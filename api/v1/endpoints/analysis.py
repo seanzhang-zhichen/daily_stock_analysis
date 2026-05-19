@@ -25,10 +25,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.orm import Session
 
-from api.deps import get_config_dep
+from api.deps import get_config_dep, get_current_user, get_db
+from src.storage import AppUser
+from src.users import (
+    KIND_ANALYSIS,
+    enforce_quota,
+    quota_exceeded_payload,
+    refund_quota,
+)
 from api.v1.schemas.analysis import (
     AnalyzeRequest,
     AnalysisResultResponse,
@@ -204,6 +212,7 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
             "model": Union[TaskAccepted, BatchTaskAcceptedResponse],
         },
         400: {"description": "请求参数错误", "model": ErrorResponse},
+        402: {"description": "今日 AI 分析额度已用完", "model": ErrorResponse},
         409: {"description": "股票正在分析中，拒绝重复提交", "model": DuplicateTaskErrorResponse},
         500: {"description": "分析失败", "model": ErrorResponse},
     },
@@ -212,7 +221,10 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
 )
 def trigger_analysis(
         request: AnalyzeRequest,
-        config: Config = Depends(get_config_dep)
+        http_request: Request,
+        config: Config = Depends(get_config_dep),
+        db: Session = Depends(get_db),
+        current_user: AppUser = Depends(get_current_user),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
     """
     触发股票分析
@@ -299,18 +311,85 @@ def trigger_analysis(
                     "message": "同步模式仅支持单只股票分析，请使用 async_mode=true 进行批量分析"
                 }
             )
-        return _handle_sync_analysis(stock_codes[0], request)
+        # 同步路径只扣 1 次配额; 失败时退还
+        outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
+        if outcome.exceeded:
+            db.commit()
+            return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+        if outcome.consumed:
+            db.commit()
+        try:
+            return _handle_sync_analysis(
+                stock_codes[0],
+                request,
+                user_id=current_user.id,
+            )
+        except Exception:
+            if outcome.consumed:
+                refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+                db.commit()
+            raise
+
+    # 异步批量: 按提交的股票数扣减 N 次, 任一未通过即整批拒绝
+    consumed_count = 0
+    if len(stock_codes) > 0:
+        for _ in stock_codes:
+            outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
+            if outcome.exceeded:
+                # 退还本批次已扣的配额, 保持原子性
+                for _i in range(consumed_count):
+                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+                db.commit()
+                return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+            if outcome.consumed:
+                consumed_count += 1
+        if consumed_count > 0:
+            db.commit()
 
     # Async mode submits one task per stock.
-    return _handle_async_analysis_batch(stock_codes, request)
+    try:
+        response = _handle_async_analysis_batch(
+            stock_codes,
+            request,
+            user_id=current_user.id,
+        )
+    except Exception:
+        # 提交队列前异常时, 退还所有已扣配额
+        if consumed_count > 0:
+            for _i in range(consumed_count):
+                refund_quota(db, user=current_user, kind=KIND_ANALYSIS)
+            db.commit()
+        raise
+
+    # 队列内重复任务: 没有真正进入分析, 退还对应配额
+    if consumed_count > 0:
+        try:
+            payload = json.loads(response.body) if hasattr(response, "body") else None
+        except Exception:
+            payload = None
+        duplicate_count = 0
+        if isinstance(payload, dict):
+            duplicates = payload.get("duplicates")
+            if isinstance(duplicates, list):
+                duplicate_count = len(duplicates)
+            elif payload.get("error") == "duplicate_task":
+                duplicate_count = 1
+        for _i in range(min(duplicate_count, consumed_count)):
+            refund_quota(db, user=current_user, kind=KIND_ANALYSIS)
+        if duplicate_count > 0:
+            db.commit()
+    return response
 
 
 def _handle_async_analysis_batch(
     stock_codes: list,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    user_id: Optional[int] = None,
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
+
+    ``user_id`` 来自 ``current_user.id``。
     """
     task_queue = get_task_queue()
     
@@ -334,6 +413,7 @@ def _handle_async_analysis_batch(
         report_type=request.report_type,
         force_refresh=request.force_refresh,
         notify=notify,
+        user_id=user_id,
     )
     if skills is not None:
         submit_kwargs["skills"] = skills
@@ -398,12 +478,14 @@ def _handle_async_analysis_batch(
 
 def _handle_sync_analysis(
     stock_code: str,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    user_id: Optional[int] = None,
 ) -> AnalysisResultResponse:
     """
     处理同步分析请求
     
-    直接执行分析，等待完成后返回结果
+    直接执行分析，等待完成后返回结果。
+    ``user_id`` 来自 ``current_user.id``。
     """
     import uuid
     from src.services.analysis_service import AnalysisService
@@ -419,6 +501,7 @@ def _handle_sync_analysis(
             query_id=query_id,
             send_notification=getattr(request, "notify", True),
             skills=getattr(request, "skills", None),
+            user_id=user_id,
         )
 
         if result is None:

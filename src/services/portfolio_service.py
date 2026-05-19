@@ -112,8 +112,16 @@ class PortfolioService:
         )
         return self._account_to_dict(row)
 
-    def list_accounts(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
-        rows = self.repo.list_accounts(include_inactive=include_inactive)
+    def list_accounts(
+        self,
+        include_inactive: bool = False,
+        owner_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        owner_filter = self._normalize_owner_filter(owner_id)
+        rows = self.repo.list_accounts(
+            include_inactive=include_inactive,
+            owner_id=owner_filter,
+        )
         return [self._account_to_dict(r) for r in rows]
 
     def update_account(
@@ -126,7 +134,22 @@ class PortfolioService:
         base_currency: Optional[str] = None,
         owner_id: Optional[str] = None,
         is_active: Optional[bool] = None,
+        owner_id_check: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        """Update account fields.
+
+        ``owner_id_check`` 为 To C 模式下的归属强校验值: 非空时, 若账户的
+        ``owner_id`` 与之不一致直接返回 ``None`` (404 语义)。``owner_id``
+        参数仍保留, 用于显式覆盖账户归属字段 (单租户模式或运营场景使用)。
+        """
+        check_owner = self._normalize_owner_filter(owner_id_check)
+        if check_owner is not None:
+            existing = self.repo.get_account(account_id, include_inactive=True)
+            if existing is None or not self._check_account_owner(existing, check_owner):
+                return None
+            # 防止用户改归属逃避隔离: 强制锁回当前 owner
+            owner_id = check_owner
+
         fields: Dict[str, Any] = {}
         if name is not None:
             name_norm = name.strip()
@@ -151,7 +174,17 @@ class PortfolioService:
             return None
         return self._account_to_dict(row)
 
-    def deactivate_account(self, account_id: int) -> bool:
+    def deactivate_account(
+        self,
+        account_id: int,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> bool:
+        owner_filter = self._normalize_owner_filter(owner_id)
+        if owner_filter is not None:
+            existing = self.repo.get_account(account_id, include_inactive=True)
+            if existing is None or not self._check_account_owner(existing, owner_filter):
+                return False
         return self.repo.deactivate_account(account_id)
 
     # ------------------------------------------------------------------
@@ -173,6 +206,7 @@ class PortfolioService:
         trade_uid: Optional[str] = None,
         dedup_hash: Optional[str] = None,
         note: Optional[str] = None,
+        owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
         side_norm = (side or "").strip().lower()
         if side_norm not in VALID_SIDES:
@@ -188,7 +222,7 @@ class PortfolioService:
         dedup_hash_norm = (dedup_hash or "").strip() or None
         try:
             with self.repo.portfolio_write_session() as session:
-                account = self._require_active_account_in_session(session=session, account_id=account_id)
+                account = self._require_active_account_in_session(session=session, account_id=account_id, owner_id=self._normalize_owner_filter(owner_id_check))
                 market_norm = self._normalize_market(market or account.market)
                 currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
                 self._validate_trade_identity(
@@ -236,6 +270,7 @@ class PortfolioService:
         amount: float,
         currency: Optional[str] = None,
         note: Optional[str] = None,
+        owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
         direction_norm = (direction or "").strip().lower()
         if direction_norm not in VALID_CASH_DIRECTIONS:
@@ -243,7 +278,7 @@ class PortfolioService:
         if amount <= 0:
             raise ValueError("amount must be > 0")
         with self.repo.portfolio_write_session() as session:
-            account = self._require_active_account_in_session(session=session, account_id=account_id)
+            account = self._require_active_account_in_session(session=session, account_id=account_id, owner_id=self._normalize_owner_filter(owner_id_check))
             currency_norm = self._normalize_currency(currency or account.base_currency)
             row = self.repo.add_cash_ledger_in_session(
                 session=session,
@@ -268,6 +303,7 @@ class PortfolioService:
         cash_dividend_per_share: Optional[float] = None,
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
+        owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
         action_type_norm = (action_type or "").strip().lower()
         if action_type_norm not in VALID_CORPORATE_ACTIONS:
@@ -280,7 +316,7 @@ class PortfolioService:
             if split_ratio is None or split_ratio <= 0:
                 raise ValueError("split_ratio must be > 0 for split_adjustment")
         with self.repo.portfolio_write_session() as session:
-            account = self._require_active_account_in_session(session=session, account_id=account_id)
+            account = self._require_active_account_in_session(session=session, account_id=account_id, owner_id=self._normalize_owner_filter(owner_id_check))
             market_norm = self._normalize_market(market or account.market)
             currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
             symbol_norm = self._normalize_symbol_for_storage(symbol)
@@ -300,15 +336,39 @@ class PortfolioService:
             )
             return {"id": int(row.id)}
 
-    def delete_trade_event(self, trade_id: int) -> bool:
+    def delete_trade_event(self, trade_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        owner_check = self._normalize_owner_filter(owner_id_check)
+        if owner_check is not None:
+            account_id = self.repo.get_trade_account_id(trade_id)
+            if account_id is None:
+                return False
+            existing = self.repo.get_account(account_id, include_inactive=True)
+            if existing is None or not self._check_account_owner(existing, owner_check):
+                return False
         with self.repo.portfolio_write_session() as session:
             return self.repo.delete_trade_in_session(session=session, trade_id=trade_id)
 
-    def delete_cash_ledger_event(self, entry_id: int) -> bool:
+    def delete_cash_ledger_event(self, entry_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        owner_check = self._normalize_owner_filter(owner_id_check)
+        if owner_check is not None:
+            account_id = self.repo.get_cash_ledger_account_id(entry_id)
+            if account_id is None:
+                return False
+            existing = self.repo.get_account(account_id, include_inactive=True)
+            if existing is None or not self._check_account_owner(existing, owner_check):
+                return False
         with self.repo.portfolio_write_session() as session:
             return self.repo.delete_cash_ledger_in_session(session=session, entry_id=entry_id)
 
-    def delete_corporate_action_event(self, action_id: int) -> bool:
+    def delete_corporate_action_event(self, action_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        owner_check = self._normalize_owner_filter(owner_id_check)
+        if owner_check is not None:
+            account_id = self.repo.get_corporate_action_account_id(action_id)
+            if account_id is None:
+                return False
+            existing = self.repo.get_account(account_id, include_inactive=True)
+            if existing is None or not self._check_account_owner(existing, owner_check):
+                return False
         with self.repo.portfolio_write_session() as session:
             return self.repo.delete_corporate_action_in_session(session=session, action_id=action_id)
 
@@ -322,9 +382,11 @@ class PortfolioService:
         side: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_filter)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -349,6 +411,7 @@ class PortfolioService:
             side=side_norm,
             page=page,
             page_size=page_size,
+            owner_id=owner_filter,
         )
         return {
             "items": [self._trade_row_to_dict(row) for row in rows],
@@ -366,9 +429,11 @@ class PortfolioService:
         direction: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_filter)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -386,6 +451,7 @@ class PortfolioService:
             direction=direction_norm,
             page=page,
             page_size=page_size,
+            owner_id=owner_filter,
         )
         return {
             "items": [self._cash_ledger_row_to_dict(row) for row in rows],
@@ -404,9 +470,11 @@ class PortfolioService:
         action_type: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_filter)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -431,6 +499,7 @@ class PortfolioService:
             action_type=action_norm,
             page=page,
             page_size=page_size,
+            owner_id=owner_filter,
         )
         return {
             "items": [self._corporate_action_row_to_dict(row) for row in rows],
@@ -448,15 +517,17 @@ class PortfolioService:
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
+        owner_filter = self._normalize_owner_filter(owner_id)
 
         if account_id is not None:
-            account = self._require_active_account(account_id)
+            account = self._require_active_account(account_id, owner_id=owner_filter)
             account_rows = [account]
         else:
-            account_rows = self.repo.list_accounts(include_inactive=False)
+            account_rows = self.repo.list_accounts(include_inactive=False, owner_id=owner_filter)
 
         accounts_payload: List[Dict[str, Any]] = []
         aggregate_currency = "CNY"
@@ -578,15 +649,17 @@ class PortfolioService:
         *,
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Refresh account FX pairs online with stale fallback when fetch fails."""
         as_of_date = as_of or date.today()
         config = get_config()
         refresh_enabled = bool(getattr(config, "portfolio_fx_update_enabled", True))
+        owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
-            account_rows = [self._require_active_account(account_id)]
+            account_rows = [self._require_active_account(account_id, owner_id=owner_filter)]
         else:
-            account_rows = self.repo.list_accounts(include_inactive=False)
+            account_rows = self.repo.list_accounts(include_inactive=False, owner_id=owner_filter)
 
         summary = {
             "as_of": as_of_date.isoformat(),
@@ -1472,19 +1545,46 @@ class PortfolioService:
             return None
         return value
 
-    def _require_active_account(self, account_id: int) -> Any:
+    @staticmethod
+    def _normalize_owner_filter(owner_id: Optional[str]) -> Optional[str]:
+        """归一 owner_id 过滤值; 空串视为 None, 单租户模式行为不变。"""
+        if owner_id is None:
+            return None
+        text = str(owner_id).strip()
+        return text or None
+
+    @staticmethod
+    def _check_account_owner(account: Any, owner_id: Optional[str]) -> bool:
+        """当 ``owner_id`` 非空时, 校验账户归属。返回 ``False`` 表示越权。"""
+        if owner_id is None:
+            return True
+        return (account.owner_id or "") == owner_id
+
+    def _require_active_account(
+        self,
+        account_id: int,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> Any:
         account = self.repo.get_account(account_id, include_inactive=False)
-        if account is None:
+        if account is None or not self._check_account_owner(account, owner_id):
+            # 越权与不存在统一抛出, 避免泄露存在性。
             raise ValueError(f"Active account not found: {account_id}")
         return account
 
-    def _require_active_account_in_session(self, *, session: Any, account_id: int) -> Any:
+    def _require_active_account_in_session(
+        self,
+        *,
+        session: Any,
+        account_id: int,
+        owner_id: Optional[str] = None,
+    ) -> Any:
         account = self.repo.get_account_in_session(
             session=session,
             account_id=account_id,
             include_inactive=False,
         )
-        if account is None:
+        if account is None or not self._check_account_owner(account, owner_id):
             raise ValueError(f"Active account not found: {account_id}")
         return account
 

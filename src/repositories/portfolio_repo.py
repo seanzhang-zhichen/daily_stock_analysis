@@ -82,11 +82,17 @@ class PortfolioRepository:
                 include_inactive=include_inactive,
             )
 
-    def list_accounts(self, include_inactive: bool = False) -> List[PortfolioAccount]:
+    def list_accounts(
+        self,
+        include_inactive: bool = False,
+        owner_id: Optional[str] = None,
+    ) -> List[PortfolioAccount]:
         with self.db.get_session() as session:
             query = select(PortfolioAccount)
             if not include_inactive:
                 query = query.where(PortfolioAccount.is_active.is_(True))
+            if owner_id is not None:
+                query = query.where(PortfolioAccount.owner_id == owner_id)
             rows = session.execute(query.order_by(PortfolioAccount.id.asc())).scalars().all()
             return list(rows)
 
@@ -246,6 +252,30 @@ class PortfolioRepository:
             )
             session.expunge(row)
             return row
+
+    def get_trade_account_id(self, trade_id: int) -> Optional[int]:
+        """Return account_id for trade_id, or None if not found."""
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(PortfolioTrade).where(PortfolioTrade.id == trade_id).limit(1)
+            ).scalar_one_or_none()
+            return int(row.account_id) if row is not None else None
+
+    def get_cash_ledger_account_id(self, entry_id: int) -> Optional[int]:
+        """Return account_id for cash ledger entry_id, or None if not found."""
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(PortfolioCashLedger).where(PortfolioCashLedger.id == entry_id).limit(1)
+            ).scalar_one_or_none()
+            return int(row.account_id) if row is not None else None
+
+    def get_corporate_action_account_id(self, action_id: int) -> Optional[int]:
+        """Return account_id for corporate action action_id, or None if not found."""
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(PortfolioCorporateAction).where(PortfolioCorporateAction.id == action_id).limit(1)
+            ).scalar_one_or_none()
+            return int(row.account_id) if row is not None else None
 
     def delete_trade(self, trade_id: int) -> bool:
         with self.portfolio_write_session() as session:
@@ -576,6 +606,7 @@ class PortfolioRepository:
         side: Optional[str],
         page: int,
         page_size: int,
+        owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioTrade], int]:
         with self.db.get_session() as session:
             conditions = []
@@ -589,6 +620,11 @@ class PortfolioRepository:
                 conditions.append(PortfolioTrade.symbol.in_(symbols))
             if side:
                 conditions.append(PortfolioTrade.side == side)
+            if owner_id is not None:
+                owner_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.owner_id == owner_id
+                )
+                conditions.append(PortfolioTrade.account_id.in_(owner_subq))
 
             data_query = select(PortfolioTrade)
             count_query = select(func.count()).select_from(PortfolioTrade)
@@ -615,6 +651,7 @@ class PortfolioRepository:
         direction: Optional[str],
         page: int,
         page_size: int,
+        owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCashLedger], int]:
         with self.db.get_session() as session:
             conditions = []
@@ -626,6 +663,11 @@ class PortfolioRepository:
                 conditions.append(PortfolioCashLedger.event_date <= date_to)
             if direction:
                 conditions.append(PortfolioCashLedger.direction == direction)
+            if owner_id is not None:
+                owner_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.owner_id == owner_id
+                )
+                conditions.append(PortfolioCashLedger.account_id.in_(owner_subq))
 
             data_query = select(PortfolioCashLedger)
             count_query = select(func.count()).select_from(PortfolioCashLedger)
@@ -653,6 +695,7 @@ class PortfolioRepository:
         action_type: Optional[str],
         page: int,
         page_size: int,
+        owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCorporateAction], int]:
         with self.db.get_session() as session:
             conditions = []
@@ -666,6 +709,11 @@ class PortfolioRepository:
                 conditions.append(PortfolioCorporateAction.symbol.in_(symbols))
             if action_type:
                 conditions.append(PortfolioCorporateAction.action_type == action_type)
+            if owner_id is not None:
+                owner_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.owner_id == owner_id
+                )
+                conditions.append(PortfolioCorporateAction.account_id.in_(owner_subq))
 
             data_query = select(PortfolioCorporateAction)
             count_query = select(func.count()).select_from(PortfolioCorporateAction)

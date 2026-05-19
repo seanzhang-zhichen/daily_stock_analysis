@@ -33,12 +33,14 @@ class PortfolioRiskService:
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         as_of_date = as_of or date.today()
         snapshot = self.portfolio_service.get_portfolio_snapshot(
             account_id=account_id,
             as_of=as_of_date,
             cost_method=cost_method,
+            owner_id=owner_id,
         )
 
         thresholds = {

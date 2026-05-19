@@ -85,6 +85,7 @@ class StockAnalysisPipeline:
         save_context_snapshot: Optional[bool] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         analysis_skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ):
         """
         初始化调度器
@@ -92,6 +93,8 @@ class StockAnalysisPipeline:
         Args:
             config: 配置对象（可选，默认使用全局配置）
             max_workers: 最大并发线程数（可选，默认从配置读取）
+            user_id: To C 模式下的归属用户 ID; 单租户/CLI/Bot 路径保持 ``None``，
+                此时 ``save_analysis_history`` 入库 ``user_id=NULL``，与旧数据兼容。
         """
         self.config = config or get_config()
         self.max_workers = max_workers or self.config.max_workers
@@ -103,13 +106,14 @@ class StockAnalysisPipeline:
         )
         self.progress_callback = progress_callback
         self.analysis_skills = list(analysis_skills) if analysis_skills is not None else None
+        self.user_id = user_id
         
         # 初始化各模块
         self.db = get_db()
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
-        self.analyzer = GeminiAnalyzer(config=self.config, skills=self.analysis_skills)
+        self.analyzer = GeminiAnalyzer(config=self.config, skills=self.analysis_skills, user_id=user_id)
         self.notifier = NotificationService(source_message=source_message)
         self._single_stock_notify_lock = threading.Lock()
         
@@ -529,7 +533,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=news_context,
                         context_snapshot=context_snapshot,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        user_id=self.user_id,
                     )
                 except Exception as e:
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
@@ -802,7 +807,7 @@ class StockAnalysisPipeline:
                 else (getattr(self.config, 'agent_skills', None) or None)
             )
             # Build executor from shared factory (ToolRegistry and SkillManager prototype are cached)
-            executor = build_agent_executor(self.config, requested_skills)
+            executor = build_agent_executor(self.config, requested_skills, user_id=self.user_id)
 
             # Build initial context to avoid redundant tool calls
             initial_context = {
@@ -918,7 +923,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=None,
                         context_snapshot=initial_context,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        user_id=self.user_id,
                     )
                 except Exception as e:
                     logger.warning(f"[{code}] 保存 Agent 分析历史失败: {e}")

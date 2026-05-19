@@ -34,7 +34,8 @@ from src.config import (
 )
 from src.llm.generation_params import apply_litellm_generation_params
 from src.llm.errors import call_litellm_with_param_recovery
-from src.storage import persist_llm_usage
+from src.storage import AppUser, get_db, persist_llm_usage
+from src.users.model_router import ModelRoute, as_litellm_kwargs, resolve_model_route
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import (
     get_signal_level,
@@ -1798,6 +1799,7 @@ class GeminiAnalyzer:
         skill_instructions: Optional[str] = None,
         default_skill_policy: Optional[str] = None,
         use_legacy_default_prompt: Optional[bool] = None,
+        user_id: Optional[int] = None,
     ):
         """Initialize LLM Analyzer via LiteLLM.
 
@@ -1810,6 +1812,7 @@ class GeminiAnalyzer:
         self._default_skill_policy_override = default_skill_policy
         self._use_legacy_default_prompt_override = use_legacy_default_prompt
         self._resolved_prompt_state: Optional[Dict[str, Any]] = None
+        self._user_id = user_id
         self._router = None
         self._legacy_router_model_list: List[Dict[str, Any]] = []
         self._litellm_available = False
@@ -1820,6 +1823,35 @@ class GeminiAnalyzer:
     def _get_runtime_config(self) -> Config:
         """Return the runtime config, honoring injected overrides for tests/pipeline."""
         return getattr(self, "_config_override", None) or get_config()
+
+    def _resolve_user_model_route(
+        self,
+        *,
+        config: Config,
+        platform_models: List[str],
+    ) -> Optional[ModelRoute]:
+        user_id = getattr(self, "_user_id", None)
+        if not user_id:
+            return None
+        try:
+            with get_db().session_scope() as session:
+                user = (
+                    session.query(AppUser)
+                    .filter(AppUser.id == int(user_id), AppUser.status == "active")
+                    .first()
+                )
+                if user is None:
+                    return None
+                return resolve_model_route(
+                    session,
+                    user=user,
+                    config=config,
+                    platform_primary_model=platform_models[0] if platform_models else config.litellm_model,
+                    platform_models=platform_models,
+                )
+        except Exception as exc:
+            logger.warning("Analyzer user model route resolution failed for user_id=%s: %s", user_id, exc)
+            return None
 
     def _get_skill_prompt_sections(self) -> tuple[str, str, bool]:
         """Resolve skill instructions + default baseline + prompt mode."""
@@ -2045,9 +2077,12 @@ class GeminiAnalyzer:
         config: Config,
         use_channel_router: bool,
         router_model_names: set[str],
+        model_route: Optional[ModelRoute] = None,
     ) -> Any:
         """Dispatch a LiteLLM completion through router or direct fallback."""
         effective_kwargs = dict(call_kwargs)
+        if model_route is not None and model_route.uses_byok:
+            return litellm.completion(**effective_kwargs)
         if use_channel_router and self._router and model in router_model_names:
             return self._router.completion(**effective_kwargs)
         if self._router and model == config.litellm_model and not use_channel_router:
@@ -2258,10 +2293,16 @@ class GeminiAnalyzer:
         )
         requested_temperature = generation_config.get('temperature', 0.7)
 
-        models_to_try = [config.litellm_model] + (config.litellm_fallback_models or [])
-        models_to_try = [m for m in models_to_try if m]
+        platform_models = [config.litellm_model] + (config.litellm_fallback_models or [])
+        platform_models = [m for m in platform_models if m]
+        model_route = self._resolve_user_model_route(config=config, platform_models=platform_models)
+        models_to_try = model_route.models_to_try if model_route is not None else platform_models
+        if not models_to_try:
+            raise _AllModelsFailedError("No LLM models are available for the current user plan")
 
-        use_channel_router = self._has_channel_config(config)
+        use_channel_router = self._has_channel_config(config) and not (
+            model_route is not None and model_route.uses_byok
+        )
 
         last_error = None
         last_response_text: Optional[str] = None
@@ -2290,9 +2331,17 @@ class GeminiAnalyzer:
                     call_kwargs["extra_body"] = extra
                 uses_router = (
                     (use_channel_router and self._router and model in router_model_names)
-                    or (self._router and model == config.litellm_model and not use_channel_router)
+                    or (
+                        self._router
+                        and model == config.litellm_model
+                        and not use_channel_router
+                        and not (model_route is not None and model_route.uses_byok)
+                    )
                 )
-                if not uses_router:
+                if model_route is not None and model_route.uses_byok:
+                    call_kwargs.update(as_litellm_kwargs(model_route))
+                    recovery_model_list = []
+                elif not uses_router:
                     try:
                         keys = get_api_keys_for_model(model, config)
                     except AttributeError:
@@ -2322,6 +2371,7 @@ class GeminiAnalyzer:
                                 config=config,
                                 use_channel_router=use_channel_router,
                                 router_model_names=router_model_names,
+                                model_route=model_route,
                             ),
                             model=model,
                             call_kwargs={**call_kwargs, "stream": True},
@@ -2370,6 +2420,7 @@ class GeminiAnalyzer:
                         config=config,
                         use_channel_router=use_channel_router,
                         router_model_names=router_model_names,
+                        model_route=model_route,
                     ),
                     model=model,
                     call_kwargs=call_kwargs,

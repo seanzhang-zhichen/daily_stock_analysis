@@ -7,7 +7,8 @@
 | 我想要 | 先看 | 继续看 |
 | --- | --- | --- |
 | 快速了解项目能做什么 | [README](../README.md) | [完整配置与部署指南](full-guide.md) |
-| 第一次把项目跑起来 | [小白客户端安装与配置](beginner-client-setup.md) | [完整配置与部署指南](full-guide.md) |
+| 第一次把项目跑起来（本地开发） | [本地启动指南](local-dev.md) | [完整配置与部署指南](full-guide.md) |
+| 第一次把项目跑起来（小白用户） | [小白客户端安装与配置](beginner-client-setup.md) | [完整配置与部署指南](full-guide.md) |
 | 配置大模型渠道 | [LLM 配置指南](LLM_CONFIG_GUIDE.md) | [LLM 服务商配置指南](llm-providers.md) |
 | 配置推送通知 | [通知能力基线](notifications.md) | [完整配置与部署指南](full-guide.md) |
 | 部署到服务器或云平台 | [部署指南](DEPLOY.md) | [云端 WebUI 部署](deploy-webui-cloud.md)、[Zeabur 部署](docker/zeabur-deployment.md) |
@@ -20,6 +21,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [README](../README.md) | 项目定位、核心能力、快速开始、推送效果 |
+| [本地启动指南](local-dev.md) | 本地前后端启动（开发模式 / 生产模式）、常用命令速查和常见问题 |
 | [小白客户端安装与配置](beginner-client-setup.md) | 面向不会代码用户的客户端下载、Anspire Open / AIHubMix 模型配置、新闻源配置和常见问题 |
 | [完整配置与部署指南](full-guide.md) | 环境准备、运行方式、配置说明、部署路径和常见问题 |
 | [FAQ](FAQ.md) | 常见配置、模型、通知、部署和运行问题 |
@@ -44,6 +46,15 @@
 | [实时告警中心](alerts.md) | EventMonitor 基线、告警契约、存储评估和 Phase 边界 |
 | [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界 |
 | [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明 |
+| [Web 前端重构计划](web-frontend-redesign-plan.md) | Web 前端视觉、布局、组件和样式治理重构方案 |
+
+## To C / 多用户
+
+| 文档 | 内容 |
+| --- | --- |
+| [To C 产品规划](to-c-product-plan.md) | 用户分层、配额权益、阶段路线、风险点（产品总纲） |
+| [To C 关键页面线框](to-c-product-wireframes.md) | 登录 / 注册 / 账户 / 会员中心 / 配额提示等关键页面线框 |
+| [To C 多用户模式](to-c-mode.md) | 默认启用的多用户认证、API、表结构、配额与隔离边界 |
 
 ## 部署与打包
 

@@ -6,6 +6,7 @@ Manages conversation sessions with TTL, storing message history and context.
 """
 
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -14,6 +15,26 @@ from typing import Any, Dict, List, Optional
 from src.storage import get_db
 
 logger = logging.getLogger(__name__)
+
+
+# To C 多用户隔离: Web endpoint 会把 session_id 加上 ``u{user_id}:`` 前缀,
+# 此处反解出 user_id 以便把消息写到该用户名下; Bot / CLI 路径保持原 session_id
+# (例如 ``telegram_xxx``), 解析失败回退到 None, 行为等价于单租户模式。
+_USER_SESSION_PREFIX_RE = re.compile(r"^u(\d+):")
+
+
+def extract_user_id_from_session(session_id: Optional[str]) -> Optional[int]:
+    """从 ``u{user_id}:...`` 前缀里反解 user_id; 不匹配返回 ``None``。"""
+    if not session_id:
+        return None
+    match = _USER_SESSION_PREFIX_RE.match(session_id)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
 
 @dataclass
 class ConversationSession:
@@ -25,7 +46,10 @@ class ConversationSession:
 
     def add_message(self, role: str, content: str):
         """Add a message to the session history."""
-        get_db().save_conversation_message(self.session_id, role, content)
+        user_id = extract_user_id_from_session(self.session_id)
+        get_db().save_conversation_message(
+            self.session_id, role, content, user_id=user_id,
+        )
         self.last_active = datetime.now()
 
     def update_context(self, key: str, value: Any):

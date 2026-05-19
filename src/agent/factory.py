@@ -271,7 +271,7 @@ def resolve_skill_prompt_state(config=None, skills: Optional[List[str]] = None) 
     )
 
 
-def build_agent_executor(config=None, skills: Optional[List[str]] = None):
+def build_agent_executor(config=None, skills: Optional[List[str]] = None, user_id: Optional[int] = None):
     """Build and return a configured AgentExecutor (or future orchestrator).
 
     When ``AGENT_ARCH=multi``, this returns an orchestrator that manages
@@ -307,7 +307,7 @@ def build_agent_executor(config=None, skills: Optional[List[str]] = None):
         prompt_state.use_legacy_default_prompt,
     )
 
-    llm_adapter = LLMToolAdapter(config)
+    llm_adapter = LLMToolAdapter(config, user_id=user_id)
 
     if arch == "multi":
         return _build_orchestrator(

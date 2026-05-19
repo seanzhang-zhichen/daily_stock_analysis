@@ -447,6 +447,198 @@ def _run_market_review_with_shared_lock(
         release_market_review_lock(lock_token)
 
 
+def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) -> None:
+    """按用户分桶执行定时分析并发送个人推送（Phase 3）。
+
+    仅处理开启了「每日推送」且自选股列表非空的用户。
+    单用户失败通过日志记录后继续执行其他用户，不影响整体调度。
+    """
+    from src.core.pipeline import StockAnalysisPipeline
+    from src.notification import NotificationService
+    from src.storage import get_db as _get_storage_db
+    from src.users.config import is_user_mode_enabled, load_user_mode_settings
+    from src.users.email import get_email_backend
+    from src.users.notification_delivery import (
+        DailyEmailContext,
+        dispatch_user_webhook,
+        send_daily_email,
+    )
+    from src.users.notification_prefs import get_prefs, get_users_with_daily_push
+    from src.users.plans import resolve_user_plan
+    from src.users.repository import get_user_by_id
+    from src.users.watchlist import list_stocks
+
+    if not is_user_mode_enabled():
+        return
+
+    db = _get_storage_db()
+    with db.session_scope() as session:
+        user_ids = get_users_with_daily_push(session)
+
+    if not user_ids:
+        logger.info("[per-user 调度] 无开启每日推送的用户，跳过")
+        return
+
+    logger.info("[per-user 调度] 开始按用户分析，共 %d 个用户", len(user_ids))
+
+    email_backend = get_email_backend()
+    report_type = getattr(config, "report_type", "simple")
+    user_settings = load_user_mode_settings()
+
+    for user_id in user_ids:
+        try:
+            with db.session_scope() as session:
+                user = get_user_by_id(session, user_id)
+                if user is None or getattr(user, "status", "active") != "active":
+                    continue
+                watchlist = list_stocks(session, user_id=user_id)
+                prefs = get_prefs(session, user_id=user_id)
+                plan = resolve_user_plan(session, user, settings=user_settings)
+                user_email = user.email
+
+            if not watchlist:
+                logger.info("[per-user 调度] 用户 %d 自选股为空，跳过", user_id)
+                continue
+
+            stock_codes_user = [item.stock_code for item in watchlist]
+            filtered_codes, _, should_skip = _compute_trading_day_filter(
+                config, args, stock_codes_user
+            )
+            if should_skip or not filtered_codes:
+                logger.info("[per-user 调度] 用户 %d 今日无可分析股票，跳过", user_id)
+                continue
+
+            logger.info(
+                "[per-user 调度] 用户 %d 开始分析 %d 只股票: %s",
+                user_id,
+                len(filtered_codes),
+                filtered_codes,
+            )
+
+            pipeline = StockAnalysisPipeline(
+                config=config,
+                max_workers=args.workers,
+                query_id=uuid.uuid4().hex,
+                query_source="scheduled",
+                user_id=user_id,
+            )
+            results = pipeline.run(
+                stock_codes=filtered_codes,
+                dry_run=getattr(args, "dry_run", False),
+                send_notification=False,
+            )
+
+            if not results:
+                logger.info("[per-user 调度] 用户 %d 分析结果为空，跳过推送", user_id)
+                continue
+
+            notifier = NotificationService()
+            report_content = notifier.generate_aggregate_report(results, report_type)
+            today_str = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+            subject = f"[DSA] 您的自选股分析报告 {today_str}"
+
+            # 邮件推送 (HTML + 一键退订)
+            if prefs.email_enabled and user_email:
+                ok = send_daily_email(
+                    DailyEmailContext(
+                        user_id=user_id,
+                        user_email=user_email,
+                        subject=subject,
+                        report_markdown=report_content,
+                    ),
+                    backend=email_backend,
+                )
+                if ok:
+                    logger.info(
+                        "[per-user 调度] 用户 %d 报告已发送至 %s",
+                        user_id,
+                        user_email,
+                    )
+            else:
+                logger.info(
+                    "[per-user 调度] 用户 %d 邮件推送已关闭或无邮箱，跳过邮件",
+                    user_id,
+                )
+
+            # Webhook 推送 (仅 Pro / 已配置 webhook 的用户)
+            if plan.can_webhook and prefs.webhook_url and prefs.webhook_type:
+                dispatch_user_webhook(
+                    prefs,
+                    can_webhook=plan.can_webhook,
+                    content=report_content,
+                    title=subject,
+                )
+
+        except Exception:
+            logger.exception("[per-user 调度] 用户 %d 分析失败，已跳过", user_id)
+
+    logger.info("[per-user 调度] 全部用户处理完毕")
+
+
+def run_plan_lifecycle_task(config: Config, args: argparse.Namespace) -> None:
+    """每日调度入口: 到期前 7/3/1 天发送续费提醒, 过期当日自动降级到 free 档 (Phase 2 + Phase 4 收尾)。
+
+    单用户失败通过日志记录后继续, 不影响其它用户。``--dry-run`` 时只扫描不写库。
+    """
+    try:
+        from src.users.config import is_user_mode_enabled
+        from src.users.plan_lifecycle import run_plan_lifecycle_check
+    except Exception:
+        logger.exception("[plan-lifecycle] 模块加载失败, 跳过本轮检查")
+        return
+
+    if not is_user_mode_enabled():
+        return
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    try:
+        summary = run_plan_lifecycle_check(dry_run=dry_run)
+    except Exception:
+        logger.exception("[plan-lifecycle] 执行失败")
+        return
+
+    logger.info(
+        "[plan-lifecycle] reminders_sent=%d reminders_skipped=%d downgraded=%d downgrade_skipped=%d",
+        summary.reminders_sent,
+        summary.reminders_skipped,
+        summary.downgraded,
+        summary.downgrade_skipped,
+    )
+
+
+def run_account_lifecycle_task(config: Config, args: argparse.Namespace) -> None:
+    """每日调度入口: 处理账号注销冷静期到期与个人数据物理清除 (Phase 6 PIPL)。
+
+    - 软删冷静期已满（7 天）的账号 (status: active -> deleted)。
+    - 物理清除软删超过保留期（30 天）的个人数据（保留订单/发票）。
+    ``--dry-run`` 时只扫描不写库。
+    """
+    try:
+        from src.users.config import is_user_mode_enabled
+        from src.users.deletion import execute_pending_deletions, cleanup_deleted_users
+        from src.storage import get_db
+    except Exception:
+        logger.exception("[account-lifecycle] 模块加载失败, 跳过本轮检查")
+        return
+
+    if not is_user_mode_enabled():
+        return
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    db = next(get_db())
+    try:
+        soft_deleted = execute_pending_deletions(db) if not dry_run else 0
+        purged = cleanup_deleted_users(db, dry_run=dry_run)
+        logger.info(
+            "[account-lifecycle] soft_deleted=%d purged=%d dry_run=%s",
+            soft_deleted, purged, dry_run,
+        )
+    except Exception:
+        logger.exception("[account-lifecycle] 执行失败")
+    finally:
+        db.close()
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
@@ -934,6 +1126,9 @@ def main() -> int:
             def scheduled_task():
                 runtime_config = _reload_runtime_config()
                 run_full_analysis(runtime_config, args, scheduled_stock_codes)
+                run_per_user_scheduled_analysis(runtime_config, args)
+                run_plan_lifecycle_task(runtime_config, args)
+                run_account_lifecycle_task(runtime_config, args)
 
             background_tasks = []
             if getattr(config, 'agent_event_monitor_enabled', False):

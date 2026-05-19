@@ -26,6 +26,8 @@ from src.config import (
 )
 from src.llm.errors import call_litellm_with_param_recovery
 from src.llm.generation_params import apply_litellm_generation_params
+from src.storage import AppUser, get_db
+from src.users.model_router import ModelRoute, as_litellm_kwargs, resolve_model_route
 
 logger = logging.getLogger(__name__)
 
@@ -153,14 +155,39 @@ class LLMToolAdapter:
     load balancing.
     """
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, user_id: Optional[int] = None):
         config = config or get_config()
         self._config = config
+        self._user_id = user_id
         self._router = None          # litellm Router (multi-key primary model)
         self._legacy_router_model_list: List[Dict[str, Any]] = []
         self._litellm_available = False
         self._register_custom_model_pricing()
         self._init_litellm()
+
+    def _resolve_user_model_route(self, models_to_try: List[str]) -> Optional[ModelRoute]:
+        user_id = getattr(self, "_user_id", None)
+        if not user_id:
+            return None
+        try:
+            with get_db().session_scope() as session:
+                user = (
+                    session.query(AppUser)
+                    .filter(AppUser.id == int(user_id), AppUser.status == "active")
+                    .first()
+                )
+                if user is None:
+                    return None
+                return resolve_model_route(
+                    session,
+                    user=user,
+                    config=self._config,
+                    platform_primary_model=models_to_try[0] if models_to_try else get_effective_agent_primary_model(self._config),
+                    platform_models=models_to_try,
+                )
+        except Exception as exc:
+            logger.warning("Agent user model route resolution failed for user_id=%s: %s", user_id, exc)
+            return None
 
     @staticmethod
     def _register_custom_model_pricing() -> None:
@@ -317,10 +344,13 @@ class LLMToolAdapter:
         """Shared completion path for both tool and text-only calls."""
         config = self._config
         models_to_try = get_effective_agent_models_to_try(config)
+        model_route = self._resolve_user_model_route(models_to_try)
+        if model_route is not None:
+            models_to_try = model_route.models_to_try
         if not models_to_try:
             error_msg = (
-                "No LLM configured. Please set LITELLM_MODEL, LLM_CHANNELS, "
-                "or provider API keys before using Agent."
+                "No LLM configured or allowed for the current user plan. "
+                "Please set LITELLM_MODEL/LLM_CHANNELS or adjust plan allowed_models."
             )
             logger.error(error_msg)
             return LLMResponse(content=error_msg, provider="error")
@@ -346,6 +376,7 @@ class LLMToolAdapter:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout=remaining_timeout,
+                    model_route=model_route,
                 )
             except Exception as e:
                 if isinstance(e, _resolve_litellm_exception("RateLimitError")):
@@ -397,6 +428,7 @@ class LLMToolAdapter:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
+        model_route: Optional[ModelRoute] = None,
     ) -> LLMResponse:
         """Call a specific litellm model with OpenAI-format messages and tools."""
         openai_messages = self._convert_messages(messages)
@@ -421,17 +453,27 @@ class LLMToolAdapter:
             call_kwargs["tools"] = tools
 
         # Use Router for primary model (multi-key), direct litellm for others
-        use_channel_router = self._has_channel_config()
+        use_channel_router = self._has_channel_config() and not (
+            model_route is not None and model_route.uses_byok
+        )
         _router_model_names = set(get_configured_llm_models(self._config.llm_model_list))
         agent_primary_model = get_effective_agent_primary_model(self._config)
         uses_router = (
             bool(use_channel_router and self._router and model in _router_model_names)
-            or bool(self._router and model == agent_primary_model and not use_channel_router)
+            or bool(
+                self._router
+                and model == agent_primary_model
+                and not use_channel_router
+                and not (model_route is not None and model_route.uses_byok)
+            )
         )
         recovery_model_list = self._config.llm_model_list
         if self._router and model == agent_primary_model and not use_channel_router:
             recovery_model_list = self._legacy_router_model_list or self._config.llm_model_list
-        if not uses_router:
+        if model_route is not None and model_route.uses_byok:
+            call_kwargs.update(as_litellm_kwargs(model_route))
+            recovery_model_list = []
+        elif not uses_router:
             keys = get_api_keys_for_model(model, self._config)
             if keys:
                 call_kwargs["api_key"] = keys[0]
@@ -451,7 +493,12 @@ class LLMToolAdapter:
                 model_list=recovery_model_list,
                 logger=logger,
             )
-        elif self._router and model == agent_primary_model and not use_channel_router:
+        elif (
+            self._router
+            and model == agent_primary_model
+            and not use_channel_router
+            and not (model_route is not None and model_route.uses_byok)
+        ):
             # Legacy path: Router for primary model multi-key
             response = call_litellm_with_param_recovery(
                 lambda kwargs: self._router.completion(**kwargs),
@@ -468,7 +515,7 @@ class LLMToolAdapter:
                 lambda kwargs: litellm.completion(**kwargs),
                 model=model,
                 call_kwargs=call_kwargs,
-                model_list=self._config.llm_model_list,
+                model_list=recovery_model_list,
                 logger=logger,
             )
 

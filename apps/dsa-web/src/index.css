@@ -133,7 +133,7 @@
   --nav-brand-shadow: hsl(var(--primary) / 0.2);
 
   /* Shell Sidebar Custom */
-  --shell-sidebar-border: hsl(193 100% 43% / 0.35);
+  --shell-sidebar-border: hsl(var(--primary) / 0.38);
 
   /* Home page related (using HSL format) */
   --home-loading-ring-track: hsl(var(--primary) / 0.2);
@@ -299,6 +299,18 @@
   --login-input-toggle-active-text: hsl(205 88% 28%);
   --login-grid-line: hsl(214 20% 55% / 0.08);
   --login-grid-mask: radial-gradient(ellipse 80% 50% at 50% 50%, #000 70%, transparent 100%);
+
+  /* Login Input Surface (Light) */
+  --login-input-surface: hsl(210 43% 92% / 0.82);
+  --login-input-border: hsl(218 28% 72% / 0.7);
+  --login-input-border-hover: hsl(218 24% 62% / 0.8);
+  --login-input-border-focus: hsl(var(--primary) / 0.48);
+  --login-input-focus-ring: 0 0 0 4px hsl(var(--primary) / 0.12);
+  --login-input-text: hsl(223 36% 12%);
+  --login-input-placeholder: hsl(221 18% 40% / 0.6);
+  --login-input-caret: hsl(223 36% 12%);
+  --login-input-fill: hsl(223 36% 12%);
+  --login-input-shadow: 0 2px 8px hsl(220 20% 30% / 0.06);
 }
 
 .dark {
@@ -395,6 +407,9 @@
   --text-primary: hsl(var(--foreground));
   --text-secondary-text: hsl(var(--secondary-text));
   --text-muted-text: hsl(var(--muted-text));
+
+  /* Shell Sidebar Custom (Dark theme) */
+  --shell-sidebar-border: hsl(var(--primary) / 0.3);
 
   /* Navigation related (Dark theme) */
   --nav-active-bg: hsl(var(--primary) / 0.11);
@@ -562,6 +577,18 @@
   --login-input-toggle-active-text: hsl(var(--primary) / 0.96);
   --login-grid-line: hsl(0 0% 50% / 0.04);
   --login-grid-mask: radial-gradient(ellipse 80% 50% at 50% 50%, #000 70%, transparent 100%);
+
+  /* Login Input Surface (Dark) */
+  --login-input-surface: hsl(222 28% 11% / 0.92);
+  --login-input-border: hsl(0 0% 100% / 0.12);
+  --login-input-border-hover: hsl(0 0% 100% / 0.2);
+  --login-input-border-focus: hsl(var(--primary) / 0.5);
+  --login-input-focus-ring: 0 0 0 4px hsl(var(--primary) / 0.15);
+  --login-input-text: hsl(0 0% 96%);
+  --login-input-placeholder: hsl(215 15% 55%);
+  --login-input-caret: hsl(0 0% 96%);
+  --login-input-fill: hsl(0 0% 96%);
+  --login-input-shadow: 0 2px 8px hsl(215 25% 5% / 0.2);
 }
 
 /* =========================================
@@ -838,8 +865,8 @@
 
 /* ============ Custom Scrollbar ============ */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -847,12 +874,17 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: hsl(var(--foreground) / 0.12);
+  border-radius: 100px;
+  transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: hsl(var(--foreground) / 0.22);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ============ Animations ============ */
@@ -1976,8 +2008,18 @@ textarea {
 
 .btn-primary:hover {
   transform: translateY(-1px);
-  filter: brightness(1.04);
-  box-shadow: 0 18px 34px rgba(0, 212, 255, 0.22);
+  filter: brightness(1.05);
+  box-shadow: 0 18px 34px rgba(0, 212, 255, 0.26);
+}
+
+.btn-primary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px hsl(var(--primary) / 0.22), 0 12px 28px rgba(0, 212, 255, 0.2);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  filter: brightness(0.98);
 }
 
 .btn-secondary {
@@ -2214,6 +2256,16 @@ textarea {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .animate-slide-in-left {

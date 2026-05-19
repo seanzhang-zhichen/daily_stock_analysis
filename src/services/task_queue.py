@@ -72,6 +72,8 @@ class TaskInfo:
     original_query: Optional[str] = None
     selection_source: Optional[str] = None
     skills: Optional[List[str]] = None
+    # To C 模式下的归属用户 ID
+    user_id: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
@@ -110,6 +112,7 @@ class TaskInfo:
             original_query=self.original_query,
             selection_source=self.selection_source,
             skills=list(self.skills) if self.skills is not None else None,
+            user_id=self.user_id,
         )
 
 
@@ -349,12 +352,14 @@ class AnalysisTaskQueue:
         force_refresh: bool = False,
         notify: bool = True,
         skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
 
         - Duplicate stocks are skipped and recorded in duplicates.
         - If executor submission fails, the current batch is rolled back.
+        - ``user_id`` 为 To C 模式下的归属用户 ID。
         """
         self.validate_selection_source(selection_source)
 
@@ -387,6 +392,7 @@ class AnalysisTaskQueue:
                     original_query=original_query,
                     selection_source=selection_source,
                     skills=task_skills,
+                    user_id=user_id,
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -400,6 +406,7 @@ class AnalysisTaskQueue:
                         force_refresh,
                         notify,
                         task_skills,
+                        user_id,
                     )
                 except Exception:
                     # Roll back the current batch to avoid partial submission.
@@ -583,6 +590,7 @@ class AnalysisTaskQueue:
         force_refresh: bool,
         notify: bool = True,
         skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -592,6 +600,7 @@ class AnalysisTaskQueue:
             stock_code: 股票代码
             report_type: 报告类型
             force_refresh: 是否强制刷新
+            user_id: To C 模式下的归属用户 ID。
             
         Returns:
             分析结果字典
@@ -626,6 +635,7 @@ class AnalysisTaskQueue:
                 send_notification=notify,
                 progress_callback=_on_progress,
                 skills=skills,
+                user_id=user_id,
             )
             
             if result:

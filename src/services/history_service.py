@@ -67,7 +67,8 @@ class HistoryService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         page: int = 1,
-        limit: int = 20
+        limit: int = 20,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Get history analysis list.
@@ -108,7 +109,8 @@ class HistoryService:
                 start_date=start_dt,
                 end_date=end_dt,
                 offset=offset,
-                limit=limit
+                limit=limit,
+                user_id=user_id,
             )
             
             # Convert to response format
@@ -134,7 +136,7 @@ class HistoryService:
             logger.error(f"查询历史列表失败: {e}", exc_info=True)
             return {"total": 0, "items": []}
 
-    def _resolve_record(self, record_id: str):
+    def _resolve_record(self, record_id: str, user_id: Optional[int] = None):
         """
         Resolve a record_id parameter to an AnalysisHistory object.
 
@@ -149,26 +151,35 @@ class HistoryService:
         """
         try:
             int_id = int(record_id)
-            record = self.db.get_analysis_history_by_id(int_id)
+            record = self.db.get_analysis_history_by_id(int_id, user_id=user_id)
             if record:
                 return record
         except (ValueError, TypeError):
             pass
-        # Fall back to query_id lookup
+        # Fall back to query_id lookup; for user-scoped queries we filter via
+        # ``get_analysis_history`` which honours ``user_id``.
+        if user_id is not None:
+            rows = self.db.get_analysis_history(query_id=record_id, limit=1, user_id=user_id)
+            return rows[0] if rows else None
         return self.db.get_latest_analysis_by_query_id(record_id)
 
-    def resolve_and_get_detail(self, record_id: str) -> Optional[Dict[str, Any]]:
+    def resolve_and_get_detail(
+        self,
+        record_id: str,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Resolve record_id (int PK or query_id string) and return history detail.
 
         Args:
             record_id: integer PK (as string) or query_id string
+            user_id: To C 模式下注入限定归属用户; 关闭时传 ``None``
 
         Returns:
             Complete analysis report dict, or None
         """
         try:
-            record = self._resolve_record(record_id)
+            record = self._resolve_record(record_id, user_id=user_id)
             if not record:
                 return None
             return self._record_to_detail_dict(record)
@@ -176,19 +187,25 @@ class HistoryService:
             logger.error(f"resolve_and_get_detail failed for {record_id}: {e}", exc_info=True)
             return None
 
-    def resolve_and_get_news(self, record_id: str, limit: int = 20) -> List[Dict[str, str]]:
+    def resolve_and_get_news(
+        self,
+        record_id: str,
+        limit: int = 20,
+        user_id: Optional[int] = None,
+    ) -> List[Dict[str, str]]:
         """
         Resolve record_id (int PK or query_id string) and return associated news.
 
         Args:
             record_id: integer PK (as string) or query_id string
             limit: max items to return
+            user_id: To C 模式下注入限定归属用户
 
         Returns:
             List of news intel dicts
         """
         try:
-            record = self._resolve_record(record_id)
+            record = self._resolve_record(record_id, user_id=user_id)
             if not record:
                 logger.warning(f"resolve_and_get_news: record not found for {record_id}")
                 return []
@@ -197,7 +214,11 @@ class HistoryService:
             logger.error(f"resolve_and_get_news failed for {record_id}: {e}", exc_info=True)
             return []
 
-    def get_history_detail_by_id(self, record_id: int) -> Optional[Dict[str, Any]]:
+    def get_history_detail_by_id(
+        self,
+        record_id: int,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Get history report detail.
 
@@ -206,12 +227,13 @@ class HistoryService:
 
         Args:
             record_id: Analysis history record primary key ID
+            user_id: To C 模式下注入限定归属用户
 
         Returns:
             Complete analysis report dictionary, or None if not exists
         """
         try:
-            record = self.db.get_analysis_history_by_id(record_id)
+            record = self.db.get_analysis_history_by_id(record_id, user_id=user_id)
             if not record:
                 return None
             return self._record_to_detail_dict(record)
@@ -307,12 +329,17 @@ class HistoryService:
             "context_snapshot": context_snapshot,
         }
 
-    def delete_history_records(self, record_ids: List[int]) -> int:
+    def delete_history_records(
+        self,
+        record_ids: List[int],
+        user_id: Optional[int] = None,
+    ) -> int:
         """
         Delete specified analysis history records.
 
         Args:
             record_ids: List of history record primary key IDs
+            user_id: To C 模式下注入限定归属用户; 不允许跨用户删除
 
         Returns:
             Number of records actually deleted
@@ -321,7 +348,7 @@ class HistoryService:
             Exception: Re-raises any storage-layer exception so the API caller
                        receives a proper 500 error instead of a silent success.
         """
-        return self.db.delete_analysis_history_records(record_ids)
+        return self.db.delete_analysis_history_records(record_ids, user_id=user_id)
 
     def get_news_intel(self, query_id: str, limit: int = 20) -> List[Dict[str, str]]:
         """
@@ -458,7 +485,11 @@ class HistoryService:
         else:
             return "极度悲观"
 
-    def get_markdown_report(self, record_id: str) -> Optional[str]:
+    def get_markdown_report(
+        self,
+        record_id: str,
+        user_id: Optional[int] = None,
+    ) -> Optional[str]:
         """
         Generate a Markdown report for a single analysis history record.
 
@@ -467,6 +498,7 @@ class HistoryService:
 
         Args:
             record_id: integer PK (as string) or query_id string
+            user_id: To C 模式下注入限定归属用户
 
         Returns:
             Markdown formatted report string, or None if record not found
@@ -474,7 +506,7 @@ class HistoryService:
         Raises:
             MarkdownReportGenerationError: If report generation fails due to internal errors
         """
-        record = self._resolve_record(record_id)
+        record = self._resolve_record(record_id, user_id=user_id)
         if not record:
             logger.warning(f"get_markdown_report: record not found for {record_id}")
             return None

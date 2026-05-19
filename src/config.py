@@ -750,6 +750,7 @@ class Config:
     prefetch_realtime_quotes: bool = True
 
     # === 数据库配置 ===
+    database_url: str = ""  # 完整 SQLAlchemy URL（优先级高于 database_path）；例如 mysql+pymysql://user:pass@host/db
     database_path: str = "./data/stock_analysis.db"
     sqlite_wal_enabled: bool = True
     sqlite_busy_timeout_ms: int = 5000
@@ -1495,6 +1496,7 @@ class Config:
             ),
             md2img_engine=cls._parse_md2img_engine(os.getenv('MD2IMG_ENGINE', 'wkhtmltoimage')),
             prefetch_realtime_quotes=os.getenv('PREFETCH_REALTIME_QUOTES', 'true').lower() == 'true',
+            database_url=os.getenv('DATABASE_URL', '').strip(),
             database_path=os.getenv('DATABASE_PATH', './data/stock_analysis.db'),
             sqlite_wal_enabled=os.getenv('SQLITE_WAL_ENABLED', 'true').lower() == 'true',
             sqlite_busy_timeout_ms=parse_env_int(
@@ -2615,9 +2617,12 @@ class Config:
     def get_db_url(self) -> str:
         """
         获取 SQLAlchemy 数据库连接 URL
-        
-        自动创建数据库目录（如果不存在）
+
+        优先使用 DATABASE_URL（支持 MySQL/PostgreSQL 等），
+        未设置时退回 DATABASE_PATH 指定的 SQLite 文件。
         """
+        if self.database_url:
+            return self.database_url
         db_path = Path(self.database_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{db_path.absolute()}"

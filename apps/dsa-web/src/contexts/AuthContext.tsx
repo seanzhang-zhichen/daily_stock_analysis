@@ -2,17 +2,32 @@ import type React from 'react';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { createParsedApiError, getParsedApiError, type ParsedApiError } from '../api/error';
 import { authApi } from '../api/auth';
+import { accountApi, type AccountStatusResponse } from '../api/account';
 import { useStockPoolStore } from '../stores';
 
 type AuthContextValue = {
+  // Legacy admin auth (single-admin password) state.
   authEnabled: boolean;
   loggedIn: boolean;
   passwordSet: boolean;
   passwordChangeable: boolean;
   setupState: 'enabled' | 'password_retained' | 'no_password';
+  // To C user mode state.
+  userMode: AccountStatusResponse | null;
   isLoading: boolean;
   loadError: ParsedApiError | null;
+  // Effective "logged in" considering both auth modes.
+  effectiveLoggedIn: boolean;
   login: (password: string, passwordConfirm?: string) => Promise<{ success: boolean; error?: ParsedApiError }>;
+  loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: ParsedApiError }>;
+  registerWithEmail: (input: {
+    email: string;
+    password: string;
+    passwordConfirm: string;
+    inviteCode?: string;
+    termsAgreed?: boolean;
+    termsVersion?: string;
+  }) => Promise<{ success: boolean; error?: ParsedApiError }>;
   changePassword: (
     currentPassword: string,
     newPassword: string,
@@ -28,7 +43,7 @@ function extractLoginError(err: unknown): ParsedApiError {
   const parsed = getParsedApiError(err);
   if (parsed.status === 429) {
     return createParsedApiError({
-      title: '登录尝试过于频繁',
+      title: '尝试过于频繁',
       message: '尝试次数过多，请稍后再试。',
       rawMessage: parsed.rawMessage,
       status: parsed.status,
@@ -44,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [passwordSet, setPasswordSet] = useState(false);
   const [passwordChangeable, setPasswordChangeable] = useState(false);
   const [setupState, setSetupState] = useState<'enabled' | 'password_retained' | 'no_password'>('no_password');
+  const [userMode, setUserMode] = useState<AccountStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<ParsedApiError | null>(null);
 
@@ -51,13 +67,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const status = await authApi.getStatus();
-      setAuthEnabled(status.authEnabled);
-      setLoggedIn(status.loggedIn);
-      setPasswordSet(status.passwordSet ?? false);
-      setPasswordChangeable(status.passwordChangeable ?? false);
-      setSetupState(status.setupState);
-      if (status.authEnabled && !status.loggedIn) {
+      const [adminStatus, accountStatus] = await Promise.all([
+        authApi.getStatus().catch(() => null),
+        accountApi.getStatus().catch(() => null),
+      ]);
+      if (adminStatus) {
+        setAuthEnabled(adminStatus.authEnabled);
+        setLoggedIn(adminStatus.loggedIn);
+        setPasswordSet(adminStatus.passwordSet ?? false);
+        setPasswordChangeable(adminStatus.passwordChangeable ?? false);
+        setSetupState(adminStatus.setupState);
+      } else {
+        setAuthEnabled(false);
+        setLoggedIn(false);
+        setPasswordSet(false);
+        setPasswordChangeable(false);
+        setSetupState('no_password');
+      }
+      setUserMode(accountStatus);
+
+      const adminLocked = (adminStatus?.authEnabled ?? false) && !(adminStatus?.loggedIn ?? false);
+      const userLocked = (accountStatus?.userModeEnabled ?? false) && !(accountStatus?.loggedIn ?? false);
+      if (adminLocked || userLocked) {
         useStockPoolStore.getState().resetDashboardState();
       }
     } catch (err) {
@@ -67,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setPasswordSet(false);
       setPasswordChangeable(false);
       setSetupState('no_password');
+      setUserMode(null);
       useStockPoolStore.getState().resetDashboardState();
     } finally {
       setIsLoading(false);
@@ -93,6 +125,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [fetchStatus]
   );
 
+  const loginWithEmail = useCallback(
+    async (
+      email: string,
+      password: string
+    ): Promise<{ success: boolean; error?: ParsedApiError }> => {
+      try {
+        await accountApi.login({ email, password });
+        await fetchStatus();
+        return { success: true };
+      } catch (err: unknown) {
+        return { success: false, error: extractLoginError(err) };
+      }
+    },
+    [fetchStatus]
+  );
+
+  const registerWithEmail = useCallback(
+    async (input: {
+      email: string;
+      password: string;
+      passwordConfirm: string;
+      inviteCode?: string;
+      termsAgreed?: boolean;
+      termsVersion?: string;
+    }): Promise<{ success: boolean; error?: ParsedApiError }> => {
+      try {
+        await accountApi.register(input);
+        await fetchStatus();
+        return { success: true };
+      } catch (err: unknown) {
+        return { success: false, error: extractLoginError(err) };
+      }
+    },
+    [fetchStatus]
+  );
+
   const changePassword = useCallback(
     async (
       currentPassword: string,
@@ -100,19 +168,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       newPasswordConfirm: string
     ): Promise<{ success: boolean; error?: ParsedApiError }> => {
       try {
-        await authApi.changePassword(currentPassword, newPassword, newPasswordConfirm);
+        if (userMode?.loggedIn) {
+          await accountApi.changePassword({ currentPassword, newPassword, newPasswordConfirm });
+        } else {
+          await authApi.changePassword(currentPassword, newPassword, newPasswordConfirm);
+        }
         return { success: true };
       } catch (err: unknown) {
         return { success: false, error: getParsedApiError(err) };
       }
     },
-    []
+    [userMode]
   );
 
   const logout = useCallback(async () => {
     let logoutError: unknown = null;
     try {
-      await authApi.logout();
+      if (userMode?.loggedIn) {
+        await accountApi.logout();
+      } else {
+        await authApi.logout();
+      }
     } catch (err) {
       logoutError = err;
     } finally {
@@ -122,7 +198,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (logoutError && getParsedApiError(logoutError).status !== 401) {
       throw logoutError;
     }
-  }, [fetchStatus]);
+  }, [fetchStatus, userMode]);
+
+  const adminEffectiveLoggedIn = !authEnabled || loggedIn;
+  const userEffectiveLoggedIn = !(userMode?.userModeEnabled ?? false) || (userMode?.loggedIn ?? false);
+  const effectiveLoggedIn = adminEffectiveLoggedIn && userEffectiveLoggedIn;
 
   return (
     <AuthContext.Provider
@@ -132,9 +212,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         passwordSet,
         passwordChangeable,
         setupState,
+        userMode,
         isLoading,
         loadError,
+        effectiveLoggedIn,
         login,
+        loginWithEmail,
+        registerWithEmail,
         changePassword,
         logout,
         refreshStatus: fetchStatus,

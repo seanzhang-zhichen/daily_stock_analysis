@@ -23,6 +23,7 @@
 - 更细的模块行为、页面交互、专题配置、排障说明、字段契约、实现语义和边界条件，优先更新对应 `docs/*.md` 或专题文档，不写入 README。
 - 变更中英双语文档之一时，需评估另一份是否需要同步；若未同步，交付说明里要写明原因。
 - 注释、docstring、日志文案以清晰准确为准，不强制要求英文，但应与文件语境保持一致。
+- **所有数据库 schema 变更（新增表、新增列、删除列、修改列类型、新增索引等）必须通过 Alembic migration 完成，禁止直接调用 `Base.metadata.create_all()` 或手写 `ALTER TABLE` 语句来变更生产 schema。** 详见"数据库迁移"一节。
 
 ## 1.1 PR 标题规范（非阻断建议）
 
@@ -237,7 +238,63 @@ gh run view <run_id> --log-failed
   - PR 描述与实际改动内容实质性矛盾
   - 缺少回滚方案
 
-## 9. 交付与发布
+## 9. 数据库迁移
+
+**原则：所有 schema 变更（新增/修改/删除 表、列、索引）必须通过 Alembic migration 完成。**
+
+### 工具与目录
+
+- 配置文件：`alembic.ini`（项目根目录）
+- 环境脚本：`alembic/env.py`（自动读取 `src.config.get_config().get_db_url()`）
+- 迁移脚本：`alembic/versions/`（按日期命名，格式 `YYYYMMDD_<rev>_<slug>.py`）
+
+### 常用命令
+
+```bash
+# 生成增量迁移（修改 ORM model 后执行）
+alembic revision --autogenerate -m "描述变更内容"
+
+# 应用所有 pending 迁移
+alembic upgrade head
+
+# 回滚一步
+alembic downgrade -1
+
+# 查看当前版本
+alembic current
+
+# 查看历史
+alembic history
+
+# 为已有数据库打基线标记（引入 Alembic 前的存量库，只需运行一次）
+alembic stamp 8f3a2b1c9d0e
+```
+
+### 工作流程
+
+1. 修改 `src/storage/models/` 下的 ORM 模型
+2. 运行 `alembic revision --autogenerate -m "..."` 生成迁移文件
+3. **人工 review** 生成的 `alembic/versions/` 文件，确认 DDL 正确
+4. 提交迁移文件与模型变更到同一 PR
+5. 生产部署时 `alembic upgrade head`（或由 `DatabaseManager` 启动时自动执行）
+
+### 存量数据库升级（首次引入 Alembic）
+
+对使用 `create_all` 创建的已有数据库，只需打一次基线标记，不需要重新建表：
+
+```bash
+alembic stamp b0bc3c721ef0
+```
+
+之后正常 `alembic upgrade head` 即可应用后续增量迁移。
+
+### 禁止事项
+
+- 禁止在 `_base.py` 外或测试以外的生产代码中调用 `Base.metadata.create_all()`
+- 禁止在代码中手写 `ALTER TABLE` / `CREATE TABLE` 等 DDL 语句
+- 禁止直接修改已合并的迁移文件（需要修正时，创建新的迁移）
+
+## 10. 交付与发布
 
 - 默认交付结构：
   - `改了什么`

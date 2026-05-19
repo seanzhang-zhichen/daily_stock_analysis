@@ -127,6 +127,41 @@ from api.v1.schemas.common import HealthResponse
 from src.services.system_config_service import SystemConfigService
 
 
+def _init_sentry() -> None:
+    """初始化 Sentry 错误监控（仅在 SENTRY_DSN 非空时生效）。
+
+    未配置或 sentry-sdk 未安装时静默跳过，不影响主流程。
+    """
+    dsn = os.environ.get("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        environment = os.environ.get("SENTRY_ENVIRONMENT", "production")
+        release = os.environ.get("SENTRY_RELEASE", None)
+        traces_sample_rate = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.05"))
+
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=environment,
+            release=release,
+            traces_sample_rate=traces_sample_rate,
+            integrations=[
+                FastApiIntegration(),
+                SqlalchemyIntegration(),
+            ],
+            send_default_pii=False,
+        )
+        logger.info("Sentry initialized (environment=%s)", environment)
+    except ImportError:
+        logger.debug("sentry-sdk not installed, skipping Sentry init")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Sentry init failed: %s", exc)
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     """Initialize and release shared services for the app lifecycle."""
@@ -151,7 +186,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # 默认静态文件目录
     if static_dir is None:
         static_dir = Path(__file__).parent.parent / "static"
-    
+
+    _init_sentry()
+
     # 创建 FastAPI 实例
     app = FastAPI(
         title="Daily Stock Analysis API",

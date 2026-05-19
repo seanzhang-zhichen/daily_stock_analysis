@@ -23,7 +23,7 @@ export default defineConfig({
   ],
   server: {
     host: '0.0.0.0',  // 允许公网访问
-    port: 5173,       // 默认端口
+    port: 5200,       // 5173 在 Windows 保留端口段 5078-5177，改用 5200
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

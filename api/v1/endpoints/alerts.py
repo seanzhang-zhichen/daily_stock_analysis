@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Alert API endpoints (Issue #1202 P1 MVP)."""
 
 from __future__ import annotations
@@ -6,8 +6,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from api.deps import get_current_user
+from src.storage import AppUser
 from api.v1.schemas.alerts import (
     AlertDeleteResponse,
     AlertNotificationListResponse,
@@ -59,10 +61,16 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Create alert rule",
 )
-def create_rule(request: AlertRuleCreateRequest) -> AlertRuleItem:
+def create_rule(
+    request: AlertRuleCreateRequest,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleItem:
     service = AlertService()
     try:
-        return AlertRuleItem(**service.create_rule(request.model_dump()))
+        return AlertRuleItem(**service.create_rule(
+            request.model_dump(),
+            user_id=current_user.id,
+        ))
     except UnsupportedAlertTypeError as exc:
         raise _bad_request(exc, error=exc.error_code)
     except AlertServiceError as exc:
@@ -85,6 +93,7 @@ def list_rules(
     source: Optional[str] = Query(None, description="Optional source filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleListResponse:
     service = AlertService()
     try:
@@ -95,6 +104,7 @@ def list_rules(
                 target_scope=target_scope,
                 target=target,
                 source=source,
+                user_id=current_user.id,
                 page=page,
                 page_size=page_size,
             )
@@ -109,10 +119,16 @@ def list_rules(
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Get alert rule",
 )
-def get_rule(rule_id: int) -> AlertRuleItem:
+def get_rule(
+    rule_id: int,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleItem:
     service = AlertService()
     try:
-        return AlertRuleItem(**service.get_rule(rule_id))
+        return AlertRuleItem(**service.get_rule(
+            rule_id,
+            user_id=current_user.id,
+        ))
     except AlertNotFoundError as exc:
         raise _not_found(exc)
     except Exception as exc:
@@ -125,11 +141,19 @@ def get_rule(rule_id: int) -> AlertRuleItem:
     responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Update alert rule",
 )
-def update_rule(rule_id: int, request: AlertRuleUpdateRequest) -> AlertRuleItem:
+def update_rule(
+    rule_id: int,
+    request: AlertRuleUpdateRequest,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleItem:
     service = AlertService()
     try:
         payload = request.model_dump(exclude_unset=True)
-        return AlertRuleItem(**service.update_rule(rule_id, payload))
+        return AlertRuleItem(**service.update_rule(
+            rule_id,
+            payload,
+            user_id=current_user.id,
+        ))
     except AlertNotFoundError as exc:
         raise _not_found(exc)
     except UnsupportedAlertTypeError as exc:
@@ -146,10 +170,13 @@ def update_rule(rule_id: int, request: AlertRuleUpdateRequest) -> AlertRuleItem:
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Delete alert rule",
 )
-def delete_rule(rule_id: int) -> AlertDeleteResponse:
+def delete_rule(
+    rule_id: int,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertDeleteResponse:
     service = AlertService()
     try:
-        if not service.delete_rule(rule_id):
+        if not service.delete_rule(rule_id, user_id=current_user.id):
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
         return AlertDeleteResponse(deleted=1)
     except AlertNotFoundError as exc:
@@ -164,10 +191,16 @@ def delete_rule(rule_id: int) -> AlertDeleteResponse:
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Enable alert rule",
 )
-def enable_rule(rule_id: int) -> AlertRuleItem:
+def enable_rule(
+    rule_id: int,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleItem:
     service = AlertService()
     try:
-        return AlertRuleItem(**service.enable_rule(rule_id, True))
+        return AlertRuleItem(**service.enable_rule(
+            rule_id, True,
+            user_id=current_user.id,
+        ))
     except AlertNotFoundError as exc:
         raise _not_found(exc)
     except Exception as exc:
@@ -180,10 +213,16 @@ def enable_rule(rule_id: int) -> AlertRuleItem:
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Disable alert rule",
 )
-def disable_rule(rule_id: int) -> AlertRuleItem:
+def disable_rule(
+    rule_id: int,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleItem:
     service = AlertService()
     try:
-        return AlertRuleItem(**service.enable_rule(rule_id, False))
+        return AlertRuleItem(**service.enable_rule(
+            rule_id, False,
+            user_id=current_user.id,
+        ))
     except AlertNotFoundError as exc:
         raise _not_found(exc)
     except Exception as exc:
@@ -196,10 +235,16 @@ def disable_rule(rule_id: int) -> AlertRuleItem:
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Dry-run alert rule",
 )
-def test_rule(rule_id: int) -> AlertRuleTestResponse:
+def test_rule(
+    rule_id: int,
+    current_user: AppUser = Depends(get_current_user),
+) -> AlertRuleTestResponse:
     service = AlertService()
     try:
-        return AlertRuleTestResponse(**service.test_rule(rule_id))
+        return AlertRuleTestResponse(**service.test_rule(
+            rule_id,
+            user_id=current_user.id,
+        ))
     except AlertNotFoundError as exc:
         raise _not_found(exc)
     except Exception as exc:
@@ -260,3 +305,4 @@ def list_notifications(
         )
     except Exception as exc:
         raise _internal_error("List alert notifications failed", exc)
+

@@ -291,14 +291,24 @@ docker-compose -f ./docker/docker-compose.yml build --no-cache
 
 检查代理配置，确保服务器能访问 Gemini API。
 
-### 3. 数据库锁定
+### 3. 版本升级后数据库 schema 未更新
+
+服务启动时会自动运行 `alembic upgrade head`。若为首次从不含 Alembic 的旧版本升级，需在启动前手动打一次基线标记：
+
+```bash
+alembic stamp b0bc3c721ef0
+```
+
+之后正常启动即可，后续迁移均自动执行。
+
+### 4. 数据库锁定
 
 ```bash
 # 停止服务后删除 lock 文件
 rm /opt/stock-analyzer/data/*.lock
 ```
 
-### 4. 内存不足
+### 5. 内存不足
 
 调整 `docker-compose.yml` 中的内存限制：
 ```yaml
@@ -308,7 +318,7 @@ deploy:
       memory: 1G
 ```
 
-### 5. WebUI 打开后 UI 元素异常变大 / 布局错乱
+### 6. WebUI 打开后 UI 元素异常变大 / 布局错乱
 
 **症状**：能访问 8000 端口，但页面上的文字、按钮、卡片异常放大，没有正常布局。
 

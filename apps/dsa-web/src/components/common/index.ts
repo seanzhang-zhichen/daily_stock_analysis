@@ -25,6 +25,8 @@ export * from './StatusDot';
 export * from './Tooltip';
 export * from './Pagination';
 export * from './ConfirmDialog';
+export * from './QuotaExceededDialog';
+export * from './RenewalBanner';
 export * from '../layout/Shell';
 export * from '../layout/SidebarNav';
 export * from '../layout/ShellHeader';

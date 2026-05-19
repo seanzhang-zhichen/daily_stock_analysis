@@ -8,14 +8,30 @@ import LoginPage from './pages/LoginPage';
 import NotFoundPage from './pages/NotFoundPage';
 import ChatPage from './pages/ChatPage';
 import PortfolioPage from './pages/PortfolioPage';
-import { ApiErrorAlert, Shell } from './components/common';
+import UserAuthPage from './pages/UserAuthPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import AccountPage from './pages/AccountPage';
+import BillingPage from './pages/BillingPage';
+import ApiKeysPage from './pages/ApiKeysPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import OnboardingPage from './pages/OnboardingPage';
+import OrdersPage from './pages/OrdersPage';
+import InvoicesPage from './pages/InvoicesPage';
+import AdminPage from './pages/AdminPage';
+import NoticesPage from './pages/NoticesPage';
+import TermsPage from './pages/legal/TermsPage';
+import PrivacyPage from './pages/legal/PrivacyPage';
+import RiskDisclosurePage from './pages/legal/RiskDisclosurePage';
+import { ApiErrorAlert, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAgentChatStore } from './stores/agentChatStore';
 import './App.css';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
-  const { authEnabled, loggedIn, isLoading, loadError, refreshStatus } = useAuth();
+  const { authEnabled, loggedIn, userMode, effectiveLoggedIn, isLoading, loadError, refreshStatus } = useAuth();
+  const userModeEnabled = Boolean(userMode?.userModeEnabled);
+  const userLoggedIn = Boolean(userMode?.loggedIn);
 
   useEffect(() => {
     useAgentChatStore.getState().setCurrentRoute(location.pathname);
@@ -46,30 +62,110 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (authEnabled && !loggedIn) {
-    if (location.pathname === '/login') {
-      return <LoginPage />;
-    }
+  // Public routes available even when not logged in (so the user mode unlocks
+  // /register, /forgot-password, /verify-email without 401 redirect loops).
+  // /legal/* 协议三件套对所有访客开放, 不参与登录跳转。
+  const publicPaths = new Set(['/login', '/register', '/forgot-password', '/verify-email']);
+  const isPublicPath = publicPaths.has(location.pathname);
+  const isNoticesPath = location.pathname.startsWith('/notices');
+  const isLegalPath = location.pathname.startsWith('/legal/');
+
+  if (!effectiveLoggedIn && !isPublicPath && !isLegalPath && !isNoticesPath) {
     const redirect = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?redirect=${redirect}`} replace />;
   }
 
-  if (location.pathname === '/login') {
+  if (effectiveLoggedIn && isPublicPath) {
     return <Navigate to="/" replace />;
   }
 
+  // Pick the right login page: prefer the To C email/password form when user
+  // mode is enabled and the current request hasn't logged into a user yet.
+  const showUserAuth = userModeEnabled && !userLoggedIn;
+  const loginElement = showUserAuth ? <UserAuthPage mode="login" /> : <LoginPage />;
+  const adminAuthBlock = authEnabled && !loggedIn;
+
   return (
-    <Routes>
-      <Route element={<Shell />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/chat" element={<ChatPage />} />
-        <Route path="/portfolio" element={<PortfolioPage />} />
-        <Route path="/backtest" element={<BacktestPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-      <Route path="/login" element={<LoginPage />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/backtest" element={<BacktestPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route
+            path="/account"
+            element={
+              userModeEnabled ? <AccountPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/account/api-keys"
+            element={
+              userModeEnabled ? <ApiKeysPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/billing"
+            element={
+              userModeEnabled ? <BillingPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/account/orders"
+            element={
+              userModeEnabled ? <OrdersPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/account/invoices"
+            element={
+              userModeEnabled ? <InvoicesPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              userModeEnabled ? <AdminPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route path="/notices" element={<NoticesPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+        <Route path="/login" element={loginElement} />
+        <Route
+          path="/register"
+          element={
+            userModeEnabled && !adminAuthBlock ? (
+              <UserAuthPage mode="register" />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={userModeEnabled ? <ForgotPasswordPage /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/verify-email"
+          element={userModeEnabled ? <VerifyEmailPage /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/onboarding"
+          element={userModeEnabled ? <OnboardingPage /> : <Navigate to="/login" replace />}
+        />
+        {/* Phase 6 协议三件套, 公开访问 */}
+        <Route path="/legal/terms" element={<TermsPage />} />
+        <Route path="/legal/privacy" element={<PrivacyPage />} />
+        <Route path="/legal/risk-disclosure" element={<RiskDisclosurePage />} />
+      </Routes>
+      {/* Plan 到期 / 续费提示, 仅在 renewal.willExpireSoon || renewal.expired 时显示 */}
+      <RenewalBanner />
+      {/* 全局配额超限对话框, 监听 axios interceptor 派发的 quota_exceeded 事件 */}
+      <QuotaExceededDialog />
+    </>
   );
 };
 

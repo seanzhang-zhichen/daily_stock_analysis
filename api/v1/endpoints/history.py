@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Body
 
-from api.deps import get_database_manager
+from api.deps import get_current_user, get_database_manager
 from api.v1.schemas.history import (
     HistoryListResponse,
     HistoryItem,
@@ -30,7 +30,7 @@ from api.v1.schemas.history import (
     MarkdownReportResponse,
 )
 from api.v1.schemas.common import ErrorResponse
-from src.storage import DatabaseManager
+from src.storage import AppUser, DatabaseManager
 from src.report_language import (
     get_sentiment_label,
     get_localized_stock_name,
@@ -66,7 +66,8 @@ def get_history_list(
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
     page: int = Query(1, ge=1, description="页码（从 1 开始）"),
     limit: int = Query(20, ge=1, le=100, description="每页数量"),
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
 ) -> HistoryListResponse:
     """
     获取历史分析列表
@@ -93,7 +94,8 @@ def get_history_list(
             start_date=start_date,
             end_date=end_date,
             page=page,
-            limit=limit
+            limit=limit,
+            user_id=current_user.id,
         )
         
         # 转换为响应模型
@@ -142,7 +144,8 @@ def get_history_list(
 )
 def delete_history_records(
     request: DeleteHistoryRequest = Body(...),
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
 ) -> DeleteHistoryResponse:
     """
     按主键 ID 批量删除历史分析记录。
@@ -159,7 +162,10 @@ def delete_history_records(
 
     try:
         service = HistoryService(db_manager)
-        deleted = service.delete_history_records(record_ids)
+        deleted = service.delete_history_records(
+            record_ids,
+            user_id=current_user.id,
+        )
         return DeleteHistoryResponse(deleted=deleted)
     except HTTPException:
         raise
@@ -187,7 +193,8 @@ def delete_history_records(
 )
 def get_history_detail(
     record_id: str,
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
 ) -> AnalysisReport:
     """
     获取历史报告详情
@@ -209,7 +216,10 @@ def get_history_detail(
         service = HistoryService(db_manager)
         
         # Try integer ID first, fall back to query_id string lookup
-        result = service.resolve_and_get_detail(record_id)
+        result = service.resolve_and_get_detail(
+            record_id,
+            user_id=current_user.id,
+        )
         
         if result is None:
             raise HTTPException(
@@ -357,7 +367,8 @@ def get_history_detail(
 def get_history_news(
     record_id: str,
     limit: int = Query(20, ge=1, le=100, description="返回数量限制"),
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
 ) -> NewsIntelResponse:
     """
     获取历史报告关联新闻
@@ -375,7 +386,11 @@ def get_history_news(
     """
     try:
         service = HistoryService(db_manager)
-        items = service.resolve_and_get_news(record_id=record_id, limit=limit)
+        items = service.resolve_and_get_news(
+            record_id=record_id,
+            limit=limit,
+            user_id=current_user.id,
+        )
 
         response_items = [
             NewsIntelItem(
@@ -415,7 +430,8 @@ def get_history_news(
 )
 def get_history_markdown(
     record_id: str,
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
 ) -> MarkdownReportResponse:
     """
     获取历史报告的 Markdown 格式内容
@@ -436,7 +452,10 @@ def get_history_markdown(
     service = HistoryService(db_manager)
 
     try:
-        markdown_content = service.get_markdown_report(record_id)
+        markdown_content = service.get_markdown_report(
+            record_id,
+            user_id=current_user.id,
+        )
     except MarkdownReportGenerationError as e:
         logger.error(f"Markdown report generation failed for {record_id}: {e.message}")
         raise HTTPException(
