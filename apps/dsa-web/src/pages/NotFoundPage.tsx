@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Home } from 'lucide-react';
+import { Button } from '../components/common';
 
 const NotFoundPage: React.FC = () => {
   const navigate = useNavigate();
@@ -62,14 +63,10 @@ const NotFoundPage: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.22, ease: 'easeOut' }}
       >
-        <button
-          type="button"
-          className="btn-primary inline-flex items-center gap-2"
-          onClick={() => navigate('/')}
-        >
+        <Button variant="primary" onClick={() => navigate('/')}>
           <Home className="h-4 w-4" />
           返回首页
-        </button>
+        </Button>
       </motion.div>
     </div>
   );

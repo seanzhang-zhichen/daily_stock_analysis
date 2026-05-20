@@ -1,5 +1,6 @@
 import type React from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from './Button';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -30,36 +31,29 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   const dialog = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-all"
+      className="ui-dialog-backdrop"
       onClick={onCancel}
     >
       <div
-        className="mx-4 w-full max-w-sm rounded-xl border border-border/70 bg-elevated p-6 shadow-2xl animate-in fade-in zoom-in duration-200"
+        className="ui-dialog-panel"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-2 text-lg font-medium text-foreground">{title}</h3>
-        <p className="text-sm text-secondary-text mb-6 leading-relaxed">
+        <h3 className="ui-dialog-title">{title}</h3>
+        <p className="ui-dialog-message">
           {message}
         </p>
-        <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-border/70 px-4 py-2 text-sm font-medium text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
-          >
+        <div className="ui-dialog-actions">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel}>
             {cancelText}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant={isDanger ? 'danger' : 'primary'}
+            size="sm"
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-foreground transition-colors ${
-              isDanger
-                ? 'bg-red-500/80 hover:bg-red-500 shadow-lg shadow-red-500/20'
-                : 'bg-cyan/80 hover:bg-cyan shadow-lg shadow-cyan/20'
-            }`}
           >
             {confirmText}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

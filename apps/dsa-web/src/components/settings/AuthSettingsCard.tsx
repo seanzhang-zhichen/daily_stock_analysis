@@ -98,14 +98,14 @@ export const AuthSettingsCard: React.FC = () => {
         <Badge
           variant={authEnabled ? 'success' : 'default'}
           size="sm"
-          className={authEnabled ? '' : 'border-[var(--settings-border)] bg-[var(--settings-surface-hover)] text-secondary-text'}
+          className={authEnabled ? '' : 'border-border/60 bg-card/97 text-secondary-text'}
         >
           {authEnabled ? '已启用' : '未启用'}
         </Badge>
       }
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <div className="rounded-xl border border-[var(--settings-border)] bg-[var(--settings-surface)] p-4 shadow-soft-card transition-[background-color,border-color] duration-200 hover:border-[var(--settings-border-strong)] hover:bg-[var(--settings-surface-hover)]">
+        <div className="rounded-xl border border-border/60 bg-card/94 p-4 shadow-card transition-[background-color,border-color] duration-200 hover:border-border/80 hover:bg-card/97">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <p className="text-sm font-semibold text-foreground">管理员认证</p>
@@ -116,7 +116,7 @@ export const AuthSettingsCard: React.FC = () => {
               disabled={isSubmitting}
               label={desiredEnabled ? '开启' : '关闭'}
               onChange={(event) => setDesiredEnabled(event.target.checked)}
-              containerClassName="rounded-full border border-[var(--settings-border)] bg-[var(--settings-surface-hover)] px-4 py-2 shadow-soft-card transition-[background-color,border-color] duration-200 hover:border-[var(--settings-border-strong)] hover:bg-[var(--settings-surface)]"
+              containerClassName="rounded-full border border-border/60 bg-card/97 px-4 py-2 shadow-card transition-[background-color,border-color] duration-200 hover:border-border/80 hover:bg-card/94"
             />
           </div>
         </div>

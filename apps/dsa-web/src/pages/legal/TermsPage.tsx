@@ -99,7 +99,7 @@ const TermsPage: React.FC = () => {
       <h2 className="mt-8 text-base font-semibold">10. 联系我们</h2>
       <p>
         如对本协议有任何疑问，请发送邮件至{' '}
-        <a className="text-cyan hover:underline" href="mailto:support@example.com">
+        <a className="text-primary hover:underline" href="mailto:support@example.com">
           support@example.com
         </a>
         。

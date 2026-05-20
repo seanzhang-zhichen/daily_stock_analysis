@@ -291,7 +291,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="settings-surface-panel settings-border-strong rounded-xl border p-4 shadow-soft-card">
+      <div className="bg-card/94 rounded-xl border border-border/80 p-4 shadow-card">
         <p className="text-sm font-medium text-foreground">支持图片、CSV/Excel 文件与剪贴板文本</p>
         <p className="mt-1 text-xs leading-5 text-secondary-text">
           图片识别需预先配置 Vision 模型。建议先人工核对解析结果，再合并到自选股。
@@ -303,7 +303,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
         className={`flex min-h-[96px] flex-col gap-4 rounded-xl border border-dashed  p-4 transition-colors ${
-          isDragging ? 'settings-drag-active' : 'settings-border-strong settings-surface-overlay-soft'
+          isDragging ? 'border-primary/50 bg-primary/6' : 'border-border/80 bg-background/15'
         } ${disabled || isLoading ? 'cursor-not-allowed opacity-60' : ''}`}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -343,7 +343,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         <div className="flex flex-col gap-2 sm:flex-row">
           <textarea
             placeholder="或粘贴 CSV/Excel 复制的文本..."
-            className="input-surface settings-surface-strong settings-border-strong min-h-[72px] w-full rounded-xl border px-3 py-2 text-sm text-foreground shadow-none transition-colors placeholder:text-muted-text focus:outline-none"
+            className="ui-input bg-card border-border/80 min-h-[72px] w-full px-3 py-2 text-sm text-foreground shadow-none placeholder:text-muted-text"
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             disabled={disabled || isLoading}
@@ -392,7 +392,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
               </button>
             </div>
           </div>
-          <div className="max-h-[220px] space-y-1 overflow-y-auto rounded-xl border settings-border-strong settings-surface-overlay-soft p-2">
+          <div className="max-h-[220px] space-y-1 overflow-y-auto rounded-xl border border-border/80 bg-background/15 p-2">
             {items.map((it) => {
               const confidence = normalizeConfidence(it.confidence);
               const confidenceMeta = getConfidenceMeta(confidence);
@@ -401,7 +401,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
                 <div
                   key={it.id}
                   className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-                    it.code ? 'settings-border bg-[var(--settings-surface-strong)]' : 'border-danger/25 bg-danger/10'
+                    it.code ? 'border-border/60 bg-card' : 'border-danger/25 bg-danger/10'
                   }`}
                 >
                   <input
@@ -409,7 +409,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
                     checked={it.checked}
                     onChange={() => toggleChecked(it.id)}
                     disabled={!it.code || disabled}
-                    className="settings-input-checkbox h-4 w-4 rounded border-border/70 bg-base"
+                    className="accent-primary h-4 w-4 rounded border-border/70 bg-base"
                   />
                   <span className={it.code ? 'font-medium text-foreground' : 'font-medium text-danger'}>
                     {it.code || '解析失败'}

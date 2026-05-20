@@ -42,7 +42,7 @@ describe('DashboardStateBlock', () => {
 
     expect(screen.getByRole('heading', { name: '开始分析', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('输入股票代码进行分析')).toBeInTheDocument();
-    expect(document.querySelector('.home-spinner')).not.toBeNull();
+    expect(document.querySelector('.border-t-primary')).not.toBeNull();
     expect(screen.queryByTestId('icon')).not.toBeInTheDocument();
   });
 });

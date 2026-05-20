@@ -71,8 +71,8 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
         data-state={open ? 'open' : 'closed'}
         className={cn(
           isNavVariant
-            ? 'group relative flex h-10 w-full select-none items-center gap-3 rounded-xl border border-transparent px-3 text-sm text-secondary-text transition-all duration-150 hover:bg-[var(--nav-hover-bg)] hover:text-foreground data-[state=open]:bg-[var(--nav-active-bg)] data-[state=open]:text-foreground data-[state=open]:shadow-[inset_0_0_0_1px_var(--nav-active-border)]'
-            : 'inline-flex h-10 items-center gap-2 rounded-xl border border-border/70 bg-card/80 px-3 text-sm text-secondary-text shadow-soft-card transition-colors hover:bg-hover hover:text-foreground',
+            ? 'ui-sidebar-action'
+            : 'ui-theme-trigger',
           isNavVariant && collapsed ? 'justify-center px-0' : ''
         )}
         aria-haspopup="menu"
@@ -92,7 +92,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
           role="menu"
           aria-label="主题模式"
           className={cn(
-            'z-[100] min-w-[8rem] overflow-hidden rounded-2xl border border-border/70 bg-elevated p-1.5 shadow-[0_24px_48px_rgba(3,8,20,0.32)] backdrop-blur-xl',
+            'ui-menu',
             isNavVariant
               ? 'absolute bottom-full left-0 mb-2 w-max min-w-[9rem]'
               : 'absolute right-0 mt-2'
@@ -111,17 +111,15 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
                   setOpen(false);
                 }}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors',
-                  isActive
-                    ? 'bg-cyan/10 text-foreground'
-                    : 'text-secondary-text hover:bg-hover hover:text-foreground'
+                  'ui-menu-item',
+                  isActive ? 'ui-menu-item-active' : ''
                 )}
               >
                 <span className="flex items-center gap-2">
                   <Icon className="h-4 w-4" />
                   {label}
                 </span>
-                {isActive ? <Check className="h-4 w-4 text-cyan" /> : null}
+                {isActive ? <Check className="ui-menu-check h-4 w-4" /> : null}
               </button>
             );
           })}

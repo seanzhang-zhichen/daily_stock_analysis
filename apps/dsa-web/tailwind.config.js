@@ -110,6 +110,7 @@ export default {
         'primary-gradient': 'linear-gradient(135deg, #00d4ff 0%, #00a8cc 100%)',
       },
       boxShadow: {
+        'card': 'var(--shadow-card)',
         'soft-card': 'var(--shadow-soft-card)',
         'soft-card-strong': 'var(--shadow-soft-card-strong)',
         'glow-cyan': '0 0 20px rgba(0, 212, 255, 0.4)',

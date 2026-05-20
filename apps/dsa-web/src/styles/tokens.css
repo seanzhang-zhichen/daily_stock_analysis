@@ -1,0 +1,46 @@
+:root {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--card);
+  --color-surface-muted: var(--muted);
+  --color-surface-raised: var(--elevated);
+  --color-surface-overlay: var(--popover);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--secondary-text);
+  --color-border: var(--border);
+  --color-border-strong: var(--foreground);
+  --color-focus-ring: var(--primary);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-muted: var(--primary);
+  --color-info: var(--primary);
+  --color-gain: 0 88% 56%;
+  --color-loss: 149 78% 36%;
+  --color-neutral-market: var(--muted-foreground);
+  --chart-1: var(--primary);
+  --chart-2: 247 74% 62%;
+  --chart-3: var(--color-success);
+  --chart-4: var(--color-warning);
+  --chart-5: var(--color-danger);
+  --chart-6: 214 42% 48%;
+  --radius-sm: 0.625rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --shadow-card: 0 10px 24px hsl(220 20% 32% / 0.08), 0 2px 8px hsl(220 16% 28% / 0.05);
+  --shadow-popover: 0 18px 42px hsl(220 24% 18% / 0.18), 0 6px 16px hsl(220 18% 18% / 0.1);
+  --shadow-dialog: 0 28px 80px hsl(220 28% 12% / 0.28), 0 10px 28px hsl(220 20% 14% / 0.16);
+  --space-page-x: clamp(1rem, 2.4vw, 2rem);
+  --space-section: clamp(1rem, 2vw, 1.5rem);
+  --space-card: clamp(1rem, 1.6vw, 1.25rem);
+}
+
+.dark {
+  --color-gain: 0 88% 64%;
+  --color-loss: 149 80% 44%;
+  --chart-2: 247 84% 72%;
+  --chart-6: 214 58% 62%;
+  --shadow-card: 0 14px 36px hsl(220 28% 4% / 0.34), 0 4px 12px hsl(220 20% 4% / 0.22);
+  --shadow-popover: 0 22px 52px hsl(220 28% 4% / 0.48), 0 8px 20px hsl(220 20% 4% / 0.28);
+  --shadow-dialog: 0 32px 90px hsl(220 32% 3% / 0.62), 0 12px 32px hsl(220 22% 3% / 0.36);
+}

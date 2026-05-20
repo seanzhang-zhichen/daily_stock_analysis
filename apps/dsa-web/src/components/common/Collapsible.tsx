@@ -24,7 +24,7 @@ export const Collapsible: React.FC<CollapsibleProps> = ({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-2xl border border-subtle bg-card/70 shadow-soft-card transition-all duration-300',
+        'overflow-hidden rounded-2xl border border-subtle bg-card/70 shadow-card transition-all duration-300',
         'hover:border-accent',
         className,
       )}
@@ -35,7 +35,7 @@ export const Collapsible: React.FC<CollapsibleProps> = ({
         className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-hover"
       >
         <div className="flex items-center gap-3">
-          {icon && <span className="text-cyan">{icon}</span>}
+          {icon && <span className="text-primary">{icon}</span>}
           <span className="font-medium text-foreground">{title}</span>
         </div>
         <svg

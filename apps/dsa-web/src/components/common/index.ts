@@ -10,6 +10,7 @@ export * from './StickyActionBar';
 export * from './Toolbar';
 export * from './ToastViewport';
 export * from './PageHeader';
+export * from './PageLayouts';
 export { Input } from './Input';
 export * from './EyeToggleIcon';
 export * from './Loading';

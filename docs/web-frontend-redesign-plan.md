@@ -872,12 +872,14 @@ AnalysisGrid
 - `src/styles/components.css`：仅放通用组件无法完全用 Tailwind 表达的样式。
 - `src/styles/markdown.css`：报告和 AI 消息 Markdown 阅读体验。
 - `src/styles/pages.css`：仅允许作为页面重写过程中的临时中转样式；对应页面完成后必须清空或删除相关旧样式。
-- `src/index.css`：只保留 Tailwind import、config import 和上述样式入口。
+- `src/index.css`：只保留 Tailwind import、Tailwind config import 和上述样式入口。
+- `src/App.css`：只保留 `#root` 等应用根容器级别样式；如后续不再需要，应并入 `base.css` 或删除入口引用。
 
 建议入口关系：
 
 ```css
 @import "tailwindcss";
+@config "../tailwind.config.js";
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/utilities.css";
@@ -1212,6 +1214,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 | 文件 / 目录 | 变更类型 |
 | --- | --- |
 | `apps/dsa-web/src/index.css` | 改为样式入口，移除大量旧样式承载职责 |
+| `apps/dsa-web/src/App.css` | 保留最小根容器样式，或并入新 `base.css` 后移除入口引用 |
 | `apps/dsa-web/src/styles/` | 新增样式真源目录 |
 | `apps/dsa-web/src/components/layout/` | 重写 Shell、Sidebar、页面布局骨架 |
 | `apps/dsa-web/src/components/common/` | 重写通用组件体系 |
@@ -1279,6 +1282,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 
 ```bash
 cd apps/dsa-web
+npm ci
 npm run lint
 npm run build
 ```
@@ -1307,6 +1311,8 @@ npm run test:smoke
 ```
 
 ### 12.1 阶段验证矩阵
+
+阶段验证默认以前端依赖已通过 `npm ci` 安装为前置条件；首次检出、依赖变更或 CI 环境中必须执行 `npm ci`。
 
 | 阶段 | 必跑 | 建议追加 | 手工检查重点 |
 | --- | --- | --- | --- |
@@ -1352,7 +1358,7 @@ npm run test:smoke
 | 图表和 Markdown 性能下降 | 新阅读体验和图表可能增加渲染成本 | 长报告、流式输出和图表容器做局部渲染控制 |
 | 商业化路径误伤 | 账号、订单、发票、支付页面涉及用户权益 | 保持 API 契约和状态语义，支付/订单路径单独手工验收 |
 
-## 13.1 PR 提交检查清单
+### 13.1 PR 提交检查清单
 
 每个重构 PR 建议在描述中附以下信息：
 
@@ -1360,7 +1366,7 @@ npm run test:smoke
 - 本 PR 删除了哪些旧样式、旧 token、旧 wrapper 或旧 variant。
 - 哪些旧样式因依赖未迁移页面而暂时保留，以及计划在哪个阶段删除。
 - 保持不变的业务契约和 API。
-- 已执行的命令：`npm run lint`、`npm run build`、`npm run test` 或说明未执行原因。
+- 已执行的命令：`npm ci`、`npm run lint`、`npm run build`、`npm run test` 或说明未执行原因。
 - 手工验收路径和视口。
 - 已知风险和回滚方式。
 
@@ -1410,3 +1416,40 @@ npm run test:smoke
 - `src/styles/` 成为样式真源，`index.css` 不再是巨型样式堆叠文件。
 - 新增页面时优先组合现有布局和组件，而不是继续新增页面专属样式。
 - 前端 lint、build、关键测试通过。
+
+## 17. 当前重构进度
+
+更新时间：2026-05-20（最新）
+
+| 阶段 | 状态 | 本轮进展 | 后续事项 |
+| Phase 0：重构基线与页面盘点 | 已完成文档基线 | 已在本文档明确页面清单、旧 UI 删除原则、测试与手工检查清单 | 后续随页面迁移补充实际删除范围和风险登记 |
+| Phase 1：新设计系统与全局骨架 | 已完成（代码） | 新增 `apps/dsa-web/src/styles/`，拆分 `tokens.css`、`base.css`、`components.css`、`layouts.css`；`src/index.css` 已接入新样式入口；所有通用组件和全局骨架已迁移到新 `ui-*` 体系；旧页面专属 token 和样式均已清除；搜索 `terminal`/`neon`/`glass`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 无旧引用残留 | 深色模式与窄屏手工验收待进行 |
+| Phase 2：首页完整重构 | 已完成（代码） | `HistoryList` 新增客户端搜索过滤框（按股票代码/名称），支持无匹配空态提示；首页空态引导、任务面板、报告工具条、批量删除等均已基于新设计系统；旧首页 token 和样式已清零 | 深色模式与窄屏手工验收待进行 |
+| Phase 3：问股页完整重构 | 已完成（代码） | 技能选择从 checkbox 改为 chip 按钮（`ui-chat-skill-chip`），支持 `aria-pressed`，限额提示独立展示；AI 消息改为全宽文档卡（`w-full`），用户消息保持短气泡；`components.css` 新增 `ui-chat-skill-chip` / `ui-chat-skill-chip-active` 样式；所有相关测试已同步更新并通过 | 深色模式与窄屏手工验收待进行 |
+| Phase 4：持仓与回测完整重构 | 已完成 | `BacktestPage` 已将 `btn-primary`/`btn-secondary` 替换为 `Button variant="primary"/"outline"`，提取 `BacktestConfigBar`、`BacktestMetricSidebar`、`BacktestResultsTable` 子组件，外层迁移到 `workspace-page-layout`，`index.css` 删除 `--backtest-*` 私有 token；`PortfolioPage` 外层迁移到 `WorkspacePageLayout`，提取 `PortfolioControlBar`、`PortfolioMetricGrid`、`PositionsAndConcentrationPanel`、`PortfolioRiskSummary`、`PortfolioManualEntryPanel`、`PortfolioImportAndLedger` 全部子组件，所有输入/选择控件已迁移到 `ui-input`，`index.css` 删除旧 portfolio-page 作用域样式；数据页面旧 terminal/glass/neon 引用清零 | 无（已完成） |
+| Phase 5：其余页面完整重写 | 已完成主体 | `NotFoundPage`、`AccountPage`、`OrdersPage`、`InvoicesPage`、`ApiKeysPage`、`BillingPage`、`NoticesPage`、`AdminPage`、`SettingsPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage`、`UserAuthPage` 全部迁移完成；legal 页面（`TermsPage`、`PrivacyPage`、`RiskDisclosurePage`、`LegalPageLayout`）已使用 token 体系，本轮新增 `prose-legal` CSS 类到 `components.css` 补全法律协议文章排版 | 深色模式与窄屏手工验收待进行 |
+| Phase 6：旧体系删除与最终收口 | 已完成（代码） | 前序完成 `index.css` 大规模清理（`--home-*`/`--settings-*` token、`terminal-card`/`glass-card` 等旧视觉类全部删除）；本轮清理最后遗留：删除空节 `/* ============ Financial Terminal Tokens ============ */` 和空节 `/* ============ Responsive ============ */`，更新旧 `(from Classic)` / `(from Terminal PR)` / `(Base/Classic)` 历史标注为语义标题（`1. THEME VARIABLES`、`2. GLOBAL STYLES`、`3. UTILITIES & ANIMATIONS`）；搜索 `terminal`/`neon`/`glow`/`glass`/`cyber`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 均无旧引用残留 | 深色模式与窄屏手工验收（手工任务，不可自动化） |
+
+本轮验证：
+
+- `npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/components/StockAutocomplete/__tests__/StockAutocomplete.test.tsx src/components/common/__tests__/Input.test.tsx`：通过，3 个文件 28 条测试通过；`StockAutocomplete` 错误边界用例仍会输出预期 stderr。
+- `npx vitest run src/pages/__tests__/HomePage.test.tsx src/components/tasks/__tests__/TaskPanel.test.tsx src/components/history/__tests__/HistoryList.test.tsx src/components/report/__tests__/ReportNews.test.tsx src/components/report/__tests__/ReportMarkdown.test.tsx src/components/report/__tests__/ReportOverview.test.tsx src/components/report/__tests__/ReportDetails.test.tsx src/components/dashboard/__tests__/DashboardStateBlock.test.tsx`：通过，8 个文件 37 条测试通过；`HomePage` 用例仍会输出既有 `StockIndexLoader` 测试环境 URL stderr 和 React `act(...)` warning。
+- `npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/pages/__tests__/PortfolioPage.test.tsx`：通过，2 个文件 16 条测试通过。
+- `npx vitest run src/pages/__tests__/BacktestPage.test.tsx`：通过，1 个文件 8 条测试通过。
+- `npx vitest run src/pages/__tests__/HomePage.test.tsx`：通过，1 个文件 15 条测试通过；仍会输出既有 `StockIndexLoader` 测试环境 URL stderr 和 React `act(...)` warning。
+- `npx vitest run src/pages/__tests__/ChatPage.test.tsx src/components/common/__tests__/Button.test.tsx`：通过，2 个文件 28 条测试通过；仍会输出既有 React `act(...)` warning。
+- `npm --prefix "d:\workplace\daily_stock_analysis\apps\dsa-web" run lint`：通过；仍有既有 `PaymentDialog.tsx` unused eslint-disable warning，未在本轮删除代码注释。
+- `npm --prefix "d:\workplace\daily_stock_analysis\apps\dsa-web" run build`：通过；仍有 Vite 大 chunk 体积提示，属于既有构建优化项。
+- 搜索 `input-surface` / `input-focus-glow` / `input-appearance-login`：旧兼容类无剩余引用；仅保留 `login-input-surface` token 供 `ui-input-login` 使用。
+- 搜索 `home-panel-card` / `home-subpanel` / `home-surface-button` / `home-spinner` / `home-markdown-prose`：首页、历史、任务、报告、dashboard 状态组件的 TS/TSX 直接旧类引用已清理；`ChatPage` 外层抽屉 / glass / `action-primary` 引用已清理。
+- 搜索 `index.css` 中 `chat-*` / `quick-question-btn` / `skill-desc-tooltip` / `session-item` / `delete-btn`：旧 Chat 页面样式和 token 已清理；`ChatPage.tsx` 仅保留 `ui-chat-*` 与正常布局/test id 命名。
+- Phase 4 本轮（上一轮）：`npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/pages/__tests__/PortfolioPage.test.tsx`：通过，2 个文件 16 条测试通过。
+- Phase 4 本轮（上一轮）：`npm run lint`：通过（0 errors，1 既有 warning）。`npm run build`：通过（既有 Vite 大 chunk 提示）。
+- Phase 4 本轮（上一轮）：搜索 `btn-secondary` / `btn-primary` / `backtest-force-btn` / `backtest-spinner` / `backtest-status-chip` / `portfolio-page` in `BacktestPage.tsx` + `PortfolioPage.tsx`：无残留引用；`index.css` 中 `--backtest-*` token 和旧 backtest/portfolio-page 作用域 CSS 已删除。
+- Phase 4 本轮（布局 + 子组件拆分）：`npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/pages/__tests__/PortfolioPage.test.tsx`：通过，2 个文件 16 条测试通过。
+- Phase 4 本轮（布局 + 子组件拆分）：`npm run lint`：通过（0 errors，1 既有 warning）。`npm run build`：通过（既有 Vite 大 chunk 提示）。
+- Phase 4 本轮（BacktestMetricSidebar / BacktestResultsTable / PositionsAndConcentrationPanel / PortfolioRiskSummary 提取）：`npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/pages/__tests__/PortfolioPage.test.tsx`：通过，2 个文件 16 条测试通过。
+- Phase 4 本轮（BacktestMetricSidebar / BacktestResultsTable / PositionsAndConcentrationPanel / PortfolioRiskSummary 提取）：`npm run lint`：通过（0 errors，1 既有 warning）。`npm run build`：通过（既有 Vite 大 chunk 提示）。
+- Phase 5 启动（NotFoundPage + 7 页面迁移）：`npm run lint`：通过（0 errors，1 既有 warning）。`npm run build`：通过（既有 Vite 大 chunk 提示）。无受影响页面的专项测试，变更为纯布局包装和颜色 token 替换，不涉及业务逻辑。
+- Phase 6 最终收口（index.css 遗留注释清理）：删除空节 Financial Terminal Tokens / Responsive 注释段，更新历史标注；搜索 `terminal`/`neon`/`glow`/`glass`/`cyber`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 无旧引用；`npm run lint`：通过（0 errors，1 既有 warning）；`npm run build`：通过（既有 Vite 大 chunk 提示）；`npx vitest run src/pages/__tests__/BacktestPage.test.tsx src/pages/__tests__/PortfolioPage.test.tsx`：通过，2 个文件 16 条测试通过。
+- Phase 2/3 完成收口（history 筛选 + chat chips + AI 文档卡）：`HistoryList` 新增本地搜索过滤；`ChatPage` 技能选择改为 `ui-chat-skill-chip` 按钮，AI 消息改为全宽 `w-full` 文档卡；更新 `HistoryList.test.tsx`（移除已删除的描述文本断言）和 `ChatPage.test.tsx`（checkbox → button + aria-pressed）；`npx vitest run` 8 个关键测试文件（89 条）：通过，仍有既有 `StockIndexLoader` URL stderr 和 `act(...)` warning；`npm run lint`：通过（0 errors，1 既有 warning）；`npm run build`：通过（既有 Vite 大 chunk 提示）。

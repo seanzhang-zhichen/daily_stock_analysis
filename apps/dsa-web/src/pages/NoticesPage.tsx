@@ -10,6 +10,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Button, Card, Loading } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { noticesApi, type Notice } from '../api/notices';
 import { cn } from '../utils/cn';
 
@@ -26,9 +27,9 @@ const NOTICE_TYPE_CONFIG = {
   info: {
     icon: Info,
     label: '公告',
-    containerClass: 'border-l-4 border-l-cyan/60 bg-cyan/5',
-    iconClass: 'text-cyan',
-    badgeClass: 'bg-cyan/10 text-cyan',
+    containerClass: 'border-l-4 border-l-primary/60 bg-primary/5',
+    iconClass: 'text-primary',
+    badgeClass: 'bg-primary/10 text-primary',
   },
   warning: {
     icon: AlertTriangle,
@@ -127,7 +128,7 @@ const NoticesPage: React.FC = () => {
   const normalNotices = notices.filter((n) => !n.isPinned);
 
   return (
-    <div className="mx-auto max-w-3xl px-2 py-6 sm:px-4">
+    <StandardPageLayout>
       {/* 标题区 */}
       <div className="mb-6 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -206,7 +207,7 @@ const NoticesPage: React.FC = () => {
           </Button>
         </div>
       ) : null}
-    </div>
+    </StandardPageLayout>
   );
 };
 

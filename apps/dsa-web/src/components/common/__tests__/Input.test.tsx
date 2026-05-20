@@ -74,7 +74,7 @@ describe('Input', () => {
 
     const input = screen.getByLabelText('登录密码');
     expect(input).toHaveAttribute('data-appearance', 'login');
-    expect(input).toHaveClass('input-appearance-login');
+    expect(input).toHaveClass('ui-input-login');
     expect(input).toHaveAttribute('type', 'password');
 
     fireEvent.click(screen.getByRole('button', { name: '显示内容' }));

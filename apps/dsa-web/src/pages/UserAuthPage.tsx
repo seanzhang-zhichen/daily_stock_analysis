@@ -94,7 +94,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   ];
 
   return (
-    <div className="flex min-h-screen bg-[var(--login-bg-main,#0a0e17)]">
+    <div className="flex min-h-screen bg-[var(--login-bg-main)]">
       {/* Left: Branding Panel */}
       <div className="relative hidden lg:flex lg:w-[52%] xl:w-[55%] flex-col justify-between overflow-hidden p-10">
         {/* Background gradients */}
@@ -110,8 +110,8 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
             <BarChart3 className="h-5 w-5 text-white" />
           </div>
           <div>
-            <p className="text-lg font-bold tracking-tight text-white">DSA</p>
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-white/40">Daily Stock Analytics</p>
+            <p className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--login-text-muted)]">Daily Stock Analytics</p>
           </div>
         </div>
 
@@ -122,14 +122,14 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
               <Sparkles className="h-3 w-3" />
               AI 驱动的智能股票分析平台
             </div>
-            <h1 className="text-4xl font-bold leading-[1.15] tracking-tight text-white xl:text-5xl">
+            <h1 className="text-4xl font-bold leading-[1.15] tracking-tight text-[var(--login-text-primary)] xl:text-5xl">
               让 AI 成为你的
               <br />
               <span className="bg-gradient-to-r from-primary to-[hsl(247_84%_72%)] bg-clip-text text-transparent">
                 专属分析师
               </span>
             </h1>
-            <p className="max-w-md text-base leading-relaxed text-white/55">
+            <p className="max-w-md text-base leading-relaxed text-[var(--login-text-secondary)]">
               覆盖 A 股、港股、美股全市场，AI 深度分析、策略回测、风险监控，一站式投资决策支持。
             </p>
           </div>
@@ -137,13 +137,13 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
           {/* Feature list */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {FEATURES.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="flex items-start gap-3 rounded-xl border border-white/8 bg-white/[0.04] p-3.5 backdrop-blur-sm">
+              <div key={title} className="flex items-start gap-3 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-3.5 backdrop-blur-sm">
                 <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-white/90">{title}</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-white/45">{desc}</p>
+                  <p className="text-sm font-semibold text-[var(--login-text-primary)]">{title}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-[var(--login-text-secondary)]">{desc}</p>
                 </div>
               </div>
             ))}
@@ -152,7 +152,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
 
         {/* Bottom: Disclaimer */}
         <div className="relative z-10">
-          <p className="text-xs text-white/25">© {new Date().getFullYear()} DSA · AI 分析结果仅供参考，不构成投资建议</p>
+          <p className="text-xs text-[var(--login-text-muted)]">© {new Date().getFullYear()} DSA · AI 分析结果仅供参考，不构成投资建议</p>
         </div>
       </div>
 
@@ -163,16 +163,16 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient">
             <BarChart3 className="h-4.5 w-4.5 text-white" />
           </div>
-          <span className="text-lg font-bold text-white">DSA</span>
+          <span className="text-lg font-bold text-[var(--login-text-primary)]">DSA</span>
         </div>
 
         <div className="w-full max-w-[400px]">
           {/* Form header */}
           <div className="mb-8">
-            <h2 className="text-2xl font-bold tracking-tight text-white">
+            <h2 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">
               {mode === 'login' ? '欢迎回来' : '创建账号'}
             </h2>
-            <p className="mt-2 text-sm text-white/50">
+            <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
               {mode === 'login'
                 ? '登录你的 DSA 账号，继续 AI 股票分析之旅'
                 : '注册免费账号，开启 AI 智能选股体验'}
@@ -235,7 +235,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
             )}
 
             {mode === 'register' && (
-              <label className="flex items-start gap-2.5 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-xs leading-relaxed text-white/55 cursor-pointer hover:bg-white/[0.05] transition-colors">
+              <label className="flex items-start gap-2.5 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-3 text-xs leading-relaxed text-[var(--login-text-secondary)] cursor-pointer hover:bg-[var(--login-bg-card)]/80 transition-colors">
                 <input
                   id="termsAgreed"
                   type="checkbox"
@@ -290,10 +290,10 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
           </form>
 
           {/* Bottom links */}
-          <div className="mt-6 flex items-center justify-between text-sm text-white/40">
+          <div className="mt-6 flex items-center justify-between text-sm text-[var(--login-text-muted)]">
             {mode === 'login' ? (
               <>
-                <Link to="/forgot-password" className="hover:text-white/70 transition-colors">
+                <Link to="/forgot-password" className="hover:text-[var(--login-text-secondary)] transition-colors">
                   忘记密码？
                 </Link>
                 {userMode?.registrationEnabled ? (

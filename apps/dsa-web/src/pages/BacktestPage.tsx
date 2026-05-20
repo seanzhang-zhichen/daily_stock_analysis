@@ -4,7 +4,8 @@ import { Check, Minus, X } from 'lucide-react';
 import { backtestApi } from '../api/backtest';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
-import { ApiErrorAlert, Card, Badge, EmptyState, Pagination, StatusDot, Tooltip } from '../components/common';
+import { ApiErrorAlert, Button, Card, Badge, EmptyState, Pagination, StatusDot, Tooltip } from '../components/common';
+import { cn } from '../utils/cn';
 import type {
   BacktestResultItem,
   BacktestRunResponse,
@@ -12,9 +13,9 @@ import type {
 } from '../types/backtest';
 
 const BACKTEST_INPUT_CLASS =
-  'input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-4 text-sm transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
+  'ui-input h-11 w-full px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60';
 const BACKTEST_COMPACT_INPUT_CLASS =
-  'input-surface input-focus-glow h-10 rounded-xl border bg-transparent px-3 py-2 text-xs transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
+  'ui-input h-10 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60';
 
 // ============ Helpers ============
 
@@ -68,10 +69,10 @@ function boolIcon(value?: boolean | null) {
   if (value === true) {
     return (
       <span
-        className="backtest-status-chip backtest-status-chip-success"
+        className="inline-flex items-center justify-center gap-1 rounded-md border border-success/20 bg-success/10 px-1.5 py-0.5 text-xs font-medium text-success"
         aria-label="yes"
       >
-        <StatusDot tone="success" className="backtest-status-chip-dot" />
+        <StatusDot tone="success" className="h-1.5 w-1.5 shadow-none" />
         <Check className="h-3.5 w-3.5" />
       </span>
     );
@@ -80,10 +81,10 @@ function boolIcon(value?: boolean | null) {
   if (value === false) {
     return (
       <span
-        className="backtest-status-chip backtest-status-chip-danger"
+        className="inline-flex items-center justify-center gap-1 rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-danger"
         aria-label="no"
       >
-        <StatusDot tone="danger" className="backtest-status-chip-dot" />
+        <StatusDot tone="danger" className="h-1.5 w-1.5 shadow-none" />
         <X className="h-3.5 w-3.5" />
       </span>
     );
@@ -91,10 +92,10 @@ function boolIcon(value?: boolean | null) {
 
   return (
     <span
-      className="backtest-status-chip backtest-status-chip-neutral"
+      className="inline-flex items-center justify-center gap-1 rounded-md border border-border/50 bg-surface px-1.5 py-0.5 text-xs font-medium text-muted-text"
       aria-label="unknown"
     >
-      <StatusDot tone="neutral" className="backtest-status-chip-dot" />
+      <StatusDot tone="neutral" className="h-1.5 w-1.5 shadow-none" />
       <Minus className="h-3.5 w-3.5" />
     </span>
   );
@@ -103,16 +104,16 @@ function boolIcon(value?: boolean | null) {
 // ============ Metric Row ============
 
 const MetricRow: React.FC<{ label: string; value: string; accent?: boolean }> = ({ label, value, accent }) => (
-  <div className="backtest-metric-row">
-    <span className="label">{label}</span>
-    <span className={`value ${accent ? 'accent' : ''}`}>{value}</span>
+  <div className="flex items-center justify-between border-b border-border/10 py-2 last:border-b-0">
+    <span className="text-xs text-secondary-text">{label}</span>
+    <span className={cn('font-mono text-sm font-semibold', accent ? 'text-primary' : 'text-foreground')}>{value}</span>
   </div>
 );
 
 // ============ Performance Card ============
 
 const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> = ({ metrics, title }) => (
-  <Card variant="gradient" padding="md" className="animate-fade-in">
+  <Card padding="md" className="animate-fade-in">
     <div className="mb-3">
       <span className="label-uppercase">{title}</span>
     </div>
@@ -123,7 +124,7 @@ const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> 
     <MetricRow label="SL Trigger Rate" value={pct(metrics.stopLossTriggerRate)} />
     <MetricRow label="TP Trigger Rate" value={pct(metrics.takeProfitTriggerRate)} />
     <MetricRow label="Avg Days to Hit" value={metrics.avgDaysToFirstHit != null ? metrics.avgDaysToFirstHit.toFixed(1) : '--'} />
-    <div className="backtest-metric-footer">
+    <div className="flex items-center justify-between border-t border-border/20 pt-2 mt-2">
       <span className="text-xs text-muted-text">Evaluations</span>
       <span className="text-xs text-secondary-text font-mono">
         {Number(metrics.completedCount)} / {Number(metrics.totalEvaluations)}
@@ -145,15 +146,354 @@ const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> 
 // ============ Run Summary ============
 
 const RunSummary: React.FC<{ data: BacktestRunResponse }> = ({ data }) => (
-  <div className="backtest-summary animate-fade-in">
-    <span className="label">Processed: <span className="value">{data.processed}</span></span>
-    <span className="label">Saved: <span className="value primary">{data.saved}</span></span>
-    <span className="label">Completed: <span className="value success">{data.completed}</span></span>
-    <span className="label">Insufficient: <span className="value warning">{data.insufficient}</span></span>
+  <div className="animate-fade-in flex flex-wrap items-center gap-4 rounded-lg border border-border/20 bg-surface px-3 py-2 font-mono text-xs">
+    <span className="text-secondary-text">Processed: <span className="text-foreground">{data.processed}</span></span>
+    <span className="text-secondary-text">Saved: <span className="text-primary">{data.saved}</span></span>
+    <span className="text-secondary-text">Completed: <span className="text-success">{data.completed}</span></span>
+    <span className="text-secondary-text">Insufficient: <span className="text-warning">{data.insufficient}</span></span>
     {data.errors > 0 && (
-      <span className="label">Errors: <span className="value danger">{data.errors}</span></span>
+      <span className="text-secondary-text">Errors: <span className="text-danger">{data.errors}</span></span>
     )}
   </div>
+);
+
+// ============ BacktestConfigBar ============
+
+type BacktestConfigBarProps = {
+  codeFilter: string;
+  analysisDateFrom: string;
+  analysisDateTo: string;
+  evalDays: string;
+  forceRerun: boolean;
+  isRunning: boolean;
+  isLoadingResults: boolean;
+  isLoadingPerf: boolean;
+  isNextDayValidation: boolean;
+  runResult: BacktestRunResponse | null;
+  runError: ParsedApiError | null;
+  onCodeFilterChange: (v: string) => void;
+  onAnalysisDateFromChange: (v: string) => void;
+  onAnalysisDateToChange: (v: string) => void;
+  onEvalDaysChange: (v: string) => void;
+  onForceRerunToggle: () => void;
+  onFilter: () => void;
+  onRun: () => void;
+  onShowNextDay: () => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
+};
+
+const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
+  codeFilter,
+  analysisDateFrom,
+  analysisDateTo,
+  evalDays,
+  forceRerun,
+  isRunning,
+  isLoadingResults,
+  isLoadingPerf,
+  isNextDayValidation,
+  runResult,
+  runError,
+  onCodeFilterChange,
+  onAnalysisDateFromChange,
+  onAnalysisDateToChange,
+  onEvalDaysChange,
+  onForceRerunToggle,
+  onFilter,
+  onRun,
+  onShowNextDay,
+  onKeyDown,
+}) => (
+  <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
+    <div className="flex max-w-5xl flex-wrap items-center gap-2">
+      <div className="relative min-w-0 flex-[1_1_220px]">
+        <input
+          type="text"
+          value={codeFilter}
+          onChange={(e) => onCodeFilterChange(e.target.value.toUpperCase())}
+          onKeyDown={onKeyDown}
+          placeholder="Filter by stock code (leave empty for all)"
+          disabled={isRunning}
+          className={BACKTEST_INPUT_CLASS}
+        />
+      </div>
+      <Button
+        variant="outline"
+        onClick={onFilter}
+        disabled={isLoadingResults}
+        className="whitespace-nowrap"
+      >
+        Filter
+      </Button>
+      <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
+        <span className="text-xs text-muted-text">Window</span>
+        <input
+          type="number"
+          min={1}
+          max={120}
+          value={evalDays}
+          onChange={(e) => onEvalDaysChange(e.target.value)}
+          placeholder="10"
+          disabled={isRunning}
+          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-24 text-center tabular-nums`}
+        />
+      </div>
+      <div className="flex items-center gap-2 whitespace-nowrap">
+        <span className="text-xs text-muted-text">From</span>
+        <input
+          type="date"
+          aria-label="Analysis date from"
+          value={analysisDateFrom}
+          onChange={(e) => onAnalysisDateFromChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          disabled={isRunning}
+          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
+        />
+      </div>
+      <div className="flex items-center gap-2 whitespace-nowrap">
+        <span className="text-xs text-muted-text">To</span>
+        <input
+          type="date"
+          aria-label="Analysis date to"
+          value={analysisDateTo}
+          onChange={(e) => onAnalysisDateToChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          disabled={isRunning}
+          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
+        />
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onShowNextDay}
+        disabled={isLoadingResults || isLoadingPerf}
+        className={cn(
+          'whitespace-nowrap',
+          isNextDayValidation && 'border-primary/40 bg-primary/10 text-primary',
+        )}
+      >
+        <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', isNextDayValidation ? 'bg-primary' : 'bg-border')} />
+        1D Validation
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onForceRerunToggle}
+        disabled={isRunning}
+        className={cn(
+          'whitespace-nowrap',
+          forceRerun && 'border-primary/40 bg-primary/10 text-primary',
+        )}
+      >
+        <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', forceRerun ? 'bg-primary' : 'bg-border')} />
+        Force
+      </Button>
+      <Button
+        variant="primary"
+        onClick={onRun}
+        disabled={isRunning}
+        isLoading={isRunning}
+        className="whitespace-nowrap"
+      >
+        Run Backtest
+      </Button>
+    </div>
+    {runResult && (
+      <div className="mt-2 max-w-4xl">
+        <RunSummary data={runResult} />
+      </div>
+    )}
+    {runError && (
+      <ApiErrorAlert error={runError} className="mt-2 max-w-4xl" />
+    )}
+    <p className="mt-2 text-xs text-muted-text">
+      {isNextDayValidation
+        ? 'Next-day validation mode compares AI predictions with the next trading day close.'
+        : 'Use window = 1 to review AI predictions against the next trading day close.'}
+    </p>
+  </header>
+);
+
+// ============ BacktestMetricSidebar ============
+
+type BacktestMetricSidebarProps = {
+  isLoadingPerf: boolean;
+  overallPerf: PerformanceMetrics | null;
+  stockPerf: PerformanceMetrics | null;
+  codeFilter: string;
+};
+
+const BacktestMetricSidebar: React.FC<BacktestMetricSidebarProps> = ({
+  isLoadingPerf,
+  overallPerf,
+  stockPerf,
+  codeFilter,
+}) => (
+  <div className="flex max-h-[38vh] flex-col gap-3 overflow-y-auto lg:max-h-none lg:w-60 lg:flex-shrink-0">
+    {isLoadingPerf ? (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+      </div>
+    ) : overallPerf ? (
+      <PerformanceCard metrics={overallPerf} title="Overall Performance" />
+    ) : (
+      <EmptyState
+        title="No Metrics Yet"
+        description="Run a backtest to generate portfolio-level performance metrics."
+        className="h-full min-h-[12rem] border-dashed bg-card/45 shadow-none"
+      />
+    )}
+    {stockPerf && (
+      <PerformanceCard metrics={stockPerf} title={`${stockPerf.code || codeFilter}`} />
+    )}
+  </div>
+);
+
+// ============ BacktestResultsTable ============
+
+type BacktestResultsTableProps = {
+  pageError: ParsedApiError | null;
+  isLoadingResults: boolean;
+  results: BacktestResultItem[];
+  totalResults: number;
+  currentPage: number;
+  totalPages: number;
+  isNextDayValidation: boolean;
+  showNextDayActualColumns: boolean;
+  codeFilter: string;
+  evalDays: string;
+  analysisDateFrom: string;
+  analysisDateTo: string;
+  onPageChange: (page: number) => void;
+};
+
+const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
+  pageError,
+  isLoadingResults,
+  results,
+  totalResults,
+  currentPage,
+  totalPages,
+  isNextDayValidation,
+  showNextDayActualColumns,
+  codeFilter,
+  evalDays,
+  analysisDateFrom,
+  analysisDateTo,
+  onPageChange,
+}) => (
+  <section className="min-h-0 flex-1 overflow-y-auto">
+    {pageError ? (
+      <ApiErrorAlert error={pageError} className="mb-3" />
+    ) : null}
+    {isLoadingResults ? (
+      <div className="flex flex-col items-center justify-center h-64">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+        <p className="mt-3 text-secondary-text text-sm">Loading results...</p>
+      </div>
+    ) : results.length === 0 ? (
+      <EmptyState
+        title="No Results"
+        description="Run a backtest to evaluate historical analysis accuracy"
+        className="border-dashed"
+        icon={(
+          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+        )}
+      />
+    ) : (
+      <div className="animate-fade-in">
+        <div className="backtest-table-toolbar">
+          <div className="backtest-table-toolbar-meta">
+            <span className="label-uppercase">{isNextDayValidation ? 'Next-Day Validation' : 'Result Set'}</span>
+            <span className="text-xs text-secondary-text">
+              {codeFilter.trim() ? `Filtered by ${codeFilter.trim()}` : 'All stocks'}
+              {evalDays ? ` · ${evalDays} day window` : ''}
+              {analysisDateFrom ? ` · from ${analysisDateFrom}` : ''}
+              {analysisDateTo ? ` · to ${analysisDateTo}` : ''}
+            </span>
+          </div>
+          <span className="backtest-table-scroll-hint">Scroll horizontally on small screens</span>
+        </div>
+        <div className="backtest-table-wrapper">
+          <table className="backtest-table min-w-[840px] w-full text-sm">
+            <thead className="backtest-table-head">
+              <tr className="text-left">
+                <th className="backtest-table-head-cell">Stock</th>
+                <th className="backtest-table-head-cell">Analysis Date</th>
+                <th className="backtest-table-head-cell">AI Prediction</th>
+                <th className="backtest-table-head-cell">
+                  {showNextDayActualColumns ? 'Actual' : 'Window Return'}
+                </th>
+                <th className="backtest-table-head-cell">
+                  {showNextDayActualColumns ? 'Accuracy' : 'Direction Match'}
+                </th>
+                <th className="backtest-table-head-cell">Outcome</th>
+                <th className="backtest-table-head-cell">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((row) => (
+                <tr key={row.analysisHistoryId} className="backtest-table-row">
+                  <td className="backtest-table-cell backtest-table-code">
+                    <div className="flex flex-col">
+                      <span>{row.code}</span>
+                      <span className="text-xs text-muted-text">{row.stockName || '--'}</span>
+                    </div>
+                  </td>
+                  <td className="backtest-table-cell text-secondary-text">{row.analysisDate || '--'}</td>
+                  <td className="backtest-table-cell max-w-[220px] text-foreground">
+                    {(row.trendPrediction || row.operationAdvice) ? (
+                      <Tooltip
+                        content={[row.trendPrediction, row.operationAdvice].filter(Boolean).join(' / ')}
+                        focusable
+                      >
+                        <div className="flex flex-col gap-1">
+                          <span className="block truncate">{row.trendPrediction || '--'}</span>
+                          <span className="block truncate text-xs text-secondary-text">{row.operationAdvice || '--'}</span>
+                        </div>
+                      </Tooltip>
+                    ) : '--'}
+                  </td>
+                  <td className="backtest-table-cell">
+                    <div className="flex items-center gap-2">
+                      {actualMovementBadge(row.actualMovement)}
+                      <span className={
+                        row.actualReturnPct != null
+                          ? row.actualReturnPct > 0 ? 'text-success' : row.actualReturnPct < 0 ? 'text-danger' : 'text-secondary-text'
+                          : 'text-muted-text'
+                      }>
+                        {pct(row.actualReturnPct)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="backtest-table-cell">
+                    <span className="flex items-center gap-2">
+                      {boolIcon(row.directionCorrect)}
+                      <span className="text-muted-text">{row.directionExpected || ''}</span>
+                    </span>
+                  </td>
+                  <td className="backtest-table-cell">{outcomeBadge(row.outcome)}</td>
+                  <td className="backtest-table-cell">{statusBadge(row.evalStatus)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-4">
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+          />
+        </div>
+        <p className="text-xs text-muted-text text-center mt-2">
+          {totalResults} result{totalResults !== 1 ? 's' : ''} total · page {currentPage} of {Math.max(totalPages, 1)}
+        </p>
+      </div>
+    )}
+  </section>
 );
 
 // ============ Main Page ============
@@ -327,264 +667,55 @@ const BacktestPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-full flex flex-col rounded-[1.5rem] bg-transparent">
-      {/* Header */}
-      <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
-        <div className="flex max-w-5xl flex-wrap items-center gap-2">
-          <div className="relative min-w-0 flex-[1_1_220px]">
-            <input
-              type="text"
-              value={codeFilter}
-              onChange={(e) => setCodeFilter(e.target.value.toUpperCase())}
-              onKeyDown={handleKeyDown}
-              placeholder="Filter by stock code (leave empty for all)"
-              disabled={isRunning}
-              className={BACKTEST_INPUT_CLASS}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={handleFilter}
-            disabled={isLoadingResults}
-            className="btn-secondary flex items-center gap-1.5 whitespace-nowrap"
-          >
-            Filter
-          </button>
-          <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
-            <span className="text-xs text-muted-text">Window</span>
-            <input
-              type="number"
-              min={1}
-              max={120}
-              value={evalDays}
-              onChange={(e) => setEvalDays(e.target.value)}
-              placeholder="10"
-              disabled={isRunning}
-              className={`${BACKTEST_COMPACT_INPUT_CLASS} w-24 text-center tabular-nums`}
-            />
-          </div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-xs text-muted-text">From</span>
-            <input
-              type="date"
-              aria-label="Analysis date from"
-              value={analysisDateFrom}
-              onChange={(e) => setAnalysisDateFrom(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isRunning}
-              className={`${BACKTEST_COMPACT_INPUT_CLASS} w-40 text-center tabular-nums`}
-            />
-          </div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-xs text-muted-text">To</span>
-            <input
-              type="date"
-              aria-label="Analysis date to"
-              value={analysisDateTo}
-              onChange={(e) => setAnalysisDateTo(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isRunning}
-              className={`${BACKTEST_COMPACT_INPUT_CLASS} w-40 text-center tabular-nums`}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={handleShowNextDay}
-            disabled={isLoadingResults || isLoadingPerf}
-            className={`backtest-force-btn ${isNextDayValidation ? 'active' : ''}`}
-          >
-            <span className="dot" />
-            1D Validation
-          </button>
-          <button
-            type="button"
-            onClick={() => setForceRerun(!forceRerun)}
-            disabled={isRunning}
-            className={`backtest-force-btn ${forceRerun ? 'active' : ''}`}
-          >
-            <span className="dot" />
-            Force
-          </button>
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={isRunning}
-            className="btn-primary flex items-center gap-1.5 whitespace-nowrap"
-          >
-            {isRunning ? (
-              <>
-                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Running...
-              </>
-            ) : (
-              'Run Backtest'
-            )}
-          </button>
-        </div>
-        {runResult && (
-          <div className="mt-2 max-w-4xl">
-            <RunSummary data={runResult} />
-          </div>
-        )}
-        {runError && (
-          <ApiErrorAlert error={runError} className="mt-2 max-w-4xl" />
-        )}
-        <p className="mt-2 text-xs text-muted-text">
-          {isNextDayValidation
-            ? 'Next-day validation mode compares AI predictions with the next trading day close.'
-            : 'Use window = 1 to review AI predictions against the next trading day close.'}
-        </p>
-      </header>
+    <main className="workspace-page-layout flex flex-col min-h-[calc(100vh-2rem)] !p-0">
+      <BacktestConfigBar
+        codeFilter={codeFilter}
+        analysisDateFrom={analysisDateFrom}
+        analysisDateTo={analysisDateTo}
+        evalDays={evalDays}
+        forceRerun={forceRerun}
+        isRunning={isRunning}
+        isLoadingResults={isLoadingResults}
+        isLoadingPerf={isLoadingPerf}
+        isNextDayValidation={isNextDayValidation}
+        runResult={runResult}
+        runError={runError}
+        onCodeFilterChange={setCodeFilter}
+        onAnalysisDateFromChange={setAnalysisDateFrom}
+        onAnalysisDateToChange={setAnalysisDateTo}
+        onEvalDaysChange={setEvalDays}
+        onForceRerunToggle={() => setForceRerun((prev) => !prev)}
+        onFilter={handleFilter}
+        onRun={handleRun}
+        onShowNextDay={handleShowNextDay}
+        onKeyDown={handleKeyDown}
+      />
 
       {/* Main content */}
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 lg:flex-row">
-        {/* Left sidebar - Performance */}
-        <div className="flex max-h-[38vh] flex-col gap-3 overflow-y-auto lg:max-h-none lg:w-60 lg:flex-shrink-0">
-          {isLoadingPerf ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="backtest-spinner sm" />
-            </div>
-          ) : overallPerf ? (
-            <PerformanceCard metrics={overallPerf} title="Overall Performance" />
-          ) : (
-            <EmptyState
-              title="No Metrics Yet"
-              description="Run a backtest to generate portfolio-level performance metrics."
-              className="h-full min-h-[12rem] border-dashed bg-card/45 shadow-none"
-            />
-          )}
-
-          {stockPerf && (
-            <PerformanceCard metrics={stockPerf} title={`${stockPerf.code || codeFilter}`} />
-          )}
-        </div>
-
-        {/* Right content - Results table */}
-        <section className="min-h-0 flex-1 overflow-y-auto">
-          {pageError ? (
-            <ApiErrorAlert error={pageError} className="mb-3" />
-          ) : null}
-          {isLoadingResults ? (
-            <div className="flex flex-col items-center justify-center h-64">
-              <div className="backtest-spinner md" />
-              <p className="mt-3 text-secondary-text text-sm">Loading results...</p>
-            </div>
-          ) : results.length === 0 ? (
-            <EmptyState
-              title="No Results"
-              description="Run a backtest to evaluate historical analysis accuracy"
-              className="backtest-empty-state border-dashed"
-              icon={(
-                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              )}
-            />
-          ) : (
-            <div className="animate-fade-in">
-              <div className="backtest-table-toolbar">
-                <div className="backtest-table-toolbar-meta">
-                  <span className="label-uppercase">{isNextDayValidation ? 'Next-Day Validation' : 'Result Set'}</span>
-                  <span className="text-xs text-secondary-text">
-                    {codeFilter.trim() ? `Filtered by ${codeFilter.trim()}` : 'All stocks'}
-                    {evalDays ? ` · ${evalDays} day window` : ''}
-                    {analysisDateFrom ? ` · from ${analysisDateFrom}` : ''}
-                    {analysisDateTo ? ` · to ${analysisDateTo}` : ''}
-                  </span>
-                </div>
-                <span className="backtest-table-scroll-hint">Scroll horizontally on small screens</span>
-              </div>
-              <div className="backtest-table-wrapper">
-                <table className="backtest-table min-w-[840px] w-full text-sm">
-                  <thead className="backtest-table-head">
-                    <tr className="text-left">
-                      <th className="backtest-table-head-cell">Stock</th>
-                      <th className="backtest-table-head-cell">Analysis Date</th>
-                      <th className="backtest-table-head-cell">AI Prediction</th>
-                      <th className="backtest-table-head-cell">
-                        {showNextDayActualColumns ? 'Actual' : 'Window Return'}
-                      </th>
-                      <th className="backtest-table-head-cell">
-                        {showNextDayActualColumns ? 'Accuracy' : 'Direction Match'}
-                      </th>
-                      <th className="backtest-table-head-cell">Outcome</th>
-                      <th className="backtest-table-head-cell">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((row) => (
-                      <tr
-                        key={row.analysisHistoryId}
-                        className="backtest-table-row"
-                      >
-                        <td className="backtest-table-cell backtest-table-code">
-                          <div className="flex flex-col">
-                            <span>{row.code}</span>
-                            <span className="text-xs text-muted-text">{row.stockName || '--'}</span>
-                          </div>
-                        </td>
-                        <td className="backtest-table-cell text-secondary-text">{row.analysisDate || '--'}</td>
-                        <td className="backtest-table-cell max-w-[220px] text-foreground">
-                          {(row.trendPrediction || row.operationAdvice) ? (
-                            <Tooltip
-                              content={[row.trendPrediction, row.operationAdvice].filter(Boolean).join(' / ')}
-                              focusable
-                            >
-                              <div className="flex flex-col gap-1">
-                                <span className="block truncate">{row.trendPrediction || '--'}</span>
-                                <span className="block truncate text-xs text-secondary-text">{row.operationAdvice || '--'}</span>
-                              </div>
-                            </Tooltip>
-                          ) : (
-                            '--'
-                          )}
-                        </td>
-                        <td className="backtest-table-cell">
-                          <div className="flex items-center gap-2">
-                            {actualMovementBadge(row.actualMovement)}
-                            <span className={
-                              row.actualReturnPct != null
-                                ? row.actualReturnPct > 0 ? 'text-success' : row.actualReturnPct < 0 ? 'text-danger' : 'text-secondary-text'
-                                : 'text-muted-text'
-                            }>
-                              {pct(row.actualReturnPct)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="backtest-table-cell">
-                          <span className="flex items-center gap-2">
-                            {boolIcon(row.directionCorrect)}
-                            <span className="text-muted-text">{row.directionExpected || ''}</span>
-                          </span>
-                        </td>
-                        <td className="backtest-table-cell">{outcomeBadge(row.outcome)}</td>
-                        <td className="backtest-table-cell">{statusBadge(row.evalStatus)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              <div className="mt-4">
-                <Pagination
-                  currentPage={currentPage}
-                  totalPages={totalPages}
-                  onPageChange={handlePageChange}
-                />
-              </div>
-
-              <p className="text-xs text-muted-text text-center mt-2">
-                {totalResults} result{totalResults !== 1 ? 's' : ''} total · page {currentPage} of {Math.max(totalPages, 1)}
-              </p>
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 lg:flex-row">
+        <BacktestMetricSidebar
+          isLoadingPerf={isLoadingPerf}
+          overallPerf={overallPerf}
+          stockPerf={stockPerf}
+          codeFilter={codeFilter}
+        />
+        <BacktestResultsTable
+          pageError={pageError}
+          isLoadingResults={isLoadingResults}
+          results={results}
+          totalResults={totalResults}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          isNextDayValidation={isNextDayValidation}
+          showNextDayActualColumns={showNextDayActualColumns}
+          codeFilter={codeFilter}
+          evalDays={evalDays}
+          analysisDateFrom={analysisDateFrom}
+          analysisDateTo={analysisDateTo}
+          onPageChange={handlePageChange}
+        />
+      </div>
+    </main>
   );
 };
 

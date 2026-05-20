@@ -86,16 +86,14 @@ beforeEach(() => {
 });
 
 describe('BacktestPage', () => {
-  it('renders shared surface inputs and prediction tracking outputs', async () => {
+  it('renders shared ui inputs and prediction tracking outputs', async () => {
     render(<BacktestPage />);
 
     const filterInput = await screen.findByPlaceholderText('Filter by stock code (leave empty for all)');
     const windowInput = screen.getByPlaceholderText('10');
 
-    expect(filterInput).toHaveClass('input-surface');
-    expect(filterInput).toHaveClass('input-focus-glow');
-    expect(windowInput).toHaveClass('input-surface');
-    expect(windowInput).toHaveClass('input-focus-glow');
+    expect(filterInput).toHaveClass('ui-input');
+    expect(windowInput).toHaveClass('ui-input');
 
     expect(await screen.findByText('WIN')).toBeInTheDocument();
     expect(screen.getByText('completed')).toBeInTheDocument();

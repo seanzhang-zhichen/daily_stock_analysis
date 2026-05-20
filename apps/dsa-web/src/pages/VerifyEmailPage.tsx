@@ -40,7 +40,7 @@ const VerifyEmailPage: React.FC = () => {
   }, [token]);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main,#0a0e17)] px-4 py-12">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main)] px-4 py-12">
       {/* Background decoration */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <div className="absolute -left-[20%] -top-[20%] h-[60%] w-[60%] rounded-full opacity-15" style={{ background: 'radial-gradient(circle, hsl(var(--primary)) 0%, transparent 70%)' }} />
@@ -53,14 +53,14 @@ const VerifyEmailPage: React.FC = () => {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
             <MailCheck className="h-4.5 w-4.5 text-white" />
           </div>
-          <span className="text-lg font-bold tracking-tight text-white">DSA</span>
+          <span className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</span>
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-7 backdrop-blur-xl">
+        <div className="rounded-2xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-7 backdrop-blur-xl">
           <div className="mb-6">
-            <h2 className="text-xl font-bold tracking-tight text-white">邮箱验证</h2>
-            <p className="mt-1.5 text-sm text-white/45">验证你的邮箱地址以激活账号</p>
+            <h2 className="text-xl font-bold tracking-tight text-[var(--login-text-primary)]">邮箱验证</h2>
+            <p className="mt-1.5 text-sm text-[var(--login-text-secondary)]">验证你的邮箱地址以激活账号</p>
           </div>
 
           {!token && (
@@ -70,20 +70,20 @@ const VerifyEmailPage: React.FC = () => {
                 message="未找到验证 token，请检查邮件中的链接是否完整。"
                 variant="error"
               />
-              <p className="text-sm text-white/50">
+              <p className="text-sm text-[var(--login-text-secondary)]">
                 如需重新发送验证邮件，请登录账号后在账户设置中操作；或联系站点管理员。
               </p>
             </div>
           )}
 
           {token && status === 'idle' && (
-            <p className="text-sm text-white/50">正在准备验证…</p>
+            <p className="text-sm text-[var(--login-text-secondary)]">正在准备验证…</p>
           )}
 
           {status === 'loading' && (
-            <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] p-4">
-              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
-              <span className="text-sm text-white/65">正在验证邮箱，请稍候…</span>
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-4">
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[var(--login-text-primary)]" />
+              <span className="text-sm text-[var(--login-text-secondary)]">正在验证邮箱，请稍候…</span>
             </div>
           )}
 
@@ -93,7 +93,7 @@ const VerifyEmailPage: React.FC = () => {
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                 <div>
                   <p className="text-sm font-semibold text-emerald-300">邮箱验证成功！</p>
-                  <p className="mt-1 text-xs text-white/50">你的账号已激活，现在可以登录使用 DSA。</p>
+                  <p className="mt-1 text-xs text-[var(--login-text-muted)]">你的账号已激活，现在可以登录使用 DSA。</p>
                 </div>
               </div>
               <Link to="/login" className="block">
@@ -121,7 +121,7 @@ const VerifyEmailPage: React.FC = () => {
                   variant="error"
                 />
               )}
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-[var(--login-text-muted)]">
                 可能原因：链接已过期（有效期 24 小时）、已使用过或链接不完整。请重新注册或联系站点管理员。
               </p>
             </div>
@@ -129,7 +129,7 @@ const VerifyEmailPage: React.FC = () => {
         </div>
 
         <div className="mt-5 text-center">
-          <Link to="/login" className="text-sm text-white/40 transition-colors hover:text-white/70">
+          <Link to="/login" className="text-sm text-[var(--login-text-muted)] transition-colors hover:text-[var(--login-text-secondary)]">
             ← 返回登录
           </Link>
         </div>

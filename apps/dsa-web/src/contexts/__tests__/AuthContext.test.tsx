@@ -20,6 +20,25 @@ vi.mock('../../api/auth', () => ({
   },
 }));
 
+vi.mock('../../api/account', () => ({
+  accountApi: {
+    getStatus: vi.fn().mockResolvedValue({
+      userModeEnabled: false,
+      registrationEnabled: false,
+      requireEmailVerification: false,
+      inviteRequired: false,
+      loggedIn: false,
+      user: null,
+      limits: { freeDailyAnalysis: 0, freeDailyAgent: 0, freeMaxStocks: 0 },
+      plan: null,
+      quota: null,
+      renewal: null,
+    }),
+    login: vi.fn(),
+    logout: vi.fn(),
+  },
+}));
+
 vi.mock('../../stores', () => ({
   useStockPoolStore: {
     getState: () => ({

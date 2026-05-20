@@ -14,7 +14,14 @@ import { ReportMarkdown, ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import type { SetupStatusResponse } from '../types/systemConfig';
+import { formatDateTime, formatReportType } from '../utils/format';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
+
+const EMPTY_QUICK_STOCKS = [
+  { code: '600519', name: '贵州茅台', hint: 'A 股龙头' },
+  { code: 'AAPL', name: 'Apple', hint: '美股科技' },
+  { code: 'hk00700', name: '腾讯控股', hint: '港股互联网' },
+] as const;
 
 type MarketReviewNotice = {
   variant: 'success' | 'warning' | 'danger';
@@ -500,6 +507,10 @@ const HomePage: React.FC = () => {
     setShowDeleteConfirm(false);
   }, [deleteSelectedHistory]);
 
+  const handleQuickStockSelect = useCallback((stockCode: string) => {
+    setQuery(stockCode);
+  }, [setQuery]);
+
   const sidebarContent = useMemo(
     () => (
       <div className="flex min-h-0 h-full flex-col gap-3 overflow-hidden">
@@ -542,9 +553,9 @@ const HomePage: React.FC = () => {
       data-testid="home-dashboard"
       className="flex h-[calc(100vh-5rem)] w-full flex-col overflow-hidden md:flex-row sm:h-[calc(100vh-5.5rem)] lg:h-[calc(100vh-2rem)]"
     >
-      <div className="flex-1 flex flex-col min-h-0 min-w-0 max-w-full lg:max-w-6xl mx-auto w-full">
+      <div className="workspace-page-layout flex-1 flex flex-col min-h-0 min-w-0 !max-w-7xl !p-0 mx-auto w-full">
         <header className="relative z-30 flex min-w-0 flex-shrink-0 items-center overflow-visible px-3 py-3 md:px-4 md:py-4">
-          <div className="flex min-w-0 flex-1 flex-col gap-2.5 md:flex-row md:items-center">
+          <div className="ui-card ui-card-bordered ui-card-padding-sm !overflow-visible flex min-w-0 flex-1 flex-col gap-2.5 md:flex-row md:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <button
                 onClick={() => setSidebarOpen(true)}
@@ -579,7 +590,7 @@ const HomePage: React.FC = () => {
                     onClick={() => setStrategyMenuOpen((open) => !open)}
                     onKeyDown={handleStrategyButtonKeyDown}
                     disabled={isAnalyzing}
-                    className="home-surface-button flex h-10 max-w-[8.5rem] items-center gap-1.5 rounded-xl px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-[11rem]"
+                    className="ui-button ui-button-secondary flex h-10 max-w-[8.5rem] items-center gap-1.5 rounded-xl px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-[11rem]"
                   >
                     <SlidersHorizontal className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                     <span className="truncate">{selectedStrategy?.name || '策略'}</span>
@@ -590,7 +601,7 @@ const HomePage: React.FC = () => {
                       role="menu"
                       aria-labelledby="strategy-menu-button"
                       onKeyDown={handleStrategyMenuKeyDown}
-                      className="absolute right-0 top-11 z-[120] max-h-80 w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-subtle bg-elevated p-1.5 text-sm text-foreground shadow-2xl"
+                      className="ui-menu absolute right-0 top-11 z-[120] max-h-80 w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto text-sm text-foreground"
                     >
                       {strategyOptions.map((option, index) => {
                         const selected = selectedStrategyId === option.id;
@@ -605,7 +616,7 @@ const HomePage: React.FC = () => {
                             aria-checked={selected}
                             tabIndex={-1}
                             onClick={() => selectStrategy(option.id)}
-                            className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-hover"
+                            className={`ui-menu-item items-start justify-start gap-2 text-left ${selected ? 'ui-menu-item-active' : ''}`}
                           >
                             <Check className={`mt-0.5 h-4 w-4 flex-shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
                             <span className="min-w-0">
@@ -626,7 +637,7 @@ const HomePage: React.FC = () => {
                   type="checkbox"
                   checked={notify}
                   onChange={(e) => setNotify(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  className="ui-checkbox h-3.5 w-3.5"
                 />
                 推送通知
               </label>
@@ -642,24 +653,16 @@ const HomePage: React.FC = () => {
                 <BarChart3 className="h-4 w-4" aria-hidden="true" />
                 大盘复盘
               </Button>
-              <button
+              <Button
                 type="button"
                 onClick={() => handleSubmitAnalysis()}
                 disabled={!query || isAnalyzing}
-                className="btn-primary flex h-10 flex-1 items-center justify-center gap-1.5 whitespace-nowrap md:flex-none"
+                isLoading={isAnalyzing}
+                loadingText="分析中"
+                className="h-10 flex-1 whitespace-nowrap md:flex-none"
               >
-                {isAnalyzing ? (
-                  <>
-                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    分析中
-                  </>
-                ) : (
-                  '分析'
-                )}
-              </button>
+                分析
+              </Button>
             </div>
           </div>
         </header>
@@ -717,9 +720,9 @@ const HomePage: React.FC = () => {
 
           {sidebarOpen ? (
             <div className="fixed inset-0 z-40 md:hidden" onClick={() => setSidebarOpen(false)}>
-              <div className="page-drawer-overlay absolute inset-0" />
+              <div className="ui-drawer-backdrop absolute inset-0" />
               <div
-                className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-hidden !rounded-none !rounded-r-xl p-3 shadow-2xl"
+                className="ui-drawer-panel ui-drawer-panel-left absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-hidden p-3"
                 onClick={(event) => event.stopPropagation()}
               >
                 {sidebarContent}
@@ -757,14 +760,16 @@ const HomePage: React.FC = () => {
               <div className="mb-3 rounded-xl border border-subtle bg-surface/70 px-3 py-3 text-xs text-secondary-text shadow-sm">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="font-semibold text-foreground">大盘复盘报告</p>
-                  <button
+                  <Button
                     type="button"
-                    className="home-surface-button h-7 rounded-md px-3 py-1 text-xs text-foreground"
+                    variant="outline"
+                    size="xsm"
+                    className="h-7"
                     disabled={marketReviewReportCopied}
                     onClick={() => void handleCopyMarketReviewReport()}
                   >
                     {marketReviewReportCopied ? '已复制' : '复制'}
-                  </button>
+                  </Button>
                 </div>
                 <pre
                   data-testid="market-review-report"
@@ -788,53 +793,103 @@ const HomePage: React.FC = () => {
               </div>
             ) : selectedReport ? (
               <div className="max-w-4xl space-y-4 pb-8">
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button
-                    variant="home-action-ai"
-                    size="sm"
-                    disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                    onClick={handleReanalyze}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    {reportText.reanalyze}
-                  </Button>
-                  <Button
-                    variant="home-action-ai"
-                    size="sm"
-                    disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                    onClick={handleAskFollowUp}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                    追问 AI
-                  </Button>
-                  <Button
-                    variant="home-action-ai"
-                    size="sm"
-                    disabled={selectedReport.meta.id === undefined}
-                    onClick={openMarkdownDrawer}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    {reportText.fullReport}
-                  </Button>
+                <div
+                  data-testid="home-report-toolbar"
+                  className="ui-card ui-card-bordered ui-card-padding-sm flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="ui-eyebrow">Analysis Report</p>
+                    <h2 className="mt-1 truncate text-lg font-semibold tracking-tight text-foreground">
+                      {selectedReport.meta.stockName || selectedReport.meta.stockCode}
+                    </h2>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-text">
+                      <span className="font-mono">{selectedReport.meta.stockCode}</span>
+                      <span>{formatReportType(selectedReport.meta.reportType)}</span>
+                      <span>{formatDateTime(selectedReport.meta.createdAt)}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                      onClick={handleReanalyze}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {reportText.reanalyze}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                      onClick={handleAskFollowUp}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                      追问 AI
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={selectedReport.meta.id === undefined}
+                      onClick={openMarkdownDrawer}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {reportText.fullReport}
+                    </Button>
+                  </div>
                 </div>
                 <ReportSummary data={selectedReport} isHistory />
               </div>
             ) : (
-              <div className="flex h-full items-center justify-center">
+              <div className="flex h-full items-center justify-center py-8">
                 <EmptyState
-                  title="开始分析"
-                  description="输入股票代码进行分析，或从左侧选择历史报告查看。"
-                  className="max-w-xl border-dashed"
+                  title="从一只股票开始分析"
+                  description="输入股票代码或名称即可生成报告；也可以先选择示例股票，再按顶部「分析」。历史报告会沉淀在左侧辅助栏。"
+                  className="max-w-2xl border-dashed"
                   icon={(
                     <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                     </svg>
+                  )}
+                  action={(
+                    <div className="w-full space-y-4">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {EMPTY_QUICK_STOCKS.map((stock) => (
+                          <button
+                            key={stock.code}
+                            type="button"
+                            disabled={isAnalyzing}
+                            onClick={() => handleQuickStockSelect(stock.code)}
+                            className="rounded-xl border border-subtle bg-surface/80 px-3 py-2.5 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <span className="block text-sm font-semibold text-foreground">{stock.name}</span>
+                            <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-text">
+                              <span className="font-mono">{stock.code}</span>
+                              <span>{stock.hint}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          isLoading={isSubmittingMarketReview}
+                          loadingText="提交中"
+                          onClick={() => void handleTriggerMarketReview()}
+                        >
+                          <BarChart3 className="h-4 w-4" aria-hidden="true" />
+                          先看大盘复盘
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 />
               </div>

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useRef, useCallback, useEffect, useId } from 'react';
+import { useRef, useCallback, useEffect, useId, useState } from 'react';
 import type { HistoryItem } from '../../types/analysis';
 import { Badge, Button, ScrollArea } from '../common';
 import { DashboardPanelHeader, DashboardStateBlock } from '../dashboard';
@@ -44,10 +44,27 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
   const selectAllId = useId();
+  const searchId = useId();
+  const [searchText, setSearchText] = useState('');
 
-  const selectedCount = items.filter((item) => selectedIds.has(item.id)).length;
-  const allVisibleSelected = items.length > 0 && selectedCount === items.length;
+  const filteredItems = searchText.trim()
+    ? items.filter((item) => {
+        const q = searchText.trim().toLowerCase();
+        return (
+          item.stockCode.toLowerCase().includes(q) ||
+          (item.stockName?.toLowerCase().includes(q) ?? false)
+        );
+      })
+    : items;
+
+  const selectedCount = filteredItems.filter((item) => selectedIds.has(item.id)).length;
+  const allVisibleSelected = filteredItems.length > 0 && selectedCount === filteredItems.length;
   const someVisibleSelected = selectedCount > 0 && !allVisibleSelected;
+  const visibleCountLabel = searchText.trim()
+    ? `${filteredItems.length}/${items.length}`
+    : items.length > 99
+      ? '99+'
+      : items.length.toString();
 
   // 使用 IntersectionObserver 检测滚动到底部
   const handleObserver = useCallback(
@@ -85,15 +102,15 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   }, [someVisibleSelected]);
 
   return (
-    <aside className={`glass-card overflow-hidden flex flex-col ${className}`}>
+    <aside className={`ui-card ui-card-bordered ui-card-padding-none overflow-hidden flex flex-col ${className}`}>
       <ScrollArea
         viewportRef={scrollContainerRef}
-        viewportClassName="p-4"
+        viewportClassName="p-3"
         testId="home-history-list-scroll"
       >
-        <div className="mb-4 space-y-3">
+        <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-3 space-y-2 border-b border-subtle bg-surface/95 px-3 py-3 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
           <DashboardPanelHeader
-            className="mb-1"
+            className="mb-0"
             title="历史分析"
             titleClassName="text-sm font-medium"
             leading={(
@@ -104,12 +121,39 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             headingClassName="items-center"
             actions={
               selectedCount > 0 ? (
-                <Badge variant="info" size="sm" className="history-selection-badge animate-in fade-in zoom-in duration-200">
+                <Badge variant="info" size="sm" className="animate-in fade-in zoom-in duration-200">
                   已选 {selectedCount}
+                </Badge>
+              ) : items.length > 0 ? (
+                <Badge variant="default" size="sm" className="shadow-none">
+                  {visibleCountLabel} 条
                 </Badge>
               ) : undefined
             }
           />
+
+          {items.length > 0 && (
+            <div className="relative">
+              <svg
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-text"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                id={searchId}
+                type="search"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="按代码或名称筛选"
+                aria-label="按股票代码或名称筛选历史记录"
+                className="ui-input w-full py-1.5 pl-8 pr-3 text-[11px]"
+              />
+            </div>
+          )}
 
           {items.length > 0 && (
             <div className="flex items-center gap-2">
@@ -125,7 +169,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                   onChange={onToggleSelectAll}
                   disabled={isDeleting}
                   aria-label="全选当前已加载历史记录"
-                  className="history-select-all-checkbox h-3.5 w-3.5 cursor-pointer bg-transparent accent-primary focus:ring-primary/30 disabled:opacity-50"
+                  className="ui-checkbox h-3.5 w-3.5 disabled:opacity-50"
                 />
                 <span className="text-[11px] text-muted-text select-none">全选当前</span>
               </label>
@@ -135,7 +179,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                 onClick={onDeleteSelected}
                 disabled={selectedCount === 0 || isDeleting}
                 isLoading={isDeleting}
-                className="history-batch-delete-button disabled:!border-transparent disabled:!bg-transparent"
+                className="disabled:!border-transparent disabled:!bg-transparent"
               >
                 {isDeleting ? '删除中' : '删除'}
               </Button>
@@ -159,9 +203,15 @@ export const HistoryList: React.FC<HistoryListProps> = ({
               </svg>
             )}
           />
+        ) : filteredItems.length === 0 ? (
+          <DashboardStateBlock
+            compact
+            title="无匹配记录"
+            description={`没有代码或名称包含「${searchText.trim()}」的历史记录。`}
+          />
         ) : (
           <div className="space-y-2">
-            {items.map((item) => (
+            {filteredItems.map((item) => (
               <HistoryListItem
                 key={item.id}
                 item={item}
@@ -177,7 +227,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             
             {isLoadingMore && (
               <div className="flex justify-center py-4">
-                <div className="home-spinner h-5 w-5 animate-spin border-2" />
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
               </div>
             )}
 

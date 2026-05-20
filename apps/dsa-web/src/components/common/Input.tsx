@@ -33,6 +33,7 @@ export const Input = ({
   iconType = 'none',
   passwordVisible,
   onPasswordVisibleChange,
+  style,
   ...props 
 }: InputProps) => {
   const generatedId = useId();
@@ -74,14 +75,6 @@ export const Input = ({
   };
 
   const leadingIcon = renderLeadingIcon();
-  const inputStyle = error
-    ? {
-      ...props.style,
-      ['--input-surface-border-focus' as string]: 'hsla(var(--destructive), 0.4)',
-      ['--input-surface-focus-ring' as string]: '0 0 0 4px hsla(var(--destructive), 0.1)',
-    }
-    : props.style;
-
   const defaultTrailingAction = isPasswordInput && allowTogglePassword ? (
     <button
       type="button"
@@ -134,16 +127,14 @@ export const Input = ({
           id={inputId}
           aria-describedby={describedBy}
           aria-invalid={ariaInvalid}
-          style={inputStyle}
+          style={style}
           data-appearance={appearance}
           className={cn(
-            'input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-4 text-sm transition-all',
-            'focus:outline-none',
-            isLoginAppearance ? 'input-appearance-login' : '',
-            error ? 'border-danger/30' : '',
+            'ui-input h-11 px-4 text-sm',
+            isLoginAppearance ? 'ui-input-login' : '',
+            error ? 'ui-input-invalid' : '',
             leadingIcon ? 'pl-10' : '',
             finalTrailingAction ? 'pr-12' : '',
-            'disabled:cursor-not-allowed disabled:opacity-60',
             className,
           )}
           {...props}

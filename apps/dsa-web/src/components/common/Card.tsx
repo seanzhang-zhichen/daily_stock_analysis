@@ -26,44 +26,28 @@ export const Card: React.FC<CardProps> = ({
   padding = 'md',
 }) => {
   const paddingStyles = {
-    none: '',
-    sm: 'p-4',
-    md: 'p-5',
-    lg: 'p-6',
+    none: 'ui-card-padding-none',
+    sm: 'ui-card-padding-sm',
+    md: 'ui-card-padding-md',
+    lg: 'ui-card-padding-lg',
   };
 
   const variantStyles = {
-    default: 'terminal-card',
-    bordered: 'terminal-card',
-    gradient: 'gradient-border-card',
+    default: 'ui-card',
+    bordered: 'ui-card ui-card-bordered',
+    gradient: 'ui-card ui-card-emphasis',
   };
 
-  const hoverStyles = hoverable ? 'terminal-card-hover cursor-pointer' : '';
-
-  if (variant === 'gradient') {
-    return (
-      <div className={cn(variantStyles.gradient, className)} style={style}>
-        <div className={cn('gradient-border-card-inner', paddingStyles[padding])}>
-          {(title || subtitle) && (
-            <div className="mb-3">
-              {subtitle ? <span className="label-uppercase">{subtitle}</span> : null}
-              {title ? <h3 className="mt-1 text-lg font-semibold text-foreground">{title}</h3> : null}
-            </div>
-          )}
-          {children}
-        </div>
-      </div>
-    );
-  }
+  const hoverStyles = hoverable ? 'ui-card-hoverable' : '';
 
   return (
     <div
       style={style}
-      className={cn('rounded-2xl', variantStyles[variant], hoverStyles, paddingStyles[padding], className)}
+      className={cn(variantStyles[variant], hoverStyles, paddingStyles[padding], className)}
     >
       {(title || subtitle) && (
         <div className="mb-3">
-          {subtitle ? <span className="label-uppercase">{subtitle}</span> : null}
+          {subtitle ? <span className="ui-eyebrow">{subtitle}</span> : null}
           {title ? <h3 className="mt-1 text-lg font-semibold text-foreground">{title}</h3> : null}
         </div>
       )}

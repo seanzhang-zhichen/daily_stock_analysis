@@ -15,6 +15,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Button, Card, Input, Loading } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import { adminApi, type AdminStats, type AdminUser, type AuditLogEntry } from '../api/admin';
 import { noticesApi, type Notice } from '../api/notices';
@@ -564,7 +565,7 @@ const UsersTab: React.FC = () => {
                 <td className="py-2 pr-3 text-xs">{u.termsVersion ?? '—'}</td>
                 <td className="py-2 pr-3">
                   {u.isAdmin ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-cyan">
+                    <span className="inline-flex items-center gap-1 text-xs text-primary">
                       <ShieldCheck className="h-3 w-3" /> admin
                     </span>
                   ) : (
@@ -963,28 +964,28 @@ const AdminPage: React.FC = () => {
 
   if (!userMode?.userModeEnabled) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <SettingsAlert title="未启用" message="当前实例未启用 To C 多用户模式, 运营后台不可用。" variant="warning" />
-      </div>
+      </StandardPageLayout>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <SettingsAlert
           title="无权访问"
           message="您当前账号不具备平台管理员权限。如需开通, 请使用 scripts/grant_admin.py 在服务器侧赋权。"
           variant="error"
         />
-      </div>
+      </StandardPageLayout>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8">
+    <StandardPageLayout className="!max-w-[90rem]">
       <div className="flex items-center gap-2">
-        <ShieldCheck className="h-5 w-5 text-cyan" />
+        <ShieldCheck className="h-5 w-5 text-primary" />
         <h1 className="text-xl font-semibold text-foreground">运营后台</h1>
       </div>
 
@@ -1000,8 +1001,8 @@ const AdminPage: React.FC = () => {
               className={cn(
                 'inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm transition-colors',
                 active
-                  ? 'border-cyan/40 bg-cyan/10 text-cyan'
-                  : 'border-border/60 bg-card/40 text-secondary-text hover:border-cyan/30 hover:text-foreground'
+                  ? 'border-primary/40 bg-primary/10 text-primary'
+                  : 'border-border/60 bg-card/40 text-secondary-text hover:border-primary/30 hover:text-foreground'
               )}
             >
               <Icon className="h-4 w-4" /> {t.label}
@@ -1020,7 +1021,7 @@ const AdminPage: React.FC = () => {
         {tab === 'audit' && <AuditLogsTab />}
         {tab === 'notices' && <NoticesAdminTab />}
       </div>
-    </div>
+    </StandardPageLayout>
   );
 };
 

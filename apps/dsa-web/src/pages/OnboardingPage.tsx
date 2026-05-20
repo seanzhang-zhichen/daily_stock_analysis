@@ -73,7 +73,7 @@ const OnboardingPage: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main,#0a0e17)] px-4 py-12">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main)] px-4 py-12">
       {/* Background decoration */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <div className="absolute -left-[20%] -top-[20%] h-[60%] w-[60%] rounded-full opacity-15" style={{ background: 'radial-gradient(circle, hsl(var(--primary)) 0%, transparent 70%)' }} />
@@ -86,14 +86,14 @@ const OnboardingPage: React.FC = () => {
           <div className="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
             <BarChart2 className="h-7 w-7 text-white" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">欢迎使用 DSA</h1>
-          <p className="mt-2 text-sm text-white/50">
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">欢迎使用 DSA</h1>
+          <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
             先选 {maxStocks} 只你关注的股票，AI 将在每个交易日为你自动分析。
           </p>
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-6 backdrop-blur-xl">
+        <div className="rounded-2xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-6 backdrop-blur-xl">
           {error && (
             <div className="mb-4">
               <SettingsAlert title="提示" message={error} variant="error" />
@@ -106,19 +106,19 @@ const OnboardingPage: React.FC = () => {
               {stocks.map((item, idx) => (
                 <li
                   key={item.stockCode}
-                  className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5 transition-colors hover:bg-white/[0.07]"
+                  className="flex items-center gap-3 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] px-4 py-2.5 transition-colors hover:bg-[var(--login-bg-card)]/80"
                 >
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
                     {idx + 1}
                   </span>
                   <Star className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-                  <span className="flex-1 text-sm font-semibold text-white">{item.stockCode}</span>
+                  <span className="flex-1 text-sm font-semibold text-[var(--login-text-primary)]">{item.stockCode}</span>
                   {item.stockName && (
-                    <span className="text-xs text-white/45">{item.stockName}</span>
+                    <span className="text-xs text-[var(--login-text-secondary)]">{item.stockName}</span>
                   )}
                   <button
                     type="button"
-                    className="text-white/25 transition-colors hover:text-red-400"
+                    className="text-[var(--login-text-muted)] transition-colors hover:text-red-400"
                     onClick={() => void handleRemoveStock(item.stockCode)}
                     title="移除"
                   >
@@ -129,8 +129,8 @@ const OnboardingPage: React.FC = () => {
             </ul>
           ) : (
             <div className="mb-4 flex flex-col items-center gap-2 rounded-xl border border-dashed border-white/[0.08] py-8 text-center">
-              <Star className="h-7 w-7 text-white/15" />
-              <p className="text-sm text-white/35">暂无自选股，在下方搜索添加</p>
+              <Star className="h-7 w-7 text-[var(--login-text-muted)]/40" />
+              <p className="text-sm text-[var(--login-text-muted)]">暂无自选股，在下方搜索添加</p>
             </div>
           )}
 
@@ -179,7 +179,7 @@ const OnboardingPage: React.FC = () => {
             <button
               type="button"
               onClick={handleSkip}
-              className="text-sm text-white/35 transition-colors hover:text-white/65"
+              className="text-sm text-[var(--login-text-muted)] transition-colors hover:text-[var(--login-text-secondary)]"
             >
               {stocks.length === 0 ? '稍后再设置' : '跳过'}
             </button>
@@ -198,7 +198,7 @@ const OnboardingPage: React.FC = () => {
         </div>
 
         {/* Footer note */}
-        <p className="mt-5 text-center text-xs text-white/25">
+        <p className="mt-5 text-center text-xs text-[var(--login-text-muted)]">
           自选股随时可在「账户设置」中修改 · 免费档最多 {maxStocks} 只
         </p>
       </div>

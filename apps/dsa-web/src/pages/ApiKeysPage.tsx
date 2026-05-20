@@ -10,6 +10,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Button, Card, ConfirmDialog, Input, Loading, Select } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import {
   accountApi,
@@ -172,19 +173,19 @@ const ApiKeysPage: React.FC = () => {
 
   if (!userModeEnabled) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="我的 API Key" subtitle="BYOK">
           <p className="text-sm text-secondary-text">
             当前实例未启用 To C 多用户模式, BYOK 暂不可用。
           </p>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
   if (!loggedIn) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="我的 API Key" subtitle="BYOK">
           <p className="text-sm text-secondary-text">请先登录后管理你的 API Key。</p>
           <div className="mt-4">
@@ -193,7 +194,7 @@ const ApiKeysPage: React.FC = () => {
             </Link>
           </div>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
@@ -207,14 +208,14 @@ const ApiKeysPage: React.FC = () => {
 
   if (loadError) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <SettingsAlert title="加载失败" message={loadError.message} variant="error" />
-      </div>
+      </StandardPageLayout>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8 lg:py-10">
+    <StandardPageLayout>
       <div className="space-y-1">
         <p className="text-xs font-medium uppercase tracking-wider text-secondary-text">
           BYOK
@@ -271,7 +272,7 @@ const ApiKeysPage: React.FC = () => {
                         className={cn(
                           'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
                           row.status === 'active'
-                            ? 'border-cyan/30 bg-cyan/10 text-cyan'
+                            ? 'border-primary/30 bg-primary/10 text-primary'
                             : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
                         )}
                       >
@@ -401,7 +402,7 @@ const ApiKeysPage: React.FC = () => {
           setDeleteError(null);
         }}
       />
-    </div>
+    </StandardPageLayout>
   );
 };
 

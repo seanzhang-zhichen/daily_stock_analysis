@@ -125,7 +125,7 @@ const PrivacyPage: React.FC = () => {
       <h2 className="mt-8 text-base font-semibold">10. 联系方式</h2>
       <p>
         如对本政策或您的个人信息处理有任何疑问，请发送邮件至{' '}
-        <a className="text-cyan hover:underline" href="mailto:privacy@example.com">
+        <a className="text-primary hover:underline" href="mailto:privacy@example.com">
           privacy@example.com
         </a>
         ，我们将在 7 个工作日内回复。

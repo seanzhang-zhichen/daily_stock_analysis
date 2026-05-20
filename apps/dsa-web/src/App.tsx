@@ -22,7 +22,7 @@ import NoticesPage from './pages/NoticesPage';
 import TermsPage from './pages/legal/TermsPage';
 import PrivacyPage from './pages/legal/PrivacyPage';
 import RiskDisclosurePage from './pages/legal/RiskDisclosurePage';
-import { ApiErrorAlert, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
+import { ApiErrorAlert, Button, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAgentChatStore } from './stores/agentChatStore';
 import './App.css';
@@ -40,7 +40,7 @@ const AppContent: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-base">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan/20 border-t-cyan" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
       </div>
     );
   }
@@ -51,13 +51,13 @@ const AppContent: React.FC = () => {
         <div className="w-full max-w-lg">
           <ApiErrorAlert error={loadError} />
         </div>
-        <button
+        <Button
           type="button"
-          className="btn-primary"
+          variant="primary"
           onClick={() => void refreshStatus()}
         >
           重试
-        </button>
+        </Button>
       </div>
     );
   }

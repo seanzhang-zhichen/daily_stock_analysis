@@ -64,7 +64,6 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
       setSecondsElapsed(0);
       stopPolling();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Cleanup timers on unmount
@@ -102,14 +101,8 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
         setPhase('pending_pay');
         startPolling(createdOrder.orderNo);
       } catch (err) {
-        const parsed = getParsedApiError(err);
-        if (parsed.status === 501 || parsed.status === 503) {
-          setError(parsed);
-          setPhase('error');
-        } else {
-          setError(parsed);
-          setPhase('error');
-        }
+        setError(getParsedApiError(err));
+        setPhase('error');
       }
     } catch (err) {
       setError(getParsedApiError(err));
@@ -258,8 +251,8 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
                       className={
                         'rounded-xl border px-3 py-3 text-sm transition-colors ' +
                         (active
-                          ? 'border-cyan/40 bg-cyan/10 text-cyan'
-                          : 'border-border/60 bg-base/40 text-foreground/80 hover:border-cyan/30')
+                          ? 'border-primary/40 bg-primary/10 text-primary'
+                          : 'border-border/60 bg-base/40 text-foreground/80 hover:border-primary/30')
                       }
                     >
                       {PROVIDER_LABEL[p]}
@@ -289,7 +282,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
 
           {phase === 'creating_order' && (
             <div className="flex flex-col items-center gap-3 py-8 text-sm text-secondary-text">
-              <Loader2 className="h-6 w-6 animate-spin text-cyan" />
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
               <p>正在创建订单 / 拉起支付…</p>
             </div>
           )}

@@ -12,24 +12,25 @@ interface ReportStrategyProps {
 interface StrategyItemProps {
   label: string;
   value?: string;
-  tone: string;
+  toneClassName: string;
+  barClassName: string;
 }
 
 const StrategyItem: React.FC<StrategyItemProps> = ({
   label,
   value,
-  tone,
+  toneClassName,
+  barClassName,
 }) => (
-  <div className="home-subpanel home-strategy-card p-3" style={{ ['--home-strategy-tone' as string]: `var(${tone})` }}>
+  <div className="relative overflow-hidden rounded-xl border border-subtle bg-surface-muted/60 p-3">
     <div className="flex flex-col">
-      <span className="home-strategy-label mb-0.5 text-xs">{label}</span>
-      <span className="home-strategy-value text-lg font-bold font-mono" style={!value ? { color: 'var(--text-muted-text)' } : undefined}>
+      <span className="mb-0.5 text-xs font-medium uppercase tracking-[0.14em] text-muted-text">{label}</span>
+      <span className={`text-lg font-bold font-mono ${value ? toneClassName : 'text-muted-text'}`}>
         {value || '—'}
       </span>
     </div>
     <div
-      className="absolute bottom-0 left-0 right-0 h-0.5"
-      style={{ background: `linear-gradient(90deg, transparent, var(${tone}), transparent)` }}
+      className={`absolute bottom-0 left-0 right-0 h-0.5 ${barClassName}`}
     />
   </div>
 );
@@ -49,27 +50,31 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({ strategy, langua
     {
       label: text.idealBuy,
       value: strategy.idealBuy,
-      tone: '--home-strategy-buy',
+      toneClassName: 'text-success',
+      barClassName: 'bg-success',
     },
     {
       label: text.secondaryBuy,
       value: strategy.secondaryBuy,
-      tone: '--home-strategy-secondary',
+      toneClassName: 'text-primary',
+      barClassName: 'bg-primary',
     },
     {
       label: text.stopLoss,
       value: strategy.stopLoss,
-      tone: '--home-strategy-stop',
+      toneClassName: 'text-danger',
+      barClassName: 'bg-danger',
     },
     {
       label: text.takeProfit,
       value: strategy.takeProfit,
-      tone: '--home-strategy-take',
+      toneClassName: 'text-warning',
+      barClassName: 'bg-warning',
     },
   ];
 
   return (
-    <Card variant="bordered" padding="md" className="home-panel-card">
+    <Card variant="bordered" padding="md">
       <DashboardPanelHeader
         eyebrow={text.strategyPoints}
         title={text.sniperLevels}

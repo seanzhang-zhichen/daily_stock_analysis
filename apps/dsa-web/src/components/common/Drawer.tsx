@@ -60,14 +60,13 @@ export const Drawer: React.FC<DrawerProps> = ({
 
   const titleId = title ? `drawer-title-${side}` : undefined;
   const sidePositionClass = side === 'left' ? 'left-0 justify-start' : 'right-0 justify-end';
-  const borderClass = side === 'left' ? 'border-r' : 'border-l';
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ zIndex }} role="presentation">
       {/* Backdrop */}
       <div
         className={cn(
-          'absolute inset-0 bg-background/80 backdrop-blur-sm transition-opacity duration-300',
+          'ui-drawer-backdrop',
           backdropClassName,
         )}
         onClick={onClose}
@@ -79,23 +78,22 @@ export const Drawer: React.FC<DrawerProps> = ({
           aria-modal="true"
           aria-labelledby={titleId}
           className={cn(
-            'relative flex w-full flex-col bg-card',
-            borderClass,
-            side === 'right' ? 'border-border/80' : 'border-border/70 shadow-2xl',
+            'ui-drawer-panel',
+            side === 'right' ? 'ui-drawer-panel-right' : 'ui-drawer-panel-left',
             side === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'
           )}
         >
-          <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div className="ui-drawer-header">
             {title ? (
               <div>
-                <span className="label-uppercase">DETAIL VIEW</span>
-                <h2 id={titleId} className="mt-1 text-lg font-semibold text-foreground">{title}</h2>
+                <span className="ui-eyebrow">DETAIL VIEW</span>
+                <h2 id={titleId} className="ui-drawer-title">{title}</h2>
               </div>
             ) : <div />}
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-card/80 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+              className="ui-icon-button"
               aria-label="关闭抽屉"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -103,7 +101,7 @@ export const Drawer: React.FC<DrawerProps> = ({
               </svg>
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="ui-drawer-body">
             {children}
           </div>
         </div>

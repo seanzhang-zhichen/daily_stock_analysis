@@ -18,9 +18,9 @@ export const SettingsCategoryNav: React.FC<SettingsCategoryNavProps> = ({
   onSelect,
 }) => {
   return (
-    <div className="h-full rounded-[1.5rem] border settings-border bg-card/94 p-4 shadow-soft-card-strong backdrop-blur-sm">
+    <div className="h-full rounded-[1.5rem] border border-border/60 bg-card/94 p-4 shadow-card backdrop-blur-sm">
       <div className="mb-4">
-        <p className="settings-accent-text text-xs font-semibold uppercase tracking-[0.3em]">配置分类</p>
+        <p className="text-primary text-xs font-semibold uppercase tracking-[0.3em]">配置分类</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-text">按模块整理系统设置与认证能力。</p>
       </div>
 
@@ -38,8 +38,8 @@ export const SettingsCategoryNav: React.FC<SettingsCategoryNavProps> = ({
               className={cn(
                 'w-full rounded-[1.1rem] border px-3 py-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200',
                 isActive
-                  ? 'settings-nav-item-active'
-                  : 'border-[var(--settings-border)] bg-[var(--settings-surface)] hover:border-[hsl(var(--primary)/0.32)] hover:bg-[hsl(var(--primary)/0.045)]',
+                  ? 'border-primary/36 bg-primary/12 text-foreground shadow-[0_0_0_1px_hsl(var(--primary)/0.18)_inset]'
+                  : 'border-border/60 bg-card/94 hover:border-primary/32 hover:bg-primary/5',
               )}
               onClick={() => onSelect(category.category)}
             >
@@ -55,7 +55,7 @@ export const SettingsCategoryNav: React.FC<SettingsCategoryNavProps> = ({
                 <Badge
                   variant={isActive ? 'info' : 'default'}
                   size="sm"
-                  className={isActive ? 'settings-accent-badge border-[hsl(var(--primary)/0.36)]' : 'border-[var(--settings-border)] bg-[var(--settings-surface-hover)] text-muted-text'}
+                  className={isActive ? 'border-primary/36 bg-primary/10 text-primary' : 'border-border/60 bg-card/97 text-muted-text'}
                 >
                   {count}
                 </Badge>

@@ -20,6 +20,7 @@ import {
   Webhook,
 } from 'lucide-react';
 import { Button, Input, Card } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { accountApi, type WatchlistItem, type NotificationPrefs } from '../api/account';
@@ -263,20 +264,20 @@ const AccountPage: React.FC = () => {
 
   if (userMode == null || !userMode.userModeEnabled) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="账户设置" subtitle="ACCOUNT">
           <p className="text-sm text-secondary-text">
             当前实例未启用 To C 多用户模式 (<code className="rounded bg-hover px-1">ENABLE_USER_REGISTRATION</code>),
             账户管理仅在管理员设置页可用。
           </p>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
   if (!userMode.loggedIn || user == null) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="账户设置" subtitle="ACCOUNT">
           <p className="text-sm text-secondary-text">请先登录后查看账户信息。</p>
           <div className="mt-4">
@@ -285,7 +286,7 @@ const AccountPage: React.FC = () => {
             </Link>
           </div>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
@@ -343,7 +344,7 @@ const AccountPage: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6 lg:py-8">
+    <StandardPageLayout>
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-text">
@@ -373,7 +374,7 @@ const AccountPage: React.FC = () => {
             <dd className="flex items-center gap-2 text-foreground">
               <span className="break-all">{user.email}</span>
               {user.emailVerified ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-cyan/30 bg-cyan/10 px-2 py-0.5 text-xs text-cyan">
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary">
                   <CheckCircle2 className="h-3 w-3" /> 已验证
                 </span>
               ) : (
@@ -524,7 +525,7 @@ const AccountPage: React.FC = () => {
             <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
               <div className="space-y-0.5">
                 <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <Bell className="h-4 w-4 text-cyan" /> 每日推送
+                  <Bell className="h-4 w-4 text-primary" /> 每日推送
                 </p>
                 <p className="text-xs text-secondary-text">
                   交易日收盘后，自动发送自选股 AI 分析报告到你的邮箱。
@@ -535,7 +536,7 @@ const AccountPage: React.FC = () => {
                 disabled={prefsSaving}
                 onClick={() => void handleTogglePref('dailyPushEnabled', !(prefs?.dailyPushEnabled ?? false))}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                  prefs?.dailyPushEnabled ? 'bg-cyan' : 'bg-border'
+                  prefs?.dailyPushEnabled ? 'bg-primary' : 'bg-border'
                 }`}
               >
                 <span
@@ -550,7 +551,7 @@ const AccountPage: React.FC = () => {
             <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
               <div className="space-y-0.5">
                 <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <Mail className="h-4 w-4 text-cyan" /> 邮件通知
+                  <Mail className="h-4 w-4 text-primary" /> 邮件通知
                 </p>
                 <p className="text-xs text-secondary-text">
                   通过注册邮箱接收分析报告与系统通知。
@@ -561,7 +562,7 @@ const AccountPage: React.FC = () => {
                 disabled={prefsSaving}
                 onClick={() => void handleTogglePref('emailEnabled', !(prefs?.emailEnabled ?? true))}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                  (prefs?.emailEnabled ?? true) ? 'bg-cyan' : 'bg-border'
+                  (prefs?.emailEnabled ?? true) ? 'bg-primary' : 'bg-border'
                 }`}
               >
                 <span
@@ -592,7 +593,7 @@ const AccountPage: React.FC = () => {
                   <div>
                     <p className="mb-1 text-xs text-secondary-text">类型</p>
                     <select
-                      className="input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      className="ui-input h-11 w-full appearance-none px-3 text-sm"
                       value={webhookType}
                       onChange={(e) => setWebhookType(e.target.value)}
                       disabled={prefsSaving}
@@ -707,7 +708,7 @@ const AccountPage: React.FC = () => {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
             <div className="space-y-1">
               <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                <Download className="h-4 w-4 text-cyan" /> 导出个人数据
+                <Download className="h-4 w-4 text-primary" /> 导出个人数据
               </p>
               <p className="text-xs text-secondary-text">
                 将你的账户信息、自选股、历史分析、订单等数据以 JSON 格式发送至注册邮箱。
@@ -818,7 +819,7 @@ const AccountPage: React.FC = () => {
           )}
         </div>
       </Card>
-    </div>
+    </StandardPageLayout>
   );
 };
 

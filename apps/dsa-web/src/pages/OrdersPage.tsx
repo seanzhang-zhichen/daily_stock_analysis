@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button, Card, Loading } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import { billingApi, type BillingOrder } from '../api/billing';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
@@ -47,7 +48,7 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
 const ORDER_STATUS_COLOR: Record<string, string> = {
   created: 'text-amber-300 border-amber-400/40 bg-amber-500/10',
   pending: 'text-blue-300 border-blue-400/40 bg-blue-500/10',
-  paid: 'text-cyan border-cyan/40 bg-cyan/10',
+  paid: 'text-primary border-primary/40 bg-primary/10',
   failed: 'text-red-400 border-red-400/40 bg-red-500/10',
   closed: 'text-secondary-text border-border/40 bg-card/40',
   refunded: 'text-purple-300 border-purple-400/40 bg-purple-500/10',
@@ -94,7 +95,7 @@ const RefundDialog: React.FC<{
         )}
         <label className="block text-sm text-secondary-text mb-1">退款原因 <span className="text-red-400">*</span></label>
         <textarea
-          className="w-full rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm text-foreground placeholder-secondary-text/50 focus:border-cyan/50 focus:outline-none resize-none"
+          className="w-full rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm text-foreground placeholder-secondary-text/50 focus:border-primary/50 focus:outline-none resize-none"
           rows={3}
           maxLength={255}
           placeholder="请简要说明退款原因…"
@@ -190,16 +191,16 @@ const OrdersPage: React.FC = () => {
 
   if (!userMode?.userModeEnabled) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="我的订单" subtitle="ORDERS">
           <p className="text-sm text-secondary-text">当前实例未启用 To C 多用户模式。</p>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-8 lg:py-10">
+    <StandardPageLayout>
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <p className="text-xs font-medium uppercase tracking-wider text-secondary-text">ORDERS</p>
@@ -260,7 +261,7 @@ const OrdersPage: React.FC = () => {
                   <>
                     <Link
                       to={`/account/invoices?orderNo=${order.orderNo}`}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 px-3 py-1.5 text-xs text-secondary-text hover:border-cyan/50 hover:text-cyan transition-colors"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 px-3 py-1.5 text-xs text-secondary-text hover:border-primary/50 hover:text-primary transition-colors"
                     >
                       <FileText className="h-3.5 w-3.5" /> 申请发票
                     </Link>
@@ -283,7 +284,7 @@ const OrdersPage: React.FC = () => {
                   <>
                     <Link
                       to="/billing"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-cyan/40 bg-cyan/10 px-3 py-1.5 text-xs text-cyan hover:bg-cyan/20 transition-colors"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/20 transition-colors"
                     >
                       <CreditCard className="h-3.5 w-3.5" /> 去支付
                     </Link>
@@ -320,11 +321,11 @@ const OrdersPage: React.FC = () => {
       <p className="text-xs text-secondary-text">
         <Clock className="mr-1 inline h-3 w-3" />
         订单在未支付状态下 15 分钟后自动关闭。
-        <Link to="/billing" className="ml-2 inline-flex items-center gap-1 text-cyan hover:underline">
+        <Link to="/billing" className="ml-2 inline-flex items-center gap-1 text-primary hover:underline">
           返回会员中心 <ArrowUpRight className="h-3 w-3" />
         </Link>
       </p>
-    </div>
+    </StandardPageLayout>
   );
 };
 

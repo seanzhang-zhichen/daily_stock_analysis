@@ -132,7 +132,7 @@ export const NotificationTestPanel: React.FC<NotificationTestPanelProps> = ({
           rows={4}
           disabled={disabled || isTesting}
           onChange={(event) => setContent(event.target.value)}
-          className="input-surface input-focus-glow min-h-[112px] w-full resize-y rounded-xl border bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          className="ui-input min-h-[112px] w-full resize-y px-4 py-3 text-sm leading-6 text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         />
       </label>
 
@@ -157,7 +157,7 @@ export const NotificationTestPanel: React.FC<NotificationTestPanelProps> = ({
               {result.attempts.map((attempt, index) => (
                 <div
                   key={`${attempt.channel}-${index}-${attempt.target || 'target'}`}
-                  className="rounded-xl border settings-border bg-background/35 px-4 py-3"
+                  className="rounded-xl border border-border/60 bg-background/35 px-4 py-3"
                 >
                   <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">

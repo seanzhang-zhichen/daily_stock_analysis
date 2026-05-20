@@ -88,7 +88,7 @@ export class SettingsPanelErrorBoundary extends Component<
     }
 
     return (
-      <div className={cn('rounded-[1.5rem] border settings-border bg-card/94 p-5 shadow-soft-card-strong backdrop-blur-sm', this.props.className)}>
+      <div className={cn('rounded-[1.5rem] border border-border/60 bg-card/94 p-5 shadow-card backdrop-blur-sm', this.props.className)}>
         <InlineAlert
           title={`${this.props.title}加载失败`}
           variant="danger"

@@ -56,7 +56,7 @@ function renderFieldControl(
   controlId: string,
 ) {
   const schema = item.schema;
-  const commonClass = 'input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-4 text-sm transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
+  const commonClass = 'ui-input h-11 w-full px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60';
   const controlType = schema?.uiControl ?? 'text';
   const isMultiValue = isMultiValueField(item);
 
@@ -207,9 +207,9 @@ export const SettingsField: React.FC<SettingsFieldProps> = ({
   return (
     <div
       className={cn(
-        'rounded-[1.15rem] border bg-[var(--settings-surface)] p-4 shadow-soft-card transition-[background-color,border-color,box-shadow] duration-200',
-        hasError ? 'border-danger/40 hover:border-danger/55' : 'border-[var(--settings-border)] hover:border-[var(--settings-border-strong)]',
-        'hover:bg-[var(--settings-surface-hover)]',
+        'rounded-[1.15rem] border bg-card/94 p-4 shadow-card transition-[background-color,border-color,box-shadow] duration-200',
+        hasError ? 'border-danger/40 hover:border-danger/55' : 'border-border/60 hover:border-border/80',
+        'hover:bg-card/97',
       )}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">

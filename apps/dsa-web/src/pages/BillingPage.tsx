@@ -12,6 +12,7 @@ import {
   TicketPercent,
 } from 'lucide-react';
 import { Button, Card, Input, Loading } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import PaymentDialog from '../components/billing/PaymentDialog';
 import { accountApi } from '../api/account';
@@ -66,7 +67,7 @@ const PlanCard: React.FC<{
       className={cn(
         'flex flex-col gap-3 rounded-2xl border p-5 transition-shadow',
         tone === 'current'
-          ? 'border-cyan/40 bg-cyan/5 shadow-[0_0_20px_var(--nav-indicator-shadow)]'
+          ? 'border-primary/40 bg-primary/5 shadow-[0_0_20px_var(--nav-indicator-shadow)]'
           : tone === 'recommended'
             ? 'border-purple-400/40 bg-purple-500/5'
             : 'border-border/60 bg-card/60'
@@ -80,7 +81,7 @@ const PlanCard: React.FC<{
           <h3 className="mt-1 text-lg font-semibold text-foreground">{plan.name}</h3>
         </div>
         {tone === 'current' ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-cyan/40 bg-cyan/10 px-2 py-0.5 text-xs text-cyan">
+          <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-primary">
             <CheckCircle2 className="h-3 w-3" /> 当前档位
           </span>
         ) : tone === 'recommended' ? (
@@ -105,15 +106,15 @@ const PlanCard: React.FC<{
 
       <ul className="space-y-1.5 text-sm">
         <li className="flex gap-2 text-foreground/90">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
           每日 {plan.dailyAnalysisLimit > 0 ? `${plan.dailyAnalysisLimit} 次` : '不限'} 分析
         </li>
         <li className="flex gap-2 text-foreground/90">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
           每日 {plan.dailyAgentLimit > 0 ? `${plan.dailyAgentLimit} 次` : '不限'} Agent 问股
         </li>
         <li className="flex gap-2 text-foreground/90">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
           自选股上限 {plan.maxStocks > 0 ? `${plan.maxStocks} 只` : '不限'}
         </li>
         <li
@@ -125,7 +126,7 @@ const PlanCard: React.FC<{
           <CheckCircle2
             className={cn(
               'h-4 w-4 shrink-0',
-              plan.canWebhook ? 'text-cyan' : 'text-border'
+              plan.canWebhook ? 'text-primary' : 'text-border'
             )}
           />
           自定义 Webhook 推送 {plan.canWebhook ? '' : '(不支持)'}
@@ -139,7 +140,7 @@ const PlanCard: React.FC<{
           <CheckCircle2
             className={cn(
               'h-4 w-4 shrink-0',
-              plan.canByok ? 'text-cyan' : 'text-border'
+              plan.canByok ? 'text-primary' : 'text-border'
             )}
           />
           支持 BYOK (自带 API Key) {plan.canByok ? '' : '(不支持)'}
@@ -158,7 +159,7 @@ const PlanCard: React.FC<{
         </Button>
       )}
       {isCurrent && (
-        <p className="mt-2 text-center text-xs text-cyan/80">当前套餐</p>
+        <p className="mt-2 text-center text-xs text-primary/80">当前套餐</p>
       )}
     </div>
   );
@@ -250,13 +251,13 @@ const BillingPage: React.FC = () => {
 
   if (!userModeEnabled) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="会员中心" subtitle="BILLING">
           <p className="text-sm text-secondary-text">
             当前实例未启用 To C 多用户模式, 会员中心暂不可用。
           </p>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
@@ -270,9 +271,9 @@ const BillingPage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <SettingsAlert title="加载失败" message={error.message} variant="error" />
-      </div>
+      </StandardPageLayout>
     );
   }
 
@@ -281,7 +282,7 @@ const BillingPage: React.FC = () => {
     plans.find((p) => p.code === 'pro')?.code ?? plans.find((p) => p.canByok)?.code;
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 lg:py-10">
+    <StandardPageLayout>
       <div className="space-y-1">
         <p className="text-xs font-medium uppercase tracking-wider text-secondary-text">
           BILLING
@@ -347,7 +348,7 @@ const BillingPage: React.FC = () => {
         )}
         {!loggedIn && (
           <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300/80">
-            升级需要登录, 请先 <Link to="/login" className="text-cyan underline">登录</Link>。
+            升级需要登录, 请先 <Link to="/login" className="text-primary underline">登录</Link>。
           </div>
         )}
       </Card>
@@ -373,7 +374,7 @@ const BillingPage: React.FC = () => {
         </form>
         {!loggedIn ? (
           <p className="mt-3 text-xs text-secondary-text">
-            兑换需要登录, 请先 <Link to="/login" className="text-cyan">登录</Link>。
+            兑换需要登录, 请先 <Link to="/login" className="text-primary">登录</Link>。
           </p>
         ) : null}
         {redeemError ? (
@@ -428,10 +429,10 @@ const BillingPage: React.FC = () => {
 
       <div className="flex flex-wrap items-center gap-4 text-xs text-secondary-text">
         <span><CreditCard className="mr-1 inline h-3 w-3" />内容由 AI 生成, 仅供参考, 不构成投资建议。</span>
-        <Link to="/account/orders" className="inline-flex items-center gap-1 text-cyan hover:underline">
+        <Link to="/account/orders" className="inline-flex items-center gap-1 text-primary hover:underline">
           <Receipt className="h-3 w-3" /> 我的订单
         </Link>
-        <Link to="/account/invoices" className="inline-flex items-center gap-1 text-cyan hover:underline">
+        <Link to="/account/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">
           <FileText className="h-3 w-3" /> 申请发票
         </Link>
         <Link to="/legal/terms" className="inline-flex items-center gap-1 text-secondary-text hover:text-foreground">
@@ -443,7 +444,7 @@ const BillingPage: React.FC = () => {
         <Link to="/legal/risk-disclosure" className="inline-flex items-center gap-1 text-secondary-text hover:text-foreground">
           风险揭示
         </Link>
-        <Link to="/account" className="inline-flex items-center gap-1 text-cyan hover:underline">
+        <Link to="/account" className="inline-flex items-center gap-1 text-primary hover:underline">
           返回账户设置 <ArrowUpRight className="h-3 w-3" />
         </Link>
       </div>
@@ -471,7 +472,7 @@ const BillingPage: React.FC = () => {
           }}
         />
       )}
-    </div>
+    </StandardPageLayout>
   );
 };
 

@@ -8,6 +8,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Button, Card, Input, Loading } from '../components/common';
+import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
 import { billingApi, type BillingInvoice } from '../api/billing';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
@@ -30,7 +31,7 @@ const INVOICE_STATUS_LABEL: Record<string, string> = {
 
 const INVOICE_STATUS_COLOR: Record<string, string> = {
   pending: 'text-amber-300 border-amber-400/40 bg-amber-500/10',
-  issued: 'text-cyan border-cyan/40 bg-cyan/10',
+  issued: 'text-primary border-primary/40 bg-primary/10',
   rejected: 'text-red-400 border-red-400/40 bg-red-500/10',
 };
 
@@ -87,7 +88,7 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({ defaultOrderNo = '', onSucces
         <div>
           <p className="mb-1 text-xs text-secondary-text">发票类型</p>
           <select
-            className="input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-3 text-sm"
+            className="ui-input h-11 w-full appearance-none px-3 text-sm"
             value={invoiceType}
             onChange={(e) => setInvoiceType(e.target.value as 'personal' | 'company')}
             disabled={submitting}
@@ -175,16 +176,16 @@ const InvoicesPage: React.FC = () => {
 
   if (!userMode?.userModeEnabled) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-10">
+      <StandardPageLayout>
         <Card title="我的发票" subtitle="INVOICES">
           <p className="text-sm text-secondary-text">当前实例未启用 To C 多用户模式。</p>
         </Card>
-      </div>
+      </StandardPageLayout>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-8 lg:py-10">
+    <StandardPageLayout>
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <p className="text-xs font-medium uppercase tracking-wider text-secondary-text">INVOICES</p>
@@ -254,7 +255,7 @@ const InvoicesPage: React.FC = () => {
                           href={inv.issuedUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-cyan hover:underline"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
                         >
                           下载 <ArrowUpRight className="h-3 w-3" />
                         </a>
@@ -271,11 +272,11 @@ const InvoicesPage: React.FC = () => {
       </Card>
 
       <p className="text-xs text-secondary-text">
-        <Link to="/account/orders" className="inline-flex items-center gap-1 text-cyan hover:underline">
+        <Link to="/account/orders" className="inline-flex items-center gap-1 text-primary hover:underline">
           返回我的订单 <ArrowUpRight className="h-3 w-3" />
         </Link>
       </p>
-    </div>
+    </StandardPageLayout>
   );
 };
 

@@ -1,0 +1,140 @@
+.app-shell {
+  min-height: 100vh;
+  background: transparent;
+  color: hsl(var(--color-foreground));
+}
+
+.app-shell-frame {
+  margin: 0 auto;
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 1800px;
+  padding: 0.75rem;
+}
+
+.app-shell-sidebar {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 40;
+  display: none;
+  max-height: calc(100vh - 1.5rem);
+  flex-shrink: 0;
+  align-self: flex-start;
+  overflow: visible;
+  border: 1px solid hsl(var(--color-border) / 0.86);
+  border-radius: var(--radius-xl);
+  background: hsl(var(--color-surface) / 0.92);
+  padding: 0.625rem;
+  box-shadow: var(--shadow-card);
+}
+
+.app-shell-main {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  padding-top: 3.5rem;
+  touch-action: pan-y;
+}
+
+.app-mobile-toolbar {
+  pointer-events: none;
+  position: fixed;
+  inset-inline: 0;
+  top: 0.75rem;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0 0.75rem;
+}
+
+.app-mobile-toolbar > * {
+  pointer-events: auto;
+}
+
+.app-page {
+  margin: 0 auto;
+  min-height: 100%;
+  width: 100%;
+  max-width: 80rem;
+  padding: 1rem var(--space-page-x) 2rem;
+}
+
+.standard-page-layout,
+.workspace-page-layout,
+.chat-workspace-layout,
+.auth-layout {
+  margin: 0 auto;
+  width: 100%;
+  padding: 1rem var(--space-page-x) 2rem;
+}
+
+.standard-page-layout {
+  max-width: 72rem;
+}
+
+.workspace-page-layout {
+  max-width: 96rem;
+}
+
+.chat-workspace-layout {
+  display: flex;
+  min-height: calc(100vh - 2rem);
+  max-width: 96rem;
+  flex-direction: column;
+}
+
+.chat-workspace-layout-workspace {
+  height: calc(100vh - 5rem);
+  min-height: 0;
+  flex-direction: row;
+  gap: 1rem;
+  overflow: hidden;
+  padding: 0;
+}
+
+.auth-layout {
+  display: grid;
+  min-height: 100vh;
+  max-width: 72rem;
+  place-items: center;
+}
+
+.layout-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section);
+}
+
+@media (min-width: 640px) {
+  .app-shell-frame {
+    padding: 1rem;
+  }
+
+  .app-shell-sidebar {
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+  }
+
+  .chat-workspace-layout-workspace {
+    height: calc(100vh - 5.5rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-shell-sidebar {
+    display: flex;
+  }
+
+  .app-shell-main {
+    padding-top: 0;
+    padding-left: 0.75rem;
+  }
+
+  .chat-workspace-layout-workspace {
+    height: calc(100vh - 2rem);
+  }
+}

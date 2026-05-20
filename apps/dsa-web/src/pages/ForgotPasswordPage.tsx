@@ -69,7 +69,7 @@ const ForgotPasswordPage: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main,#0a0e17)] px-4 py-12">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main)] px-4 py-12">
       {/* Background decoration */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <div className="absolute -left-[20%] -top-[20%] h-[60%] w-[60%] rounded-full opacity-15" style={{ background: 'radial-gradient(circle, hsl(var(--primary)) 0%, transparent 70%)' }} />
@@ -82,14 +82,14 @@ const ForgotPasswordPage: React.FC = () => {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
             <MailQuestion className="h-4.5 w-4.5 text-white" />
           </div>
-          <span className="text-lg font-bold tracking-tight text-white">DSA</span>
+          <span className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</span>
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-7 backdrop-blur-xl">
+        <div className="rounded-2xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-7 backdrop-blur-xl">
           <div className="mb-6">
-            <h2 className="text-xl font-bold tracking-tight text-white">找回密码</h2>
-            <p className="mt-1.5 text-sm text-white/45">
+            <h2 className="text-xl font-bold tracking-tight text-[var(--login-text-primary)]">找回密码</h2>
+            <p className="mt-1.5 text-sm text-[var(--login-text-secondary)]">
               {step === 'request'
                 ? '输入注册邮箱，我们将发送重置链接'
                 : '填写邮件中的 token 和新密码完成重置'}
@@ -200,7 +200,7 @@ const ForgotPasswordPage: React.FC = () => {
         </div>
 
         <div className="mt-5 text-center">
-          <Link to="/login" className="text-sm text-white/40 transition-colors hover:text-white/70">
+          <Link to="/login" className="text-sm text-[var(--login-text-muted)] transition-colors hover:text-[var(--login-text-secondary)]">
             ← 返回登录
           </Link>
         </div>

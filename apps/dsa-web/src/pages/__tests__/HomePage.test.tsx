@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { analysisApi, DuplicateTaskError } from '../../api/analysis';
@@ -155,6 +155,13 @@ describe('HomePage', () => {
     expect(screen.getByTestId('home-dashboard-scroll')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('输入股票代码或名称，如 600519、贵州茅台、AAPL')).toBeInTheDocument();
     expect(await screen.findByText('趋势维持强势')).toBeInTheDocument();
+    const reportToolbar = await screen.findByTestId('home-report-toolbar');
+    expect(within(reportToolbar).getByRole('heading', { name: '贵州茅台', level: 2 })).toBeInTheDocument();
+    expect(within(reportToolbar).getByText('600519')).toBeInTheDocument();
+    expect(within(reportToolbar).getByText('标准')).toBeInTheDocument();
+    expect(
+      within(reportToolbar).getAllByRole('button').map((button) => button.getAttribute('data-variant')),
+    ).toEqual(['outline', 'outline', 'secondary']);
     expect(
       screen.getByRole('button', {
         name: getReportText(normalizeReportLanguage(historyReport.meta.reportLanguage)).fullReport,
@@ -176,9 +183,11 @@ describe('HomePage', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('开始分析')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '开始分析', level: 3 })).toBeInTheDocument();
-    expect(screen.getByText('输入股票代码进行分析，或从左侧选择历史报告查看。')).toBeInTheDocument();
+    expect(await screen.findByText('从一只股票开始分析')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '从一只股票开始分析', level: 3 })).toBeInTheDocument();
+    expect(screen.getByText(/输入股票代码或名称即可生成报告/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /贵州茅台/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /先看大盘复盘/i })).toBeInTheDocument();
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();
   });
 
@@ -324,7 +333,7 @@ describe('HomePage', () => {
     expect(dashboardScroll).toContainElement(marketReviewReport);
     expect(marketReviewReport.className).not.toContain('max-h-64');
     expect(marketReviewReport.className).not.toContain('overflow-y-auto');
-    expect(await screen.findByText('开始分析')).toBeInTheDocument();
+    expect(await screen.findByText('从一只股票开始分析')).toBeInTheDocument();
   });
 
   it('shows first-run setup gaps and links to settings', async () => {
@@ -429,7 +438,7 @@ describe('HomePage', () => {
     });
   });
 
-  it('opens and closes the mobile history drawer without changing dashboard styles', async () => {
+  it('opens and closes the mobile history drawer with new drawer styling', async () => {
     vi.mocked(historyApi.getList).mockResolvedValue({
       total: 0,
       page: 1,
@@ -446,13 +455,13 @@ describe('HomePage', () => {
     const trigger = await screen.findByRole('button', { name: '历史记录' });
     fireEvent.click(trigger);
 
-    expect(container.querySelector('.page-drawer-overlay')).toBeTruthy();
-    expect(container.querySelector('.dashboard-card')).toBeTruthy();
+    expect(container.querySelector('.ui-drawer-backdrop')).toBeTruthy();
+    expect(container.querySelector('.ui-drawer-panel')).toBeTruthy();
 
     fireEvent.click(container.querySelector('.fixed.inset-0.z-40') as HTMLElement);
 
     await waitFor(() => {
-      expect(container.querySelector('.page-drawer-overlay')).toBeFalsy();
+      expect(container.querySelector('.ui-drawer-backdrop')).toBeFalsy();
     });
   });
 

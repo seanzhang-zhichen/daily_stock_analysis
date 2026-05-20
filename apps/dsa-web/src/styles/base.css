@@ -1,0 +1,19 @@
+html {
+  background: hsl(var(--color-background));
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, hsl(var(--color-primary) / 0.06), transparent 32rem),
+    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.36));
+  color: hsl(var(--color-foreground));
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: hsl(var(--color-primary) / 0.22);
+  color: hsl(var(--color-foreground));
+}

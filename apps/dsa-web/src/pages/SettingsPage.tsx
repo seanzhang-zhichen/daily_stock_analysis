@@ -527,13 +527,13 @@ const SettingsPage: React.FC = () => {
     <EmptyState
       title="当前分类下暂无配置项"
       description="当前分类没有可编辑字段；可切换左侧分类继续查看其它系统配置。"
-      className="settings-surface-panel settings-border-strong border-none bg-transparent shadow-none"
+      className="border-none bg-transparent shadow-none"
     />
   );
 
   return (
-    <div className="settings-page min-h-full px-4 pb-6 pt-4 md:px-6">
-      <div className="mb-5 rounded-[1.5rem] border settings-border bg-card/94 px-5 py-5 shadow-soft-card-strong backdrop-blur-sm">
+    <div className="min-h-full px-4 pb-6 pt-4 md:px-6">
+      <div className="mb-5 rounded-[1.5rem] border border-border/60 bg-card/94 px-5 py-5 shadow-card backdrop-blur-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">系统设置</h1>
@@ -606,7 +606,7 @@ const SettingsPage: React.FC = () => {
                 <div
                   className={`grid grid-cols-1 gap-3 ${shouldShowDesktopVersionCard ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}
                 >
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
+                  <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
                       WebUI 版本
                     </p>
@@ -614,7 +614,7 @@ const SettingsPage: React.FC = () => {
                       {WEB_BUILD_INFO.version}
                     </p>
                   </div>
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
+                  <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
                       构建标识
                     </p>
@@ -622,7 +622,7 @@ const SettingsPage: React.FC = () => {
                       {WEB_BUILD_INFO.buildId}
                     </p>
                   </div>
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
+                  <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
                       构建时间
                     </p>
@@ -631,7 +631,7 @@ const SettingsPage: React.FC = () => {
                     </p>
                   </div>
                   {shouldShowDesktopVersionCard ? (
-                    <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
+                    <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
                         桌面端版本
                       </p>
@@ -645,7 +645,7 @@ const SettingsPage: React.FC = () => {
                   重新执行前端构建或 Docker 镜像构建后，此处的构建标识和构建时间会更新，可用来确认当前页面资源是否已切换。
                 </p>
                 {canCheckDesktopUpdate ? (
-                  <div className="mt-4 space-y-3 rounded-2xl border settings-border bg-background/30 px-4 py-4">
+                  <div className="mt-4 space-y-3 rounded-2xl border border-border/60 bg-background/30 px-4 py-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">桌面端更新</p>

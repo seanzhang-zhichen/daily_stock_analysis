@@ -48,8 +48,8 @@ const LegalPageLayout: React.FC<LegalPageLayoutProps> = ({
                   className={
                     'inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 transition-colors ' +
                     (isActive
-                      ? 'border-cyan/40 bg-cyan/10 text-cyan'
-                      : 'border-border/60 bg-card/40 text-secondary-text hover:border-cyan/30 hover:text-foreground')
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/60 bg-card/40 text-secondary-text hover:border-primary/30 hover:text-foreground')
                   }
                 >
                   <Icon className="h-3.5 w-3.5" /> {item.label}
@@ -79,7 +79,7 @@ const LegalPageLayout: React.FC<LegalPageLayoutProps> = ({
           </p>
           <p className="mt-2">
             如对本协议有疑问，可发送邮件至{' '}
-            <a className="text-cyan hover:underline" href="mailto:support@example.com">
+            <a className="text-primary hover:underline" href="mailto:support@example.com">
               support@example.com
             </a>{' '}
             联系客服。

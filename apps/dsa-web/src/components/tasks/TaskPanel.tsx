@@ -2,6 +2,7 @@ import type React from 'react';
 import { Badge, Card, StatusDot } from '../common';
 import { DashboardPanelHeader } from '../dashboard';
 import type { TaskInfo } from '../../types/analysis';
+import { formatDateTime } from '../../utils/format';
 
 /**
  * 任务项组件属性
@@ -20,56 +21,69 @@ const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
   const statusVariant = isProcessing ? 'info' : 'default';
   const statusTone = isProcessing ? 'info' : 'neutral';
   const progress = Math.max(0, Math.min(100, task.progress || 0));
+  const phaseLabel = isPending
+    ? '排队等待'
+    : task.message || (progress >= 80 ? '整理报告' : progress >= 40 ? '生成分析' : '准备数据');
+  const timeLabel = formatDateTime(task.startedAt || task.createdAt);
 
   return (
-    <div className="home-subpanel flex items-center gap-3 px-3 py-2.5">
-      {/* 状态图标 */}
-      <div className="shrink-0">
-        {isProcessing ? (
-          <StatusDot tone="info" pulse className="h-2.5 w-2.5" aria-label="任务进行中" />
-        ) : isPending ? (
-          <StatusDot tone="neutral" className="h-2.5 w-2.5" aria-label="任务等待中" />
-        ) : null}
-      </div>
-
-      {/* 任务信息 */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground truncate">
-            {task.stockName || task.stockCode}
-          </span>
-          <span className="text-xs text-muted-text">
-            {task.stockCode}
-          </span>
+    <div className="rounded-xl border border-subtle bg-surface/80 px-3 py-3">
+      <div className="flex items-start gap-3">
+        {/* 状态图标 */}
+        <div className="mt-1 shrink-0">
+          {isProcessing ? (
+            <StatusDot tone="info" pulse className="h-2.5 w-2.5" aria-label="任务进行中" />
+          ) : isPending ? (
+            <StatusDot tone="neutral" className="h-2.5 w-2.5" aria-label="任务等待中" />
+          ) : null}
         </div>
-        {task.message && (
-          <p className="text-xs text-secondary-text truncate mt-0.5">
-            {task.message}
-          </p>
-        )}
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/8">
-            <div
-              className="h-full rounded-full bg-cyan transition-[width] duration-300 ease-out"
-              style={{ width: `${progress}%` }}
-            />
+
+        {/* 任务信息 */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-sm font-medium text-foreground truncate">
+                {task.stockName || task.stockCode}
+              </span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-text">
+                <span className="font-mono">{task.stockCode}</span>
+                <span aria-hidden="true">·</span>
+                <span>{timeLabel}</span>
+              </div>
+            </div>
+            <Badge
+              variant={statusVariant}
+              className="shrink-0 justify-center gap-1.5 shadow-none"
+              aria-label={`任务状态：${statusLabel}`}
+            >
+              <StatusDot tone={statusTone} pulse={isProcessing} className="h-1.5 w-1.5" />
+              {statusLabel}
+            </Badge>
           </div>
-          <span className="shrink-0 text-[11px] text-muted-text tabular-nums">
-            {progress}%
-          </span>
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+            <span className="min-w-0 truncate text-secondary-text">
+              {phaseLabel}
+            </span>
+            <span className="shrink-0 text-[11px] text-muted-text tabular-nums">
+              {progress}%
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <div
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted"
+              role="progressbar"
+              aria-label={`${task.stockName || task.stockCode} 分析进度`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* 状态标签 */}
-      <div className="flex-shrink-0">
-        <Badge
-          variant={statusVariant}
-          className="min-w-[4.75rem] justify-center gap-1.5 shadow-none"
-          aria-label={`任务状态：${statusLabel}`}
-        >
-          <StatusDot tone={statusTone} pulse={isProcessing} className="h-1.5 w-1.5" />
-          {statusLabel}
-        </Badge>
       </div>
     </div>
   );
@@ -116,7 +130,7 @@ export const TaskPanel: React.FC<TaskPanelProps> = ({
     <Card
       variant="bordered"
       padding="none"
-      className={`home-panel-card overflow-hidden ${className}`}
+      className={`overflow-hidden ${className}`}
     >
       <div className="border-b border-subtle px-3 py-3">
         <DashboardPanelHeader
@@ -124,7 +138,7 @@ export const TaskPanel: React.FC<TaskPanelProps> = ({
           title={title}
           titleClassName="text-sm font-medium"
           leading={(
-            <svg className="h-4 w-4 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -153,7 +167,7 @@ export const TaskPanel: React.FC<TaskPanelProps> = ({
         />
       </div>
 
-      <div className="max-h-64 overflow-y-auto p-2">
+      <div className="max-h-72 overflow-y-auto p-2">
         <div className="space-y-2">
           {activeTasks.map((task) => (
             <TaskItem key={task.taskId} task={task} />

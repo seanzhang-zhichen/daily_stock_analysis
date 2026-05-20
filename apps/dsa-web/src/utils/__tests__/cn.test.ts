@@ -17,7 +17,7 @@ describe('cn utility', () => {
     // Tests our Phase 0 extracted classes
     expect(cn('terminal-card border-subtle', 'border-primary/50')).toBe('terminal-card border-primary/50');
     expect(cn('glass-card p-4', 'p-6')).toBe('glass-card p-6');
-    expect(cn('btn-primary bg-blue-500', 'bg-red-500')).toBe('btn-primary bg-red-500');
+    expect(cn('ui-card bg-blue-500', 'bg-red-500')).toBe('ui-card bg-red-500');
   });
 
   it('should handle undefined and null gracefully', () => {

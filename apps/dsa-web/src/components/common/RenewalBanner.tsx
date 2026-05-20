@@ -71,14 +71,16 @@ export const RenewalBanner: React.FC = () => {
   // 跨周期自动失效旧 dismiss
   useEffect(() => {
     if (!dismissed) {
-      return;
+      return undefined;
     }
     if (dismissed.signature !== signature) {
-      return;
+      return undefined;
     }
-    if (Date.now() - dismissed.ts > DISMISS_TTL_MS) {
+    const remainingMs = DISMISS_TTL_MS - (Date.now() - dismissed.ts);
+    const timer = window.setTimeout(() => {
       setDismissed(null);
-    }
+    }, Math.max(remainingMs, 0));
+    return () => window.clearTimeout(timer);
   }, [dismissed, signature]);
 
   if (!renewal) {
@@ -87,7 +89,7 @@ export const RenewalBanner: React.FC = () => {
   if (!renewal.willExpireSoon && !renewal.expired) {
     return null;
   }
-  if (dismissed && dismissed.signature === signature && Date.now() - dismissed.ts <= DISMISS_TTL_MS) {
+  if (dismissed && dismissed.signature === signature) {
     return null;
   }
   // 在登录 / 注册 / 法律页 / 引导页等公开页面不展示
@@ -106,12 +108,9 @@ export const RenewalBanner: React.FC = () => {
   const tone = isExpired ? 'expired' : renewal.daysRemaining <= 1 ? 'urgent' : 'warning';
 
   const toneStyles = {
-    expired:
-      'border-red-500/40 bg-red-500/10 text-red-200',
-    urgent:
-      'border-amber-500/50 bg-amber-500/15 text-amber-100',
-    warning:
-      'border-amber-500/30 bg-amber-500/10 text-amber-200',
+    expired: 'ui-renewal-expired',
+    urgent: 'ui-renewal-urgent',
+    warning: 'ui-renewal-warning',
   }[tone];
 
   const Icon = isExpired ? AlertCircle : Clock;
@@ -133,7 +132,7 @@ export const RenewalBanner: React.FC = () => {
       role="status"
       data-testid="renewal-banner"
       className={cn(
-        'sticky top-0 z-30 flex w-full items-center gap-3 border-b px-3 py-2 text-xs sm:px-4 sm:text-sm',
+        'ui-renewal-banner',
         toneStyles
       )}
     >
@@ -141,14 +140,14 @@ export const RenewalBanner: React.FC = () => {
       <span className="min-w-0 flex-1 truncate">
         {message}
         {!isExpired && (
-          <span className="ml-2 hidden text-secondary-text/80 sm:inline">
+          <span className="ui-renewal-note ml-2 hidden sm:inline">
             到期后将自动降级为 Free 档，记得及时续费
           </span>
         )}
       </span>
       <Link
         to="/billing?renew=1"
-        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-current/40 px-2 py-1 text-xs font-medium transition-colors hover:bg-current/10"
+        className="ui-renewal-action"
       >
         立即续费
         <ArrowRight className="h-3.5 w-3.5" aria-hidden />
@@ -157,7 +156,7 @@ export const RenewalBanner: React.FC = () => {
         type="button"
         onClick={handleDismiss}
         aria-label="暂时关闭续费提示"
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-current/70 transition-colors hover:bg-current/10 hover:text-current"
+        className="ui-renewal-dismiss"
       >
         <X className="h-4 w-4" aria-hidden />
       </button>

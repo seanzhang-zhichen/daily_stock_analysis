@@ -33,12 +33,9 @@ type QuotaSummary =
     };
 
 const TONE_STYLES: Record<Tone, string> = {
-  neutral:
-    'border-border/60 bg-card/70 text-secondary-text hover:bg-hover hover:text-foreground',
-  warning:
-    'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:bg-amber-500/15',
-  brand:
-    'border-cyan/30 bg-cyan/10 text-cyan hover:bg-cyan/15',
+  neutral: 'ui-quota-neutral',
+  warning: 'ui-quota-warning',
+  brand: 'ui-quota-brand',
 };
 
 function formatRemaining(remaining: number | null | undefined, limit: number) {
@@ -155,7 +152,7 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
         aria-label={summary.hint}
         title={`${summary.hint}: ${summary.label}`}
         className={cn(
-          'mt-3 flex h-10 w-10 items-center justify-center self-center rounded-xl border transition-colors',
+          'ui-quota-indicator ui-quota-indicator-collapsed',
           TONE_STYLES[tone],
           className
         )}
@@ -173,16 +170,16 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
       title={summary.hint}
       data-testid="quota-indicator"
       className={cn(
-        'mt-3 flex flex-col gap-1 rounded-xl border px-3 py-2 text-xs transition-colors',
+        'ui-quota-indicator ui-quota-indicator-expanded',
         TONE_STYLES[tone],
         className
       )}
     >
-      <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide opacity-80">
+      <span className="ui-quota-meta">
         <Icon className="h-3.5 w-3.5" aria-hidden />
         {summary.hint}
       </span>
-      <span className="truncate text-sm font-semibold tabular-nums">
+      <span className="ui-quota-value">
         {summary.label}
       </span>
     </Link>

@@ -4,7 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../utils/cn';
 import { agentApi } from '../api/agent';
-import { ApiErrorAlert, Badge, Button, ConfirmDialog, EmptyState, InlineAlert, ScrollArea, Tooltip } from '../components/common';
+import { ApiErrorAlert, Badge, Button, ChatWorkspaceLayout, ConfirmDialog, EmptyState, InlineAlert, ScrollArea, Tooltip } from '../components/common';
 import { getParsedApiError } from '../api/error';
 import type { SkillInfo } from '../api/agent';
 import { DashboardStateBlock } from '../components/dashboard';
@@ -439,32 +439,32 @@ const ChatPage: React.FC = () => {
   const renderThinkingDetails = (steps: ProgressStep[]) => (
     <div className="mb-3 pl-5 border-l border-border/40 space-y-1.5 animate-fade-in">
       {steps.map((step, idx) => {
-        let statusClass = 'chat-progress-item-muted';
-        let iconClass = 'chat-progress-dot-muted';
+        let statusClass = 'ui-chat-progress-item-muted';
+        let iconClass = 'ui-chat-progress-dot-muted';
         let text = '';
         if (step.type === 'thinking') {
           text = step.message || `第 ${step.step} 步：思考`;
-          statusClass = 'chat-progress-item-thinking';
-          iconClass = 'chat-progress-dot-thinking';
+          statusClass = 'ui-chat-progress-item-info';
+          iconClass = 'ui-chat-progress-dot-info';
         } else if (step.type === 'tool_start') {
           text = `${step.display_name || step.tool}...`;
-          statusClass = 'chat-progress-item-tool';
-          iconClass = 'chat-progress-dot-tool';
+          statusClass = 'ui-chat-progress-item-info';
+          iconClass = 'ui-chat-progress-dot-info';
         } else if (step.type === 'tool_done') {
           text = `${step.display_name || step.tool} (${step.duration}s)`;
-          statusClass = step.success ? 'chat-progress-item-success' : 'chat-progress-item-danger';
-          iconClass = step.success ? 'chat-progress-dot-success' : 'chat-progress-dot-danger';
+          statusClass = step.success ? 'ui-chat-progress-item-success' : 'ui-chat-progress-item-danger';
+          iconClass = step.success ? 'ui-chat-progress-dot-success' : 'ui-chat-progress-dot-danger';
         } else if (step.type === 'generating') {
           text = step.message || '生成分析';
-          statusClass = 'chat-progress-item-generating';
-          iconClass = 'chat-progress-dot-generating';
+          statusClass = 'ui-chat-progress-item-info';
+          iconClass = 'ui-chat-progress-dot-info';
         }
         return (
           <div
             key={idx}
-            className={cn('chat-progress-item', statusClass)}
+            className={cn('ui-chat-progress-item', statusClass)}
           >
-            <span className={cn('chat-progress-dot', iconClass)} />
+            <span className={cn('ui-chat-progress-dot', iconClass)} />
             <span className="leading-relaxed">{text}</span>
           </div>
         );
@@ -474,8 +474,8 @@ const ChatPage: React.FC = () => {
 
   const sidebarContent = (
     <>
-      <div className="flex items-center justify-between border-b border-white/5 bg-white/2 p-3.5">
-        <h2 className="text-sm font-semibold text-cyan uppercase tracking-[0.2em] flex items-center gap-2">
+      <div className="flex items-center justify-between border-b border-border/70 bg-surface/40 p-3.5">
+        <h2 className="ui-eyebrow flex items-center gap-2">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
@@ -483,7 +483,7 @@ const ChatPage: React.FC = () => {
         </h2>
         <button
           onClick={handleStartNewChat}
-          className="rounded-lg p-1.5 text-muted-text transition-all hover:bg-white/10 hover:text-foreground"
+          className="ui-icon-button h-8 w-8 rounded-lg"
           aria-label="开启新对话"
         >
           <svg
@@ -519,25 +519,28 @@ const ChatPage: React.FC = () => {
         ) : (
           <div className="space-y-2">
             {sessions.map((s) => (
-              <div key={s.session_id} className="session-item-row">
+              <div key={s.session_id} className="ui-chat-session-row">
                 <button
                   type="button"
                   onClick={() => handleSwitchSession(s.session_id)}
-                  className={`session-item ${s.session_id === sessionId ? 'active' : ''}`}
+                  className={cn(
+                    'ui-chat-session-item',
+                    s.session_id === sessionId && 'ui-chat-session-item-active',
+                  )}
                   aria-label={`切换到对话 ${s.title}`}
                   aria-current={s.session_id === sessionId ? 'page' : undefined}
                 >
-                  <div className="indicator" />
-                  <div className="content">
-                    <span className="title">{s.title}</span>
+                  <div className="ui-chat-session-indicator" />
+                  <div className="ui-chat-session-content">
+                    <span className="ui-chat-session-title">{s.title}</span>
                     <div className="mt-0.5 flex items-center gap-2">
-                      <span className="meta">
+                      <span className="ui-chat-session-meta">
                         {s.message_count} 条对话
                       </span>
                       {s.last_active && (
                         <>
-                          <span className="separator" />
-                          <span className="meta">
+                          <span className="ui-chat-session-separator" />
+                          <span className="ui-chat-session-meta">
                             {new Date(s.last_active).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
                           </span>
                         </>
@@ -547,7 +550,7 @@ const ChatPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  className="delete-btn"
+                  className="ui-chat-session-delete-button"
                   onClick={() => {
                     setDeleteConfirmId(s.session_id);
                   }}
@@ -576,12 +579,12 @@ const ChatPage: React.FC = () => {
   );
 
   return (
-    <div
+    <ChatWorkspaceLayout
       data-testid="chat-workspace"
-      className="flex h-[calc(100vh-5rem)] w-full min-w-0 gap-4 overflow-hidden sm:h-[calc(100vh-5.5rem)] lg:h-[calc(100vh-2rem)]"
+      className="chat-workspace-layout-workspace min-w-0"
     >
       {/* Desktop sidebar */}
-      <div className="hidden h-full w-64 flex-shrink-0 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/82 shadow-soft-card md:flex">
+      <div className="ui-card ui-card-padding-none hidden h-full w-64 flex-shrink-0 flex-col md:flex">
         {sidebarContent}
       </div>
 
@@ -591,9 +594,9 @@ const ChatPage: React.FC = () => {
           className="fixed inset-0 z-40 md:hidden"
           onClick={() => setSidebarOpen(false)}
         >
-          <div className="page-drawer-overlay absolute inset-0" />
+          <div className="ui-drawer-backdrop absolute inset-0" />
           <div
-            className="absolute left-0 top-0 bottom-0 w-72 flex flex-col glass-card overflow-hidden border-r border-white/10 bg-card/90 shadow-2xl"
+            className="ui-drawer-panel ui-drawer-panel-left absolute bottom-0 left-0 top-0 w-72 overflow-hidden p-3"
             onClick={(e) => e.stopPropagation()}
           >
             {sidebarContent}
@@ -620,7 +623,7 @@ const ChatPage: React.FC = () => {
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-hover transition-colors text-secondary-text hover:text-foreground"
+                className="-ml-1 ui-icon-button h-9 w-9 md:hidden"
                 aria-label="历史对话"
               >
                 <svg
@@ -638,7 +641,7 @@ const ChatPage: React.FC = () => {
                 </svg>
               </button>
               <svg
-                className="w-6 h-6 text-cyan"
+                className="w-6 h-6 text-primary"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -657,7 +660,7 @@ const ChatPage: React.FC = () => {
                 <Tooltip content="导出会话为 Markdown 文件">
                   <span className="inline-flex">
                     <Button
-                      variant="action-primary"
+                      variant="outline"
                       size="sm"
                       onClick={() => downloadSession(messages)}
                       aria-label="导出会话为 Markdown 文件"
@@ -682,7 +685,7 @@ const ChatPage: React.FC = () => {
                 <Tooltip content="发送到已配置的通知机器人/邮箱">
                   <span className="inline-flex">
                     <Button
-                      variant="action-primary"
+                      variant="secondary"
                       size="sm"
                       disabled={sending}
                       onClick={async () => {
@@ -760,7 +763,7 @@ const ChatPage: React.FC = () => {
           ) : null}
         </header>
 
-        <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden border border-white/6 bg-card/78 glass-card">
+        <div className="ui-card ui-card-padding-none relative z-10 flex min-h-0 flex-1 flex-col">
           {/* Messages */}
           <ScrollArea
             className="relative z-10 flex-1"
@@ -796,7 +799,7 @@ const ChatPage: React.FC = () => {
                         <button
                           key={i}
                           onClick={() => handleQuickQuestion(q)}
-                          className="quick-question-btn"
+                          className="ui-chat-quick-question"
                         >
                           {q.label}
                         </button>
@@ -816,20 +819,22 @@ const ChatPage: React.FC = () => {
                   <div
                     className={cn(
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold shadow-sm transition-all',
-                      msg.role === 'user' ? 'chat-avatar-user' : 'chat-avatar-ai'
+                      msg.role === 'user' ? 'ui-chat-avatar-user' : 'ui-chat-avatar-ai'
                     )}
                   >
                     {msg.role === 'user' ? 'U' : 'AI'}
                   </div>
                   <div
                     className={cn(
-                      'group/message min-w-0 w-fit max-w-[min(100%,48rem)] overflow-hidden px-5 py-3.5 transition-colors',
-                      msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
+                      'ui-chat-message-bubble group/message min-w-0 overflow-hidden px-5 py-3.5 transition-colors',
+                      msg.role === 'user'
+                        ? 'ui-chat-message-bubble-user w-fit max-w-[min(100%,28rem)]'
+                        : 'ui-chat-message-bubble-ai w-full'
                     )}
                   >
                     {msg.role === 'assistant' && skillLabel && (
                       <div className="mb-2">
-                        <Badge variant="info" className="chat-skill-badge shadow-none" aria-label={`技能 ${skillLabel}`}>
+                        <Badge variant="info" className="ui-chat-skill-badge shadow-none" aria-label={`技能 ${skillLabel}`}>
                           <svg
                             className="w-3 h-3"
                             fill="none"
@@ -854,11 +859,11 @@ const ChatPage: React.FC = () => {
                       renderThinkingDetails(msg.thinkingSteps)}
                     {msg.role === 'assistant' ? (
                       <div className="relative">
-                        <div className="chat-message-actions">
+                        <div className="ui-chat-message-actions">
                           <button
                             type="button"
                             onClick={() => copyMessageToClipboard(msg.id, msg.content)}
-                            className="chat-copy-btn"
+                            className="ui-chat-mini-action"
                             aria-label={copiedMessages.has(msg.id) ? text.copied : text.copy}
                           >
                             {copiedMessages.has(msg.id) ? text.copied : text.copy}
@@ -866,13 +871,24 @@ const ChatPage: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => downloadMessageAsMarkdown(msg)}
-                            className="chat-copy-btn"
+                            className="ui-chat-mini-action"
                             aria-label="导出此条消息为 Markdown"
                           >
                             导出
                           </button>
                         </div>
-                        <div className="chat-prose pr-20 sm:pr-24">
+                        <div
+                          className="ui-prose prose prose-invert prose-sm max-w-none pr-20 sm:pr-24
+                            prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-2
+                            prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
+                            prose-p:leading-relaxed prose-p:mb-2 prose-p:last:mb-0
+                            prose-strong:text-foreground prose-strong:font-semibold
+                            prose-ul:my-2 prose-ol:my-2 prose-li:my-1
+                            prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+                            prose-pre:border prose-table:border-collapse prose-hr:my-3
+                            prose-a:no-underline hover:prose-a:underline prose-blockquote:text-secondary-text
+                            break-words"
+                        >
                           <Markdown remarkPlugins={[remarkGfm]}>
                             {msg.content}
                           </Markdown>
@@ -898,14 +914,14 @@ const ChatPage: React.FC = () => {
 
             {loading && (
               <div className="flex gap-4">
-                <div className="w-8 h-8 rounded-full bg-elevated text-foreground flex items-center justify-center flex-shrink-0 text-xs font-bold">
+                <div className="ui-chat-avatar-ai flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold">
                   AI
                 </div>
-                <div className="min-w-[200px] max-w-[min(100%,48rem)] overflow-hidden rounded-2xl rounded-tl-sm border border-white/6 bg-card/72 px-5 py-4">
+                <div className="ui-chat-message-bubble ui-chat-message-bubble-ai w-full overflow-hidden px-5 py-4">
                   <div className="flex items-center gap-2.5 text-sm text-secondary-text">
                     <div className="relative w-4 h-4 flex-shrink-0">
-                      <div className="absolute inset-0 rounded-full border-2 border-cyan/20" />
-                      <div className="absolute inset-0 rounded-full border-2 border-cyan border-t-transparent animate-spin" />
+                      <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                      <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
                     </div>
                     <span className="text-secondary-text">
                       {getCurrentStage(progressSteps)}
@@ -922,7 +938,7 @@ const ChatPage: React.FC = () => {
             <div className="pointer-events-none absolute bottom-[5.75rem] right-4 z-20 md:bottom-24 md:right-6">
               <button
                 type="button"
-                className="pointer-events-auto chat-copy-btn shadow-soft-card"
+                className="pointer-events-auto ui-chat-mini-action shadow-card"
                 onClick={() => {
                   requestScrollToBottom('smooth');
                   scrollToBottom('smooth');
@@ -948,7 +964,7 @@ const ChatPage: React.FC = () => {
           )}
 
           {/* Input area */}
-          <div className="border-t border-white/6 bg-card/88 p-4 md:p-6 relative z-20">
+          <div className="relative z-20 border-t border-border/70 bg-card/90 p-4 md:p-6">
             <div className="space-y-3">
               {chatError ? <ApiErrorAlert error={chatError} /> : null}
               {isFollowUpContextLoading ? (
@@ -960,58 +976,45 @@ const ChatPage: React.FC = () => {
                 />
               ) : null}
             {skills.length > 0 && (
-              <div className="flex flex-wrap items-start gap-x-5 gap-y-2">
-                <span className="text-xs text-muted-text font-medium uppercase tracking-wider flex-shrink-0 mt-1">
-                  策略
-                </span>
-                <label className="flex items-center gap-1.5 text-sm cursor-pointer group mt-0.5">
-                  <input
-                    type="checkbox"
-                    name="general-analysis"
-                    value=""
-                    checked={selectedSkillIds.length === 0}
-                    onChange={() => setSelectedSkillIds([])}
-                    className="chat-skill-checkbox"
-                  />
-                  <span
-                    className={`transition-colors text-sm ${selectedSkillIds.length === 0 ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
-                  >
-                    通用分析
-                  </span>
-                </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-pressed={selectedSkillIds.length === 0}
+                  onClick={() => setSelectedSkillIds([])}
+                  className={cn('ui-chat-skill-chip', selectedSkillIds.length === 0 && 'ui-chat-skill-chip-active')}
+                >
+                  通用分析
+                </button>
                 {skills.map((s) => {
                   const checked = selectedSkillIdSet.has(s.id);
                   const disabled = !checked && skillLimitReached;
                   return (
-                    <label
-                      key={s.id}
-                      className={`flex items-center gap-1.5 cursor-pointer group relative mt-0.5 ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
-                      onMouseEnter={() => setShowSkillDesc(s.id)}
-                      onMouseLeave={() => setShowSkillDesc(null)}
-                    >
-                      <input
-                        type="checkbox"
-                        name="skills"
-                        value={s.id}
-                        checked={checked}
+                    <div key={s.id} className="relative">
+                      <button
+                        type="button"
+                        aria-pressed={checked}
                         disabled={disabled}
-                        onChange={() => toggleSkillSelection(s.id)}
-                        className="chat-skill-checkbox"
-                      />
-                      <span
-                        className={`transition-colors text-sm ${checked ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
+                        onClick={() => toggleSkillSelection(s.id)}
+                        onMouseEnter={() => setShowSkillDesc(s.id)}
+                        onMouseLeave={() => setShowSkillDesc(null)}
+                        className={cn('ui-chat-skill-chip', checked && 'ui-chat-skill-chip-active')}
                       >
                         {s.name}
-                      </span>
+                      </button>
                       {showSkillDesc === s.id && s.description && (
-                        <div className="skill-desc-tooltip">
-                          <p className="skill-title">{s.name}</p>
+                        <div className="ui-chat-skill-tooltip">
+                          <p className="ui-chat-skill-tooltip-title">{s.name}</p>
                           <p>{s.description}</p>
                         </div>
                       )}
-                    </label>
+                    </div>
                   );
                 })}
+                {skillLimitReached && (
+                  <span className="text-[11px] text-muted-text">
+                    最多选 {MAX_SELECTED_SKILLS} 个
+                  </span>
+                )}
               </div>
             )}
 
@@ -1023,7 +1026,7 @@ const ChatPage: React.FC = () => {
                   placeholder="例如：分析 600519 / 茅台现在适合买入吗？ (Enter 发送, Shift+Enter 换行)"
                   disabled={loading}
                   rows={1}
-                  className="input-surface input-focus-glow flex-1 min-h-[44px] max-h-[200px] rounded-xl border bg-transparent px-4 py-2.5 text-sm transition-all focus:outline-none resize-none disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-input flex-1 min-h-[44px] max-h-[200px] resize-none px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ height: 'auto' }}
                   onInput={(e) => {
                     const t = e.target as HTMLTextAreaElement;
@@ -1036,7 +1039,7 @@ const ChatPage: React.FC = () => {
                   onClick={() => handleSend()}
                   disabled={!input.trim() || loading}
                   isLoading={loading}
-                  className="btn-primary flex-shrink-0"
+                  className="flex-shrink-0"
                 >
                   发送
                 </Button>
@@ -1045,7 +1048,7 @@ const ChatPage: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </ChatWorkspaceLayout>
   );
 };
 

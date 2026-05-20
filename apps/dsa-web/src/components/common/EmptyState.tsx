@@ -18,8 +18,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 }) => {
   return (
     <div className={cn(
-      'rounded-2xl border border-dashed border-border/50 bg-card/40 px-8 py-12 text-center',
-      'transition-colors duration-200',
+      'ui-empty-state transition-colors duration-200',
       className
     )}>
       {icon ? (

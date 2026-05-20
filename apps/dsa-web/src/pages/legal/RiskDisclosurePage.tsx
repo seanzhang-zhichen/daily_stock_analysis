@@ -104,7 +104,7 @@ const RiskDisclosurePage: React.FC = () => {
 
       <p className="mt-8 text-xs text-secondary-text">
         如本揭示书后续有更新，运营方将在本页面发布最新版本并请您重新确认。如对内容有疑问，请联系{' '}
-        <a className="text-cyan hover:underline" href="mailto:support@example.com">
+        <a className="text-primary hover:underline" href="mailto:support@example.com">
           support@example.com
         </a>
         。

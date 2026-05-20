@@ -275,8 +275,8 @@ describe('ChatPage', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('checkbox', { name: '趋势分析' })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: '通用分析' })).not.toBeChecked();
+    expect(await screen.findByRole('button', { name: '趋势分析' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '通用分析' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('sends multiple selected skills in order', async () => {
@@ -294,7 +294,7 @@ describe('ChatPage', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.click(await screen.findByRole('button', { name: '均线金叉' }));
     fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
       target: { value: '分析 600519' },
     });
@@ -321,8 +321,8 @@ describe('ChatPage', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: '趋势分析' }));
-    expect(screen.getByRole('checkbox', { name: '通用分析' })).toBeChecked();
+    fireEvent.click(await screen.findByRole('button', { name: '趋势分析' }));
+    expect(screen.getByRole('button', { name: '通用分析' })).toHaveAttribute('aria-pressed', 'true');
 
     fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
       target: { value: '分析 AAPL' },
@@ -358,13 +358,13 @@ describe('ChatPage', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: '缠论' }));
+    fireEvent.click(await screen.findByRole('button', { name: '均线金叉' }));
+    fireEvent.click(screen.getByRole('button', { name: '缠论' }));
 
-    const wave = screen.getByRole('checkbox', { name: '波浪理论' });
+    const wave = screen.getByRole('button', { name: '波浪理论' });
     expect(wave).toBeDisabled();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.click(screen.getByRole('button', { name: '均线金叉' }));
     expect(wave).not.toBeDisabled();
   });
 
@@ -384,7 +384,7 @@ describe('ChatPage', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: '均线金叉' }));
+    fireEvent.click(await screen.findByRole('button', { name: '均线金叉' }));
     fireEvent.click(screen.getByRole('button', { name: '用缠论分析茅台' }));
 
     await waitFor(() => {
@@ -415,7 +415,7 @@ describe('ChatPage', () => {
     const exportButton = await screen.findByRole('button', { name: '导出此条消息为 Markdown' });
     const actionGroup = exportButton.parentElement;
 
-    expect(actionGroup).toHaveClass('chat-message-actions');
+    expect(actionGroup).toHaveClass('ui-chat-message-actions');
     expect(actionGroup?.className).not.toMatch(/pointer-events-none|opacity-0/);
   });
 

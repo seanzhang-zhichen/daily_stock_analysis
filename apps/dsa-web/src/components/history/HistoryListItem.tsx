@@ -54,14 +54,15 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
           checked={isChecked}
           onChange={() => onToggleChecked(item.id)}
           disabled={isDeleting}
-          className="h-3.5 w-3.5 cursor-pointer rounded border-subtle-hover bg-transparent accent-primary focus:ring-primary/30 disabled:opacity-50"
+          className="ui-checkbox h-3.5 w-3.5 disabled:opacity-50"
         />
       </div>
       <button
         type="button"
         onClick={() => onClick(item.id)}
-        className={`home-history-item flex-1 text-left p-2.5 group/item ${
-          isViewing ? 'home-history-item-selected' : ''
+        aria-pressed={isViewing}
+        className={`flex-1 rounded-xl border p-2.5 text-left transition-colors group/item ${
+          isViewing ? 'border-primary/30 bg-primary/5 shadow-sm' : 'border-transparent bg-surface/70 hover:border-subtle hover:bg-surface-muted/70'
         }`}
       >
         <div className={`flex items-center gap-2.5 relative z-10${isTruncated ? ' group-hover/item:z-20' : ''}`}>
@@ -90,7 +91,7 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
                 <Badge
                   variant="default"
                   size="sm"
-                  className={`home-history-sentiment-badge shrink-0 shadow-none text-[11px] font-semibold leading-none transition-opacity duration-200${isTruncated ? ' group-hover/item:opacity-80' : ''}`}
+                  className={`shrink-0 shadow-none text-[11px] font-semibold leading-none transition-opacity duration-200${isTruncated ? ' group-hover/item:opacity-80' : ''}`}
                   style={{
                     color: sentimentColor,
                     borderColor: `${sentimentColor}30`,
