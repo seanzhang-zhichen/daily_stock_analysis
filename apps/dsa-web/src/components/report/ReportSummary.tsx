@@ -9,6 +9,7 @@ import { getReportText, normalizeReportLanguage } from '../../utils/reportLangua
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
   isHistory?: boolean;
+  showDiagnostics?: boolean;
 }
 
 /**
@@ -18,6 +19,7 @@ interface ReportSummaryProps {
 export const ReportSummary: React.FC<ReportSummaryProps> = ({
   data,
   isHistory = false,
+  showDiagnostics = true,
 }) => {
   // 兼容 AnalysisResult 和 AnalysisReport 两种数据格式
   const report: AnalysisReport = 'report' in data ? data.report : data;
@@ -29,7 +31,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const text = getReportText(reportLanguage);
   const modelUsed = (meta.modelUsed || '').trim();
   const shouldShowModel = Boolean(
-    modelUsed && !['unknown', 'error', 'none', 'null', 'n/a'].includes(modelUsed.toLowerCase()),
+    showDiagnostics && modelUsed && !['unknown', 'error', 'none', 'null', 'n/a'].includes(modelUsed.toLowerCase()),
   );
 
   return (
@@ -49,7 +51,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       <ReportNews recordId={recordId} limit={8} language={reportLanguage} />
 
       {/* 透明度与追溯区 */}
-      <ReportDetails details={details} recordId={recordId} language={reportLanguage} />
+      {showDiagnostics && <ReportDetails details={details} recordId={recordId} language={reportLanguage} />}
 
       {/* 分析模型标记（Issue #528）— 报告末尾 */}
       {shouldShowModel && (

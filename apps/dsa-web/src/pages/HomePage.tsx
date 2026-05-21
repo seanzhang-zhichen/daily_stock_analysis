@@ -35,6 +35,7 @@ const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { userMode } = useAuth();
   const canReadSetupStatus = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
+  const canViewReportDiagnostics = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
@@ -890,7 +891,7 @@ const HomePage: React.FC = () => {
                     </Button>
                   </div>
                 </div>
-                <ReportSummary data={selectedReport} isHistory />
+                <ReportSummary data={selectedReport} isHistory showDiagnostics={canViewReportDiagnostics} />
               </div>
             ) : (
               <div className="flex h-full items-center justify-center py-8">

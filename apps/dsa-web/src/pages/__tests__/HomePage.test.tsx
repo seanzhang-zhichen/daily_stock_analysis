@@ -100,12 +100,17 @@ const historyReport = {
     reportType: 'detailed' as const,
     reportLanguage: 'zh' as const,
     createdAt: '2026-03-18T08:00:00Z',
+    modelUsed: 'openai/gpt-5.5',
   },
   summary: {
     analysisSummary: '趋势维持强势',
     operationAdvice: '继续观察买点',
     trendPrediction: '短线震荡偏强',
     sentimentScore: 78,
+  },
+  details: {
+    rawResult: { opinion: 'buy' },
+    contextSnapshot: { source: 'test' },
   },
 };
 
@@ -237,6 +242,32 @@ describe('HomePage', () => {
 
     await waitFor(() => expect(agentApi.getSkills).toHaveBeenCalled());
     expect(systemConfigApi.getSetupStatus).not.toHaveBeenCalled();
+  });
+
+  it('hides report diagnostics for regular To C users', async () => {
+    authState.userMode = {
+      userModeEnabled: true,
+      user: { isAdmin: false },
+    };
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 1,
+      page: 1,
+      limit: 20,
+      items: [historyItem],
+    });
+    vi.mocked(historyApi.getDetail).mockResolvedValue(historyReport);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('趋势维持强势')).toBeInTheDocument();
+    expect(screen.queryByText('数据追溯')).not.toBeInTheDocument();
+    expect(screen.queryByText(/分析模型/)).not.toBeInTheDocument();
+    expect(screen.queryByText('原始分析结果')).not.toBeInTheDocument();
+    expect(screen.queryByText('分析快照')).not.toBeInTheDocument();
   });
 
   it('surfaces duplicate task warnings from dashboard submission', async () => {
