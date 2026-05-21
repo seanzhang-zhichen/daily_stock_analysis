@@ -2,7 +2,7 @@ import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import type { ParsedApiError } from '../../api/error';
 import { getParsedApiError } from '../../api/error';
-import { ApiErrorAlert, Button, Card } from '../common';
+import { ApiErrorAlert, Card } from '../common';
 import { DashboardPanelHeader, DashboardStateBlock } from '../dashboard';
 import { historyApi } from '../../api/history';
 import type { NewsIntelItem, ReportLanguage } from '../../types/analysis';
@@ -55,25 +55,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
   return (
     <Card variant="bordered" padding="md">
       <DashboardPanelHeader
-        eyebrow={text.newsFeed}
-        title={text.relatedNews}
-        actions={(
-          <div className="flex items-center gap-2">
-            {isLoading ? (
-              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary/20 border-t-primary" aria-hidden="true" />
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="xsm"
-              onClick={() => void fetchNews()}
-              className="h-7 px-2 text-xs"
-              aria-label={text.refresh}
-            >
-              {text.refresh}
-            </Button>
-          </div>
-        )}
+        eyebrow={text.relatedNews}
       />
 
       {error && !isLoading && (
@@ -133,14 +115,6 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
                     aria-label={text.openLink}
                   >
                     {text.openLink}
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M14 3h7m0 0v7m0-7L10 14"
-                      />
-                    </svg>
                   </a>
                 )}
               </div>

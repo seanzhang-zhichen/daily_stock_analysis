@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { historyApi } from '../../../api/history';
 import { ReportNews } from '../ReportNews';
@@ -14,7 +14,7 @@ describe('ReportNews', () => {
     vi.clearAllMocks();
   });
 
-  it('renders news items and refreshes with new panel styling', async () => {
+  it('renders news items with new panel styling', async () => {
     vi.mocked(historyApi.getNews).mockResolvedValue({
       total: 1,
       items: [
@@ -29,15 +29,11 @@ describe('ReportNews', () => {
     const { container } = render(<ReportNews recordId={1} />);
 
     expect(await screen.findByText('茅台发布最新经营数据')).toBeInTheDocument();
+    expect(screen.getByText('相关资讯')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '跳转' })).toHaveAttribute('href', 'https://example.com/news');
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(container.querySelector('.ui-card')).toBeTruthy();
     expect(container.querySelector('.bg-surface\\/70')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
-
-    await waitFor(() => {
-      expect(historyApi.getNews).toHaveBeenCalledTimes(2);
-    });
   });
 
   it('renders the empty state when no news exists', async () => {

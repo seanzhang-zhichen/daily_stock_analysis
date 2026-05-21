@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要 Pro 套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
+- [改进] Web 报告资讯卡片标题统一为「相关资讯」，移除右上角刷新入口，并移除资讯条目右侧「跳转」按钮内的箭头图标。
 - [改进] 将「邮件通知」和「每日推送」改为 Pro 专属权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到 Pro 套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。
 - [修复] 修复 Web 问股页面的三横线历史对话按钮在桌面布局（md 及以上宽度）下被 ui-icon-button 自定义样式覆盖而无法隐藏的问题，通过将按钮包裹在 md:hidden 响应式容器中实现正确隐藏。
 - [修复] 修复首页股票分析提交后依赖 SSE 才显示任务队列的问题，提交成功返回任务 ID 后立即在前端队列中展示等待中的分析任务，并将按钮加载文案改为“提交中”。
