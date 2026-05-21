@@ -9,6 +9,7 @@ import {
   LogOut,
   MessageSquareQuote,
   Settings2,
+  Star,
   UserCircle2,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
@@ -18,7 +19,6 @@ import { useAgentChatStore } from '../../stores/agentChatStore';
 import { cn } from '../../utils/cn';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
-import { ThemeToggle } from '../theme/ThemeToggle';
 import { QuotaIndicator } from './QuotaIndicator';
 
 type SidebarNavProps = {
@@ -43,6 +43,13 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
   { key: 'notices', label: '公告', to: '/notices', icon: Bell },
 ];
+
+const WATCHLIST_NAV_ITEM: NavItem = {
+  key: 'watchlist',
+  label: '自选',
+  to: '/watchlist',
+  icon: Star,
+};
 
 const ACCOUNT_NAV_ITEM: NavItem = {
   key: 'account',
@@ -73,9 +80,13 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
   const userModeEnabled = Boolean(userMode?.userModeEnabled);
   const userLoggedIn = Boolean(userMode?.loggedIn);
-  const navItems: NavItem[] = userModeEnabled && userLoggedIn
-    ? [...BASE_NAV_ITEMS, ACCOUNT_NAV_ITEM]
+  const userIsAdmin = Boolean(userMode?.user?.isAdmin);
+  const mainNavItems = userModeEnabled && userLoggedIn && !userIsAdmin
+    ? BASE_NAV_ITEMS.filter((item) => item.key !== 'settings')
     : BASE_NAV_ITEMS;
+  const navItems: NavItem[] = userModeEnabled && userLoggedIn
+    ? [...mainNavItems, WATCHLIST_NAV_ITEM, ACCOUNT_NAV_ITEM]
+    : mainNavItems;
 
   return (
     <div className="ui-sidebar">
@@ -165,30 +176,25 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         ))}
       </nav>
 
-      {/* Quota Indicator */}
-      <QuotaIndicator collapsed={collapsed} onNavigate={onNavigate} />
-
-      {/* Divider */}
-      <div className={cn('ui-sidebar-divider my-1', collapsed ? 'mx-0' : 'mx-1')} />
-
       {/* Bottom actions */}
       <div className="flex flex-col gap-0.5">
-        <ThemeToggle variant="nav" collapsed={collapsed} />
-
         {/* Help link */}
-        <a
-          href={import.meta.env.VITE_SUPPORT_URL as string | undefined ?? '#'}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(
-            'ui-sidebar-action',
-            collapsed ? 'justify-center px-0' : ''
-          )}
+        <NavLink
+          to="/help"
+          onClick={onNavigate}
+          aria-label="帮助"
+          className={({ isActive }) =>
+            cn(
+              'ui-sidebar-action',
+              collapsed ? 'justify-center px-0' : '',
+              isActive ? 'ui-sidebar-link-active' : ''
+            )
+          }
           title="帮助与反馈"
         >
           <HelpCircle className="h-4.5 w-4.5 shrink-0" />
           {!collapsed ? <span className="font-[450]">帮助</span> : null}
-        </a>
+        </NavLink>
 
         {/* Logout (admin mode only) */}
         {authEnabled && !(userModeEnabled && userLoggedIn) ? (
@@ -205,6 +211,12 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           </button>
         ) : null}
       </div>
+
+      {/* Divider */}
+      <div className={cn('ui-sidebar-divider my-1', collapsed ? 'mx-0' : 'mx-1')} />
+
+      {/* Quota Indicator */}
+      <QuotaIndicator collapsed={collapsed} onNavigate={onNavigate} />
 
       <ConfirmDialog
         isOpen={showLogoutConfirm}

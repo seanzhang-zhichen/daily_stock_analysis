@@ -16,7 +16,7 @@ interface HistoryListProps {
   onItemClick: (recordId: number) => void;  // 点击记录的回调
   onLoadMore: () => void;
   onToggleItemSelection: (recordId: number) => void;
-  onToggleSelectAll: () => void;
+  onToggleSelectAll: (recordIds: number[]) => void;
   onDeleteSelected: () => void;
   className?: string;
 }
@@ -60,6 +60,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   const selectedCount = filteredItems.filter((item) => selectedIds.has(item.id)).length;
   const allVisibleSelected = filteredItems.length > 0 && selectedCount === filteredItems.length;
   const someVisibleSelected = selectedCount > 0 && !allVisibleSelected;
+  const visibleIds = filteredItems.map((item) => item.id);
   const visibleCountLabel = searchText.trim()
     ? `${filteredItems.length}/${items.length}`
     : items.length > 99
@@ -108,7 +109,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
         viewportClassName="p-3"
         testId="home-history-list-scroll"
       >
-        <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-3 space-y-2 border-b border-subtle bg-surface/95 px-3 py-3 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
+        <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-3 space-y-2.5 border-b border-subtle bg-surface/95 px-3 pb-3 pt-3 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
           <DashboardPanelHeader
             className="mb-0"
             title="历史分析"
@@ -133,56 +134,56 @@ export const HistoryList: React.FC<HistoryListProps> = ({
           />
 
           {items.length > 0 && (
-            <div className="relative">
-              <svg
-                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-text"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                id={searchId}
-                type="search"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                placeholder="按代码或名称筛选"
-                aria-label="按股票代码或名称筛选历史记录"
-                className="ui-input w-full py-1.5 pl-8 pr-3 text-[11px]"
-              />
-            </div>
-          )}
-
-          {items.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label
-                className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 py-1"
-                htmlFor={selectAllId}
-              >
+            <div className="space-y-2 rounded-2xl border border-subtle bg-surface-muted/45 p-1.5">
+              <div className="relative">
+                <svg
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-text"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
                 <input
-                  id={selectAllId}
-                  ref={selectAllRef}
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={onToggleSelectAll}
-                  disabled={isDeleting}
-                  aria-label="全选当前已加载历史记录"
-                  className="ui-checkbox h-3.5 w-3.5 disabled:opacity-50"
+                  id={searchId}
+                  type="search"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder="按代码或名称筛选"
+                  aria-label="按股票代码或名称筛选历史记录"
+                  className="ui-input min-h-8 w-full rounded-xl bg-surface py-1.5 pl-8 pr-3 text-[11px] shadow-none"
                 />
-                <span className="text-[11px] text-muted-text select-none">全选当前</span>
-              </label>
-              <Button
-                variant="danger-subtle"
-                size="xsm"
-                onClick={onDeleteSelected}
-                disabled={selectedCount === 0 || isDeleting}
-                isLoading={isDeleting}
-                className="disabled:!border-transparent disabled:!bg-transparent"
-              >
-                {isDeleting ? '删除中' : '删除'}
-              </Button>
+              </div>
+
+              <div className="-mx-1.5 flex items-center gap-2">
+                <label
+                  className="flex min-h-7 flex-1 cursor-pointer items-center gap-2 rounded-lg"
+                  htmlFor={selectAllId}
+                >
+                  <input
+                    id={selectAllId}
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={() => onToggleSelectAll(visibleIds)}
+                    disabled={isDeleting}
+                    aria-label="全选当前已加载历史记录"
+                    className="ui-checkbox h-3.5 w-3.5 disabled:opacity-50"
+                  />
+                  <span className="select-none text-[11px] text-muted-text">全选当前</span>
+                </label>
+                <Button
+                  variant="danger-subtle"
+                  size="xsm"
+                  onClick={onDeleteSelected}
+                  disabled={selectedCount === 0 || isDeleting}
+                  isLoading={isDeleting}
+                  className="disabled:!border-transparent disabled:!bg-transparent disabled:!text-muted-text"
+                >
+                  {isDeleting ? '删除中' : '删除'}
+                </Button>
+              </div>
             </div>
           )}
         </div>

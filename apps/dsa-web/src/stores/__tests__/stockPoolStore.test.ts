@@ -149,6 +149,30 @@ describe('stockPoolStore', () => {
     expect(state.selectedReport?.meta.stockCode).toBe('AAPL');
   });
 
+  it('toggles select all for the provided visible history ids only', () => {
+    useStockPoolStore.setState({
+      historyItems: [
+        historyItem,
+        {
+          ...historyItem,
+          id: 2,
+          queryId: 'q-2',
+          stockCode: '300342',
+          stockName: '天银机电',
+        },
+      ],
+      selectedHistoryIds: [3],
+    });
+
+    useStockPoolStore.getState().toggleSelectAllVisible([1]);
+
+    expect(useStockPoolStore.getState().selectedHistoryIds).toEqual([3, 1]);
+
+    useStockPoolStore.getState().toggleSelectAllVisible([1]);
+
+    expect(useStockPoolStore.getState().selectedHistoryIds).toEqual([3]);
+  });
+
   it('surfaces duplicate task errors without replacing the dashboard error state', async () => {
     vi.mocked(analysisApi.analyzeAsync).mockRejectedValue(
       new DuplicateTaskError('600519', 'task-1', '股票 600519 正在分析中'),
@@ -199,6 +223,34 @@ describe('stockPoolStore', () => {
       originalQuery: '00700',
       selectionSource: 'autocomplete',
       notify: true,
+    }));
+  });
+
+  it('adds accepted analysis tasks to the queue without waiting for SSE', async () => {
+    vi.mocked(analysisApi.analyzeAsync).mockResolvedValue({
+      taskId: 'task-accepted-1',
+      status: 'pending',
+      message: '分析任务已加入队列',
+    } as never);
+
+    await useStockPoolStore.getState().submitAnalysis({
+      stockCode: '600519',
+      stockName: '贵州茅台',
+      originalQuery: '茅台',
+      selectionSource: 'autocomplete',
+    });
+
+    const state = useStockPoolStore.getState();
+    expect(state.activeTasks).toHaveLength(1);
+    expect(state.activeTasks[0]).toEqual(expect.objectContaining({
+      taskId: 'task-accepted-1',
+      stockCode: '600519',
+      stockName: '贵州茅台',
+      status: 'pending',
+      progress: 0,
+      reportType: 'detailed',
+      originalQuery: '茅台',
+      selectionSource: 'autocomplete',
     }));
   });
 

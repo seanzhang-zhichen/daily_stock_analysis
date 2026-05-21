@@ -11,6 +11,7 @@ import PortfolioPage from './pages/PortfolioPage';
 import UserAuthPage from './pages/UserAuthPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import AccountPage from './pages/AccountPage';
+import WatchlistPage from './pages/WatchlistPage';
 import BillingPage from './pages/BillingPage';
 import ApiKeysPage from './pages/ApiKeysPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
@@ -19,6 +20,7 @@ import OrdersPage from './pages/OrdersPage';
 import InvoicesPage from './pages/InvoicesPage';
 import AdminPage from './pages/AdminPage';
 import NoticesPage from './pages/NoticesPage';
+import HelpPage from './pages/HelpPage';
 import TermsPage from './pages/legal/TermsPage';
 import PrivacyPage from './pages/legal/PrivacyPage';
 import RiskDisclosurePage from './pages/legal/RiskDisclosurePage';
@@ -32,6 +34,8 @@ const AppContent: React.FC = () => {
   const { authEnabled, loggedIn, userMode, effectiveLoggedIn, isLoading, loadError, refreshStatus } = useAuth();
   const userModeEnabled = Boolean(userMode?.userModeEnabled);
   const userLoggedIn = Boolean(userMode?.loggedIn);
+  const userIsAdmin = Boolean(userMode?.user?.isAdmin);
+  const canAccessSystemSettings = !userModeEnabled || userIsAdmin;
 
   useEffect(() => {
     useAgentChatStore.getState().setCurrentRoute(location.pathname);
@@ -93,11 +97,22 @@ const AppContent: React.FC = () => {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/backtest" element={<BacktestPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route
+            path="/settings"
+            element={
+              canAccessSystemSettings ? <SettingsPage /> : <Navigate to="/account" replace />
+            }
+          />
           <Route
             path="/account"
             element={
               userModeEnabled ? <AccountPage /> : <Navigate to="/settings" replace />
+            }
+          />
+          <Route
+            path="/watchlist"
+            element={
+              userModeEnabled ? <WatchlistPage /> : <Navigate to="/settings" replace />
             }
           />
           <Route
@@ -131,6 +146,7 @@ const AppContent: React.FC = () => {
             }
           />
           <Route path="/notices" element={<NoticesPage />} />
+          <Route path="/help" element={<HelpPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
         <Route path="/login" element={loginElement} />

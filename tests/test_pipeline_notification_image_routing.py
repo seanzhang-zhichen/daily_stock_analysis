@@ -7,13 +7,24 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from tests.litellm_stub import ensure_litellm_stub
 
 ensure_litellm_stub()
+try:
+    __import__("json_repair")
+except ModuleNotFoundError:
+    json_repair_stub = MagicMock()
+    json_repair_stub.repair_json = lambda value: value
+    sys.modules["json_repair"] = json_repair_stub
+if "newspaper" not in sys.modules:
+    newspaper_stub = MagicMock()
+    newspaper_stub.Article = MagicMock()
+    newspaper_stub.Config = MagicMock()
+    sys.modules["newspaper"] = newspaper_stub
 
 from src.core.pipeline import StockAnalysisPipeline, NotificationChannel
 from src.enums import ReportType
@@ -59,8 +70,8 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
 
     def _make_results(self):
         return [
-            SimpleNamespace(code="000001"),
-            SimpleNamespace(code="600519"),
+            SimpleNamespace(code="000001", name="平安银行"),
+            SimpleNamespace(code="600519", name="贵州茅台"),
         ]
 
     @patch("src.md2img.markdown_to_image", return_value=b"png-bytes")
@@ -75,6 +86,9 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
         called_receivers = [kwargs.get("receivers") for _, kwargs in pipeline.notifier._send_email_with_inline_image.call_args_list]
         self.assertIn(["group@example.com"], called_receivers)
         self.assertIn(None, called_receivers)
+        called_subjects = [kwargs.get("subject") for _, kwargs in pipeline.notifier._send_email_with_inline_image.call_args_list]
+        self.assertTrue(any("平安银行(000001)" in subject for subject in called_subjects))
+        self.assertTrue(any("贵州茅台(600519)" in subject for subject in called_subjects))
 
     @patch("src.md2img.markdown_to_image", return_value=None)
     def test_send_notifications_email_group_falls_back_to_text_when_image_unavailable(self, _mock_md2img):
@@ -88,6 +102,9 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
         called_receivers = [kwargs.get("receivers") for _, kwargs in pipeline.notifier.send_to_email.call_args_list]
         self.assertIn(["group@example.com"], called_receivers)
         self.assertIn(None, called_receivers)
+        called_subjects = [kwargs.get("subject") for _, kwargs in pipeline.notifier.send_to_email.call_args_list]
+        self.assertTrue(any("平安银行(000001)" in subject for subject in called_subjects))
+        self.assertTrue(any("贵州茅台(600519)" in subject for subject in called_subjects))
 
     @patch("src.md2img.markdown_to_image", return_value=None)
     def test_send_notifications_email_group_failure_does_not_skip_later_group(self, _mock_md2img):
@@ -101,6 +118,9 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
         called_receivers = [kwargs.get("receivers") for _, kwargs in pipeline.notifier.send_to_email.call_args_list]
         self.assertIn(["group@example.com"], called_receivers)
         self.assertIn(None, called_receivers)
+        called_subjects = [kwargs.get("subject") for _, kwargs in pipeline.notifier.send_to_email.call_args_list]
+        self.assertTrue(any("平安银行(000001)" in subject for subject in called_subjects))
+        self.assertTrue(any("贵州茅台(600519)" in subject for subject in called_subjects))
 
 
 class _FakeWechatNotifier:
@@ -242,13 +262,14 @@ class TestPipelineReportRouteFiltering(unittest.TestCase):
             image_channels={"telegram"},
         )
         pipeline.config = SimpleNamespace(stock_email_groups=[])
-        results = [SimpleNamespace(code="000001")]
+        results = [SimpleNamespace(code="000001", name="平安银行")]
 
         with patch("src.md2img.markdown_to_image", return_value=b"png") as mock_md2img:
             pipeline._send_notifications(results, ReportType.SIMPLE)
 
         mock_md2img.assert_not_called()
-        pipeline.notifier.send_to_email.assert_called_once_with("report:000001")
+        pipeline.notifier.send_to_email.assert_called_once_with("report:000001", subject=ANY)
+        self.assertIn("平安银行(000001)", pipeline.notifier.send_to_email.call_args.kwargs["subject"])
         pipeline.notifier.send_to_telegram.assert_not_called()
 
     def test_ntfy_route_uses_text_report_without_image_conversion(self):
@@ -320,12 +341,13 @@ class TestPipelineReportRouteFiltering(unittest.TestCase):
         pipeline.notifier.send_to_telegram.side_effect = RuntimeError("telegram failed")
         pipeline.notifier.send_to_email.return_value = True
         pipeline.config = SimpleNamespace(stock_email_groups=[])
-        results = [SimpleNamespace(code="000001")]
+        results = [SimpleNamespace(code="000001", name="平安银行")]
 
         pipeline._send_notifications(results, ReportType.SIMPLE)
 
         pipeline.notifier.send_to_telegram.assert_called_once_with("report:000001")
-        pipeline.notifier.send_to_email.assert_called_once_with("report:000001")
+        pipeline.notifier.send_to_email.assert_called_once_with("report:000001", subject=ANY)
+        self.assertIn("平安银行(000001)", pipeline.notifier.send_to_email.call_args.kwargs["subject"])
         pipeline.notifier.record_noise_control.assert_called_once()
         pipeline.notifier.release_noise_control.assert_not_called()
 
@@ -335,12 +357,13 @@ class TestPipelineReportRouteFiltering(unittest.TestCase):
         pipeline.notifier.send_to_telegram.side_effect = RuntimeError("telegram failed")
         pipeline.notifier.send_to_email.return_value = False
         pipeline.config = SimpleNamespace(stock_email_groups=[])
-        results = [SimpleNamespace(code="000001")]
+        results = [SimpleNamespace(code="000001", name="平安银行")]
 
         pipeline._send_notifications(results, ReportType.SIMPLE)
 
         pipeline.notifier.send_to_telegram.assert_called_once_with("report:000001")
-        pipeline.notifier.send_to_email.assert_called_once_with("report:000001")
+        pipeline.notifier.send_to_email.assert_called_once_with("report:000001", subject=ANY)
+        self.assertIn("平安银行(000001)", pipeline.notifier.send_to_email.call_args.kwargs["subject"])
         pipeline.notifier.record_noise_control.assert_not_called()
         pipeline.notifier.release_noise_control.assert_called_once()
 

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from src.storage import AppUserNotificationPref
 from src.users.errors import UserError, UserErrorCode
 
-ALLOWED_WEBHOOK_TYPES = {"feishu", "wecom", "discord", "telegram", "generic"}
+ALLOWED_WEBHOOK_TYPES = {"feishu", "wecom", "dingtalk", "discord", "telegram", "generic", "custom"}
 
 
 @dataclass
@@ -62,6 +62,7 @@ def update_prefs(
     webhook_type: Optional[str] = None,
     clear_webhook: bool = False,
     can_webhook: bool = False,
+    can_email_notifications: bool = False,
 ) -> NotificationPrefs:
     """Upsert 用户通知偏好。
 
@@ -71,6 +72,10 @@ def update_prefs(
     """
     if webhook_url is not None and not can_webhook:
         raise UserError(UserErrorCode.PERMISSION_DENIED, "Webhook 通知需要 Pro 套餐")
+    if email_enabled is True and not can_email_notifications:
+        raise UserError(UserErrorCode.PERMISSION_DENIED, "邮件通知需要 Pro 套餐")
+    if daily_push_enabled is True and not can_email_notifications:
+        raise UserError(UserErrorCode.PERMISSION_DENIED, "每日推送需要 Pro 套餐")
 
     if webhook_type is not None and webhook_type not in ALLOWED_WEBHOOK_TYPES:
         raise UserError(

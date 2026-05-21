@@ -1,8 +1,8 @@
-# Default Bull Trend Strategy / 默认多头趋势
+# Bull Trend Strategy / 多头趋势
 
 name: bull_trend
-display_name: 默认多头趋势
-description: 默认个股分析优先策略，识别多头排列、趋势延续与回踩低吸机会。
+display_name: 多头趋势
+description: 识别多头排列、趋势延续与回踩低吸机会。
 category: trend
 core_rules: [1, 2, 3]
 required_tools:
@@ -15,10 +15,10 @@ default_priority: 10
 market_regimes: [trending_up]
 
 instructions: |
-  **默认多头趋势（Default Bull Trend Strategy）**
+  **多头趋势（Bull Trend Strategy）**
 
   适用场景：
-  - 常规个股分析的默认策略。
+  - 常规个股分析默认启用的趋势策略。
   - 优先寻找“趋势向上 + 风险可控 + 不追高”的机会。
 
   分析框架：

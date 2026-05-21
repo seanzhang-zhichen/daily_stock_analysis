@@ -621,25 +621,27 @@ const ChatPage: React.FC = () => {
         <header className="mb-4 flex-shrink-0 space-y-3">
           <div className="flex items-start justify-between gap-4">
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-              <button
-                onClick={() => setSidebarOpen(true)}
-                className="-ml-1 ui-icon-button h-9 w-9 md:hidden"
-                aria-label="历史对话"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              <span className="md:hidden">
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="-ml-1 ui-icon-button h-9 w-9"
+                  aria-label="历史对话"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
-              </button>
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 6h16M4 12h16M4 18h16"
+                    />
+                  </svg>
+                </button>
+              </span>
               <svg
                 className="w-6 h-6 text-primary"
                 fill="none"

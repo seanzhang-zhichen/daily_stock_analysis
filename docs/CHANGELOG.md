@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要 Pro 套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
+- [改进] 将「邮件通知」和「每日推送」改为 Pro 专属权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到 Pro 套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。
+- [修复] 修复 Web 问股页面的三横线历史对话按钮在桌面布局（md 及以上宽度）下被 ui-icon-button 自定义样式覆盖而无法隐藏的问题，通过将按钮包裹在 md:hidden 响应式容器中实现正确隐藏。
+- [修复] 修复首页股票分析提交后依赖 SSE 才显示任务队列的问题，提交成功返回任务 ID 后立即在前端队列中展示等待中的分析任务，并将按钮加载文案改为“提交中”。
+- [修复] 修复首页输入股票中文名后直接点击「分析」会把中文名原样提交给后端、依赖后端在线名称解析甚至超时的问题，按钮提交前会优先用前端股票索引解析为真实股票代码。
+- [修复] 调整 Web 主按钮禁用态为灰色，并增强首页「分析」按钮启用态阴影，避免可用按钮看起来像不可点击状态。
+- [修复] 修复 Web 首页历史分析筛选后「全选当前」仍会选中所有已加载历史记录的问题，并将全选复选框与历史记录复选框左侧对齐。
+- [改进] 单股分析邮件主题增加股票名称和代码，便于在邮件列表中区分同一天的不同股票报告；批量报告仍保留日期主题。
+- [修复] 隐藏 Web 密码输入框的浏览器原生显示密码按钮，避免与自定义密码可见性按钮同时出现两个眼睛图标。
+- [修复] 修复首页策略下拉菜单被共享 `ui-menu` 裁剪导致无法滚动的问题，并移除含义不清的“默认策略”选项，改为直接选中后端返回的默认策略且将内置多头策略展示为“多头趋势”。
+- [新功能] Web 前端新增 `/help` 帮助中心页面，侧边栏「帮助」改为站内导航，页面提供 FAQ、反馈指引、配置入口和免责声明。
+- [改进] To C 模式下普通用户不再显示或访问系统设置页，系统配置 API 收紧为平台管理员权限，避免将部署级配置暴露给 C 端用户。
+- [改进] Web 回测页面文案中文化，将筛选、验证周期、次日验证、强制重算、结果表格、指标卡和空状态改为面向 C 端用户更易理解的历史验证表达。
+- [改进] Web 前端主题入口收敛到右上角 `ThemeToggle`，移除侧边栏底部主题切换入口，并将默认主题从深色改为跟随系统。
 - [文档] 新增并更新 `docs/web-frontend-redesign-plan.md`，明确 Web 前端本次按删除式完整重构推进：旧页面结构、旧组件视觉语义、旧样式体系和旧布局方式均视为废弃对象，补充重构后全局、标准内容页、工作台、首页、问股、持仓、回测、响应式、阅读与数据排版方案，并新增信息架构、交互状态、数据可视化、可访问性、性能与删除式重构完成定义；`docs/INDEX.md` 同步增加入口。
 - [改进] Web 前端重构 Phase 1 继续推进：`SidebarNav`、`QuotaIndicator`、`Drawer`、`ConfirmDialog`、`Tooltip`、`RenewalBanner`、`ThemeToggle` 迁移到新 `ui-*` 全局视觉类，减少全局组件对旧 `nav-*`、`cyan`、`elevated` 等旧视觉细节的直接依赖；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
 - [改进] Web 前端重构 Phase 1 继续推进：`StockAutocomplete`、`SettingsField`、`NotificationTestPanel`、`IntelligentImport`、`BacktestPage`、`PortfolioPage`、`ChatPage`、`AccountPage`、`InvoicesPage` 中的原生输入、选择框和文本域迁移到 `ui-input`，TS/TSX 侧清零旧 `input-surface` / `input-focus-glow` 直接引用；`BacktestPage` 测试断言同步切到 `ui-input`；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
@@ -39,12 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] Phase 6 公告中心：新增 `AppNotice` ORM 表（`app_notices`，含 `notice_type`/`is_pinned`/`is_published`/`target_plan`/`expires_at`）；新增 `api/v1/endpoints/notices.py` 提供公开列表 `GET /api/v1/notices`、近期公告数 `GET /api/v1/notices/unread-count`、管理员 CRUD + publish/unpublish 接口，两个公开端点已加入 `AuthMiddleware` 白名单；前端新增 `/notices` 页面（置顶/普通分区展示、加载更多）、侧边栏「公告」导航项（Bell 图标，含近 30 天发布数角标）、Admin `/admin` 新增「公告管理」标签页（创建草稿 + 发布/下架 + 删除）。
 - [新功能] Phase 6 Sentry 错误监控：`requirements.txt` 追加 `sentry-sdk[fastapi]>=2.0.0`；`api/app.py` 新增 `_init_sentry()` 函数，读取 `SENTRY_DSN`/`SENTRY_ENVIRONMENT`/`SENTRY_TRACES_SAMPLE_RATE` 环境变量，接入 `FastApiIntegration` + `SqlalchemyIntegration`；`SENTRY_DSN` 留空时完全不初始化，不影响主流程；`.env.example` 补充相关字段说明。
 - [改进] Phase 6 注册防刷：`registration_guard.py` + `config.py` 新增邮箱域名 DNS 宽松 MX 校验（`check_mx_domain`，基于 `socket.getaddrinfo`，网络故障时 fail-open 放行）；由 `USER_EMAIL_MX_CHECK_ENABLED=true` 开关控制（默认关闭）；`service.py` 向 `RegistrationGuardConfig` 透传 `mx_check_enabled`；`.env.example` 补充说明。
-- [新功能] Phase 6 客服入口：前端 `SidebarNav` 侧边栏底部新增「帮助」链接（`HelpCircle` 图标），链接地址通过 `VITE_SUPPORT_URL` 前端环境变量配置（留空时跳转 `#`）；`.env.example` 补充 `VITE_SUPPORT_URL` 说明。
+- [新功能] Phase 6 客服入口：前端 `SidebarNav` 侧边栏底部新增「帮助」链接（`HelpCircle` 图标），进入站内 `/help` 帮助中心，集中展示 FAQ、反馈指引、配置入口和免责声明。
 - [文档] `docs/to-c-product-plan.md` Phase 6 状态更新为「主要落地」，标注公告中心、Sentry 监控、MX 校验、客服入口已落地；`.env.example` 同步追加四个新变量区段。
 - [新功能] Phase 6 账号注销（PIPL 合规）：`AppUser` 新增 `deletion_requested_at` 字段；新增 `src/users/deletion.py` 提供 `request_deletion`（7 天冷静期 + 立即撤销 session + 确认邮件）、`cancel_deletion`（冷静期内取消）、`execute_pending_deletions`（调度软删）、`cleanup_deleted_users`（物理清除个人数据，保留订单/发票 5 年）；`POST /api/v1/account/deletion` / `DELETE /api/v1/account/deletion` / `GET /api/v1/account/deletion` 三个端点已上线；`main.py` 调度器新增 `run_account_lifecycle_task` 每日执行软删 + 物理清除，支持 `--dry-run`。
 - [新功能] Phase 6 个人数据导出（PIPL 合规）：新增 `src/users/data_export.py` 收集用户注册信息、自选股、通知偏好、订阅历史、订单、BYOK（脱敏）、协议同意记录并通过邮件发送 JSON 导出包；`POST /api/v1/account/data-export` 端点已上线；操作写 `app_audit_logs`。
 - [新功能] Phase 6 增长埋点：`src/storage/models/app.py` 新增 `AppGrowthEvent` ORM 表（user_id / session_id / event / props / ip / ts）；`POST /api/v1/usage/events` 端点已上线（匿名可访问，白名单事件名过滤，登录态自动关联 user_id）；`/api/v1/usage/events` 已加入 `AuthMiddleware` 白名单。
-- [改进] 前端 `AccountPage` 新增「数据与隐私」卡片（导出个人数据按钮）与「危险操作」卡片账号注销区块：注销需输入「注销账号」确认词，冷静期内显示取消入口；`src/api/account.ts` 同步新增 `getDeletionStatus` / `requestDeletion` / `cancelDeletion` / `requestDataExport` 四个 API 方法。
+- [改进] `src/api/account.ts` 新增 `getDeletionStatus` / `requestDeletion` / `cancelDeletion` / `requestDataExport` 四个账号合规 API 方法。
+- [改进] Web 账户页移除「数据与隐私」与「危险操作」展示区块，页面底部仅保留普通「退出登录」入口；`docs/to-c-product-plan.md` 与 `docs/to-c-product-wireframes.md` 同步更新账户页说明。
 - [新功能] Phase 5 对账账单拉取：`WechatGateway.fetch_settlements` 接入微信 V3 `GET /v3/bill/tradebill` 获取 `download_url` 后下载 gzip CSV 并解析（剥离 `` ` `` 前缀、跳过汇总行、元转分）；`AlipayGateway.fetch_settlements` 调用 `alipay.bill.downloadurl.query` 获取下载链接后解压 ZIP 内 GBK 编码 CSV（跳过汇总行、GBK 解码）；两个 gateway 失败时均静默返回空列表，对账脚本降级为仅 `local_only` 差异；同步新增 `_parse_wechat_bill_csv` / `_parse_alipay_bill_csv` 模块级函数便于单元测试独立验证解析逻辑。
 - [测试] `tests/test_payment_gateway.py` 新增 `TestWechatGatewayFetchSettlements`（7 条）与 `TestAlipayGatewayFetchSettlements`（7 条）共 14 条测试，覆盖 CSV 解析字段映射、gzip 解压、汇总行跳过、空订单号跳过、坏 ZIP 容错、API 错误返回空列表、完整 fetch_settlements 成功路径，14 条全部通过，全文件 54 条无回归。
 - [新功能] Phase 5 安全收尾：新增 `src/services/billing/security.py` 提供回调 IP 白名单检查（`check_callback_ip`，读 `PAYMENT_CALLBACK_ALLOWED_IPS[_{PROVIDER}]` CIDR 列表，留空允许所有；命中外来 IP 返回 200 但不驱动业务、写 `app_audit_logs.callback.ip_blocked`）与签名失败滑动窗口告警（`record_sig_failure`，`PAYMENT_CALLBACK_SIG_FAIL_THRESHOLD` 默认 5 次 / `_WINDOW_SECONDS` 默认 300s / 30 分钟冷却，通过 `ADMIN_ALERT_EMAIL` + `RECONCILE_WEBHOOK_URL` 双路告警）；两个回调端点 `/callbacks/wechat` 与 `/callbacks/alipay` 均已接入 IP 检查和签名失败告警。

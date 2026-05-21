@@ -44,6 +44,7 @@ _WECOM_MAX_BYTES = 4000  # 官方 4096, 留一点余量给 markdown 包裹字段
 _DISCORD_MAX_CHARS = 1900
 _TELEGRAM_MAX_CHARS = 4000
 _FEISHU_MAX_CHARS = 18000  # 飞书消息体在 20KB 字节左右, 字符级粗略截断
+_DINGTALK_MAX_BYTES = 19000  # 钉钉消息体官方上限约 20000 字节, 留 1000 字节给 payload 包装
 _GENERIC_MAX_CHARS = 18000
 
 _WEBHOOK_TIMEOUT_SECONDS = 15
@@ -311,12 +312,28 @@ def _send_generic_webhook(url: str, content: str, *, title: str) -> bool:
     return _post_json(url, payload, label="generic")
 
 
+def _send_dingtalk_webhook(url: str, content: str, *, title: str) -> bool:
+    """钉钉自定义机器人 - markdown 格式。"""
+    body = f"### {title}\n\n{content}" if title else content
+    safe_body = _truncate_bytes(body, _DINGTALK_MAX_BYTES)
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title or "DSA 每日分析报告",
+            "text": safe_body,
+        },
+    }
+    return _post_json(url, payload, label="dingtalk")
+
+
 _WEBHOOK_DISPATCH = {
     "feishu": _send_feishu_webhook,
     "wecom": _send_wecom_webhook,
+    "dingtalk": _send_dingtalk_webhook,
     "discord": _send_discord_webhook,
     "telegram": _send_telegram_webhook,
     "generic": _send_generic_webhook,
+    "custom": _send_generic_webhook,
 }
 
 

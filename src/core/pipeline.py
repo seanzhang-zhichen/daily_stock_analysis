@@ -2109,6 +2109,7 @@ class StockAnalysisPipeline:
                                     receivers=receivers,
                                 ) -> bool:
                                     grp_report = self._generate_aggregate_report(group_results, report_type)
+                                    subject = self._build_email_subject(group_results)
                                     grp_image_bytes = None
                                     if channel.value in self.notifier._markdown_to_image_channels:
                                         grp_image_bytes = markdown_to_image(
@@ -2120,10 +2121,14 @@ class StockAnalysisPipeline:
                                     )
                                     if use_image:
                                         return self.notifier._send_email_with_inline_image(
-                                            grp_image_bytes, receivers=receivers
+                                            grp_image_bytes,
+                                            receivers=receivers,
+                                            subject=subject,
                                         )
                                     return self.notifier.send_to_email(
-                                        grp_report, receivers=receivers
+                                        grp_report,
+                                        receivers=receivers,
+                                        subject=subject,
                                     )
 
                                 email_label = (
@@ -2136,12 +2141,16 @@ class StockAnalysisPipeline:
                                 ) or non_wechat_success
                         else:
                             def _send_email_report() -> bool:
+                                subject = self._build_email_subject(results)
                                 use_image = self.notifier._should_use_image_for_channel(
                                     channel, image_bytes
                                 )
                                 if use_image:
-                                    return self.notifier._send_email_with_inline_image(image_bytes)
-                                return self.notifier.send_to_email(report)
+                                    return self.notifier._send_email_with_inline_image(
+                                        image_bytes,
+                                        subject=subject,
+                                    )
+                                return self.notifier.send_to_email(report, subject=subject)
 
                             non_wechat_success = _send_channel_safely(
                                 channel.value,
@@ -2245,6 +2254,20 @@ class StockAnalysisPipeline:
                 self.notifier.release_noise_control(noise_decision)
             import traceback
             logger.error(f"发送通知失败: {e}\n{traceback.format_exc()}")
+
+    @staticmethod
+    def _build_email_subject(results: List[AnalysisResult]) -> str:
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        if len(results) == 1:
+            result = results[0]
+            code = str(getattr(result, "code", "") or "").strip()
+            name = str(getattr(result, "name", "") or "").strip()
+            stock_label = name or code
+            if stock_label and code and code not in stock_label:
+                stock_label = f"{stock_label}({code})"
+            if stock_label:
+                return f"📈 股票智能分析报告 - {stock_label} - {date_str}"
+        return f"📈 股票智能分析报告 - {date_str}"
 
     def _generate_aggregate_report(
         self,

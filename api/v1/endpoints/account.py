@@ -884,6 +884,7 @@ async def account_update_notification_prefs(
             webhook_type=body.webhook_type,
             clear_webhook=body.clear_webhook,
             can_webhook=plan.can_webhook,
+            can_email_notifications=plan.is_pro,
         )
         _commit_or_rollback(db)
     except UserError as exc:

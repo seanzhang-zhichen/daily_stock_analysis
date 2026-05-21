@@ -86,7 +86,37 @@ describe('HistoryList', () => {
 
     fireEvent.click(screen.getByText('全选当前'));
 
-    expect(onToggleSelectAll).toHaveBeenCalledTimes(1);
+    expect(onToggleSelectAll).toHaveBeenCalledWith([1]);
+  });
+
+  it('toggles select-all only for the filtered history items', () => {
+    const onToggleSelectAll = vi.fn();
+
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          ...items,
+          {
+            id: 2,
+            queryId: 'q-2',
+            stockCode: '300342',
+            stockName: '天银机电',
+            sentimentScore: 42,
+            operationAdvice: '观望',
+            createdAt: '2026-03-15T09:00:00Z',
+          },
+        ]}
+        onToggleSelectAll={onToggleSelectAll}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '按股票代码或名称筛选历史记录' }), {
+      target: { value: '天银' },
+    });
+    fireEvent.click(screen.getByText('全选当前'));
+
+    expect(onToggleSelectAll).toHaveBeenCalledWith([2]);
   });
 
   it('disables delete when nothing is selected', () => {

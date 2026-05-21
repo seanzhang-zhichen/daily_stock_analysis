@@ -322,7 +322,7 @@ class TestEmailSender(unittest.TestCase):
         server.quit.assert_called_once()
 
     @mock.patch("smtplib.SMTP_SSL")
-    def test_send_image_email_encodes_non_ascii_sender_name(self, mock_smtp_ssl):
+    def test_send_image_email_encodes_non_ascii_sender_name_and_custom_subject(self, mock_smtp_ssl):
         cfg = _config(
             email_sender="a@qq.com",
             email_password="p",
@@ -331,7 +331,11 @@ class TestEmailSender(unittest.TestCase):
         )
         sender = EmailSender(cfg)
 
-        result = sender._send_email_with_inline_image(b"PNG_BYTES", receivers=["b@qq.com"])
+        result = sender._send_email_with_inline_image(
+            b"PNG_BYTES",
+            receivers=["b@qq.com"],
+            subject="股票智能分析报告 - 平安银行(000001)",
+        )
 
         self.assertTrue(result)
         server = mock_smtp_ssl.return_value

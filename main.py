@@ -538,7 +538,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
             subject = f"[DSA] 您的自选股分析报告 {today_str}"
 
             # 邮件推送 (HTML + 一键退订)
-            if prefs.email_enabled and user_email:
+            if plan.is_pro and prefs.email_enabled and user_email:
                 ok = send_daily_email(
                     DailyEmailContext(
                         user_id=user_id,
@@ -556,7 +556,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
                     )
             else:
                 logger.info(
-                    "[per-user 调度] 用户 %d 邮件推送已关闭或无邮箱，跳过邮件",
+                    "[per-user 调度] 用户 %d 非 Pro、邮件推送已关闭或无邮箱，跳过邮件",
                     user_id,
                 )
 

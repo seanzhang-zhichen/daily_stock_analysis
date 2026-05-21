@@ -1,20 +1,23 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from '../SidebarNav';
 
 const mockLogout = vi.fn().mockResolvedValue(undefined);
-const mockThemeToggle = vi.fn(({ collapsed }: { collapsed?: boolean }) => (
-  <button type="button">{collapsed ? '切换主题(折叠)' : '切换主题'}</button>
-));
 
 const completionBadgeState = { value: true };
+const authState = {
+  authEnabled: true,
+  userMode: null as null | {
+    userModeEnabled: boolean;
+    loggedIn: boolean;
+    user: { isAdmin?: boolean } | null;
+  },
+  logout: mockLogout,
+};
 
 vi.mock('../../../contexts/AuthContext', () => ({
-  useAuth: () => ({
-    authEnabled: true,
-    logout: mockLogout,
-  }),
+  useAuth: () => authState,
 }));
 
 vi.mock('../../../stores/agentChatStore', () => ({
@@ -22,11 +25,14 @@ vi.mock('../../../stores/agentChatStore', () => ({
     selector({ completionBadge: completionBadgeState.value }),
 }));
 
-vi.mock('../../theme/ThemeToggle', () => ({
-  ThemeToggle: (props: { collapsed?: boolean }) => mockThemeToggle(props),
-}));
-
 describe('SidebarNav', () => {
+  beforeEach(() => {
+    completionBadgeState.value = true;
+    authState.authEnabled = true;
+    authState.userMode = null;
+    mockLogout.mockClear();
+  });
+
   it('shows the shared completion badge only when chat completion is pending', () => {
     completionBadgeState.value = true;
 
@@ -49,17 +55,58 @@ describe('SidebarNav', () => {
     expect(screen.queryByTestId('chat-completion-badge')).not.toBeInTheDocument();
   });
 
-  it('renders the collapsed theme toggle variant when the sidebar is collapsed', () => {
+  it('does not render a sidebar theme toggle when the sidebar is collapsed', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <SidebarNav collapsed />
       </MemoryRouter>,
     );
 
-    expect(mockThemeToggle).toHaveBeenCalledWith(
-      expect.objectContaining({ variant: 'nav', collapsed: true }),
+    expect(screen.queryByRole('button', { name: '切换主题' })).not.toBeInTheDocument();
+  });
+
+  it('routes help to the in-app help page', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav />
+      </MemoryRouter>,
     );
-    expect(screen.getByRole('button', { name: '切换主题(折叠)' })).toBeInTheDocument();
+
+    expect(screen.getByRole('link', { name: '帮助' })).toHaveAttribute('href', '/help');
+  });
+
+  it('hides system settings for regular To C users', () => {
+    authState.userMode = {
+      userModeEnabled: true,
+      loggedIn: true,
+      user: { isAdmin: false },
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: '设置' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '我的' })).toBeInTheDocument();
+  });
+
+  it('keeps system settings visible for To C admins', () => {
+    authState.userMode = {
+      userModeEnabled: true,
+      loggedIn: true,
+      user: { isAdmin: true },
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: '设置' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '我的' })).toBeInTheDocument();
   });
 
   it('opens the logout confirmation and confirms logout', async () => {

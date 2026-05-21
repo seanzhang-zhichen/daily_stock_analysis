@@ -28,11 +28,11 @@ function outcomeBadge(outcome?: string) {
   if (!outcome) return <Badge variant="default">--</Badge>;
   switch (outcome) {
     case 'win':
-      return <Badge variant="success" glow>WIN</Badge>;
+      return <Badge variant="success" glow>命中</Badge>;
     case 'loss':
-      return <Badge variant="danger" glow>LOSS</Badge>;
+      return <Badge variant="danger" glow>未命中</Badge>;
     case 'neutral':
-      return <Badge variant="warning">NEUTRAL</Badge>;
+      return <Badge variant="warning">中性</Badge>;
     default:
       return <Badge variant="default">{outcome}</Badge>;
   }
@@ -41,12 +41,12 @@ function outcomeBadge(outcome?: string) {
 function statusBadge(status: string) {
   switch (status) {
     case 'completed':
-      return <Badge variant="success">completed</Badge>;
+      return <Badge variant="success">已完成</Badge>;
     case 'insufficient':
     case 'insufficient_data':
-      return <Badge variant="warning">insufficient</Badge>;
+      return <Badge variant="warning">数据不足</Badge>;
     case 'error':
-      return <Badge variant="danger">error</Badge>;
+      return <Badge variant="danger">异常</Badge>;
     default:
       return <Badge variant="default">{status}</Badge>;
   }
@@ -55,13 +55,34 @@ function statusBadge(status: string) {
 function actualMovementBadge(movement?: string | null) {
   switch (movement) {
     case 'up':
-      return <Badge variant="success">UP</Badge>;
+      return <Badge variant="success">上涨</Badge>;
     case 'down':
-      return <Badge variant="danger">DOWN</Badge>;
+      return <Badge variant="danger">下跌</Badge>;
     case 'flat':
-      return <Badge variant="warning">FLAT</Badge>;
+      return <Badge variant="warning">横盘</Badge>;
     default:
       return <Badge variant="default">--</Badge>;
+  }
+}
+
+function directionExpectedLabel(direction?: string | null): string {
+  switch (direction) {
+    case 'up':
+      return '预期上涨';
+    case 'down':
+      return '预期下跌';
+    case 'flat':
+      return '预期横盘';
+    case 'not_down':
+      return '预期不下跌';
+    case 'not_up':
+      return '预期不上涨';
+    case 'long':
+      return '看多';
+    case 'cash':
+      return '观望';
+    default:
+      return direction || '';
   }
 }
 
@@ -70,7 +91,7 @@ function boolIcon(value?: boolean | null) {
     return (
       <span
         className="inline-flex items-center justify-center gap-1 rounded-md border border-success/20 bg-success/10 px-1.5 py-0.5 text-xs font-medium text-success"
-        aria-label="yes"
+        aria-label="是"
       >
         <StatusDot tone="success" className="h-1.5 w-1.5 shadow-none" />
         <Check className="h-3.5 w-3.5" />
@@ -82,7 +103,7 @@ function boolIcon(value?: boolean | null) {
     return (
       <span
         className="inline-flex items-center justify-center gap-1 rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-danger"
-        aria-label="no"
+        aria-label="否"
       >
         <StatusDot tone="danger" className="h-1.5 w-1.5 shadow-none" />
         <X className="h-3.5 w-3.5" />
@@ -93,7 +114,7 @@ function boolIcon(value?: boolean | null) {
   return (
     <span
       className="inline-flex items-center justify-center gap-1 rounded-md border border-border/50 bg-surface px-1.5 py-0.5 text-xs font-medium text-muted-text"
-      aria-label="unknown"
+      aria-label="未知"
     >
       <StatusDot tone="neutral" className="h-1.5 w-1.5 shadow-none" />
       <Minus className="h-3.5 w-3.5" />
@@ -117,21 +138,21 @@ const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> 
     <div className="mb-3">
       <span className="label-uppercase">{title}</span>
     </div>
-    <MetricRow label="Direction Accuracy" value={pct(metrics.directionAccuracyPct)} accent />
-    <MetricRow label="Win Rate" value={pct(metrics.winRatePct)} accent />
-    <MetricRow label="Avg Sim. Return" value={pct(metrics.avgSimulatedReturnPct)} />
-    <MetricRow label="Avg Stock Return" value={pct(metrics.avgStockReturnPct)} />
-    <MetricRow label="SL Trigger Rate" value={pct(metrics.stopLossTriggerRate)} />
-    <MetricRow label="TP Trigger Rate" value={pct(metrics.takeProfitTriggerRate)} />
-    <MetricRow label="Avg Days to Hit" value={metrics.avgDaysToFirstHit != null ? metrics.avgDaysToFirstHit.toFixed(1) : '--'} />
+    <MetricRow label="方向命中率" value={pct(metrics.directionAccuracyPct)} accent />
+    <MetricRow label="胜率" value={pct(metrics.winRatePct)} accent />
+    <MetricRow label="平均模拟收益" value={pct(metrics.avgSimulatedReturnPct)} />
+    <MetricRow label="平均实际涨跌幅" value={pct(metrics.avgStockReturnPct)} />
+    <MetricRow label="止损触发率" value={pct(metrics.stopLossTriggerRate)} />
+    <MetricRow label="止盈触发率" value={pct(metrics.takeProfitTriggerRate)} />
+    <MetricRow label="平均触达天数" value={metrics.avgDaysToFirstHit != null ? metrics.avgDaysToFirstHit.toFixed(1) : '--'} />
     <div className="flex items-center justify-between border-t border-border/20 pt-2 mt-2">
-      <span className="text-xs text-muted-text">Evaluations</span>
+      <span className="text-xs text-muted-text">验证数</span>
       <span className="text-xs text-secondary-text font-mono">
         {Number(metrics.completedCount)} / {Number(metrics.totalEvaluations)}
       </span>
     </div>
     <div className="flex items-center justify-between">
-      <span className="text-xs text-muted-text">W / L / N</span>
+      <span className="text-xs text-muted-text">命中 / 未命中 / 中性</span>
       <span className="text-xs font-mono">
         <span className="text-success">{metrics.winCount}</span>
         {' / '}
@@ -147,12 +168,12 @@ const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> 
 
 const RunSummary: React.FC<{ data: BacktestRunResponse }> = ({ data }) => (
   <div className="animate-fade-in flex flex-wrap items-center gap-4 rounded-lg border border-border/20 bg-surface px-3 py-2 font-mono text-xs">
-    <span className="text-secondary-text">Processed: <span className="text-foreground">{data.processed}</span></span>
-    <span className="text-secondary-text">Saved: <span className="text-primary">{data.saved}</span></span>
-    <span className="text-secondary-text">Completed: <span className="text-success">{data.completed}</span></span>
-    <span className="text-secondary-text">Insufficient: <span className="text-warning">{data.insufficient}</span></span>
+    <span className="text-secondary-text">已处理：<span className="text-foreground">{data.processed}</span></span>
+    <span className="text-secondary-text">已保存：<span className="text-primary">{data.saved}</span></span>
+    <span className="text-secondary-text">已完成：<span className="text-success">{data.completed}</span></span>
+    <span className="text-secondary-text">数据不足：<span className="text-warning">{data.insufficient}</span></span>
     {data.errors > 0 && (
-      <span className="text-secondary-text">Errors: <span className="text-danger">{data.errors}</span></span>
+      <span className="text-secondary-text">错误：<span className="text-danger">{data.errors}</span></span>
     )}
   </div>
 );
@@ -212,7 +233,7 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
           value={codeFilter}
           onChange={(e) => onCodeFilterChange(e.target.value.toUpperCase())}
           onKeyDown={onKeyDown}
-          placeholder="Filter by stock code (leave empty for all)"
+          placeholder="输入股票代码，可留空查看全部"
           disabled={isRunning}
           className={BACKTEST_INPUT_CLASS}
         />
@@ -223,10 +244,10 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         disabled={isLoadingResults}
         className="whitespace-nowrap"
       >
-        Filter
+        筛选
       </Button>
       <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
-        <span className="text-xs text-muted-text">Window</span>
+        <span className="text-xs text-muted-text">验证周期</span>
         <input
           type="number"
           min={1}
@@ -239,10 +260,10 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         />
       </div>
       <div className="flex items-center gap-2 whitespace-nowrap">
-        <span className="text-xs text-muted-text">From</span>
+        <span className="text-xs text-muted-text">开始日期</span>
         <input
           type="date"
-          aria-label="Analysis date from"
+          aria-label="分析开始日期"
           value={analysisDateFrom}
           onChange={(e) => onAnalysisDateFromChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -251,10 +272,10 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         />
       </div>
       <div className="flex items-center gap-2 whitespace-nowrap">
-        <span className="text-xs text-muted-text">To</span>
+        <span className="text-xs text-muted-text">结束日期</span>
         <input
           type="date"
-          aria-label="Analysis date to"
+          aria-label="分析结束日期"
           value={analysisDateTo}
           onChange={(e) => onAnalysisDateToChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -273,7 +294,7 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         )}
       >
         <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', isNextDayValidation ? 'bg-primary' : 'bg-border')} />
-        1D Validation
+        次日验证
       </Button>
       <Button
         variant="outline"
@@ -286,7 +307,7 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         )}
       >
         <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', forceRerun ? 'bg-primary' : 'bg-border')} />
-        Force
+        强制重算
       </Button>
       <Button
         variant="primary"
@@ -295,7 +316,7 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         isLoading={isRunning}
         className="whitespace-nowrap"
       >
-        Run Backtest
+        开始验证
       </Button>
     </div>
     {runResult && (
@@ -308,8 +329,8 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
     )}
     <p className="mt-2 text-xs text-muted-text">
       {isNextDayValidation
-        ? 'Next-day validation mode compares AI predictions with the next trading day close.'
-        : 'Use window = 1 to review AI predictions against the next trading day close.'}
+        ? '次日验证会将 AI 分析结论与下一个交易日收盘表现进行对比。'
+        : '验证周期填 1 时，可查看 AI 分析结论在下一个交易日的验证表现。'}
     </p>
   </header>
 );
@@ -335,11 +356,11 @@ const BacktestMetricSidebar: React.FC<BacktestMetricSidebarProps> = ({
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
       </div>
     ) : overallPerf ? (
-      <PerformanceCard metrics={overallPerf} title="Overall Performance" />
+      <PerformanceCard metrics={overallPerf} title="总体表现" />
     ) : (
       <EmptyState
-        title="No Metrics Yet"
-        description="Run a backtest to generate portfolio-level performance metrics."
+        title="暂无指标"
+        description="点击「开始验证」后，将生成整体历史验证表现指标。"
         className="h-full min-h-[12rem] border-dashed bg-card/45 shadow-none"
       />
     )}
@@ -389,12 +410,12 @@ const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
     {isLoadingResults ? (
       <div className="flex flex-col items-center justify-center h-64">
         <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
-        <p className="mt-3 text-secondary-text text-sm">Loading results...</p>
+        <p className="mt-3 text-secondary-text text-sm">正在加载验证结果...</p>
       </div>
     ) : results.length === 0 ? (
       <EmptyState
-        title="No Results"
-        description="Run a backtest to evaluate historical analysis accuracy"
+        title="暂无验证结果"
+        description="点击「开始验证」后，可查看历史分析与后续真实行情的对比结果。"
         className="border-dashed"
         icon={(
           <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -406,31 +427,31 @@ const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
       <div className="animate-fade-in">
         <div className="backtest-table-toolbar">
           <div className="backtest-table-toolbar-meta">
-            <span className="label-uppercase">{isNextDayValidation ? 'Next-Day Validation' : 'Result Set'}</span>
+            <span className="label-uppercase">{isNextDayValidation ? '次日验证' : '验证结果'}</span>
             <span className="text-xs text-secondary-text">
-              {codeFilter.trim() ? `Filtered by ${codeFilter.trim()}` : 'All stocks'}
-              {evalDays ? ` · ${evalDays} day window` : ''}
-              {analysisDateFrom ? ` · from ${analysisDateFrom}` : ''}
-              {analysisDateTo ? ` · to ${analysisDateTo}` : ''}
+              {codeFilter.trim() ? `筛选股票：${codeFilter.trim()}` : '全部股票'}
+              {evalDays ? ` · ${evalDays} 日验证周期` : ''}
+              {analysisDateFrom ? ` · 开始 ${analysisDateFrom}` : ''}
+              {analysisDateTo ? ` · 结束 ${analysisDateTo}` : ''}
             </span>
           </div>
-          <span className="backtest-table-scroll-hint">Scroll horizontally on small screens</span>
+          <span className="backtest-table-scroll-hint">小屏幕可横向滚动查看完整表格</span>
         </div>
         <div className="backtest-table-wrapper">
           <table className="backtest-table min-w-[840px] w-full text-sm">
             <thead className="backtest-table-head">
               <tr className="text-left">
-                <th className="backtest-table-head-cell">Stock</th>
-                <th className="backtest-table-head-cell">Analysis Date</th>
-                <th className="backtest-table-head-cell">AI Prediction</th>
+                <th className="backtest-table-head-cell">股票</th>
+                <th className="backtest-table-head-cell">分析日期</th>
+                <th className="backtest-table-head-cell">AI 分析结论</th>
                 <th className="backtest-table-head-cell">
-                  {showNextDayActualColumns ? 'Actual' : 'Window Return'}
+                  {showNextDayActualColumns ? '实际表现' : '周期涨跌幅'}
                 </th>
                 <th className="backtest-table-head-cell">
-                  {showNextDayActualColumns ? 'Accuracy' : 'Direction Match'}
+                  {showNextDayActualColumns ? '是否命中' : '方向匹配'}
                 </th>
-                <th className="backtest-table-head-cell">Outcome</th>
-                <th className="backtest-table-head-cell">Status</th>
+                <th className="backtest-table-head-cell">结果</th>
+                <th className="backtest-table-head-cell">状态</th>
               </tr>
             </thead>
             <tbody>
@@ -471,7 +492,7 @@ const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
                   <td className="backtest-table-cell">
                     <span className="flex items-center gap-2">
                       {boolIcon(row.directionCorrect)}
-                      <span className="text-muted-text">{row.directionExpected || ''}</span>
+                      <span className="text-muted-text">{directionExpectedLabel(row.directionExpected)}</span>
                     </span>
                   </td>
                   <td className="backtest-table-cell">{outcomeBadge(row.outcome)}</td>
@@ -489,7 +510,7 @@ const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
           />
         </div>
         <p className="text-xs text-muted-text text-center mt-2">
-          {totalResults} result{totalResults !== 1 ? 's' : ''} total · page {currentPage} of {Math.max(totalPages, 1)}
+          共 {totalResults} 条结果 · 第 {currentPage} / {Math.max(totalPages, 1)} 页
         </p>
       </div>
     )}

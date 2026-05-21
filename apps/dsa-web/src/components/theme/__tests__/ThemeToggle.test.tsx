@@ -34,4 +34,14 @@ describe('ThemeToggle', () => {
     expect(screen.getByRole('menuitemradio', { name: '深色' })).toBeInTheDocument();
     expect(screen.getByRole('menuitemradio', { name: '跟随系统' })).toBeInTheDocument();
   });
+
+  it('uses system mode by default', () => {
+    render(
+      <ThemeProvider>
+        <ThemeToggle />
+      </ThemeProvider>
+    );
+
+    expect(screen.getByRole('button', { name: '切换主题' })).toHaveTextContent('跟随系统');
+  });
 });

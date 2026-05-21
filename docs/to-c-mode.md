@@ -60,7 +60,7 @@
 | PUT | `/watchlist` | 全量替换自选股列表。 |
 | DELETE | `/watchlist/{stock_code}` | 删除一只自选股。 |
 | GET | `/notification-prefs` | 查询当前用户通知偏好。 |
-| PATCH | `/notification-prefs` | 更新通知偏好（`dailyPushEnabled` / `emailEnabled` / `webhookUrl`）；Webhook 需 `plan.canWebhook=true`。 |
+| PATCH | `/notification-prefs` | 更新通知偏好（`dailyPushEnabled` / `emailEnabled` / `webhookUrl`）；开启 `emailEnabled=true` 或 `dailyPushEnabled=true` 需 `plan.is_pro=true`；Webhook 需 `plan.canWebhook=true`。 |
 | GET | `/notification-prefs/unsubscribe` | 通过邮件中的 HMAC token 一键退订（无需登录，已加入 `AuthMiddleware` 白名单）；成功后关闭 `dailyPushEnabled`（`action=daily`）或同时关闭 `emailEnabled`（`action=email`），并写入 `app_audit_logs`。 |
 
 挂载在 `/api/v1/billing/*`：
@@ -89,7 +89,7 @@
 - `api/middlewares/auth.py`：保护非豁免 `/api/v1/*` 业务接口，只接受有效 `dsa_user_session`。
 - `api.deps.get_current_user`：业务 endpoint 的默认依赖；未登录直接返回 401。
 - `api.deps.get_optional_current_user`：仅作为 `get_current_user` 和公开账号类接口内部复用的解析 helper，不应用于普通业务接口放行。
-- `api.deps.get_admin_user`：`/api/v1/admin/*` 专用依赖，要求登录且 `is_admin=True`，否则 401/403。`scripts/grant_admin.py` 提供命令行授予 / 撤销 admin 角色。
+- `api.deps.get_admin_user`：`/api/v1/admin/*` 与 `/api/v1/system/config*` 管理接口专用依赖，要求登录且 `is_admin=True`，否则 401/403。`scripts/grant_admin.py` 提供命令行授予 / 撤销 admin 角色。
 
 ## 6. 前端入口
 
@@ -101,6 +101,7 @@
 - `/account/api-keys`：BYOK 管理，free 用户会被引导到 `/billing` 升级。
 - `/account/orders` / `/account/invoices`：订单 / 发票列表与取消 / 退款入口。
 - `/legal/terms` / `/legal/privacy` / `/legal/risk-disclosure`：协议三件套静态页，未登录可访问；注册表单勾选同意后 `register_user` 调 `record_consent` 写 `app_user_consents`。
+- `/settings`：部署级系统设置入口，仅非用户模式部署者或 `is_admin=True` 平台管理员可访问；普通 C 端用户侧边栏不展示该入口，直接访问会跳回 `/account`。
 - `/admin`：运营后台，仅 `is_admin=True` 可访问，含概览 / 订单 / 退款审核 / 发票审核 / 用户 / 手动 grant-plan 六个标签页。
 
 ## 7. 配额与 Plan 解析

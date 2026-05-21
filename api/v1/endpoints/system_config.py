@@ -7,7 +7,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from api.deps import get_system_config_service
+from api.deps import get_admin_user, get_system_config_service
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.system_config import (
     DiscoverLLMChannelModelsRequest,
@@ -38,7 +38,7 @@ from src.services.system_config_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_admin_user)])
 
 
 class EnvBackupAccessDenied(Exception):

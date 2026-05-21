@@ -3,7 +3,7 @@ import { analysisApi, DuplicateTaskError } from '../api/analysis';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { historyApi } from '../api/history';
-import type { AnalysisReport, HistoryItem, HistoryListResponse, TaskInfo } from '../types/analysis';
+import type { AnalysisReport, AnalyzeAsyncResponse, HistoryItem, HistoryListResponse, TaskInfo } from '../types/analysis';
 import { getRecentStartDate, getTodayInShanghai } from '../utils/format';
 import { isObviouslyInvalidStockQuery, looksLikeStockCode, validateStockCode } from '../utils/validation';
 
@@ -61,7 +61,7 @@ export interface StockPoolState {
   loadMoreHistory: () => Promise<void>;
   selectHistoryItem: (recordId: number) => Promise<void>;
   toggleHistorySelection: (recordId: number) => void;
-  toggleSelectAllVisible: () => void;
+  toggleSelectAllVisible: (recordIds?: number[]) => void;
   deleteSelectedHistory: () => Promise<void>;
   submitAnalysis: (options?: SubmitAnalysisOptions) => Promise<void>;
   setNotify: (notify: boolean) => void;
@@ -100,6 +100,49 @@ function buildHistoryParams(page: number) {
     page,
     limit: PAGE_SIZE,
   };
+}
+
+function buildOptimisticTasks(
+  response: AnalyzeAsyncResponse,
+  fallback: {
+    stockCode: string;
+    stockName?: string;
+    originalQuery: string;
+    selectionSource: SelectionSource;
+    reportType: string;
+  },
+): TaskInfo[] {
+  const createdAt = new Date().toISOString();
+
+  if ('taskId' in response) {
+    const accepted = response as typeof response & { stockCode?: string; stockName?: string };
+    return [
+      {
+        taskId: accepted.taskId,
+        stockCode: accepted.stockCode || fallback.stockCode,
+        stockName: accepted.stockName || fallback.stockName,
+        status: accepted.status,
+        progress: 0,
+        message: accepted.message,
+        reportType: fallback.reportType,
+        createdAt,
+        originalQuery: fallback.originalQuery,
+        selectionSource: fallback.selectionSource,
+      },
+    ];
+  }
+
+  return response.accepted.map((accepted) => ({
+    taskId: accepted.taskId,
+    stockCode: accepted.stockCode,
+    status: accepted.status,
+    progress: 0,
+    message: accepted.message,
+    reportType: fallback.reportType,
+    createdAt,
+    originalQuery: fallback.originalQuery,
+    selectionSource: fallback.selectionSource,
+  }));
 }
 
 async function fetchHistory(
@@ -255,8 +298,8 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
     set({ selectedHistoryIds: Array.from(selected) });
   },
 
-  toggleSelectAllVisible: () => {
-    const visibleIds = get().historyItems.map((item) => item.id);
+  toggleSelectAllVisible: (recordIds) => {
+    const visibleIds = recordIds ?? get().historyItems.map((item) => item.id);
     const selectedIds = get().selectedHistoryIds;
     const visibleSet = new Set(visibleIds);
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
@@ -342,7 +385,7 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
 
     const requestId = ++analyzeRequestSeq;
     try {
-      await analysisApi.analyzeAsync({
+      const response = await analysisApi.analyzeAsync({
         stockCode: normalizedStockCode,
         reportType: 'detailed',
         stockName,
@@ -356,6 +399,14 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
       if (requestId !== analyzeRequestSeq) {
         return;
       }
+
+      buildOptimisticTasks(response, {
+        stockCode: normalizedStockCode,
+        stockName,
+        originalQuery: originalQuery || stockCodeInput,
+        selectionSource,
+        reportType: 'detailed',
+      }).forEach((task) => get().syncTaskCreated(task));
 
       set({
         query: '',

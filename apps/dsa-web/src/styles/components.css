@@ -64,14 +64,22 @@
 
 .ui-button-primary {
   border-color: hsl(var(--color-primary) / 0.88);
-  background: hsl(var(--color-primary));
+  background: color-mix(in oklch, hsl(var(--color-primary)), black 14%);
   color: hsl(var(--color-primary-foreground));
-  box-shadow: 0 10px 20px hsl(var(--color-primary) / 0.16);
+  box-shadow: 0 10px 20px hsl(var(--color-primary) / 0.2);
 }
 
 .ui-button-primary:hover:not(:disabled) {
-  background: hsl(var(--color-primary) / 0.92);
-  box-shadow: 0 12px 24px hsl(var(--color-primary) / 0.2);
+  background: color-mix(in oklch, hsl(var(--color-primary)), black 22%);
+  box-shadow: 0 12px 24px hsl(var(--color-primary) / 0.26);
+}
+
+.ui-button-primary:disabled {
+  border-color: hsl(var(--color-border) / 0.72);
+  background: hsl(var(--color-surface-muted) / 0.76);
+  color: hsl(var(--color-muted-foreground));
+  box-shadow: none;
+  opacity: 1;
 }
 
 .ui-button-secondary {
@@ -258,6 +266,11 @@
 
 .ui-input::placeholder {
   color: hsl(var(--color-muted-foreground) / 0.72);
+}
+
+.ui-input::-ms-reveal,
+.ui-input::-ms-clear {
+  display: none;
 }
 
 .ui-input:hover:not(:focus):not(:disabled) {
@@ -996,7 +1009,6 @@
 }
 
 .ui-quota-indicator {
-  margin-top: 0.75rem;
   border: 1px solid;
   border-radius: var(--radius-lg);
   transition:
@@ -1112,6 +1124,11 @@
   backdrop-filter: blur(14px);
 }
 
+.ui-menu-scrollable {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .ui-menu-item {
   display: flex;
   width: 100%;
@@ -1124,6 +1141,24 @@
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
+}
+
+.ui-menu-item.ui-menu-item-radio {
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.ui-menu-item-check-slot {
+  margin-top: 0.125rem;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.ui-menu-item-content {
+  min-width: 0;
+  flex: 1;
 }
 
 .ui-menu-item:hover,

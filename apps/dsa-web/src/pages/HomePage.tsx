@@ -12,10 +12,12 @@ import { StockAutocomplete } from '../components/StockAutocomplete';
 import { HistoryList } from '../components/history';
 import { ReportMarkdown, ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
-import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
+import { useAuth, useDashboardLifecycle, useHomeDashboardState } from '../hooks';
+import { useStockIndex } from '../hooks/useStockIndex';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { formatDateTime, formatReportType } from '../utils/format';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
+import { searchStocks } from '../utils/searchStocks';
 
 const EMPTY_QUICK_STOCKS = [
   { code: '600519', name: '贵州茅台', hint: 'A 股龙头' },
@@ -31,6 +33,8 @@ type MarketReviewNotice = {
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
+  const { userMode } = useAuth();
+  const canReadSetupStatus = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
@@ -39,6 +43,7 @@ const HomePage: React.FC = () => {
   const [marketReviewReport, setMarketReviewReport] = useState<string | null>(null);
   const [marketReviewReportCopied, setMarketReviewReportCopied] = useState(false);
   const [analysisSkills, setAnalysisSkills] = useState<SkillInfo[]>([]);
+  const [defaultStrategyId, setDefaultStrategyId] = useState('');
   const [selectedStrategyId, setSelectedStrategyId] = useState('');
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
   const marketReviewPollTimer = useRef<number | null>(null);
@@ -108,12 +113,18 @@ const HomePage: React.FC = () => {
     closeMarkdownDrawer,
     selectedIds,
   } = useHomeDashboardState();
+  const { index: stockIndex } = useStockIndex();
 
   useEffect(() => {
     document.title = '每日选股分析 - DSA';
   }, []);
 
   useEffect(() => {
+    if (!canReadSetupStatus) {
+      setSetupStatus(null);
+      return;
+    }
+
     let active = true;
     systemConfigApi.getSetupStatus()
       .then((status) => {
@@ -130,19 +141,30 @@ const HomePage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [canReadSetupStatus]);
 
   useEffect(() => {
     let active = true;
     agentApi.getSkills()
       .then((response) => {
         if (active) {
+          const nextDefaultStrategyId = response.skills.some((skill) => skill.id === response.default_skill_id)
+            ? response.default_skill_id
+            : response.skills[0]?.id || '';
           setAnalysisSkills(response.skills);
+          setDefaultStrategyId(nextDefaultStrategyId);
+          setSelectedStrategyId((current) => (
+            current && response.skills.some((skill) => skill.id === current)
+              ? current
+              : nextDefaultStrategyId
+          ));
         }
       })
       .catch(() => {
         if (active) {
           setAnalysisSkills([]);
+          setDefaultStrategyId('');
+          setSelectedStrategyId('');
         }
       });
 
@@ -169,10 +191,21 @@ const HomePage: React.FC = () => {
   }, [strategyMenuOpen]);
 
   useEffect(() => {
-    if (selectedStrategyId && !analysisSkills.some((skill) => skill.id === selectedStrategyId)) {
-      setSelectedStrategyId('');
+    const fallbackStrategyId = analysisSkills.some((skill) => skill.id === defaultStrategyId)
+      ? defaultStrategyId
+      : analysisSkills[0]?.id || '';
+
+    if (!selectedStrategyId) {
+      if (fallbackStrategyId) {
+        setSelectedStrategyId(fallbackStrategyId);
+      }
+      return;
     }
-  }, [analysisSkills, selectedStrategyId]);
+
+    if (!analysisSkills.some((skill) => skill.id === selectedStrategyId)) {
+      setSelectedStrategyId(fallbackStrategyId);
+    }
+  }, [analysisSkills, defaultStrategyId, selectedStrategyId]);
 
   const reportLanguage = normalizeReportLanguage(selectedReport?.meta.reportLanguage);
   const reportText = getReportText(reportLanguage);
@@ -186,14 +219,11 @@ const HomePage: React.FC = () => {
     [selectedStrategyId],
   );
   const strategyOptions = useMemo(
-    () => [
-      { id: '', name: '默认策略', description: '沿用系统默认分析框架' },
-      ...analysisSkills.map((skill) => ({
+    () => analysisSkills.map((skill) => ({
         id: skill.id,
         name: skill.name,
         description: skill.description,
       })),
-    ],
     [analysisSkills],
   );
   const closeStrategyMenu = useCallback((restoreFocus = false) => {
@@ -280,6 +310,21 @@ const HomePage: React.FC = () => {
         break;
     }
   }, [closeStrategyMenu, focusStrategyItem, strategyOptions.length]);
+  const resolveExactStockInput = useCallback((value: string) => {
+    const trimmedValue = value.trim();
+    if (!trimmedValue || stockIndex.length === 0) {
+      return null;
+    }
+
+    try {
+      const exactMatches = searchStocks(trimmedValue, stockIndex, { limit: 20 })
+        .filter((suggestion) => suggestion.matchType === 'exact');
+      return exactMatches.length === 1 ? exactMatches[0] : null;
+    } catch (err) {
+      console.error('Failed to resolve stock input from index.', err);
+      return null;
+    }
+  }, [stockIndex]);
   const setupNeedsAction = setupStatus ? !setupStatus.isComplete : false;
   const setupMissingLabels = useMemo(() => {
     if (!setupStatus) {
@@ -311,15 +356,16 @@ const HomePage: React.FC = () => {
       stockName?: string,
       selectionSource?: 'manual' | 'autocomplete' | 'import' | 'image',
     ) => {
+      const resolvedStock = stockCode ? null : resolveExactStockInput(query);
       void submitAnalysis({
-        stockCode,
-        stockName,
+        stockCode: stockCode ?? resolvedStock?.canonicalCode,
+        stockName: stockName ?? resolvedStock?.nameZh,
         originalQuery: query,
         selectionSource: selectionSource ?? 'manual',
         skills: selectedAnalysisSkills,
       });
     },
-    [query, selectedAnalysisSkills, submitAnalysis],
+    [query, resolveExactStockInput, selectedAnalysisSkills, submitAnalysis],
   );
 
   const handleAskFollowUp = useCallback(() => {
@@ -593,7 +639,7 @@ const HomePage: React.FC = () => {
                     className="ui-button ui-button-secondary flex h-10 max-w-[8.5rem] items-center gap-1.5 rounded-xl px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-[11rem]"
                   >
                     <SlidersHorizontal className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-                    <span className="truncate">{selectedStrategy?.name || '策略'}</span>
+                    <span className="truncate">{selectedStrategy?.name || '选择策略'}</span>
                   </button>
                   {strategyMenuOpen ? (
                     <div
@@ -601,13 +647,13 @@ const HomePage: React.FC = () => {
                       role="menu"
                       aria-labelledby="strategy-menu-button"
                       onKeyDown={handleStrategyMenuKeyDown}
-                      className="ui-menu absolute right-0 top-11 z-[120] max-h-80 w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto text-sm text-foreground"
+                      className="ui-menu ui-menu-scrollable absolute right-0 top-11 z-[120] max-h-80 w-[min(18rem,calc(100vw-1.5rem))] text-sm text-foreground"
                     >
                       {strategyOptions.map((option, index) => {
                         const selected = selectedStrategyId === option.id;
                         return (
                           <button
-                            key={option.id || 'default'}
+                            key={option.id}
                             ref={(node) => {
                               strategyItemRefs.current[index] = node;
                             }}
@@ -616,10 +662,10 @@ const HomePage: React.FC = () => {
                             aria-checked={selected}
                             tabIndex={-1}
                             onClick={() => selectStrategy(option.id)}
-                            className={`ui-menu-item items-start justify-start gap-2 text-left ${selected ? 'ui-menu-item-active' : ''}`}
+                            className={`ui-menu-item ui-menu-item-radio text-left ${selected ? 'ui-menu-item-active' : ''}`}
                           >
-                            <Check className={`mt-0.5 h-4 w-4 flex-shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
-                            <span className="min-w-0">
+                            <Check className={`ui-menu-item-check-slot ${selected ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
+                            <span className="ui-menu-item-content">
                               <span className="block font-medium">{option.name}</span>
                               <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-text">{option.description}</span>
                             </span>
@@ -658,8 +704,8 @@ const HomePage: React.FC = () => {
                 onClick={() => handleSubmitAnalysis()}
                 disabled={!query || isAnalyzing}
                 isLoading={isAnalyzing}
-                loadingText="分析中"
-                className="h-10 flex-1 whitespace-nowrap md:flex-none"
+                loadingText="提交中"
+                className="h-10 flex-1 whitespace-nowrap shadow-lg shadow-primary/20 md:flex-none"
               >
                 分析
               </Button>

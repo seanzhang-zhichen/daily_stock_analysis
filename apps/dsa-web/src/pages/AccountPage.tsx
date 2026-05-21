@@ -2,28 +2,22 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle,
   Bell,
-  BellOff,
   CheckCircle2,
   CreditCard,
-  Download,
   KeyRound,
   Loader2,
+  Lock,
   LogOut,
   Mail,
-  Plus,
   ShieldCheck,
   Sparkles,
-  Star,
-  Trash2,
   Webhook,
 } from 'lucide-react';
 import { Button, Input, Card } from '../components/common';
 import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
-import { StockAutocomplete } from '../components/StockAutocomplete';
-import { accountApi, type WatchlistItem, type NotificationPrefs } from '../api/account';
+import { accountApi, type NotificationPrefs } from '../api/account';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
 
@@ -40,15 +34,14 @@ const formatDate = (value?: string | null): string => {
   }
 };
 
-const WEBHOOK_TYPES = ['feishu', 'wecom', 'dingtalk', 'discord', 'telegram', 'custom'] as const;
-const WEBHOOK_TYPE_LABELS: Record<string, string> = {
-  feishu: '飞书',
-  wecom: '企业微信',
-  dingtalk: '钉钉',
-  discord: 'Discord',
-  telegram: 'Telegram',
-  custom: '自定义',
-};
+const WEBHOOK_PLATFORM_ITEMS = [
+  { type: 'feishu', label: '飞书通知', desc: '通过飞书自定义机器人接收 AI 分析报告推送。', placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...' },
+  { type: 'wecom', label: '企业微信通知', desc: '通过企业微信群机器人接收 AI 分析报告推送。', placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...' },
+  { type: 'dingtalk', label: '钉钉通知', desc: '通过钉钉自定义机器人接收 AI 分析报告推送。', placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=...' },
+  { type: 'discord', label: 'Discord 通知', desc: '通过 Discord Webhook 接收 AI 分析报告推送。', placeholder: 'https://discord.com/api/webhooks/...' },
+  { type: 'telegram', label: 'Telegram 通知', desc: '通过 Telegram Bot 接收 AI 分析报告推送。', placeholder: 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=...' },
+  { type: 'custom', label: '自定义 Webhook', desc: '向自定义 URL 推送 JSON 格式分析报告，可对接任意支持 Webhook 的系统。', placeholder: 'https://your-service.example.com/webhook' },
+] as const;
 
 const AccountPage: React.FC = () => {
   const { userMode, changePassword, logout, refreshStatus } = useAuth();
@@ -66,51 +59,16 @@ const AccountPage: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // 自选股
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [maxStocks, setMaxStocks] = useState<number>(3);
-  const [watchlistLoading, setWatchlistLoading] = useState(false);
-  const [watchlistError, setWatchlistError] = useState<string | null>(null);
-  const [addInput, setAddInput] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-
-  // 账号注销
-  const [deletionPending, setDeletionPending] = useState(false);
-  const [deletionRequestedAt, setDeletionRequestedAt] = useState<string | null>(null);
-  const [deletionCoolingOff, setDeletionCoolingOff] = useState(7);
-  const [isDeletionLoading, setIsDeletionLoading] = useState(false);
-  const [deletionConfirmText, setDeletionConfirmText] = useState('');
-  const [showDeletionConfirm, setShowDeletionConfirm] = useState(false);
-  const [deletionMsg, setDeletionMsg] = useState<string | null>(null);
-
-  // 数据导出
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportMsg, setExportMsg] = useState<string | null>(null);
-
   // 通知偏好
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [prefsLoading, setPrefsLoading] = useState(false);
   const [prefsError, setPrefsError] = useState<string | null>(null);
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
-  const [webhookType, setWebhookType] = useState('feishu');
+  const [expandedWebhookType, setExpandedWebhookType] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = '账户设置 - DSA';
-  }, []);
-
-  const loadWatchlist = useCallback(async () => {
-    setWatchlistLoading(true);
-    setWatchlistError(null);
-    try {
-      const res = await accountApi.getWatchlist();
-      setWatchlist(res.stocks);
-      setMaxStocks(res.maxStocks);
-    } catch (err) {
-      setWatchlistError(getParsedApiError(err).message);
-    } finally {
-      setWatchlistLoading(false);
-    }
   }, []);
 
   const loadPrefs = useCallback(async () => {
@@ -120,7 +78,6 @@ const AccountPage: React.FC = () => {
       const res = await accountApi.getNotificationPrefs();
       setPrefs(res.prefs);
       setWebhookUrl(res.prefs.webhookUrl ?? '');
-      setWebhookType(res.prefs.webhookType ?? 'feishu');
     } catch (err) {
       setPrefsError(getParsedApiError(err).message);
     } finally {
@@ -128,52 +85,11 @@ const AccountPage: React.FC = () => {
     }
   }, []);
 
-  const loadDeletionStatus = useCallback(async () => {
-    try {
-      const res = await accountApi.getDeletionStatus();
-      setDeletionPending(res.hasPendingDeletion);
-      setDeletionRequestedAt(res.deletionRequestedAt);
-      setDeletionCoolingOff(res.coolingOffDays);
-    } catch {
-      // 静默失败，不影响主流程
-    }
-  }, []);
-
   useEffect(() => {
     if (userMode?.loggedIn) {
-      void loadWatchlist();
       void loadPrefs();
-      void loadDeletionStatus();
     }
-  }, [userMode?.loggedIn, loadWatchlist, loadPrefs, loadDeletionStatus]);
-
-  const handleAddStock = useCallback(async (code: string, name?: string) => {
-    if (!code.trim()) return;
-    setIsAdding(true);
-    setWatchlistError(null);
-    try {
-      const res = await accountApi.addWatchlistStock({ stockCode: code.trim(), stockName: name });
-      setWatchlist((prev) => {
-        if (prev.some((s) => s.stockCode === res.stock.stockCode)) return prev;
-        return [...prev, res.stock];
-      });
-      setAddInput('');
-    } catch (err) {
-      setWatchlistError(getParsedApiError(err).message);
-    } finally {
-      setIsAdding(false);
-    }
-  }, []);
-
-  const handleRemoveStock = useCallback(async (stockCode: string) => {
-    setWatchlistError(null);
-    try {
-      await accountApi.removeWatchlistStock(stockCode);
-      setWatchlist((prev) => prev.filter((s) => s.stockCode !== stockCode));
-    } catch (err) {
-      setWatchlistError(getParsedApiError(err).message);
-    }
-  }, []);
+  }, [userMode?.loggedIn, loadPrefs]);
 
   const handleTogglePref = useCallback(
     async (field: 'dailyPushEnabled' | 'emailEnabled', value: boolean) => {
@@ -191,68 +107,37 @@ const AccountPage: React.FC = () => {
     []
   );
 
-  const handleSaveWebhook = useCallback(async () => {
+  const handleSaveWebhookForType = useCallback(async (type: string) => {
     setPrefsSaving(true);
     setPrefsError(null);
     try {
       const res = await accountApi.updateNotificationPrefs({
         webhookUrl: webhookUrl.trim() || null,
-        webhookType: webhookUrl.trim() ? webhookType : null,
+        webhookType: webhookUrl.trim() ? type : null,
         clearWebhook: !webhookUrl.trim(),
       });
       setPrefs(res.prefs);
+      setWebhookUrl(res.prefs.webhookUrl ?? '');
+      setExpandedWebhookType(null);
     } catch (err) {
       setPrefsError(getParsedApiError(err).message);
     } finally {
       setPrefsSaving(false);
     }
-  }, [webhookUrl, webhookType]);
+  }, [webhookUrl]);
 
-  const handleRequestDeletion = useCallback(async () => {
-    if (deletionConfirmText !== '注销账号') return;
-    setIsDeletionLoading(true);
-    setDeletionMsg(null);
+  const handleClearWebhook = useCallback(async () => {
+    setPrefsSaving(true);
+    setPrefsError(null);
     try {
-      await accountApi.requestDeletion();
-      setDeletionPending(true);
-      setDeletionRequestedAt(new Date().toISOString());
-      setShowDeletionConfirm(false);
-      setDeletionConfirmText('');
-      setDeletionMsg(`注销申请已提交，${deletionCoolingOff} 天冷静期后账号将被注销。你已被强制登出，如需取消请重新登录。`);
-      await logout();
-      navigate('/login');
+      const res = await accountApi.updateNotificationPrefs({ clearWebhook: true });
+      setPrefs(res.prefs);
+      setWebhookUrl('');
+      setExpandedWebhookType(null);
     } catch (err) {
-      setDeletionMsg(getParsedApiError(err).message);
+      setPrefsError(getParsedApiError(err).message);
     } finally {
-      setIsDeletionLoading(false);
-    }
-  }, [deletionConfirmText, deletionCoolingOff, logout, navigate]);
-
-  const handleCancelDeletion = useCallback(async () => {
-    setIsDeletionLoading(true);
-    setDeletionMsg(null);
-    try {
-      await accountApi.cancelDeletion();
-      setDeletionPending(false);
-      setDeletionRequestedAt(null);
-      setDeletionMsg('注销申请已取消，账号恢复正常。');
-    } catch (err) {
-      setDeletionMsg(getParsedApiError(err).message);
-    } finally {
-      setIsDeletionLoading(false);
-    }
-  }, []);
-
-  const handleDataExport = useCallback(async () => {
-    setIsExporting(true);
-    setExportMsg(null);
-    try {
-      const res = await accountApi.requestDataExport();
-      setExportMsg(res.message);
-    } catch (err) {
-      setExportMsg(`导出失败：${getParsedApiError(err).message}`);
-    } finally {
-      setIsExporting(false);
+      setPrefsSaving(false);
     }
   }, []);
 
@@ -261,6 +146,9 @@ const AccountPage: React.FC = () => {
     () => plan?.expiresAt ?? user?.planExpiresAt ?? null,
     [plan, user]
   );
+  const canEmailNotifications = Boolean(plan?.isPro);
+  const dailyPushEnabled = canEmailNotifications && (prefs?.dailyPushEnabled ?? false);
+  const emailEnabled = canEmailNotifications && (prefs?.emailEnabled ?? true);
 
   if (userMode == null || !userMode.userModeEnabled) {
     return (
@@ -355,13 +243,6 @@ const AccountPage: React.FC = () => {
             管理你的账户信息、订阅状态、安全设置以及自带 API Key (BYOK)。
           </p>
         </div>
-        {user && (
-          <div className="hidden shrink-0 items-center gap-3 sm:flex">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-sm font-bold text-primary">
-              {user.email.charAt(0).toUpperCase()}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 账户信息 */}
@@ -431,84 +312,6 @@ const AccountPage: React.FC = () => {
         </div>
       </Card>
 
-      {/* 自选股管理 */}
-      <Card title="我的自选股" subtitle="WATCHLIST">
-        {watchlistLoading ? (
-          <div className="flex items-center gap-2 text-secondary-text text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {watchlistError && (
-              <SettingsAlert title="操作失败" message={watchlistError} variant="error" />
-            )}
-
-            {/* 当前自选股列表 */}
-            {watchlist.length === 0 ? (
-              <p className="text-sm text-secondary-text">暂无自选股，在下方添加你关注的股票。</p>
-            ) : (
-              <ul className="flex flex-wrap gap-2">
-                {watchlist.map((item) => (
-                  <li
-                    key={item.stockCode}
-                    className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-card/60 px-3 py-1.5 text-sm"
-                  >
-                    <Star className="h-3.5 w-3.5 text-amber-400" />
-                    <span className="font-medium text-foreground">{item.stockCode}</span>
-                    {item.stockName && (
-                      <span className="text-secondary-text">{item.stockName}</span>
-                    )}
-                    <button
-                      type="button"
-                      className="ml-1 text-secondary-text hover:text-red-400 transition-colors"
-                      onClick={() => void handleRemoveStock(item.stockCode)}
-                      title="删除"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {/* 添加新股票 */}
-            {watchlist.length < maxStocks ? (
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <p className="mb-1.5 text-xs text-secondary-text">
-                    添加自选股（{watchlist.length}/{maxStocks}）
-                  </p>
-                  <StockAutocomplete
-                    value={addInput}
-                    onChange={setAddInput}
-                    onSubmit={(code, name) => void handleAddStock(code, name)}
-                    disabled={isAdding}
-                    placeholder="输入股票代码或名称"
-                  />
-                </div>
-                <Button
-                  variant="primary"
-                  isLoading={isAdding}
-                  onClick={() => void handleAddStock(addInput)}
-                  disabled={!addInput.trim() || isAdding}
-                >
-                  <Plus className="h-4 w-4" /> 添加
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-300">
-                已达到当前套餐自选股上限（{maxStocks} 只）。
-                {!plan?.isPro && (
-                  <Link to="/billing" className="ml-1 underline hover:text-amber-200">
-                    升级 Pro 解锁更多
-                  </Link>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
-
       {/* 通知偏好 */}
       <Card title="通知偏好" subtitle="NOTIFICATIONS">
         {prefsLoading ? (
@@ -528,23 +331,32 @@ const AccountPage: React.FC = () => {
                   <Bell className="h-4 w-4 text-primary" /> 每日推送
                 </p>
                 <p className="text-xs text-secondary-text">
-                  交易日收盘后，自动发送自选股 AI 分析报告到你的邮箱。
+                  交易日收盘后，自动推送自选股 AI 分析报告到已配置的通知渠道。
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={prefsSaving}
-                onClick={() => void handleTogglePref('dailyPushEnabled', !(prefs?.dailyPushEnabled ?? false))}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                  prefs?.dailyPushEnabled ? 'bg-primary' : 'bg-border'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                    prefs?.dailyPushEnabled ? 'translate-x-6' : 'translate-x-1'
+              {canEmailNotifications ? (
+                <button
+                  type="button"
+                  disabled={prefsSaving}
+                  onClick={() => void handleTogglePref('dailyPushEnabled', !dailyPushEnabled)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                    dailyPushEnabled ? 'bg-primary' : 'bg-border'
                   }`}
-                />
-              </button>
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      dailyPushEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              ) : (
+                <Link
+                  to="/billing"
+                  className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
+                >
+                  <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                </Link>
+              )}
             </div>
 
             {/* 邮件通知开关 */}
@@ -554,86 +366,132 @@ const AccountPage: React.FC = () => {
                   <Mail className="h-4 w-4 text-primary" /> 邮件通知
                 </p>
                 <p className="text-xs text-secondary-text">
-                  通过注册邮箱接收分析报告与系统通知。
+                  通过注册邮箱接收 AI 分析报告推送。
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={prefsSaving}
-                onClick={() => void handleTogglePref('emailEnabled', !(prefs?.emailEnabled ?? true))}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                  (prefs?.emailEnabled ?? true) ? 'bg-primary' : 'bg-border'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                    (prefs?.emailEnabled ?? true) ? 'translate-x-6' : 'translate-x-1'
+              {canEmailNotifications ? (
+                <button
+                  type="button"
+                  disabled={prefsSaving}
+                  onClick={() => void handleTogglePref('emailEnabled', !emailEnabled)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                    emailEnabled ? 'bg-primary' : 'bg-border'
                   }`}
-                />
-              </button>
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      emailEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              ) : (
+                <Link
+                  to="/billing"
+                  className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
+                >
+                  <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                </Link>
+              )}
             </div>
 
-            {/* Pro Webhook */}
-            {plan?.canWebhook ? (
-              <div className="space-y-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
-                <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <Webhook className="h-4 w-4 text-purple-400" /> Pro Webhook 推送
-                </p>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="sm:col-span-2">
-                    <Input
-                      type="url"
-                      label="Webhook URL"
-                      placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
-                      value={webhookUrl}
-                      onChange={(e) => setWebhookUrl(e.target.value)}
-                      disabled={prefsSaving}
-                    />
+            {/* Webhook 推送 - 每平台独立行 */}
+            {WEBHOOK_PLATFORM_ITEMS.map(({ type, label, desc, placeholder }) => {
+              const isActive = prefs?.webhookType === type && !!prefs?.webhookUrl;
+              const isExpanded = expandedWebhookType === type;
+              return (
+                <div
+                  key={type}
+                  className={`rounded-xl border bg-card/60 px-4 py-3 space-y-3 ${
+                    isActive ? 'border-primary/30' : 'border-border/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                        <Webhook className="h-4 w-4 text-purple-400" /> {label}
+                      </p>
+                      <p className="text-xs text-secondary-text">{desc}</p>
+                      {plan?.canWebhook && isActive && !isExpanded && (
+                        <button
+                          type="button"
+                          className="mt-0.5 text-xs text-purple-400 hover:text-purple-300"
+                          onClick={() => {
+                            setExpandedWebhookType(type);
+                            setWebhookUrl(prefs?.webhookUrl ?? '');
+                          }}
+                        >
+                          编辑 Webhook URL
+                        </button>
+                      )}
+                    </div>
+                    {plan?.canWebhook ? (
+                      <button
+                        type="button"
+                        disabled={prefsSaving}
+                        onClick={() => {
+                          if (isActive) {
+                            void handleClearWebhook();
+                          } else if (isExpanded) {
+                            setExpandedWebhookType(null);
+                            setWebhookUrl('');
+                          } else {
+                            setExpandedWebhookType(type);
+                            setWebhookUrl('');
+                          }
+                        }}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                          isActive ? 'bg-primary' : 'bg-border'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                            isActive ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    ) : (
+                      <Link
+                        to="/billing"
+                        className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
+                      >
+                        <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                      </Link>
+                    )}
                   </div>
-                  <div>
-                    <p className="mb-1 text-xs text-secondary-text">类型</p>
-                    <select
-                      className="ui-input h-11 w-full appearance-none px-3 text-sm"
-                      value={webhookType}
-                      onChange={(e) => setWebhookType(e.target.value)}
-                      disabled={prefsSaving}
-                    >
-                      {WEBHOOK_TYPES.map((t) => (
-                        <option key={t} value={t}>{WEBHOOK_TYPE_LABELS[t]}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="primary" isLoading={prefsSaving} onClick={() => void handleSaveWebhook()}>
-                    保存 Webhook
-                  </Button>
-                  {prefs?.webhookUrl && (
-                    <Button
-                      variant="outline"
-                      disabled={prefsSaving}
-                      onClick={() => { setWebhookUrl(''); void handleSaveWebhook(); }}
-                    >
-                      <BellOff className="h-4 w-4" /> 清除
-                    </Button>
+                  {plan?.canWebhook && isExpanded && (
+                    <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-end">
+                      <div className="flex-1">
+                        <Input
+                          type="url"
+                          label="Webhook URL"
+                          placeholder={placeholder}
+                          value={webhookUrl}
+                          onChange={(e) => setWebhookUrl(e.target.value)}
+                          disabled={prefsSaving}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="primary"
+                          isLoading={prefsSaving}
+                          disabled={!webhookUrl.trim() || prefsSaving}
+                          onClick={() => void handleSaveWebhookForType(type)}
+                        >
+                          保存
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={prefsSaving}
+                          onClick={() => { setExpandedWebhookType(null); setWebhookUrl(''); }}
+                        >
+                          取消
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </div>
-                {prefs?.webhookUrl && (
-                  <p className="text-xs text-secondary-text">
-                    当前已配置 {WEBHOOK_TYPE_LABELS[prefs.webhookType ?? 'custom'] ?? prefs.webhookType} Webhook。
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-border/40 bg-card/40 px-3 py-2 text-sm text-secondary-text">
-                <Webhook className="mr-1.5 inline h-3.5 w-3.5" />
-                Pro Webhook 推送（飞书 / 企业微信 / Discord / Telegram）需升级到{' '}
-                <Link to="/billing" className="text-purple-400 underline hover:text-purple-300">
-                  Pro 套餐
-                </Link>
-                。
-              </div>
-            )}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -701,124 +559,15 @@ const AccountPage: React.FC = () => {
         </form>
       </Card>
 
-      {/* 数据与隐私 */}
-      <Card title="数据与隐私" subtitle="DATA & PRIVACY">
-        <div className="space-y-3">
-          {/* 导出个人数据 */}
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
-            <div className="space-y-1">
-              <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                <Download className="h-4 w-4 text-primary" /> 导出个人数据
-              </p>
-              <p className="text-xs text-secondary-text">
-                将你的账户信息、自选股、历史分析、订单等数据以 JSON 格式发送至注册邮箱。
-              </p>
-            </div>
-            <Button variant="secondary" isLoading={isExporting} onClick={() => void handleDataExport()}>
-              导出
-            </Button>
-          </div>
-          {exportMsg && (
-            <SettingsAlert
-              title={exportMsg.startsWith('导出失败') ? '导出失败' : '已发送'}
-              message={exportMsg}
-              variant={exportMsg.startsWith('导出失败') ? 'error' : 'success'}
-            />
-          )}
-        </div>
-      </Card>
-
-      {/* 危险操作 */}
-      <Card title="危险操作" subtitle="DANGER ZONE">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 px-4 py-3">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">退出登录</p>
-              <p className="text-xs text-secondary-text">
-                清空当前浏览器的登录态, 下次访问需要重新输入邮箱密码。
-              </p>
-            </div>
-            <Button
-              variant="danger-subtle"
-              isLoading={isLoggingOut}
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4" /> 退出
-            </Button>
-          </div>
-
-          {/* 账号注销 */}
-          {deletionPending ? (
-            <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3">
-              <p className="flex items-center gap-1.5 text-sm font-medium text-amber-400">
-                <AlertTriangle className="h-4 w-4" /> 注销申请冷静期中
-              </p>
-              <p className="text-xs text-secondary-text">
-                申请时间：{formatDate(deletionRequestedAt)}。
-                冷静期（{deletionCoolingOff} 天）结束后账号将被软删除，30 天后个人数据物理清除。
-              </p>
-              <div className="pt-1">
-                <Button variant="secondary" isLoading={isDeletionLoading} onClick={() => void handleCancelDeletion()}>
-                  取消注销申请
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3 rounded-xl border border-red-500/30 bg-card/60 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                    <Trash2 className="h-4 w-4 text-red-400" /> 注销账号
-                  </p>
-                  <p className="text-xs text-secondary-text">
-                    进入 {deletionCoolingOff} 天冷静期后软删除账号，30 天后物理清除个人数据；订单与发票保留 5 年。
-                  </p>
-                </div>
-                {!showDeletionConfirm && (
-                  <Button variant="danger-subtle" onClick={() => setShowDeletionConfirm(true)}>
-                    注销
-                  </Button>
-                )}
-              </div>
-              {showDeletionConfirm && (
-                <div className="space-y-2 border-t border-border/40 pt-3">
-                  <p className="text-xs text-secondary-text">
-                    确认注销请在下方输入 <strong className="text-red-400">注销账号</strong> 并点击确认。
-                    此操作将立即撤销你的所有会话。
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="flex-1 rounded-lg border border-border bg-base px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-400"
-                      placeholder="输入『注销账号』以确认"
-                      value={deletionConfirmText}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeletionConfirmText(e.target.value)}
-                    />
-                    <Button
-                      variant="danger"
-                      isLoading={isDeletionLoading}
-                      disabled={deletionConfirmText !== '注销账号'}
-                      onClick={() => void handleRequestDeletion()}
-                    >
-                      确认注销
-                    </Button>
-                    <Button variant="secondary" onClick={() => { setShowDeletionConfirm(false); setDeletionConfirmText(''); }}>
-                      取消
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {deletionMsg && (
-            <SettingsAlert
-              title={deletionMsg.includes('失败') ? '操作失败' : '操作成功'}
-              message={deletionMsg}
-              variant={deletionMsg.includes('失败') ? 'error' : 'success'}
-            />
-          )}
-        </div>
-      </Card>
+      <div className="flex justify-center">
+        <Button
+          variant="danger-subtle"
+          isLoading={isLoggingOut}
+          onClick={handleLogout}
+        >
+          <LogOut className="h-4 w-4" /> 退出登录
+        </Button>
+      </div>
     </StandardPageLayout>
   );
 };

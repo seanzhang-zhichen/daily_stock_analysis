@@ -99,6 +99,33 @@ class SystemConfigApiTestCase(unittest.TestCase):
         add_auth_middleware(app)
         return app
 
+    def _build_system_router_app(self, *, admin_allowed: bool) -> FastAPI:
+        app = FastAPI()
+        app.state.system_config_service = self.service
+
+        def admin_override():
+            if not admin_allowed:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": "forbidden", "message": "需要平台管理员权限"},
+                )
+            return SimpleNamespace(is_admin=True)
+
+        app.dependency_overrides[system_config.get_admin_user] = admin_override
+        app.include_router(system_config.router, prefix="/api/v1/system")
+        add_error_handlers(app)
+        return app
+
+    def test_system_config_router_requires_admin_user(self) -> None:
+        async def request_config() -> httpx.Response:
+            transport = httpx.ASGITransport(app=self._build_system_router_app(admin_allowed=False))
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                return await client.get("/api/v1/system/config")
+
+        response = asyncio.run(request_config())
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "forbidden")
+
     def test_get_config_returns_raw_secret_value(self) -> None:
         payload = system_config.get_system_config(include_schema=True, service=self.service).model_dump(by_alias=True)
         item_map = {item["key"]: item for item in payload["items"]}

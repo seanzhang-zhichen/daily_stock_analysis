@@ -221,8 +221,8 @@ class AppUserNotificationPref(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, unique=True, index=True)
-    daily_push_enabled = Column(Boolean, nullable=False, default=False)  # 每日定时推送开关
-    email_enabled = Column(Boolean, nullable=False, default=True)  # 邮件推送（免费 / Pro 均可用）
+    daily_push_enabled = Column(Boolean, nullable=False, default=False)  # 每日定时推送开关（Pro 专属）
+    email_enabled = Column(Boolean, nullable=False, default=True)  # 邮件推送开关（Pro 专属）
     webhook_url = Column(String(1024))  # Pro 专属自定义 Webhook
     webhook_type = Column(String(32))  # feishu / wecom / discord / telegram / generic
     created_at = Column(DateTime, default=datetime.now, nullable=False)

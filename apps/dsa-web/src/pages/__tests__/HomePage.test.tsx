@@ -6,10 +6,20 @@ import { agentApi } from '../../api/agent';
 import { historyApi } from '../../api/history';
 import { systemConfigApi } from '../../api/systemConfig';
 import { useStockPoolStore } from '../../stores';
+import type { StockIndexItem } from '../../types/stockIndex';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import HomePage from '../HomePage';
 
 const navigateMock = vi.fn();
+const stockIndexState = vi.hoisted(() => ({
+  index: [] as StockIndexItem[],
+}));
+const authState = {
+  userMode: null as null | {
+    userModeEnabled: boolean;
+    user: { isAdmin?: boolean } | null;
+  },
+};
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -53,8 +63,22 @@ vi.mock('../../api/agent', () => ({
   },
 }));
 
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => authState,
+}));
+
 vi.mock('../../hooks/useTaskStream', () => ({
   useTaskStream: vi.fn(),
+}));
+
+vi.mock('../../hooks/useStockIndex', () => ({
+  useStockIndex: () => ({
+    index: stockIndexState.index,
+    loading: false,
+    error: null,
+    fallback: false,
+    loaded: true,
+  }),
 }));
 
 const historyItem = {
@@ -116,6 +140,8 @@ describe('HomePage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     navigateMock.mockReset();
+    stockIndexState.index = [];
+    authState.userMode = null;
     useStockPoolStore.getState().resetDashboardState();
     vi.mocked(agentApi.getSkills).mockResolvedValue({ skills: [], default_skill_id: '' });
     vi.mocked(systemConfigApi.getSetupStatus).mockResolvedValue({
@@ -191,6 +217,28 @@ describe('HomePage', () => {
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();
   });
 
+  it('does not request setup status for regular To C users', async () => {
+    authState.userMode = {
+      userModeEnabled: true,
+      user: { isAdmin: false },
+    };
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(agentApi.getSkills).toHaveBeenCalled());
+    expect(systemConfigApi.getSetupStatus).not.toHaveBeenCalled();
+  });
+
   it('surfaces duplicate task warnings from dashboard submission', async () => {
     vi.mocked(historyApi.getList).mockResolvedValue({
       total: 0,
@@ -216,6 +264,53 @@ describe('HomePage', () => {
       expect(screen.getByText(/股票 600519 正在分析中/)).toBeInTheDocument();
     });
     expect(screen.getByText(/股票 600519 正在分析中/).closest('[role="alert"]')).toBeInTheDocument();
+  });
+
+  it('resolves an exact stock name before submitting from the toolbar button', async () => {
+    stockIndexState.index = [
+      {
+        canonicalCode: '600584.SH',
+        displayCode: '600584',
+        nameZh: '长电科技',
+        pinyinFull: 'zhangdiankeji',
+        pinyinAbbr: 'zdkj',
+        aliases: [],
+        market: 'CN',
+        assetType: 'stock',
+        active: true,
+        popularity: 100,
+      },
+    ];
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+    vi.mocked(analysisApi.analyzeAsync).mockResolvedValue({
+      taskId: 'task-600584',
+      status: 'pending',
+      message: '分析任务已加入队列',
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByPlaceholderText('输入股票代码或名称，如 600519、贵州茅台、AAPL');
+    fireEvent.change(input, { target: { value: '长电科技' } });
+    fireEvent.click(screen.getByRole('button', { name: '分析' }));
+
+    await waitFor(() => {
+      expect(analysisApi.analyzeAsync).toHaveBeenCalledWith(expect.objectContaining({
+        stockCode: '600584.SH',
+        stockName: '长电科技',
+        originalQuery: '长电科技',
+        selectionSource: 'manual',
+      }));
+    });
   });
 
   it('submits market review from the home toolbar', async () => {
@@ -540,7 +635,7 @@ describe('HomePage', () => {
     vi.mocked(agentApi.getSkills).mockResolvedValue({
       default_skill_id: 'bull_trend',
       skills: [
-        { id: 'bull_trend', name: '默认多头趋势', description: '趋势分析' },
+        { id: 'bull_trend', name: '多头趋势', description: '趋势分析' },
         { id: 'growth_quality', name: '成长质量', description: '成长股分析' },
       ],
     });
@@ -561,7 +656,7 @@ describe('HomePage', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '策略' }));
+    fireEvent.click(await screen.findByRole('button', { name: '多头趋势' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: /成长质量/ }));
 
     const input = screen.getByPlaceholderText('输入股票代码或名称，如 600519、贵州茅台、AAPL');
@@ -576,11 +671,49 @@ describe('HomePage', () => {
     });
   });
 
+  it('passes the backend default strategy when submitting without manual selection', async () => {
+    vi.mocked(agentApi.getSkills).mockResolvedValue({
+      default_skill_id: 'bull_trend',
+      skills: [
+        { id: 'bull_trend', name: '多头趋势', description: '趋势分析' },
+        { id: 'growth_quality', name: '成长质量', description: '成长股分析' },
+      ],
+    });
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+    vi.mocked(analysisApi.analyzeAsync).mockResolvedValue({
+      taskId: 'task-default-strategy-1',
+      status: 'pending',
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('button', { name: '多头趋势' });
+    const input = screen.getByPlaceholderText('输入股票代码或名称，如 600519、贵州茅台、AAPL');
+    fireEvent.change(input, { target: { value: '600519' } });
+    fireEvent.click(screen.getByRole('button', { name: '分析' }));
+
+    await waitFor(() => {
+      expect(analysisApi.analyzeAsync).toHaveBeenCalledWith(expect.objectContaining({
+        stockCode: '600519',
+        skills: ['bull_trend'],
+      }));
+    });
+  });
+
   it('supports keyboard navigation in the strategy menu', async () => {
     vi.mocked(agentApi.getSkills).mockResolvedValue({
       default_skill_id: 'bull_trend',
       skills: [
-        { id: 'bull_trend', name: '默认多头趋势', description: '趋势分析' },
+        { id: 'bull_trend', name: '多头趋势', description: '趋势分析' },
         { id: 'growth_quality', name: '成长质量', description: '成长股分析' },
       ],
     });
@@ -597,17 +730,17 @@ describe('HomePage', () => {
       </MemoryRouter>,
     );
 
-    const trigger = await screen.findByRole('button', { name: '策略' });
+    const trigger = await screen.findByRole('button', { name: '多头趋势' });
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
 
-    const defaultOption = await screen.findByRole('menuitemradio', { name: /默认策略/ });
+    const defaultOption = await screen.findByRole('menuitemradio', { name: /^多头趋势/ });
     await waitFor(() => {
       expect(defaultOption).toHaveFocus();
     });
 
     const menu = screen.getByRole('menu');
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
-    expect(screen.getByRole('menuitemradio', { name: /默认多头趋势/ })).toHaveFocus();
+    expect(screen.getByRole('menuitemradio', { name: /成长质量/ })).toHaveFocus();
 
     fireEvent.keyDown(menu, { key: 'End' });
     expect(screen.getByRole('menuitemradio', { name: /成长质量/ })).toHaveFocus();
