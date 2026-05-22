@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [文档] 新增 `docs/to-c-user-stories.md`，基于当前 To C 多用户、配额、通知、支付、BYOK、合规与运营后台实现整理核心用户故事、验收口径和实现映射，并在中英文文档索引与产品规划中补充入口。
+- [文档] 基于当前 To C 多用户、支付、BYOK、通知和前端页面实现更新 `docs/to-c-mode.md`、`docs/to-c-product-wireframes.md` 与 `docs/to-c-product-plan.md`，修正页面状态、API 列表、数据表、已落地能力与剩余缺口说明。
 - [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要 Pro 套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
 - [改进] Web 报告资讯卡片标题统一为「相关资讯」，移除右上角刷新入口，并移除资讯条目右侧「跳转」按钮内的箭头图标。
 - [改进] 将「邮件通知」和「每日推送」改为 Pro 专属权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到 Pro 套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。

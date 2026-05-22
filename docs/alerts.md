@@ -107,7 +107,7 @@
 
 当前仓库已有 SQLite 存储层和 repository/service 分层：
 
-- `src/storage.py` 管理 SQLite 连接、SQLAlchemy ORM 模型和 `DatabaseManager`。
+- `src/storage/` 包管理 SQLite 连接、SQLAlchemy ORM 模型和 `DatabaseManager`（已按业务域拆分为 `src/storage/models/` 与 `src/storage/manager/`，`from src.storage import ...` 接口保持向后兼容）。
 - `src/repositories/` 放置数据访问层，例如 `PortfolioRepository`。
 - `src/services/` 放置业务服务层，例如 `PortfolioService`、`PortfolioRiskService`。
 - 默认数据库路径跟随现有配置，通常落在 `data/stock_analysis.db`。

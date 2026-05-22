@@ -4,13 +4,14 @@
 
 > 本文档锁定**产品形态、用户分层、阶段拆分与风险点**，是后续多 Phase 改造的总纲。
 > 当前已落地的工程骨架（环境变量、API、表结构、回滚方式）请参考 [`docs/to-c-mode.md`](./to-c-mode.md)；
-> 关键页面线框请参考 [`docs/to-c-product-wireframes.md`](./to-c-product-wireframes.md)。
+> 关键页面线框请参考 [`docs/to-c-product-wireframes.md`](./to-c-product-wireframes.md)；
+> 用户故事、验收口径与实现映射请参考 [`docs/to-c-user-stories.md`](./to-c-user-stories.md)。
 
 ## 0. 当前进度速览
 
 | Phase | 状态 | 说明 |
 | --- | --- | --- |
-| Phase 0：产品规划 | ✅ 已完成 | 本文档 + 线框 + 决策锁定。 |
+| Phase 0：产品规划 | ✅ 已完成 | 本文档 + 线框 + 用户故事 + 决策锁定。 |
 | Phase 1：用户体系骨架 | ✅ 基本闭环 | `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` / `app_user_byok_credentials` / `app_plans` / `app_subscriptions` / `app_redeem_codes` 等表已建好，`/api/v1/account/*` 已上线，前端 `/login` `/register` `/forgot-password` `/verify-email` 均可用，新用户注册后自动跳转 `/onboarding` 首次引导页；业务 API 已默认要求 `dsa_user_session`，history / analysis / portfolio / alerts / agent 已按当前用户隔离。剩余：语言和模型偏好仍依赖全局 `SystemConfig`。详见 [`to-c-mode.md`](./to-c-mode.md)。 |
 | Phase 2：商业化骨架 | 🟡 主要落地 | 配额服务已通过 `src/users/quota_guard.py` 接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；`AppPlan` / `AppSubscription` / `AppRedeemCode` 三张表 + `resolve_user_plan` / `redeem_code` / `grant_plan` 已上线；`/api/v1/account/redeem`、`/api/v1/account/api-keys`、`/api/v1/billing/{plans,subscription}` endpoint 已上线；前端 `/account` `/billing` `/account/api-keys` 页面 + 顶栏 `QuotaIndicator` + 全局 `QuotaExceededDialog` 已可用；模型路由运行时已接入（见 Phase 4）。Plan 到期 / 续费闭环已落地：`app_plan_reminders` + `src/users/plan_lifecycle.py` 支持 7/3/1 天到期前邮件提醒、过期当日自动降级 free + 通知邮件，`/api/v1/account/status.renewal` + 前端 `RenewalBanner` 顶栏续费提示已上线。剩余：套餐 / 订阅的运营后台、平台 Key 配额池统一管理、支付闭环。 |
 | Phase 3：调度与通知 To C 化 | ✅ 基本闭环 | 新增 `app_user_watchlists`（per-user 自选股，含 `max_stocks` 上限）与 `app_user_notification_prefs`（`daily_push_enabled` / `email_enabled` / Webhook）两张表；服务层 `src/users/watchlist.py` / `src/users/notification_prefs.py`；API `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) 已上线；`main.py` `run_per_user_scheduled_analysis` 按开启日推的用户分桶执行分析、调用 `src/users/notification_delivery.py` 发送 HTML 邮件（含一键退订链接，渲染走 `markdown2`）并按 `webhook_type` 分发到飞书 / 企业微信 / Discord / Telegram / 通用 JSON；新增 `src/users/unsubscribe.py` HMAC 无状态退订 token + `GET /api/v1/account/notification-prefs/unsubscribe` 公开端点（已加入 `AuthMiddleware` 白名单），操作写 `app_audit_logs`。前端 `AccountPage` 已新增「我的自选股」与「通知偏好」卡片（含 Pro Webhook 配置 UI）。剩余：HTML 邮件模板的视觉打磨（运营素材定稿后）、多用户并发调度（当前串行）。 |
@@ -55,6 +56,8 @@
 > 新用户首单可叠加**限时折扣**（如首月 ¥9.9 体验价）通过 `app_redeem_codes` + 活动码方式发放，避免影响标价。
 
 ## 4. 核心用户故事（MVP）
+
+> 本节保留 MVP 总览；更细的角色拆分、验收标准和当前代码映射请参考 [`docs/to-c-user-stories.md`](./to-c-user-stories.md)。
 
 1. **注册登录**：用户用邮箱+密码注册，邮箱验证码激活；忘记密码可通过邮箱重置。
 2. **首次引导**：填 1–3 只自选股 → 立即生成一份 demo 决策报告。
@@ -118,12 +121,12 @@
 > - `alert_*`：API 端点已强制登录，规则、触发历史、通知历史通过当前用户过滤；后台评估 worker 的按用户分桶仍需在 Phase 3 继续补齐。
 > - `conversation_messages`：Web API 会话已按当前 `AppUser.id` 隔离；Bot / CLI 路径仍保留平台维度 session_id。
 > - 自选股：**已完成（Phase 3）**。`app_user_watchlists` 表 + `src/users/watchlist.py` 服务 + `/api/v1/account/watchlist` CRUD 已上线，含 `plan.max_stocks` 上限检查。
-> - 通知偏好：**已完成（Phase 3）**。`app_user_notification_prefs` 表 + `src/users/notification_prefs.py` 服务 + `/api/v1/account/notification-prefs` GET/PATCH 已上线；`daily_push_enabled` / `email_enabled` / Webhook（Pro）均可配置。
+> - 通知偏好：**已完成（Phase 3）**。`app_user_notification_prefs` 表 + `src/users/notification_prefs.py` 服务 + `/api/v1/account/notification-prefs` GET/PATCH 已上线；`daily_push_enabled` / `email_enabled` 仅 Pro 可开启，Webhook 需 `plan.can_webhook=true`。
 > - 语言、模型偏好等：仍依赖 `SystemConfig` 全局表，没有 per-user 视图。
 
 ### 5.4 商业化与配额
 
-- 已有表：`app_plans` / `app_subscriptions` / `app_user_usage_counters` / `app_redeem_codes` / `app_user_byok_credentials`（详见 `src/storage.py`）。
+- 已有表：`app_plans` / `app_subscriptions` / `app_user_usage_counters` / `app_redeem_codes` / `app_user_byok_credentials`（详见 `src/storage/`）。
 - **新增表（Phase 5 已落地，详见 §11.2）**：
   - `app_orders`：订单主表（含金额、币种、状态、provider、外部交易号、quote 快照）。
   - `app_payment_events`：支付通道回调流水（用于回放对账，幂等去重）。
@@ -141,14 +144,14 @@
   1. 若 `plan.can_byok` 且用户已配置 BYOK 凭证 → 走 BYOK 路由（注入 `api_key` / `api_base`，绕过平台 Router）。
   2. 否则按 `plan.allowed_models` 过滤可用模型，走平台 Key 池。
   3. 平台 Key 池失败时按 channel `fallback_chain` 重试；`user_id` 已从 API 层 → factory → adapter 全链路透传。
-- **剩余缺口**：`allowed_models` 具体配置尚未入库（`app_plans` 中该字段为空时降级为不限制）；plan 到期自动降级触发；平台 Key 池每日/每分钟限额监控与用量看板。
+- **剩余缺口**：`allowed_models` 具体配置尚未入库（`app_plans` 中该字段为空时降级为不限制）；平台 Key 池每日/每分钟限额监控与用量看板。
 
 > 当前实现：`src/users/quota.py` 提供 `try_consume` / `refund` / `get_quota_snapshot`；`quota_guard.py` 把两者串成 `enforce_quota` / `refund_quota` / `quota_exceeded_payload`，已接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；未登录调用不再 bypass。`model_router.py` 提供 `resolve_model_route` / `as_litellm_kwargs`，已在 `GeminiAnalyzer` 与 `LLMToolAdapter` 的实际 LLM 调用前生效；BYOK 路由绕过 LiteLLM Router 直接调用，平台路由按 `plan.allowed_models` 过滤可用模型。
 
 ### 5.5 调度与推送
 
 - 现有「全局调度跑全局自选股」改为：「调度时按用户分桶，按需并发跑」。
-- 推送渠道按用户偏好：免费档仅邮箱；Pro 可加 webhook（飞书/企业微信/Discord/TG）。
+- 推送渠道按用户偏好：AI 分析报告自动推送仅 Pro 可开启；Pro 可使用邮件与 webhook（飞书/企业微信/Discord/TG 等）。
 - 引入失败降级：单用户的某个渠道失败不影响其它用户。
 - 节流：调度器尊重每个 provider 的 rate limit，整体并发上限可配置。
 
@@ -209,7 +212,7 @@
 
 - **数据库选型**：
   - SQLite 适合自部署单机，但 To C 多用户 + 订单写入并发风险高。**建议 Phase 5 前迁 PostgreSQL**（云数据库即可，1c2g 即可起步）。
-  - 迁移工具：现有 `src/storage.py` 走 SQLAlchemy ORM，迁移成本可控；需补一份 `scripts/migrate_sqlite_to_pg.py`。
+  - 迁移工具：现有 `src/storage/` 走 SQLAlchemy ORM，schema 已通过 Alembic 管理，迁移成本可控；需补一份 `scripts/migrate_sqlite_to_pg.py` 数据搬迁脚本。
 - **部署形态**：
   - MVP：单节点 Docker（`docker/Dockerfile`）+ Nginx 反代 + 云 RDS；预算控制在 ¥200/月以内。
   - 二期：双节点 + 云 LB + 共享 RDS + Redis（用于 session / 配额计数器，替换数据库写入热点）。
@@ -230,7 +233,7 @@
 - **运行手册**：
   - `docs/runbook-to-c.md`（待写）：包含「支付回调失败排查」「邮件送达失败排查」「数据库恢复演练」「商户号 / 私钥轮换」等 SOP。
 
-> 当前实现：**Sentry 错误监控**已在 `api/app.py::_init_sentry` 接入（`SENTRY_DSN` 非空时自动初始化，集成 FastAPI + SQLAlchemy，`send_default_pii=False`，`traces_sample_rate` 可配置）。**`app_audit_logs` 表**（`AppAuditLog`，永不删除）已上线，登录/注册/退订/套餐变更/支付回调/管理员操作均写入；`/api/v1/admin/audit-logs` 已暴露查询接口。支付回调 IP 白名单 + 签名失败滑动窗口告警（`src/services/billing/security.py`）已接入，超阈值通过 `ADMIN_ALERT_EMAIL` + `RECONCILE_WEBHOOK_URL` 发出告警。`/health` 已存在用于健康检查。未完成：**备份脚本**（`scripts/backup_db.sh` / `.py`）尚未创建；**`docs/runbook-to-c.md`** 尚未撰写；Prometheus 监控看板（Sentry 覆盖错误层，业务层指标从 DB 聚合）；SQLite → PostgreSQL 迁移脚本。
+> 当前实现：**Sentry 错误监控**已在 `api/app.py::_init_sentry` 接入（`SENTRY_DSN` 非空时自动初始化，集成 FastAPI + SQLAlchemy，`send_default_pii=False`，`traces_sample_rate` 可配置）。**`app_audit_logs` 表**（`AppAuditLog`，永不删除）已上线，登录/注册/退订/套餐变更/支付回调/管理员操作均写入；`/api/v1/admin/audit-logs` 已暴露查询接口。支付回调 IP 白名单 + 签名失败滑动窗口告警（`src/services/billing/security.py`）已接入，超阈值通过 `ADMIN_ALERT_EMAIL` + `RECONCILE_WEBHOOK_URL` 发出告警。`/health` 已存在用于健康检查。**SQLite 备份脚本** `scripts/backup_db.py` 已上线，支持在线热备份、gzip 压缩、保留份数、上传钩子与 dry-run。未完成：**`docs/runbook-to-c.md`** 尚未撰写；Prometheus 监控看板（Sentry 覆盖错误层，业务层指标从 DB 聚合）；SQLite → PostgreSQL 迁移脚本。
 
 ### 5.10 增长、运营与客服
 
@@ -327,11 +330,11 @@
 - ✅ 对账脚本真实通道账单拉取：`WechatGateway.fetch_settlements`（V3 `GET /v3/bill/tradebill` → gzip CSV 解析）与 `AlipayGateway.fetch_settlements`（`alipay.bill.downloadurl.query` → ZIP 内 GBK CSV 解析）均已实现并对接 gateway facade；失败时静默返回空列表，对账脚本降级为仅 `local_only` 差异。
 
 ### Phase 6：可观测、运营、合规（与 Phase 5 并行）
-- 监控告警（Sentry / Prometheus / 健康检查）、用户操作审计、备份策略。
-- 协议三件套（用户协议 / 隐私政策 / 投资风险揭示书）正式上线。
-- 注册防刷（行为验证码、邮箱限频、一次性邮箱拦截）。
-- 客服入口（工单 / 邮件 / IM 群）、FAQ、产品公告中心。
-- 增长埋点（自建事件 + GA 兜底）；首次引导上线。
+- ✅ Sentry、健康检查、用户操作审计、SQLite 备份脚本已上线；Prometheus 看板与 SQLite → PostgreSQL 迁移脚本仍为后续项。
+- ✅ 协议三件套、注册同意、账号注销、个人数据导出已上线。
+- ✅ 注册防刷已包含一次性邮箱拦截、IP / 邮箱滚动窗口限频与可选 MX 校验；行为验证码仍为后续项。
+- ✅ 客服入口、FAQ、产品公告中心已上线；公告同步邮件给付费用户仍为后续项。
+- ✅ 增长埋点、自建事件 API、首次引导、续费提醒已上线；邀请奖励 / 推荐裂变仍为后续项。
 - 详见 §5.9 / §5.10 / §5.11。
 
 ### Phase 7：移动端 / 小程序（可选/后置）
@@ -488,8 +491,8 @@
 
 ### 11.2 数据模型（新增表草案）
 
-> 字段名采用 snake_case，字段类型沿用 `src/storage.py` 的 SQLAlchemy 风格。
-> 实现时统一通过 `src/storage.py` 追加 ORM 模型 + `scripts/migrate_*.py` 落库。
+> 字段名采用 snake_case，字段类型沿用 `src/storage/` 中 SQLAlchemy ORM 的风格。
+> 实现时在 `src/storage/models/` 对应模块追加 ORM 模型，并通过 **Alembic migration**（`alembic revision --autogenerate` + `alembic upgrade head`）落库；禁止直接调用 `Base.metadata.create_all()` 或手写 `ALTER TABLE` 变更生产 schema。
 
 #### 11.2.1 `app_orders`（订单主表）
 
