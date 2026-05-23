@@ -70,7 +70,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_schedule_run_immediately_falls_back_to_legacy_run_immediately(
+    def test_schedule_run_immediately_ignores_run_immediately(
         self,
         _mock_parse_yaml,
         _mock_setup_env,
@@ -82,8 +82,8 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             config = Config._load_from_env()
 
-        self.assertFalse(config.schedule_run_immediately)
-        self.assertFalse(config.run_immediately)
+        self.assertTrue(config.schedule_run_immediately)
+        self.assertTrue(config.run_immediately)
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
@@ -101,11 +101,11 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
             config = Config._load_from_env()
 
         self.assertTrue(config.schedule_run_immediately)
-        self.assertFalse(config.run_immediately)
+        self.assertTrue(config.run_immediately)
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_empty_legacy_run_immediately_stays_false_when_schedule_alias_is_unset(
+    def test_empty_run_immediately_is_ignored_when_schedule_setting_is_unset(
         self,
         _mock_parse_yaml,
         _mock_setup_env,
@@ -117,8 +117,8 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             config = Config._load_from_env()
 
-        self.assertFalse(config.schedule_run_immediately)
-        self.assertFalse(config.run_immediately)
+        self.assertTrue(config.schedule_run_immediately)
+        self.assertTrue(config.run_immediately)
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
@@ -136,10 +136,10 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
             config = Config._load_from_env()
 
         self.assertFalse(config.schedule_run_immediately)
-        self.assertTrue(config.run_immediately)
+        self.assertFalse(config.run_immediately)
 
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_schedule_run_immediately_ignores_persisted_alias_when_only_legacy_env_is_explicit(
+    def test_schedule_run_immediately_ignores_persisted_alias_when_only_env_override_is_explicit(
         self,
         _mock_parse_yaml,
     ) -> None:
@@ -149,7 +149,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                 "\n".join(
                     [
                         "STOCK_LIST=600519",
-                        "RUN_IMMEDIATELY=true",
                         "SCHEDULE_RUN_IMMEDIATELY=true",
                     ]
                 )
@@ -161,14 +160,14 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                 os.environ,
                 {
                     "ENV_FILE": str(env_path),
-                    "RUN_IMMEDIATELY": "false",
+                    "SCHEDULE_RUN_IMMEDIATELY": "false",
                 },
                 clear=True,
             ):
                 config = Config._load_from_env()
 
-        self.assertFalse(config.run_immediately)
         self.assertFalse(config.schedule_run_immediately)
+        self.assertFalse(config.run_immediately)
 
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_blank_schedule_time_falls_back_to_default(
@@ -291,7 +290,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                         "STOCK_LIST=600519",
                         "SCHEDULE_ENABLED=false",
                         "SCHEDULE_TIME=18:00",
-                        "RUN_IMMEDIATELY=true",
                         "SCHEDULE_RUN_IMMEDIATELY=false",
                     ]
                 )
@@ -306,7 +304,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                     "STOCK_LIST": "600519",
                     "SCHEDULE_ENABLED": "false",
                     "SCHEDULE_TIME": "18:00",
-                    "RUN_IMMEDIATELY": "true",
                     "SCHEDULE_RUN_IMMEDIATELY": "false",
                 },
                 clear=True,
@@ -318,7 +315,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                             "STOCK_LIST=300750,TSLA",
                             "SCHEDULE_ENABLED=true",
                             "SCHEDULE_TIME=09:30",
-                            "RUN_IMMEDIATELY=false",
                             "SCHEDULE_RUN_IMMEDIATELY=true",
                         ]
                     )
@@ -332,8 +328,8 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertEqual(config.stock_list, ["300750", "TSLA"])
         self.assertTrue(config.schedule_enabled)
         self.assertEqual(config.schedule_time, "09:30")
-        self.assertFalse(config.run_immediately)
         self.assertTrue(config.schedule_run_immediately)
+        self.assertTrue(config.run_immediately)
 
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_runtime_mutable_keys_prefer_process_env_when_values_differ(
@@ -353,7 +349,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                         "STOCK_LIST=300750,TSLA",
                         "SCHEDULE_ENABLED=true",
                         "SCHEDULE_TIME=09:30",
-                        "RUN_IMMEDIATELY=false",
                         "SCHEDULE_RUN_IMMEDIATELY=true",
                     ]
                 )
@@ -368,7 +363,6 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                     "STOCK_LIST": "600519,000001",
                     "SCHEDULE_ENABLED": "false",
                     "SCHEDULE_TIME": "18:00",
-                    "RUN_IMMEDIATELY": "true",
                     "SCHEDULE_RUN_IMMEDIATELY": "false",
                 },
                 clear=True,
@@ -379,8 +373,8 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertEqual(config.stock_list, ["600519", "000001"])
         self.assertFalse(config.schedule_enabled)
         self.assertEqual(config.schedule_time, "18:00")
-        self.assertTrue(config.run_immediately)
         self.assertFalse(config.schedule_run_immediately)
+        self.assertFalse(config.run_immediately)
 
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_runtime_mutable_keys_use_process_env_when_absent_from_file(

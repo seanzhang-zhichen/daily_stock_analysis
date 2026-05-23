@@ -150,18 +150,18 @@ pip install -r requirements.txt
 cp .env.example .env && vim .env
 
 # 运行分析
-python main.py
+python backend/main.py
 ```
 
 常用命令：
 
 ```bash
-python main.py --debug
-python main.py --dry-run
-python main.py --stocks 600519,hk00700,AAPL
-python main.py --market-review
-python main.py --schedule
-python main.py --serve-only
+python backend/main.py --debug
+python backend/main.py --dry-run
+python backend/main.py --stocks 600519,hk00700,AAPL
+python backend/main.py --market-review
+python backend/main.py --schedule
+python backend/main.py --serve-only
 ```
 
 > Docker 部署、定时任务、云服务器访问请参考 [完整指南](docs/full-guide.md)；桌面客户端打包请参考 [桌面端打包说明](docs/desktop-package.md)。
@@ -221,14 +221,23 @@ python main.py --serve-only
 
 ## 🖥️ Web 界面
 
-Web 工作台提供配置管理、任务监控、手动分析、历史报告、完整 Markdown 报告、Agent 问股、回测、持仓管理、智能导入和浅色 / 深色主题。启动方式：
+Web 工作台提供配置管理、任务监控、手动分析、历史报告、完整 Markdown 报告、Agent 问股、回测、持仓管理、智能导入和浅色 / 深色主题。
+
+开发模式推荐前后端分离启动：
 
 ```bash
-python main.py --webui
-python main.py --webui-only
+# 终端 1：后端 API
+python backend/main.py --serve-only
+
+# 终端 2：前端开发服务器
+cd frontend/web
+npm ci
+npm run dev
 ```
 
-访问 `http://127.0.0.1:8000` 即可使用。认证、智能导入、搜索补全、历史报告复制、云服务器访问等细节见 [本地 WebUI 管理界面](docs/full-guide.md#本地-webui-管理界面)。
+访问 `http://localhost:5200` 即可使用；前端会把 `/api/*` 代理到 `http://127.0.0.1:8000`。
+
+本地一体化体验或生产部署可运行 `python backend/main.py --webui-only`，由后端托管已构建的 Web 前端并访问 `http://127.0.0.1:8000`。完整启动方式见 [本地启动指南](docs/local-dev.md) 和 [本地 WebUI 管理界面](docs/full-guide.md#本地-webui-管理界面)。
 
 ## 🤖 Agent 策略问股
 

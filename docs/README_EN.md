@@ -151,18 +151,18 @@ pip install -r requirements.txt
 cp .env.example .env && vim .env
 
 # Run analysis
-python main.py
+python backend/main.py
 ```
 
 Common commands:
 
 ```bash
-python main.py --debug
-python main.py --dry-run
-python main.py --stocks 600519,hk00700,AAPL
-python main.py --market-review
-python main.py --schedule
-python main.py --serve-only
+python backend/main.py --debug
+python backend/main.py --dry-run
+python backend/main.py --stocks 600519,hk00700,AAPL
+python backend/main.py --market-review
+python backend/main.py --schedule
+python backend/main.py --serve-only
 ```
 
 > Docker deployment, scheduling, and cloud-server WebUI access are documented in the [Full Guide](./full-guide_EN.md).
@@ -212,8 +212,8 @@ Full environment variables, model routing, notification channels, data-source pr
 The Web workspace supports settings, task monitoring, manual analysis, history reports, full Markdown reports, Agent strategy chat, backtest, portfolio management, smart import, and light/dark themes.
 
 ```bash
-python main.py --webui
-python main.py --webui-only
+python backend/main.py --webui
+python backend/main.py --webui-only
 ```
 
 Visit `http://127.0.0.1:8000`. Authentication, smart import, autocomplete, report copying, and cloud-server access are documented in [Local WebUI Management](./full-guide_EN.md#local-webui-management-interface).

@@ -15,7 +15,7 @@ if [[ ! -d "${ROOT_DIR}/dist/backend/stock_analysis" ]]; then
   exit 1
 fi
 
-pushd "${ROOT_DIR}/apps/dsa-desktop" >/dev/null
+pushd "${ROOT_DIR}/frontend/desktop" >/dev/null
 
 package_lock_hash() {
   if command -v shasum >/dev/null 2>&1; then

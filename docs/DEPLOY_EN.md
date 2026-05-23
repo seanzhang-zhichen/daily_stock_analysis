@@ -73,7 +73,7 @@ docker-compose -f ./docker/docker-compose.yml up -d
 docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer bash
 
 # Manually run analysis once
-docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python main.py --no-notify
+docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python backend/main.py --no-notify
 ```
 
 ### 5. Data Persistence
@@ -123,13 +123,13 @@ vim .env  # Fill in configuration
 
 ```bash
 # Single run
-python main.py
+python backend/main.py
 
 # Scheduled task mode (foreground)
-python main.py --schedule
+python backend/main.py --schedule
 
 # Background run (using nohup)
-nohup python main.py --schedule > /dev/null 2>&1 &
+nohup python backend/main.py --schedule > /dev/null 2>&1 &
 ```
 
 ---
@@ -155,7 +155,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/stock-analyzer
 Environment="PATH=/opt/stock-analyzer/venv/bin"
-ExecStart=/opt/stock-analyzer/venv/bin/python main.py --schedule
+ExecStart=/opt/stock-analyzer/venv/bin/python backend/main.py --schedule
 Restart=always
 RestartSec=30
 

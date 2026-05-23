@@ -73,7 +73,7 @@ function Ensure-DesktopDependencies {
 }
 
 Write-Host 'Building Electron desktop app...'
-Push-Location (Join-Path $repoRoot 'apps\dsa-desktop')
+Push-Location (Join-Path $repoRoot 'frontend\desktop')
 Ensure-DesktopDependencies
 
 Write-Host 'Stopping running app (if any)...'

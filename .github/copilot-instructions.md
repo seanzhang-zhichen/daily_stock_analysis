@@ -7,9 +7,9 @@ If any instruction in this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
 ## Core Rules
 
 - Respect directory boundaries:
-  - Backend: `src/`, `data_provider/`, `api/`, `bot/`
-  - Web: `apps/dsa-web/`
-  - Desktop: `apps/dsa-desktop/`
+  - Backend: `backend/` for real backend code; root `src/`, `data_provider/`, `api/`, and `bot/` are compatibility shims
+  - Web: `frontend/web/`
+  - Desktop: `frontend/desktop/`
   - Deployment/workflows: `scripts/`, `.github/workflows/`, `docker/`
 - Do not run `git commit`, `git tag`, or `git push` without explicit user confirmation.
 - PR titles should use `<type>: <change summary>` such as `fix: 修复大盘分析历史记录丢失`; use `fix`/`feat`/`refactor`/`docs`/`chore`/`test`/`ci` where possible, and avoid `[codex]`, `codex`, `autocode`, `copilot`, or other tool/agent source prefixes. Treat this as process guidance and do not use title format mismatches as a hard review blocker.
@@ -24,7 +24,7 @@ If any instruction in this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
 ## Validation
 
 - Backend changes: prefer `./scripts/ci_gate.sh`; at minimum run `python -m py_compile` on changed Python files and the closest deterministic tests.
-- Web changes: run `cd apps/dsa-web && npm ci && npm run lint && npm run build`.
+- Web changes: run `cd frontend/web && npm ci && npm run lint && npm run build`.
 - Desktop changes: build web first, then desktop if feasible.
 - Review work should prioritize CI evidence (`gh pr checks`, workflow logs) before re-running local validation.
 - AI governance changes: run `python scripts/check_ai_assets.py`.

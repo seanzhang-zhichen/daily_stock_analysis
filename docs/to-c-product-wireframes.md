@@ -12,11 +12,11 @@
 8. 首次引导（`/onboarding`，注册后添加自选股）— 已落地
 
 > 线框使用 ASCII 表达布局，重点标注：组件来源、关键文案、调用的 API、关键交互。
-> **不**包含像素级视觉规范；视觉细节沿用现有 `apps/dsa-web/src/components/common/` 中的 `Button` / `Input` / `Shell` / `SettingsAlert` 等基础组件，色彩沿用 `index.css` 中的 token。
+> **不**包含像素级视觉规范；视觉细节沿用现有 `frontend/web/src/components/common/` 中的 `Button` / `Input` / `Shell` / `SettingsAlert` 等基础组件，色彩沿用 `index.css` 中的 token。
 
 ## 1. 登录 / 注册（`/login`、`/register`）
 
-> **状态**：已落地，对应 `apps/dsa-web/src/pages/UserAuthPage.tsx`。
+> **状态**：已落地，对应 `frontend/web/src/pages/UserAuthPage.tsx`。
 > 本节作为后续迭代的对齐基线。
 
 ```
@@ -59,7 +59,7 @@
 
 ## 2. 找回密码 / 重置密码
 
-> **状态**：已落地，对应 `apps/dsa-web/src/pages/ForgotPasswordPage.tsx`。
+> **状态**：已落地，对应 `frontend/web/src/pages/ForgotPasswordPage.tsx`。
 
 **Step 1 — 发送重置邮件 (`/forgot-password`)**：
 
@@ -277,7 +277,7 @@ Pro 档已用完:      [今日剩余: 分析 0/50 · Agent 0/50 → 升级]     
 
 - **每页页脚**：固定显示「内容由 AI 生成, 仅供参考, 不构成投资建议。投资有风险, 入市需谨慎。」
 - **每封邮件**：模板末尾追加同一句免责声明，并附 HMAC 一键退订链接（`GET /api/v1/account/notification-prefs/unsubscribe`）。
-- **错误文案统一规范**：参考现有 `apps/dsa-web/src/api/error.ts`：
+- **错误文案统一规范**：参考现有 `frontend/web/src/api/error.ts`：
   - 网络错误：「网络异常, 请稍后重试」
   - 配额错误：「今日额度已用完」
   - 鉴权错误：「请先登录」

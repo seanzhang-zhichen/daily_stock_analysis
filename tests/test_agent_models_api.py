@@ -19,7 +19,7 @@ def _build_config(**overrides):
         llm_model_list=[],
         llm_channels=[],
         litellm_config_path=None,
-        llm_models_source="legacy_env",
+        llm_models_source="",
         openai_base_url=None,
     )
     for key, value in overrides.items():
@@ -99,67 +99,7 @@ class AgentModelsApiTestCase(unittest.TestCase):
         self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_primary"])
         self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_fallback"])
 
-    def test_models_endpoint_resolves_legacy_placeholders_to_real_models(self) -> None:
-        config = _build_config(
-            llm_model_list=[
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-1"}},
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-2"}},
-                {"model_name": "__legacy_openai__", "litellm_params": {"model": "__legacy_openai__", "api_key": "o-1"}},
-            ],
-            openai_base_url="https://openai.example.com/v1",
-        )
-
-        deployments = list_agent_model_deployments(config)
-
-        self.assertEqual(len(deployments), 3)
-        self.assertEqual(deployments[0]["model"], "gemini/gemini-2.5-flash")
-        self.assertEqual(deployments[1]["model"], "gemini/gemini-2.5-flash")
-        self.assertEqual(deployments[2]["model"], "openai/gpt-4o-mini")
-        self.assertEqual(deployments[2]["api_base"], "https://openai.example.com/v1")
-        self.assertEqual(deployments[2]["source"], "legacy_env")
-        self.assertTrue(all(not item["deployment_name"].startswith("__legacy_") for item in deployments))
-
-    def test_models_endpoint_resolves_unprefixed_legacy_openai_model_names(self) -> None:
-        config = _build_config(
-            litellm_model="gpt-4o-mini",
-            litellm_fallback_models=[],
-            llm_model_list=[
-                {"model_name": "__legacy_openai__", "litellm_params": {"model": "__legacy_openai__", "api_key": "o-1"}},
-            ],
-            openai_base_url="https://openai.example.com/v1",
-        )
-
-        deployments = list_agent_model_deployments(config)
-
-        self.assertEqual(len(deployments), 1)
-        self.assertEqual(deployments[0]["model"], "gpt-4o-mini")
-        self.assertEqual(deployments[0]["provider"], "openai")
-        self.assertEqual(deployments[0]["source"], "legacy_env")
-        self.assertEqual(deployments[0]["api_base"], "https://openai.example.com/v1")
-
-    def test_models_endpoint_collapses_legacy_fallbacks_to_single_runtime_deployment(self) -> None:
-        config = _build_config(
-            llm_model_list=[
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-12345678"}},
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-87654321"}},
-                {"model_name": "__legacy_openai__", "litellm_params": {"model": "__legacy_openai__", "api_key": "o-12345678"}},
-                {"model_name": "__legacy_openai__", "litellm_params": {"model": "__legacy_openai__", "api_key": "o-87654321"}},
-            ],
-        )
-
-        deployments = list_agent_model_deployments(config)
-
-        self.assertEqual(len(deployments), 3)
-        primary = [item for item in deployments if item["is_primary"]]
-        fallback = [item for item in deployments if item["is_fallback"]]
-
-        self.assertEqual(len(primary), 2)
-        self.assertEqual(len(fallback), 1)
-        self.assertEqual(fallback[0]["model"], "openai/gpt-4o-mini")
-        self.assertEqual(fallback[0]["deployment_id"], "legacy:openai:0:openai/gpt-4o-mini")
-        self.assertEqual(fallback[0]["deployment_name"], "legacy_openai_1")
-
-    def test_models_endpoint_keeps_direct_env_primary_provider_in_legacy_mode(self) -> None:
+    def test_models_endpoint_returns_empty_for_direct_env_primary_without_router_deployments(self) -> None:
         config = _build_config(
             litellm_model="cohere/command-r-plus",
             litellm_fallback_models=[],
@@ -168,31 +108,7 @@ class AgentModelsApiTestCase(unittest.TestCase):
 
         deployments = list_agent_model_deployments(config)
 
-        self.assertEqual(len(deployments), 1)
-        self.assertEqual(deployments[0]["model"], "cohere/command-r-plus")
-        self.assertEqual(deployments[0]["provider"], "cohere")
-        self.assertEqual(deployments[0]["source"], "legacy_env")
-        self.assertTrue(deployments[0]["is_primary"])
-        self.assertFalse(deployments[0]["is_fallback"])
-
-    def test_models_endpoint_keeps_direct_env_fallback_provider_in_legacy_mode(self) -> None:
-        config = _build_config(
-            litellm_fallback_models=["cohere/command-r-plus"],
-            llm_model_list=[
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-12345678"}},
-                {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "g-87654321"}},
-            ],
-        )
-
-        deployments = list_agent_model_deployments(config)
-
-        self.assertEqual(len(deployments), 3)
-        fallback = [item for item in deployments if item["is_fallback"]]
-        self.assertEqual(len(fallback), 1)
-        self.assertEqual(fallback[0]["model"], "cohere/command-r-plus")
-        self.assertEqual(fallback[0]["provider"], "cohere")
-        self.assertEqual(fallback[0]["deployment_id"], "legacy:cohere:0:cohere/command-r-plus")
-        self.assertEqual(fallback[0]["deployment_name"], "legacy_cohere_1")
+        self.assertEqual(deployments, [])
 
     def test_models_endpoint_returns_empty_list_when_no_model_is_configured(self) -> None:
         config = _build_config(
@@ -446,7 +362,7 @@ class AgentModelsSourceDetectionTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_load_from_env_marks_legacy_as_actual_source_after_yaml_fallback(
+    def test_load_from_env_does_not_create_model_list_after_yaml_fallback(
         self,
         _mock_parse_yaml,
         _mock_setup_env,
@@ -454,7 +370,7 @@ class AgentModelsSourceDetectionTestCase(unittest.TestCase):
         env = {
             "LITELLM_CONFIG": "config/missing.yaml",
             "LLM_CHANNELS": "",
-            "OPENAI_API_KEY": "legacy-openai-key",
+            "OPENAI_API_KEY": "direct-openai-key",
             "LITELLM_MODEL": "gpt-4o-mini",
             "AIHUBMIX_KEY": "",
             "GEMINI_API_KEY": "",
@@ -465,9 +381,8 @@ class AgentModelsSourceDetectionTestCase(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             config = Config._load_from_env()
 
-        self.assertEqual(config.llm_models_source, "legacy_env")
-        self.assertTrue(config.llm_model_list)
-        self.assertEqual(config.llm_model_list[0]["model_name"], "__legacy_openai__")
+        self.assertEqual(config.llm_models_source, "")
+        self.assertEqual(config.llm_model_list, [])
 
 
 if __name__ == "__main__":

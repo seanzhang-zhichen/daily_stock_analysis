@@ -171,15 +171,15 @@ class BotCommand(ABC):
 - The AI availability displayed by `/status` follows runtime precedence:
   - `LITELLM_CONFIG` (LiteLLM YAML)
   - `LLM_CHANNELS`
-  - legacy provider keys (`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`)
+  - explicit `LITELLM_MODEL` plus provider keys (`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`)
 - If the primary model (`LITELLM_MODEL` or `AGENT_LITELLM_MODEL`) has no configured source in the active layer, `/status` shows `AI 服务未配置` and keeps the explicit reason line.
 - Runtime dependency constraint in this repository is `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`; current status semantics are aligned with this constraint.
-- This diagnostic follows the same readiness rules as `GET /api/v1/system/config/setup/status` for LLM checks: channels/yaml are active higher priority than legacy keys, and no silent migration is performed when toggling modes.
+- This diagnostic follows the same readiness rules as `GET /api/v1/system/config/setup/status` for LLM checks: channels/yaml take priority over direct model settings, and no silent migration is performed when toggling modes.
 
 ### Fallback and migration boundary
 
-- When `LITELLM_CONFIG` or `LLM_CHANNELS` is active, lower-priority legacy provider keys are ignored as the active source for that run (no silent downgrade).
-- This change only improves diagnosis and does not perform automatic migration: legacy configuration values are not deleted or rewritten during startup or status collection.
+- When `LITELLM_CONFIG` or `LLM_CHANNELS` is active, lower-priority direct provider keys are ignored as the active source for that run (no silent downgrade).
+- This change only improves diagnosis and does not perform automatic migration: configuration values are not deleted or rewritten during startup or status collection.
 
 ### Official compatibility references (for triage)
 

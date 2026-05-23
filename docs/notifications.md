@@ -92,7 +92,7 @@
 ## CLI 诊断
 
 ```bash
-python main.py --check-notify
+python backend/main.py --check-notify
 ```
 
 该命令只读配置，不发送通知，不写入 `.env`。它会在配置加载和日志初始化后立即执行，完成后直接退出，不再进入 Web、调度、大盘复盘或默认分析流程。
@@ -257,7 +257,7 @@ Apprise 后续如要引入，应先作为可选依赖评估，而不是默认依
 本地运行优先使用项目根目录 `.env`。复制 `.env.example` 后填写至少一个 minimal key 即可启用对应静态通知渠道；advanced key 只改变认证、安全、格式、路由或降噪行为，不会单独启用渠道。
 
 ```bash
-python main.py --check-notify
+python backend/main.py --check-notify
 ```
 
 `--check-notify` 是只读诊断：不发送通知、不写 `.env`、不进入分析流程。配置好 WebUI 后，也可以在系统设置页用单渠道测试发送真实测试消息；该测试只使用页面草稿临时配置，不保存 `.env`。

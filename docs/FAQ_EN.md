@@ -128,7 +128,7 @@ PROXY_PORT=10809
 
 **Q: Configured both GEMINI_API_KEY and LLM_CHANNELS, why does it only use channels?**
 
-The system uses exactly one mode by priority: advanced YAML routing (`LITELLM_CONFIG`) > `LLM_CHANNELS` > legacy keys. However, YAML routing only takes effect when the file can be parsed successfully and yields a non-empty `model_list`; if the YAML path is invalid or the content is empty, the system automatically falls back to `LLM_CHANNELS` or legacy keys. Once a tier is active, lower-priority tiers are not used.
+The system uses exactly one mode by priority: advanced YAML routing (`LITELLM_CONFIG`) > `LLM_CHANNELS` > explicit `LITELLM_MODEL` plus provider API key. YAML routing only takes effect when the file can be parsed successfully and yields a non-empty `model_list`; if the YAML path is invalid or the content is empty, the system falls back to `LLM_CHANNELS` or an explicit primary model. Once a tier is active, lower-priority tiers are not used.
 
 **Q: check_env says no usable AI model is configured, what should I do?**
 
@@ -138,9 +138,9 @@ Start with one provider and its API key. If you want to pin a primary model, add
 
 Use channel mode: set `LLM_CHANNELS=aihubmix,deepseek,gemini` and configure each channel's `LLM_{NAME}_BASE_URL`, `LLM_{NAME}_API_KEY`, `LLM_{NAME}_MODELS`. You can also configure this visually in Web Settings → AI Model → AI Model Access.
 
-**Q: The ask-stock / Agent page says no usable LLM is configured, but I only use legacy `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` settings. What should I check?**
+**Q: The ask-stock / Agent page says no usable LLM is configured, but I configured `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` API keys. What should I check?**
 
-First confirm whether `LITELLM_CONFIG` or `LLM_CHANNELS` is active, because either of those tiers overrides legacy keys. If neither tier is active and `AGENT_LITELLM_MODEL` is empty, the ask-stock Agent still inherits legacy provider models automatically: `GEMINI_MODEL`, `OPENAI_MODEL`, and `ANTHROPIC_MODEL` are mapped to LiteLLM provider-prefixed model names for the corresponding runtime. This fix does not silently migrate or clear old settings; it only returns the real backend reason to the frontend so you can see whether the issue is a missing key, a missing model name, or an upper-tier config taking precedence. Full compatibility details are documented in the [LLM Config Guide](LLM_CONFIG_GUIDE_EN.md) under “Ask-Stock Agent / LiteLLM compatibility notes”.
+First confirm that `LITELLM_MODEL=provider/model` or `AGENT_LITELLM_MODEL=provider/model` is set explicitly. Provider API keys alone no longer infer a primary model automatically. If `LITELLM_CONFIG` or `LLM_CHANNELS` is active, that upper tier is the actual model source. See the [LLM Config Guide](LLM_CONFIG_GUIDE_EN.md) for details.
 
 ---
 
@@ -303,8 +303,8 @@ Work through the following 5 checkpoints in order:
 **Why**:
 1. Docker publishing is driven by `.github/workflows/docker-publish.yml`, which only publishes release images for Git tags matching `v*.*.*` (for example, `v3.12.0`).
 2. So the Docker image version follows the **GitHub Release / Git tag**, rather than a fixed value in `main.py`, `server.py`, or another backend module.
-3. The `version` field in `apps/dsa-web/package.json` is currently a placeholder `0.0.0`. The WebUI version/build card is useful for checking whether frontend assets were rebuilt, but it is not the Docker release version.
-4. The desktop app has its own version in `apps/dsa-desktop/package.json`, and that only applies to the Electron desktop build, not the Docker image.
+3. The `version` field in `frontend/web/package.json` is currently a placeholder `0.0.0`. The WebUI version/build card is useful for checking whether frontend assets were rebuilt, but it is not the Docker release version.
+4. The desktop app has its own version in `frontend/desktop/package.json`, and that only applies to the Electron desktop build, not the Docker image.
 
 **How to check your current Docker version**:
 1. **Check the image tag in your deploy command or Compose file**. For example, in `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`, the deployed version is `v3.12.0`.
@@ -322,7 +322,7 @@ Work through the following 5 checkpoints in order:
 **Method**:
 ```bash
 # Local run
-python main.py --market-only
+python backend/main.py --market-only
 
 # GitHub Actions
 # Select mode: market-only when manually triggering

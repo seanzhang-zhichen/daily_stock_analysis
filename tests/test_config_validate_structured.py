@@ -4,8 +4,7 @@
 Covers:
 - ConfigIssue dataclass basics
 - validate_structured() severity classifications
-- LLM availability check honours all three config tiers (YAML / channels /
-  legacy keys) via llm_model_list
+- LLM availability check honours YAML / channel model lists
 - validate() backward-compat: still returns List[str] with the same messages
 """
 import pytest
@@ -27,7 +26,7 @@ def _make_config(**kwargs) -> Config:
     defaults = dict(
         stock_list=["600519"],
         tushare_token=None,
-        # Populate llm_model_list as the three-tier signal
+        # Populate llm_model_list as the router availability signal
         llm_model_list=[{"model_name": "gemini/gemini-2.0-flash", "litellm_params": {"model": "gemini/gemini-2.0-flash", "api_key": "sk-test"}}],
         litellm_model="gemini/gemini-2.0-flash",
         gemini_api_keys=[],
@@ -178,12 +177,12 @@ class TestValidateStructuredStockList:
 
 
 # ---------------------------------------------------------------------------
-# validate_structured() — LLM availability (three-tier check)
+# validate_structured() — LLM availability
 # ---------------------------------------------------------------------------
 
 class TestValidateStructuredLLM:
     def test_no_llm_is_error(self):
-        """Empty llm_model_list must produce an error regardless of legacy keys."""
+        """Empty llm_model_list must produce an error unless a direct-env model is set."""
         cfg = _make_config(llm_model_list=[])
         issues = cfg.validate_structured()
         assert any(i.severity == "error" and "AI 模型" in i.message for i in issues)
@@ -191,8 +190,8 @@ class TestValidateStructuredLLM:
     def test_llm_channels_only_no_error(self):
         """LLM_CHANNELS populated via llm_model_list must NOT trigger an error.
 
-        This is the primary regression guard: a user who only configures
-        LLM_CHANNELS (no legacy *_API_KEY) should not see 'AI 功能不可用'.
+        This is the primary regression guard: a user who configures
+        LLM_CHANNELS should not see 'AI 功能不可用'.
         """
         channel_model_list = [
             {"model_name": "openai/gpt-4o-mini", "litellm_params": {"api_key": "sk-chan", "api_base": "https://aihubmix.com/v1"}},
@@ -224,22 +223,23 @@ class TestValidateStructuredLLM:
         issues = cfg.validate_structured()
         assert not any(i.severity == "error" and "LLM" in i.message for i in issues)
 
-    def test_legacy_gemini_key_no_error(self):
-        """Legacy GEMINI_API_KEY path: llm_model_list populated = no error."""
+    def test_channel_gemini_model_no_error(self):
+        """Channel model_list populated = no error."""
         model_list = [
-            {"model_name": "__legacy_gemini__", "litellm_params": {"model": "__legacy_gemini__", "api_key": "sk-gem"}},
+            {"model_name": "gemini/gemini-2.5-flash", "litellm_params": {"model": "gemini/gemini-2.5-flash", "api_key": "sk-gem"}},
         ]
         cfg = _make_config(llm_model_list=model_list, gemini_api_keys=["sk-gem"])
         issues = cfg.validate_structured()
         assert not any(i.severity == "error" and "LLM" in i.message for i in issues)
 
-    def test_deepseek_only_no_error(self):
-        """DEEPSEEK_API_KEY path (was missing in old validate()): no error."""
+    def test_channel_deepseek_model_no_error(self):
+        """DeepSeek channel model_list populated = no error."""
         model_list = [
-            {"model_name": "__legacy_deepseek__", "litellm_params": {"model": "__legacy_deepseek__", "api_key": "sk-ds"}},
+            {"model_name": "deepseek/deepseek-v4-flash", "litellm_params": {"model": "deepseek/deepseek-v4-flash", "api_key": "sk-ds"}},
         ]
         cfg = _make_config(
             llm_model_list=model_list,
+            litellm_model="deepseek/deepseek-v4-flash",
             deepseek_api_keys=["sk-ds"],
             gemini_api_keys=[],
             anthropic_api_keys=[],
@@ -568,13 +568,13 @@ class TestVisionKeyValidation:
 
 
 # ---------------------------------------------------------------------------
-# Env alias compatibility
+# Env alias cleanup
 # ---------------------------------------------------------------------------
 
-class TestEnvAliasCompatibility:
+class TestEnvAliasCleanup:
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_discord_channel_id_legacy_alias_is_still_loaded(
+    def test_discord_channel_id_removed_alias_is_ignored(
         self,
         _mock_parse_yaml,
         _mock_setup_env,
@@ -590,11 +590,11 @@ class TestEnvAliasCompatibility:
             config = Config._load_from_env()
 
         assert config.discord_bot_token == "token"
-        assert config.discord_main_channel_id == "legacy-channel"
+        assert config.discord_main_channel_id is None
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_discord_main_channel_id_takes_precedence_over_legacy_alias(
+    def test_discord_main_channel_id_is_loaded(
         self,
         _mock_parse_yaml,
         _mock_setup_env,
@@ -603,7 +603,6 @@ class TestEnvAliasCompatibility:
             "os.environ",
             {
                 "DISCORD_BOT_TOKEN": "token",
-                "DISCORD_CHANNEL_ID": "legacy-channel",
                 "DISCORD_MAIN_CHANNEL_ID": "main-channel",
             },
             clear=True,

@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import backend  # noqa: E402,F401  # trigger backend/__init__.py sys.path injection
 
 try:
     import tushare as ts

@@ -353,7 +353,7 @@ class TestRunLifecycleCheck(_Base):
 
 class TestPerUserScheduledAnalysis(unittest.TestCase):
     def test_skips_non_pro_user_before_running_pipeline(self):
-        import main
+        import backend.main as main
 
         pipeline_cls = MagicMock()
         get_db = MagicMock(return_value=SimpleNamespace(session_scope=lambda: _SessionScope()))

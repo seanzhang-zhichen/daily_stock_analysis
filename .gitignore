@@ -82,6 +82,8 @@ verify_*.py
 
 # ignore static files
 static/
-/apps/dsa-desktop/dist/
-/apps/dsa-desktop/node_modules/
+/frontend/desktop/dist/
+/frontend/desktop/node_modules/
+/frontend/web/node_modules/
+/frontend/web/dist/
 docs/specs/

@@ -33,12 +33,14 @@ If you only plan to use one single model, this is the fastest way. Open the `.en
 ```env
 # Anspire Open API keys (multiple keys supported, separated by commas)
 # Get your key at: https://open.anspire.cn/?share_code=QFBC0FYC
-# When no higher-priority OpenAI-compatible source is set, this key is reused for Anspire search + LLM path (example fallback behavior only).
-# Example model: Doubao-Seed-2.0-lite; example gateway: https://open-gateway.anspire.cn/v6
+# ANSPIRE_API_KEYS is search-only. Configure Anspire LLM explicitly through LLM channels.
 ANSPIRE_API_KEYS=sk-xxxxxxxxxxxxxxxx
-# Optional: switch example model or gateway according to your Anspire account and official docs.
-# ANSPIRE_LLM_MODEL=Doubao-Seed-2.0-pro
-# ANSPIRE_LLM_BASE_URL=https://open-gateway.anspire.ai/v6
+LLM_CHANNELS=anspire
+LLM_ANSPIRE_PROTOCOL=openai
+LLM_ANSPIRE_BASE_URL=https://open-gateway.anspire.cn/v6
+LLM_ANSPIRE_API_KEY=sk-xxxxxxxxxxxxxxxx
+LLM_ANSPIRE_MODELS=Doubao-Seed-2.0-lite
+LITELLM_MODEL=openai/Doubao-Seed-2.0-lite
 ```
 
 ### Example 1: Using a Third-party OpenAI-Compatible Platform (Highly Recommended)
@@ -103,19 +105,19 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 - External references: LiteLLM Python SDK / OpenAI I/O format / streaming / exception mapping: <https://docs.litellm.ai/>; LiteLLM OpenAI-compatible routing: <https://docs.litellm.ai/docs/providers/openai_compatible>; OpenAI Chat Completions: <https://platform.openai.com/docs/api-reference/chat/create>; JSON mode: <https://platform.openai.com/docs/guides/structured-outputs?api-mode=chat>; tool calling: <https://platform.openai.com/docs/guides/function-calling?api-mode=chat>; streaming: <https://platform.openai.com/docs/guides/streaming-responses?api-mode=chat>; vision input: <https://platform.openai.com/docs/guides/images-vision?api-mode=chat>.
 - Saving channels only updates the keys submitted in that save operation; there is no whole-config silent migration when you switch channel settings. The one deliberate cleanup is runtime model references: if `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, or `LITELLM_FALLBACK_MODELS` point to models that no longer exist in the currently enabled channels, the editor clears/removes those stale references before saving so runtime calls do not keep targeting invalid models. Even when enabled channels expose no selectable models, stale managed-provider values without a matching legacy key are cleaned. `cohere/*`, `google/*`, and `xai/*` are kept as explicit direct-env compatibility examples for legacy retention behavior only, and are not a runtime availability guarantee.
 - Backend consistency basis: runtime validation in `SystemConfigService._validate_llm_runtime_selection` (`src/services/system_config_service.py`) relies on `_uses_direct_env_provider` (`src/config.py`). Only `gemini`, `vertex_ai`, `anthropic`, `openai`, and `deepseek` are treated as managed key-backed providers; `cohere`, `google`, and `xai` are not in that allowlist, so they remain valid direct provider runtime entries.
-- Rollback stays minimal: restore the previous channel model list and re-select the runtime models, or restore the previous `LLM_*`, `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, and `LLM_TEMPERATURE` values from your desktop export / manual `.env` backup. No extra migration script is required.
-- The current dependency constraint for this flow in the repository is `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` (see `requirements.txt`). Regression coverage for it lives in `tests/test_system_config_service.py`, `tests/test_system_config_api.py`, and `apps/dsa-web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
+- Rollback stays minimal: restore the previous channel model list and re-select the runtime models, or restore the previous `LLM_*`, `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, and `LLM_TEMPERATURE` values from your system config export / manual `.env` backup. No extra migration script is required.
+- The current dependency constraint for this flow in the repository is `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` (see `requirements.txt`). Regression coverage for it lives in `tests/test_system_config_service.py`, `tests/test_system_config_api.py`, and `frontend/web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
 
 > **External provider model examples notice**: `cohere/*`, `google/*`, and `xai/*` provider-prefixed values are included here only to describe current runtime retention behavior and are **not** a global availability guarantee. Specific model names in docs or tests are configuration-retention examples, not production recommendations. Check the provider's official model/API docs and validate against the repository dependency constraint `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` before production use.
 
 ### Rollback & compatibility evidence
 
 - Scope and cleanup behavior under `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`: only runtime references (`LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LITELLM_FALLBACK_MODELS`) are sanitized during save; non-channel direct providers such as `cohere/*`, `google/*`, and `xai/*` are preserved.
-- Rollback path: export desktop config, then restore the backup through `POST /api/v1/system/config/import`; or manually restore historical `.env` entries (`LITELLM_*`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`) and restart.
-- Rollback evidence: `tests/test_system_config_service.py::test_import_desktop_env_restores_runtime_models_after_cleanup` covers restore from exported desktop backup after runtime cleanup.
+- Rollback path: export system config, then restore the backup through `POST /api/v1/system/config/import`; or manually restore historical `.env` entries (`LITELLM_*`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`) and restart.
+- Rollback evidence: `tests/test_system_config_service.py::test_import_env_restores_runtime_models_after_cleanup` covers restore from exported system config backup after runtime cleanup.
 - Direct-provider evidence: `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_minimax_model_as_direct_env_provider`, `test_validate_accepts_cohere_model_as_direct_env_provider`, `test_validate_accepts_google_model_as_direct_env_provider`, and `test_validate_accepts_xai_model_as_direct_env_provider` cover the preserved direct-provider behavior.
-- Frontend regression commands: `cd apps/dsa-web && npm run lint && npm run build && npm run test -- src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
-- Recommended rollback sequence (including UI reload): export desktop backup, restore via `POST /api/v1/system/config/import`, then call `GET /api/v1/system/config` to refresh the settings page and verify `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE` before continuing.
+- Frontend regression commands: `cd frontend/web && npm run lint && npm run build && npm run test -- src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
+- Recommended rollback sequence (including UI reload): export system config backup, restore via `POST /api/v1/system/config/import`, then call `GET /api/v1/system/config` to refresh the settings page and verify `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE` before continuing.
 
 ### Official references for provider presets / Base URLs / model naming
 
@@ -183,14 +185,12 @@ LITELLM_MODEL=ollama/qwen3:8b
 - If you access MiniMax through an OpenAI-compatible channel, enter the model as `minimax/<model-name>` in the channel model list, for example `minimax/MiniMax-M1`.
 - The Web settings page now keeps that value unchanged in Primary, Agent Primary, Fallback, and Vision selectors instead of rewriting it to `openai/minimax/<model-name>`.
 
-### Ask-Stock Agent / LiteLLM compatibility notes
+### Ask-Stock Agent / LiteLLM configuration notes
 
-- The ask-stock Agent follows the same three-tier runtime priority as the regular analyzer: `LITELLM_CONFIG` (LiteLLM YAML) > `LLM_CHANNELS` > legacy provider keys. Once an upper tier is valid and active, lower tiers are ignored for that request.
+- The ask-stock Agent follows the same runtime priority as the regular analyzer: `LITELLM_CONFIG` (LiteLLM YAML) > `LLM_CHANNELS` > explicit `LITELLM_MODEL` plus provider keys. Once an upper tier is valid and active, lower tiers are ignored for that request.
 - In YAML mode, the Agent reuses LiteLLM `model_list` / `model_name` routing semantics directly. In channel mode, it first reads `AGENT_LITELLM_MODEL`; when that is empty it inherits `LITELLM_MODEL`, then continues through `LITELLM_FALLBACK_MODELS`.
-- If you do not use YAML or Channels, leave `AGENT_LITELLM_MODEL` empty, and still rely on legacy provider env vars, the ask-stock Agent continues to inherit them: `GEMINI_API_KEY + GEMINI_MODEL` -> `gemini/<model>`, `OPENAI_API_KEY + OPENAI_MODEL` -> `openai/<model>`, and `ANTHROPIC_API_KEY + ANTHROPIC_MODEL` -> `anthropic/<model>`.
-- This fix only improves two things: preserving the backend's real failure reason and returning a more specific diagnostic when no usable Agent LLM is configured. It does **not** silently delete, clear, migrate, or rewrite your existing `GEMINI_*`, `OPENAI_*`, `ANTHROPIC_*`, or `LITELLM_*` settings.
-- If the current environment has no valid Agent model path at all, the ask-stock page still returns a failure and now surfaces the backend's real configuration diagnosis. As soon as you restore any valid model source, the flow recovers without running any migration step.
-- The recommended forward path is still to configure `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` explicitly or move to `LLM_CHANNELS`; legacy provider keys remain a compatibility fallback for older `.env` files, local macOS development, and existing deployments.
+- Provider API keys alone no longer infer Agent model names automatically. Configure `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` explicitly or move to `LLM_CHANNELS`.
+- If the current environment has no valid Agent model path at all, the ask-stock page returns a failure and surfaces the backend's real configuration diagnosis. As soon as you restore any valid model source, the flow recovers without running any migration step.
 
 ### Strict Temperature Model Compatibility Notes
 
@@ -214,7 +214,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 
 - Compatibility is validated in two layers: first-party provider/API contract references (LiteLLM OpenAI-compatible routing, OpenAI Chat Completions, Moonshot/Kimi docs and model notes), and second the current runtime implementation in this repository under `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`.
 - This recovery path is runtime-only and intentionally local: exception classification + one in-request repair retry + in-process cache. It does not rewrite `.env`, migrate saved config keys, or alter legacy values; it only omits/adjusts request parameters (`temperature`, `top_p`, `presence_penalty`, `frequency_penalty`, `seed`) for the current call. Rolling back requires no migration; restore previous settings and model/provider selection.
-- Regression evidence for this path is in `tests/test_llm_param_recovery.py`, `tests/test_system_config_service.py`, `tests/test_llm_channel_config.py`, `tests/test_system_config_api.py`, `tests/test_market_analyzer_generate_text.py`, `tests/test_agent_pipeline.py`; desktop backup import restore is directly covered by `test_import_desktop_env_restores_runtime_models_after_cleanup`.
+- Regression evidence for this path is in `tests/test_llm_param_recovery.py`, `tests/test_system_config_service.py`, `tests/test_llm_channel_config.py`, `tests/test_system_config_api.py`, `tests/test_market_analyzer_generate_text.py`, `tests/test_agent_pipeline.py`; config backup import restore is directly covered by `test_import_env_restores_runtime_models_after_cleanup`.
 
 ---
 

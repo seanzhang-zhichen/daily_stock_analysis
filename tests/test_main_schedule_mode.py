@@ -14,7 +14,7 @@ from tests.litellm_stub import ensure_litellm_stub
 
 ensure_litellm_stub()
 
-import main
+from backend import main
 from src.config import Config
 
 
@@ -116,13 +116,13 @@ class MainScheduleModeTestCase(unittest.TestCase):
             )
             task()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main._reload_runtime_config", return_value=config), \
-             patch("main._build_schedule_time_provider", return_value=lambda: "18:00"), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_full_analysis, \
-             patch("main.logger.warning") as warning_log, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main._reload_runtime_config", return_value=config), \
+             patch("backend.main._build_schedule_time_provider", return_value=lambda: "18:00"), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_full_analysis, \
+             patch("backend.main.logger.warning") as warning_log, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
 
@@ -160,12 +160,12 @@ class MainScheduleModeTestCase(unittest.TestCase):
             )
             task()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=startup_config), \
-             patch("main._reload_runtime_config", return_value=runtime_config), \
-             patch("main._build_schedule_time_provider", return_value=lambda: "09:30"), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_full_analysis, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=startup_config), \
+             patch("backend.main._reload_runtime_config", return_value=runtime_config), \
+             patch("backend.main._build_schedule_time_provider", return_value=lambda: "09:30"), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_full_analysis, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
 
@@ -201,12 +201,12 @@ class MainScheduleModeTestCase(unittest.TestCase):
                 schedule_time_provider() if schedule_time_provider is not None else None
             )
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main._reload_runtime_config", return_value=config) as reload_config, \
-             patch("main._build_schedule_time_provider", return_value=lambda: "18:00"), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_full_analysis, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main._reload_runtime_config", return_value=config) as reload_config, \
+             patch("backend.main._build_schedule_time_provider", return_value=lambda: "18:00"), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_full_analysis, \
              patch("src.services.alert_worker.AlertWorker", return_value=worker) as worker_cls, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
@@ -224,7 +224,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
         self.assertEqual(background_task["interval_seconds"], 7 * 60)
         self.assertEqual(background_task["run_immediately"], True)
 
-        with patch("main.logger.info") as info_log:
+        with patch("backend.main.logger.info") as info_log:
             background_task["task"]()
 
         worker.run_once.assert_called_once_with()
@@ -250,12 +250,12 @@ class MainScheduleModeTestCase(unittest.TestCase):
         ):
             scheduled_call["background_tasks"] = background_tasks or []
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main._reload_runtime_config", return_value=config), \
-             patch("main._build_schedule_time_provider", return_value=lambda: "18:00"), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_full_analysis, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main._reload_runtime_config", return_value=config), \
+             patch("backend.main._build_schedule_time_provider", return_value=lambda: "18:00"), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_full_analysis, \
              patch("src.services.alert_worker.AlertWorker", return_value=worker) as worker_cls, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
@@ -271,11 +271,11 @@ class MainScheduleModeTestCase(unittest.TestCase):
         config = self._make_config(webui_enabled=False)
         diagnostic_result = SimpleNamespace(ok=True)
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
-             patch("main.start_api_server") as start_api_server, \
-             patch("main.run_full_analysis") as run_full_analysis, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.start_api_server") as start_api_server, \
+             patch("backend.main.run_full_analysis") as run_full_analysis, \
              patch(
                  "src.services.notification_diagnostics.run_notification_diagnostics",
                  return_value=diagnostic_result,
@@ -297,11 +297,11 @@ class MainScheduleModeTestCase(unittest.TestCase):
         args = self._make_args(serve_only=True)
         config = self._make_config(webui_enabled=False)
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
-             patch("main.start_api_server") as start_api_server, \
-             patch("main.time.sleep", side_effect=KeyboardInterrupt), \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.start_api_server") as start_api_server, \
+             patch("backend.main.time.sleep", side_effect=KeyboardInterrupt), \
              patch("src.webui_frontend.prepare_webui_frontend_assets") as prepare_assets, \
              patch.dict(os.environ, {"WEBUI_HOST": "", "WEBUI_AUTO_BUILD": "true"}, clear=False):
             exit_code = main.main()
@@ -319,11 +319,11 @@ class MainScheduleModeTestCase(unittest.TestCase):
         args = self._make_args(webui_only=True)
         config = self._make_config(webui_enabled=False)
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
-             patch("main.start_api_server") as start_api_server, \
-             patch("main.time.sleep", side_effect=KeyboardInterrupt), \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.start_api_server") as start_api_server, \
+             patch("backend.main.time.sleep", side_effect=KeyboardInterrupt), \
              patch("src.webui_frontend.prepare_webui_frontend_assets", return_value=True) as prepare_assets, \
              patch.dict(os.environ, {"WEBUI_HOST": ""}, clear=False):
             exit_code = main.main()
@@ -361,7 +361,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "_RUNTIME_ENV_FILE_KEYS",
             {"SCHEDULE_TIME"},
         ), patch(
-            "main.get_config",
+            "backend.main.get_config",
             return_value=runtime_config,
         ) as get_config_mock:
             reloaded_config = main._reload_runtime_config()
@@ -389,7 +389,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "_RUNTIME_ENV_FILE_KEYS",
             {"OPENAI_API_KEY", "SCHEDULE_TIME"},
         ), patch(
-            "main.dotenv_values",
+            "backend.main.dotenv_values",
             side_effect=OSError("boom"),
         ):
             main._reload_env_file_values_preserving_overrides()
@@ -416,13 +416,13 @@ class MainScheduleModeTestCase(unittest.TestCase):
             return runtime_config
 
         with patch(
-            "main._reload_env_file_values_preserving_overrides",
+            "backend.main._reload_env_file_values_preserving_overrides",
             side_effect=fake_reload_env,
         ), patch(
-            "main.Config.reset_instance",
+            "backend.main.Config.reset_instance",
             side_effect=fake_reset_instance,
         ), patch(
-            "main.get_config",
+            "backend.main.get_config",
             side_effect=fake_get_config,
         ):
             reloaded_config = main._reload_runtime_config()
@@ -499,10 +499,10 @@ class MainScheduleModeTestCase(unittest.TestCase):
         args = self._make_args(stocks="600519,000001")
         config = self._make_config(run_immediately=True)
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_full_analysis:
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_full_analysis:
             exit_code = main.main()
 
         self.assertEqual(exit_code, 0)
@@ -551,10 +551,10 @@ class MainScheduleModeTestCase(unittest.TestCase):
         runtime_analyzer = MagicMock()
         runtime_search_service = MagicMock()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
-             patch("main._run_market_review_with_shared_lock") as run_with_lock, \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main._run_market_review_with_shared_lock") as run_with_lock, \
              patch(
                  "src.core.market_review_runtime.build_market_review_runtime",
                  return_value=(
@@ -599,8 +599,8 @@ class MainScheduleModeTestCase(unittest.TestCase):
 
         root_logger = logging.getLogger()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", side_effect=RuntimeError("config boom")):
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", side_effect=RuntimeError("config boom")):
             root_logger.addHandler(capture_handler)
             try:
                 exit_code = main.main()
@@ -618,11 +618,11 @@ class MainScheduleModeTestCase(unittest.TestCase):
         args = self._make_args()
         config = self._make_config()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main._setup_bootstrap_logging", side_effect=OSError("read-only fs")), \
-             patch("main.setup_logging"), \
-             patch("main.run_full_analysis") as run_mock:
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main._setup_bootstrap_logging", side_effect=OSError("read-only fs")), \
+             patch("backend.main.setup_logging"), \
+             patch("backend.main.run_full_analysis") as run_mock:
             exit_code = main.main()
 
         self.assertEqual(exit_code, 0)
@@ -641,13 +641,13 @@ class MainScheduleModeTestCase(unittest.TestCase):
 
         root_logger = logging.getLogger()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
              patch(
-                 "main.setup_logging",
+                 "backend.main.setup_logging",
                  side_effect=PermissionError("/app/logs/stock_analysis_20260511.log"),
              ), \
-             patch("main.run_full_analysis") as run_mock:
+             patch("backend.main.run_full_analysis") as run_mock:
             root_logger.addHandler(capture_handler)
             try:
                 exit_code = main.main()
@@ -667,9 +667,9 @@ class MainScheduleModeTestCase(unittest.TestCase):
         args = self._make_args()
         config = self._make_config()
 
-        with patch("main.parse_arguments", return_value=args), \
-             patch("main.get_config", return_value=config), \
-             patch("main.setup_logging"), \
+        with patch("backend.main.parse_arguments", return_value=args), \
+             patch("backend.main.get_config", return_value=config), \
+             patch("backend.main.setup_logging"), \
              patch.dict("sys.modules", {"src.core.pipeline": None}):
             exit_code = main.main()
 
@@ -681,7 +681,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
         main._LazyPipelineDescriptor._resolved = None
         main._env_bootstrapped = False
 
-        with patch("main._bootstrap_environment", wraps=main._bootstrap_environment) as mock_boot, \
+        with patch("backend.main._bootstrap_environment", wraps=main._bootstrap_environment) as mock_boot, \
              patch("src.core.pipeline.StockAnalysisPipeline", create=True, new_callable=lambda: type("FakePipeline", (), {})):
             try:
                 _ = main.StockAnalysisPipeline

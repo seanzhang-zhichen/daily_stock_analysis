@@ -5,12 +5,12 @@
 
 FROM node:20-slim AS web-builder
 
-WORKDIR /app/apps/dsa-web
+WORKDIR /app/frontend/web
 
-COPY apps/dsa-web/package.json apps/dsa-web/package-lock.json ./
+COPY frontend/web/package.json frontend/web/package-lock.json ./
 RUN npm ci
 
-COPY apps/dsa-web/ ./
+COPY frontend/web/ ./
 RUN npm run build
 
 # Pin to bookworm: wkhtmltopdf was removed from Debian testing (2025)
@@ -39,19 +39,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -g 1000 dsa && \
     useradd -u 1000 -g dsa -m dsa
 
-# 复制依赖文件
-COPY requirements.txt .
+# Copy dependency files
+COPY requirements.txt ./
+COPY backend/requirements.txt ./backend/requirements.txt
 
-# 安装 Python 依赖
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
-COPY *.py ./
-COPY api/ ./api/
-COPY data_provider/ ./data_provider/
-COPY bot/ ./bot/
-COPY src/ ./src/
-COPY strategies/ ./strategies/
+# Copy application code
+COPY alembic.ini ./
+COPY backend/ ./backend/
 COPY --from=web-builder /app/static ./static/
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
@@ -84,4 +81,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # 默认命令（可被覆盖）
-CMD ["python", "main.py", "--schedule"]
+CMD ["python", "backend/main.py", "--schedule"]

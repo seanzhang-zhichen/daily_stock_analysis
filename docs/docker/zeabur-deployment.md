@@ -60,7 +60,7 @@ Zeabur 会自动检测 `.github/workflows/docker-publish.yml` 文件，并使用
 ### 2.4 前端构建与静态资源
 
 FastAPI 会自动托管 `static/` 目录下的前端资源。前端打包输出位置由
-`apps/dsa-web/vite.config.ts` 决定，默认输出到项目根目录 `static/`。
+`frontend/web/vite.config.ts` 决定，默认输出到项目根目录 `static/`。
 
 Dockerfile 已采用多阶段构建，前端会在镜像构建时自动打包。
 如需覆盖默认静态资源，可在宿主机手动构建并挂载到容器内 `/app/static`。
@@ -73,10 +73,10 @@ Dockerfile 已采用多阶段构建，前端会在镜像构建时自动打包。
 
 | 模式 | 启动命令 | 描述 |
 |------|----------|------|
-| 定时任务模式（默认） | `python main.py --schedule` | 按计划执行股票分析 |
-| FastAPI 模式 | `python main.py --serve` | 启动 FastAPI 并执行分析 |
-| 仅 FastAPI 模式 | `python main.py --serve-only` | 仅启动 FastAPI，不执行分析 |
-| 仅大盘复盘 | `python main.py --market-review` | 仅执行大盘复盘分析 |
+| 定时任务模式（默认） | `python backend/main.py --schedule` | 按计划执行股票分析 |
+| FastAPI 模式 | `python backend/main.py --serve` | 启动 FastAPI 并执行分析 |
+| 仅 FastAPI 模式 | `python backend/main.py --serve-only` | 仅启动 FastAPI，不执行分析 |
+| 仅大盘复盘 | `python backend/main.py --market-review` | 仅执行大盘复盘分析 |
 
 ### 3.2 配置启动命令
 
@@ -84,9 +84,9 @@ Dockerfile 已采用多阶段构建，前端会在镜像构建时自动打包。
 2. 点击「设置」
 3. 找到「启动命令」配置项
 4. 输入你需要的启动命令，例如：
-    - 启动 FastAPI：`python main.py --serve`
-    - 仅启动 FastAPI：`python main.py --serve-only --host 0.0.0.0 --port 8000`
-    - 启动定时任务：`python main.py --schedule`
+    - 启动 FastAPI：`python backend/main.py --serve`
+    - 仅启动 FastAPI：`python backend/main.py --serve-only --host 0.0.0.0 --port 8000`
+    - 启动定时任务：`python backend/main.py --schedule`
 5. 点击「保存」
 6. 重启服务
 
@@ -242,9 +242,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 你可以在 Zeabur 上部署多个实例，用于不同的功能：
 
-1. 一个实例用于 API 服务（`python main.py --serve-only`）
-2. 一个实例用于定时任务（`python main.py --schedule`）
-3. 一个实例用于机器人（`python main.py --discord-bot`）
+1. 一个实例用于 API 服务（`python backend/main.py --serve-only`）
+2. 一个实例用于定时任务（`python backend/main.py --schedule`）
+3. 一个实例用于机器人（`python backend/main.py --discord-bot`）
 
 确保它们共享同一个 `/app/data` 存储卷，以共享数据库。
 

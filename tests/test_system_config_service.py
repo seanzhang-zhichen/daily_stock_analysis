@@ -15,7 +15,7 @@ from tests.litellm_stub import ensure_litellm_stub
 
 ensure_litellm_stub()
 
-from src.config import ANSPIRE_LLM_MODEL_DEFAULT, Config
+from src.config import Config
 from src.core.config_manager import ConfigManager
 from src.services.system_config_service import ConfigConflictError, ConfigImportError, SystemConfigService
 
@@ -148,25 +148,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(checks["stock_list"]["status"], "configured")
         self.assertEqual(checks["notification"]["status"], "optional")
 
-    def test_get_setup_status_accepts_anspire_one_key_llm(self) -> None:
+    def test_get_setup_status_does_not_treat_anspire_search_key_as_llm(self) -> None:
         self._rewrite_env(
-            "ANSPIRE_API_KEYS=sk-anspire-test-value",
-            "STOCK_LIST=600519",
-        )
-
-        with patch.dict(os.environ, {}, clear=True):
-            status = self.service.get_setup_status()
-
-        checks = {check["key"]: check for check in status["checks"]}
-        self.assertTrue(status["is_complete"])
-        self.assertEqual(checks["llm_primary"]["status"], "configured")
-        self.assertIn("openai/Doubao-Seed-2.0-lite", checks["llm_primary"]["message"])
-
-    def test_get_setup_status_treats_blank_anspire_channel_enabled_as_shared_disable(self) -> None:
-        self._rewrite_env(
-            "LLM_CHANNELS=anspire",
-            "LLM_ANSPIRE_ENABLED=",
-            "ANSPIRE_LLM_ENABLED=false",
             "ANSPIRE_API_KEYS=sk-anspire-test-value",
             "STOCK_LIST=600519",
         )
@@ -179,7 +162,23 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(checks["llm_primary"]["status"], "needs_action")
         self.assertIn("llm_primary", status["required_missing_keys"])
 
-    def test_get_setup_status_respects_disabled_anspire_channel_without_legacy_fallback(self) -> None:
+    def test_get_setup_status_requires_explicit_anspire_channel_model(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=anspire",
+            "LLM_ANSPIRE_ENABLED=",
+            "ANSPIRE_API_KEYS=sk-anspire-test-value",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertFalse(status["is_complete"])
+        self.assertEqual(checks["llm_primary"]["status"], "needs_action")
+        self.assertIn("llm_primary", status["required_missing_keys"])
+
+    def test_get_setup_status_respects_disabled_anspire_channel(self) -> None:
         self._rewrite_env(
             "LLM_CHANNELS=anspire",
             "LLM_ANSPIRE_ENABLED=false",
@@ -306,13 +305,13 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(storage_check["status"], "configured")
         self.assertFalse(missing_parent.exists())
 
-    def test_export_desktop_env_returns_raw_text(self) -> None:
+    def test_export_env_returns_raw_text(self) -> None:
         self.env_path.write_text(
             "# Desktop config\nSTOCK_LIST=600519,000001\n\nGEMINI_API_KEY=secret-key-value\n",
             encoding="utf-8",
         )
 
-        payload = self.service.export_desktop_env()
+        payload = self.service.export_env()
 
         self.assertEqual(
             payload["content"],
@@ -320,10 +319,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
         self.assertEqual(payload["config_version"], self.manager.get_config_version())
 
-    def test_import_desktop_env_merges_keys_without_deleting_unspecified_values(self) -> None:
+    def test_import_env_merges_keys_without_deleting_unspecified_values(self) -> None:
         current_version = self.manager.get_config_version()
 
-        payload = self.service.import_desktop_env(
+        payload = self.service.import_env(
             config_version=current_version,
             content="STOCK_LIST=300750\nCUSTOM_NOTE=desktop backup\n",
             reload_now=False,
@@ -335,10 +334,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(current_map["CUSTOM_NOTE"], "desktop backup")
         self.assertEqual(current_map["GEMINI_API_KEY"], "secret-key-value")
 
-    def test_import_desktop_env_treats_mask_token_as_literal_value(self) -> None:
+    def test_import_env_treats_mask_token_as_literal_value(self) -> None:
         current_version = self.manager.get_config_version()
 
-        self.service.import_desktop_env(
+        self.service.import_env(
             config_version=current_version,
             content="GEMINI_API_KEY=******\n",
             reload_now=False,
@@ -347,10 +346,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         current_map = self.manager.read_config_map()
         self.assertEqual(current_map["GEMINI_API_KEY"], "******")
 
-    def test_import_desktop_env_uses_last_duplicate_assignment(self) -> None:
+    def test_import_env_uses_last_duplicate_assignment(self) -> None:
         current_version = self.manager.get_config_version()
 
-        self.service.import_desktop_env(
+        self.service.import_env(
             config_version=current_version,
             content="STOCK_LIST=000001\nSTOCK_LIST=300750\n",
             reload_now=False,
@@ -359,10 +358,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         current_map = self.manager.read_config_map()
         self.assertEqual(current_map["STOCK_LIST"], "300750")
 
-    def test_import_desktop_env_allows_empty_assignment(self) -> None:
+    def test_import_env_allows_empty_assignment(self) -> None:
         current_version = self.manager.get_config_version()
 
-        self.service.import_desktop_env(
+        self.service.import_env(
             config_version=current_version,
             content="LOG_LEVEL=\n",
             reload_now=False,
@@ -371,17 +370,17 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         current_map = self.manager.read_config_map()
         self.assertEqual(current_map["LOG_LEVEL"], "")
 
-    def test_import_desktop_env_rejects_empty_or_comment_only_content(self) -> None:
+    def test_import_env_rejects_empty_or_comment_only_content(self) -> None:
         with self.assertRaises(ConfigImportError):
-            self.service.import_desktop_env(
+            self.service.import_env(
                 config_version=self.manager.get_config_version(),
                 content="   \n# only comments\n\n",
                 reload_now=False,
             )
 
-    def test_import_desktop_env_raises_conflict_for_stale_version(self) -> None:
+    def test_import_env_raises_conflict_for_stale_version(self) -> None:
         with self.assertRaises(ConfigConflictError):
-            self.service.import_desktop_env(
+            self.service.import_env(
                 config_version="stale-version",
                 content="STOCK_LIST=300750\n",
                 reload_now=False,
@@ -794,13 +793,18 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             '[{"stock_code":"600519","alert_type":"price_cross","direction":"above","price":1800}]',
         )
 
-    def test_validate_accepts_legacy_agent_orchestrator_mode_alias(self) -> None:
+    def test_validate_rejects_removed_agent_orchestrator_mode_alias(self) -> None:
         validation = self.service.validate(items=[{"key": "AGENT_ORCHESTRATOR_MODE", "value": "strategy"}])
 
-        self.assertTrue(validation["valid"])
-        self.assertEqual(validation["issues"], [])
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                issue["key"] == "AGENT_ORCHESTRATOR_MODE" and issue["code"] == "invalid_enum"
+                for issue in validation["issues"]
+            )
+        )
 
-    def test_get_config_projects_legacy_strategy_aliases_onto_skill_fields(self) -> None:
+    def test_get_config_no_longer_projects_strategy_aliases_onto_skill_fields(self) -> None:
         self._rewrite_env(
             "AGENT_STRATEGY_DIR=legacy-strategies",
             "AGENT_STRATEGY_AUTOWEIGHT=false",
@@ -810,34 +814,23 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         payload = self.service.get_config(include_schema=True)
         items = {item["key"]: item for item in payload["items"]}
 
-        self.assertEqual(items["AGENT_SKILL_DIR"]["value"], "legacy-strategies")
-        self.assertEqual(items["AGENT_SKILL_AUTOWEIGHT"]["value"], "false")
-        self.assertEqual(items["AGENT_SKILL_ROUTING"]["value"], "manual")
-        self.assertNotIn("AGENT_STRATEGY_DIR", items)
-        self.assertNotIn("AGENT_STRATEGY_AUTOWEIGHT", items)
-        self.assertNotIn("AGENT_STRATEGY_ROUTING", items)
-
-    def test_get_config_respects_empty_canonical_skill_field_over_legacy_alias(self) -> None:
-        self._rewrite_env(
-            "AGENT_SKILL_DIR=",
-            "AGENT_STRATEGY_DIR=legacy-strategies",
-        )
-
-        payload = self.service.get_config(include_schema=True)
-        items = {item["key"]: item for item in payload["items"]}
-
         self.assertEqual(items["AGENT_SKILL_DIR"]["value"], "")
+        self.assertEqual(items["AGENT_SKILL_AUTOWEIGHT"]["value"], "true")
+        self.assertEqual(items["AGENT_SKILL_ROUTING"]["value"], "")
+        self.assertIn("AGENT_STRATEGY_DIR", items)
+        self.assertIn("AGENT_STRATEGY_AUTOWEIGHT", items)
+        self.assertIn("AGENT_STRATEGY_ROUTING", items)
 
-    def test_get_config_normalizes_legacy_orchestrator_mode_for_ui(self) -> None:
+    def test_get_config_does_not_normalize_removed_orchestrator_mode_alias(self) -> None:
         self._rewrite_env("AGENT_ORCHESTRATOR_MODE=strategy")
 
         payload = self.service.get_config(include_schema=True)
         items = {item["key"]: item for item in payload["items"]}
 
-        self.assertEqual(items["AGENT_ORCHESTRATOR_MODE"]["value"], "specialist")
+        self.assertEqual(items["AGENT_ORCHESTRATOR_MODE"]["value"], "strategy")
         self.assertEqual(
             items["AGENT_ORCHESTRATOR_MODE"]["schema"]["validation"]["enum"],
-            ["quick", "standard", "full", "specialist", "strategy", "skill"],
+            ["quick", "standard", "full", "specialist"],
         )
 
     @patch.object(
@@ -977,50 +970,51 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(validation["valid"])
         self.assertEqual(validation["issues"], [])
 
-    def test_validate_allows_anspire_channel_with_shared_key_defaults(self) -> None:
+    def test_validate_allows_anspire_channel_with_explicit_config(self) -> None:
         validation = self.service.validate(
             items=[
                 {"key": "LLM_CHANNELS", "value": "anspire"},
-                {"key": "ANSPIRE_API_KEYS", "value": "sk-anspire-test-value"},
+                {"key": "LLM_ANSPIRE_PROTOCOL", "value": "openai"},
+                {"key": "LLM_ANSPIRE_BASE_URL", "value": "https://open-gateway.anspire.cn/v6"},
+                {"key": "LLM_ANSPIRE_API_KEY", "value": "sk-anspire-test-value"},
+                {"key": "LLM_ANSPIRE_MODELS", "value": "Doubao-Seed-2.0-lite"},
             ]
         )
 
         self.assertTrue(validation["valid"])
         self.assertEqual(validation["issues"], [])
 
-    def test_validate_treats_blank_anspire_channel_enabled_as_shared_disable(self) -> None:
+    def test_validate_reports_incomplete_anspire_channel_without_explicit_model(self) -> None:
         validation = self.service.validate(
             items=[
                 {"key": "LLM_CHANNELS", "value": "anspire"},
                 {"key": "LLM_ANSPIRE_ENABLED", "value": "   "},
-                {"key": "ANSPIRE_LLM_ENABLED", "value": "false"},
             ]
         )
 
-        self.assertTrue(validation["valid"], validation["issues"])
-        self.assertEqual(validation["issues"], [])
+        self.assertFalse(validation["valid"])
+        self.assertTrue(any(issue["key"] == "LLM_ANSPIRE_MODELS" for issue in validation["issues"]))
 
-    def test_validate_excludes_blank_disabled_anspire_channel_from_runtime_models(self) -> None:
+    def test_validate_excludes_incomplete_anspire_channel_from_runtime_models(self) -> None:
         validation = self.service.validate(
             items=[
                 {"key": "LLM_CHANNELS", "value": "anspire"},
                 {"key": "LLM_ANSPIRE_ENABLED", "value": "   "},
-                {"key": "ANSPIRE_LLM_ENABLED", "value": "false"},
                 {"key": "ANSPIRE_API_KEYS", "value": "sk-anspire-test-value"},
-                {"key": "LITELLM_MODEL", "value": f"openai/{ANSPIRE_LLM_MODEL_DEFAULT}"},
+                {"key": "LITELLM_MODEL", "value": "openai/Doubao-Seed-2.0-lite"},
             ]
         )
 
         self.assertFalse(validation["valid"])
         self.assertTrue(any(issue["key"] == "LITELLM_MODEL" and issue["code"] == "missing_runtime_source" for issue in validation["issues"]))
 
-    def test_validate_excludes_disabled_anspire_channel_from_legacy_runtime_source(self) -> None:
+    def test_validate_excludes_disabled_anspire_channel_from_runtime_source(self) -> None:
         validation = self.service.validate(
             items=[
                 {"key": "LLM_CHANNELS", "value": "anspire"},
                 {"key": "LLM_ANSPIRE_ENABLED", "value": "false"},
                 {"key": "ANSPIRE_API_KEYS", "value": "sk-anspire-test-value"},
-                {"key": "LITELLM_MODEL", "value": f"openai/{ANSPIRE_LLM_MODEL_DEFAULT}"},
+                {"key": "LITELLM_MODEL", "value": "openai/Doubao-Seed-2.0-lite"},
             ]
         )
 
@@ -1320,7 +1314,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertNotIn("password", target)
 
     @patch("src.notification_sender.discord_sender.requests.post")
-    def test_test_notification_channel_prefers_discord_main_channel_alias(self, mock_post) -> None:
+    def test_test_notification_channel_uses_discord_main_channel(self, mock_post) -> None:
         mock_post.return_value = self._mock_http_response(200)
 
         with self._notification_test_env():
@@ -1329,7 +1323,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
                 items=[
                     {"key": "DISCORD_BOT_TOKEN", "value": "bot-token"},
                     {"key": "DISCORD_MAIN_CHANNEL_ID", "value": "main-channel"},
-                    {"key": "DISCORD_CHANNEL_ID", "value": "legacy-channel"},
                 ],
                 title="Test title",
                 content="hello",
@@ -2072,7 +2065,11 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(response["success"])
         mock_reload_runtime_singletons.assert_called_once()
 
-    def test_update_with_reload_applies_updated_env_file_when_process_env_is_stale(self) -> None:
+    @patch.object(SystemConfigService, "_reload_runtime_singletons")
+    def test_update_with_reload_applies_updated_env_file_when_process_env_is_stale(
+        self,
+        _mock_reload_runtime_singletons,
+    ) -> None:
         os.environ["STOCK_LIST"] = "600519,000001"
 
         response = self.service.update(
@@ -2123,7 +2120,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         response = self.service.update(
             config_version=self.manager.get_config_version(),
             items=[
-                {"key": "RUN_IMMEDIATELY", "value": "false"},
                 {"key": "SCHEDULE_ENABLED", "value": "true"},
                 {"key": "SCHEDULE_RUN_IMMEDIATELY", "value": "true"},
             ],
@@ -2131,19 +2127,12 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
 
         self.assertTrue(response["success"])
-        run_warning = next(
-            warning
-            for warning in response["warnings"]
-            if "RUN_IMMEDIATELY 已写入 .env" in warning
-        )
         schedule_warning = next(
             warning
             for warning in response["warnings"]
             if "SCHEDULE_ENABLED" in warning
         )
 
-        self.assertIn("非 schedule 模式", run_warning)
-        self.assertNotIn("以 schedule 模式", run_warning)
         self.assertIn("SCHEDULE_RUN_IMMEDIATELY", schedule_warning)
         self.assertIn("不会因为本次保存启动、停止或重建 scheduler", schedule_warning)
         self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
@@ -2236,9 +2225,9 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             if "已同步清理失效的运行时模型引用" in warning
         )
         self.assertIn("主模型 / Agent 主模型 / Vision 模型 / 备选模型中的失效项", warning)
-        self.assertIn("桌面端导出备份", warning)
+        self.assertIn("系统配置导出备份", warning)
 
-    def test_import_desktop_env_restores_runtime_models_after_cleanup(self) -> None:
+    def test_import_env_restores_runtime_models_after_cleanup(self) -> None:
         self._rewrite_env(
             "STOCK_LIST=600519,000001",
             "LLM_CHANNELS=deepseek",
@@ -2252,7 +2241,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             "VISION_MODEL=deepseek/deepseek-v4-flash",
         )
 
-        backup_content = self.service.export_desktop_env()["content"]
+        backup_content = self.service.export_env()["content"]
         pre_clear_map = dict(self.manager.read_config_map())
 
         clear_response = self.service.update(
@@ -2274,7 +2263,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(cleared_map["VISION_MODEL"], "")
         self.assertEqual(cleared_map["LITELLM_FALLBACK_MODELS"], "deepseek/deepseek-v4-flash")
 
-        restore_payload = self.service.import_desktop_env(
+        restore_payload = self.service.import_env(
             config_version=self.manager.get_config_version(),
             content=backup_content,
             reload_now=False,

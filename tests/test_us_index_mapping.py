@@ -7,7 +7,7 @@ import sys
 import os
 
 # 确保能导入 data_provider 模块（直接导入避免加载重量级依赖）
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_provider')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend', 'data_provider')))
 
 from us_index_mapping import (
     is_us_index_code,

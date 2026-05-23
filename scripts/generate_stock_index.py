@@ -3,8 +3,8 @@
 """
 Stock Index Generation Script
 
-Generate stock index file for frontend autocomplete functionality
-Output to apps/dsa-web/public/stocks.index.json
+Generate stock index file for stock search functionality
+Output to backend/src/data/resources/stocks.index.json
 
 Two-phase strategy:
 1. MVP: Use existing STOCK_NAME_MAP
@@ -24,6 +24,7 @@ from typing import List, Dict, Any
 
 # Add the project root to sys.path.
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import backend  # noqa: E402,F401  # trigger backend/__init__.py sys.path injection
 
 try:
     from pypinyin import lazy_pinyin
@@ -309,7 +310,7 @@ def main():
         return 0
 
     # 输出路径
-    output_path = Path(__file__).parent.parent / "apps" / "dsa-web" / "public" / "stocks.index.json"
+    output_path = Path(__file__).parent.parent / "backend" / "src" / "data" / "resources" / "stocks.index.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 写入文件

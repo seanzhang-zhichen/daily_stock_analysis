@@ -42,10 +42,10 @@ def test_documented_compose_exec_commands_run_as_dsa() -> None:
         doc = (REPO_ROOT / doc_path).read_text(encoding="utf-8")
 
         assert f"{safe_exec_prefix} stock-analyzer bash" in doc
-        assert f"{safe_exec_prefix} stock-analyzer python main.py --no-notify" in doc
+        assert f"{safe_exec_prefix} stock-analyzer python backend/main.py --no-notify" in doc
         assert f"{unsafe_exec_prefix} stock-analyzer bash" not in doc
         assert (
-            f"{unsafe_exec_prefix} stock-analyzer python main.py --no-notify"
+            f"{unsafe_exec_prefix} stock-analyzer python backend/main.py --no-notify"
             not in doc
         )
 

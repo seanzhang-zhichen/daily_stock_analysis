@@ -65,27 +65,29 @@ alembic stamp b0bc3c721ef0
 
 前后端分别启动，前端带热重载，适合修改 UI 代码时使用。
 
-**终端 1 - 启动后端（API 服务，端口 8000）**
+**终端 1 - 启动后端（仅 API 服务，端口 8000）**
 
 ```bash
-python main.py --serve-only
+python backend/main.py --serve-only
 ```
+
+`--serve-only` 只启动 FastAPI API，不会安装、构建或托管 Web 前端静态资源。
 
 或用 uvicorn 带热重载：
 
 ```bash
-uvicorn server:app --reload --host 127.0.0.1 --port 8000
+uvicorn backend.backend.server:app --reload --host 127.0.0.1 --port 8000
 ```
 
-**终端 2 - 启动前端开发服务器（端口 5173）**
+**终端 2 - 启动前端开发服务器（端口 5200）**
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm ci
 npm run dev
 ```
 
-前端开发服务器会自动将 `/api/*` 请求代理到后端 `http://127.0.0.1:8000`，无需额外配置跨域。
+前端开发服务器会自动将 `/api/*` 请求代理到后端 `http://127.0.0.1:8000`，无需额外配置跨域。注册验证邮件中的前端页面链接默认指向 `http://localhost:5200`；如需改成自定义域名，可设置 `USER_FRONTEND_BASE_URL`。
 
 **访问地址**
 
@@ -97,14 +99,14 @@ npm run dev
 
 ---
 
-### 方式 B：生产模式（前端构建后由后端统一托管）
+### 方式 B：生产模式 / 本地体验（前端构建后由后端统一托管）
 
-前端构建输出到 `static/`，后端在 8000 端口同时托管 API 和静态文件，只需访问一个地址。
+前端构建输出到 `static/`，后端在 8000 端口同时托管 API 和静态文件，只需访问一个地址。显式 WebUI 启动路径会按需检查并构建前端资源；如果你希望构建过程可控，建议先手动执行步骤 1。
 
 **步骤 1 - 构建前端**
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm ci
 npm run build
 cd ../..
@@ -115,7 +117,7 @@ cd ../..
 **步骤 2 - 启动 WebUI 服务（同时托管前端静态文件）**
 
 ```bash
-python main.py --webui-only
+python backend/main.py --webui-only
 ```
 
 **访问地址**
@@ -159,34 +161,37 @@ alembic revision --autogenerate -m "describe_change"
 
 ```bash
 # 仅启动 API 服务（不执行分析）
-python main.py --serve-only
+python backend/main.py --serve-only
 
-# 仅启动 WebUI 服务（不执行分析，会按需准备前端静态资源）
-python main.py --webui-only
+# 仅启动 WebUI 服务（不执行分析，会按需准备并托管前端静态资源）
+python backend/main.py --webui-only
+
+# 启动 WebUI 服务 + 立即执行一次分析
+python backend/main.py --webui
 
 # 启动 API 服务 + 立即执行一次分析
-python main.py --serve
+python backend/main.py --serve
 
 # 启动 API 服务 + 定时任务
-python main.py --serve --schedule
+python backend/main.py --serve --schedule
 
 # 直接执行一次分析（不启动 API）
-python main.py
+python backend/main.py
 
 # 调试模式（输出更多日志）
-python main.py --debug
+python backend/main.py --debug
 
 # 干跑模式（不实际调用 AI，用于测试流程）
-python main.py --dry-run
+python backend/main.py --dry-run
 
 # 仅分析指定股票
-python main.py --stocks 600519,hk00700,AAPL
+python backend/main.py --stocks 600519,hk00700,AAPL
 ```
 
 ### 前端
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 
 # 安装依赖
 npm ci

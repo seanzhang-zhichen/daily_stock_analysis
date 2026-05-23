@@ -23,7 +23,7 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
 fi
 
 log "Building React UI (static assets)..."
-pushd "${ROOT_DIR}/apps/dsa-web" >/dev/null
+pushd "${ROOT_DIR}/frontend/web" >/dev/null
 if [[ ! -d node_modules ]]; then
   npm install
 fi
@@ -103,8 +103,8 @@ for module in "${hidden_imports[@]}"; do
 done
 
 pushd "${ROOT_DIR}" >/dev/null
-cmd=("${PYTHON_BIN}" -m PyInstaller --name stock_analysis --onedir --noconfirm --noconsole --add-data "static:static" --collect-data litellm --collect-data tiktoken)
-cmd+=("${hidden_import_args[@]}" "main.py")
+cmd=("${PYTHON_BIN}" -m PyInstaller --name stock_analysis --onedir --noconfirm --noconsole --add-data "static:static" --paths backend --collect-data litellm --collect-data tiktoken)
+cmd+=("${hidden_import_args[@]}" "backend/main.py")
 
 echo "Running: ${cmd[*]}"
 "${cmd[@]}"

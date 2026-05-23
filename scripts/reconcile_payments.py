@@ -42,6 +42,7 @@ from typing import Iterable, List, Optional
 # Ensure project root on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+import backend  # noqa: E402,F401  # trigger backend/__init__.py sys.path injection
 
 from sqlalchemy.orm import Session
 

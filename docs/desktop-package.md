@@ -1,6 +1,6 @@
 # 桌面端打包说明 (Electron + React UI)
 
-本项目可打包为桌面应用，使用 Electron 作为桌面壳，`apps/dsa-web` 的 React UI 作为界面。
+本项目可打包为桌面应用，使用 Electron 作为桌面壳，`frontend/web` 的 React UI 作为界面。
 
 ## 架构说明
 
@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run-desktop.ps1
 1) 构建 React UI（输出到 `static/`）
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm install
 npm run build
 ```
@@ -29,7 +29,7 @@ npm run build
 2) 启动 Electron 应用（自动拉起后端）
 
 ```bash
-cd apps/dsa-desktop
+cd frontend/desktop
 npm install
 npm run dev
 ```
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
   - 推送语义化 tag（如 `v3.2.12`）后自动触发
   - 在 Actions 页面手动触发并指定 `release_tag`
 - 产物：
-  - Windows 安装包：Release 附件和本地 `apps/dsa-desktop/dist/` 中统一为 `daily-stock-analysis-windows-installer-<tag>.exe`
+  - Windows 安装包：Release 附件和本地 `frontend/desktop/dist/` 中统一为 `daily-stock-analysis-windows-installer-<tag>.exe`
   - Windows 自动更新元数据：Release 附件会额外保留 `latest.yml` 和 `*.blockmap`，供安装版桌面端后台下载与校验更新；普通用户无需手动下载这些元数据
   - Windows 免安装包：`daily-stock-analysis-windows-noinstall-<tag>.zip`
   - macOS Intel：`daily-stock-analysis-macos-x64-<tag>.dmg`
@@ -91,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 1. 先构建 Web 静态产物（桌面端主窗口与设置页入口依赖）
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm ci
 npm run lint
 npm run build
@@ -109,7 +109,7 @@ npm run build
 在 Windows 发布复核环境，还可额外执行：
 
 ```powershell
-./scripts/verify-desktop-updater-artifacts.ps1 -ReleaseTag v$(node -p "require('./apps/dsa-desktop/package.json').version")
+./scripts/verify-desktop-updater-artifacts.ps1 -ReleaseTag v$(node -p "require('./frontend/desktop/package.json').version")
 ```
 
 > 预期当前执行环境不支持生成 Windows NSIS 安装器时，请在交付说明中明确注明平台限制，并要求指定的 Windows 发布链路复核人补齐该项验证。
@@ -184,7 +184,7 @@ Get-FileHash .env,data\\stock_analysis.db,data\\stock_analysis.db-wal,data\\stoc
 1) 构建 React UI
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm install
 npm run build
 ```
@@ -207,12 +207,12 @@ copy dist\stock_analysis.exe dist\backend\stock_analysis.exe
 3) 打包 Electron 桌面应用
 
 ```bash
-cd apps/dsa-desktop
+cd frontend/desktop
 npm install
 npm run build
 ```
 
-打包产物位于 `apps/dsa-desktop/dist/`。Windows 安装器会生成 `daily-stock-analysis-windows-installer-<tag>.exe`，安装向导中可选择安装目录。
+打包产物位于 `frontend/desktop/dist/`。Windows 安装器会生成 `daily-stock-analysis-windows-installer-<tag>.exe`，安装向导中可选择安装目录。
 
 ## 目录结构
 
@@ -302,8 +302,8 @@ PyInstaller 打包时缺少模块，需要在 `scripts/build-backend.ps1` 中增
 
 Windows 分发现在有两种方式：
 
-1. 安装包：分发 `apps/dsa-desktop/dist/` 下的 `daily-stock-analysis-windows-installer-<tag>.exe`，用户安装时可自行选择目标目录
-2. 免安装包：将 `apps/dsa-desktop/dist/win-unpacked/` 整个文件夹打包发给用户
+1. 安装包：分发 `frontend/desktop/dist/` 下的 `daily-stock-analysis-windows-installer-<tag>.exe`，用户安装时可自行选择目标目录
+2. 免安装包：将 `frontend/desktop/dist/win-unpacked/` 整个文件夹打包发给用户
 
 使用 `win-unpacked` 免安装包时，用户只需：
 

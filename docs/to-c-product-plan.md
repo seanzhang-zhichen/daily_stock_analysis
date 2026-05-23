@@ -26,8 +26,8 @@
 - **数据**：历史、分析、Portfolio、Alert、Agent 会话、自选股、通知偏好已在 API 层按当前用户隔离；LLM 渠道仍由平台管理员全局配置。
 - **配置**：`.env` + `SystemConfig` 是「机器一份」全局配置；自选股、通知渠道和模型偏好已 per-user 化，用户模型偏好只允许从管理员配置且套餐允许的模型中选择。
 - **任务**：调度器已改为按用户分桶（`run_per_user_scheduled_analysis`），读取各用户当前套餐、自选股与通知偏好，仅对仍具备 Pro 权益的用户执行每日自动分析，单用户失败不影响其他用户；分析任务队列、任务状态和 SSE 已按当前用户隔离；Webhook 通知已在调度层通过 `dispatch_user_webhook` 实际发送（Pro 用户可用）。
-- **前端**：`apps/dsa-web` 已有邮箱登录（含 `/verify-email`）、登录后 `/onboarding` 首次引导、账户页（自选股 + 通知偏好 + 模型偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股、通知偏好和模型偏好已完成 per-user 化。
-- **桌面端**：`apps/dsa-desktop` 是 Electron 单机壳，To C 化默认不强依赖它。
+- **前端**：`frontend/web` 已有邮箱登录（含 `/verify-email`）、登录后 `/onboarding` 首次引导、账户页（自选股 + 通知偏好 + 模型偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股、通知偏好和模型偏好已完成 per-user 化。
+- **桌面端**：`frontend/desktop` 是 Electron 单机壳，To C 化默认不强依赖它。
 
 ## 2. 目标产品形态（一句话）
 
@@ -157,7 +157,7 @@
 > 当前实现（Phase 3 已落地）：`main.py` `run_per_user_scheduled_analysis` 每轮调度后依次：① 查询所有 `daily_push_enabled=True` 的用户 ID；② 读取各用户 `app_user_watchlists` 与 `app_user_notification_prefs`，解析 `resolve_user_plan` 得到 `can_webhook` 等权益；③ 经交易日过滤后，创建独立 `StockAnalysisPipeline`（`user_id=user.id`，`send_notification=False`）执行分析；④ 调用 `src/users/notification_delivery.py::send_daily_email` 发送 HTML 邮件（`markdown2` 渲染报告 + 免责声明 + 一键退订链接，链接 token 由 `src/users/unsubscribe.py` HMAC 签发）；⑤ 若 `plan.can_webhook=True` 且用户配置了 Webhook，则调用 `dispatch_user_webhook` 按 `webhook_type` 投递到飞书 / 企业微信 / Discord / Telegram / 通用 JSON 五种 schema，每种渠道独立 try/except，失败仅日志；⑥ 单用户任意阶段失败只记日志，不影响其他用户。`GET /api/v1/account/notification-prefs/unsubscribe` 公开 endpoint 已加入 `AuthMiddleware` 白名单，验证 token 后关闭对应偏好并写 `app_audit_logs`。
 > 未完成：HTML 模板视觉打磨（运营素材定稿后再迭代）；多用户并发调度（当前串行，用户量大时需改线程池）；按 provider rate limit 节流。
 
-### 5.6 前端改造（`apps/dsa-web`）
+### 5.6 前端改造（`frontend/web`）
 
 - 路由：增加 `/register`、`/forgot-password`、`/billing`、`/account`；现有 `LoginPage` 重写为「登录 / 注册 / 找回密码」三态。
 - AuthContext 改为基于 user session，含 `user.plan`、`quota` 等。
@@ -166,7 +166,7 @@
   - `账户设置`（邮箱、密码、订阅状态）。
   - `自选股 & 通知偏好`（per-user）。
   - `模型偏好`（从管理员配置且当前套餐允许的模型中选择）。
-- 桌面端 `apps/dsa-desktop`：MVP 不强改，仅改登录调用。后续可作为 Pro 用户福利。
+- 桌面端 `frontend/desktop`：MVP 不强改，仅改登录调用。后续可作为 Pro 用户福利。
 
 > 当前实现：`/login`、`/register`、`/forgot-password`、`/verify-email`、`/onboarding`、`/account`、`/billing`、`/account/orders`、`/account/invoices`、`/admin`、`/notices`、`/help`、`/legal/terms`、`/legal/privacy`、`/legal/risk-disclosure` 均已上线。`/verify-email`（`VerifyEmailPage`）自动读取 `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。注册成功后自动跳转 `/onboarding` 引导添加自选股；`AccountPage` 已新增「我的自选股」「通知偏好」与「模型偏好」卡片，含每日推送开关、邮件通知开关、Pro Webhook 配置 UI 和当前套餐可选模型选择，页面底部仅保留退出登录入口；顶栏 `QuotaIndicator` 在登录后显示当日剩余，全局 `QuotaExceededDialog` 监听 `dsa:quota-exceeded` 事件并提供升级引导。`/billing` 已接入 `PaymentDialog`（二维码 + 2s 轮询 + mock 调试按钮）。`/account/orders` 支持列表 + 取消 + 退款弹窗，`/account/invoices` 支持申请 + 历史列表。侧边栏铃铛图标显示近期公告数角标，帮助客服入口进入站内 `/help` 页面。`UserAuthPage` 注册表单已有协议三件套勾选框，未勾选时禁用提交。AuthContext 已暴露 `userMode`（含 `plan` / `quota`）/ `loginWithEmail` / `registerWithEmail` / `effectiveLoggedIn`。
 > 未完成：邀请/推荐功能入口。
@@ -215,7 +215,7 @@
   - MVP：单节点 Docker（`docker/Dockerfile`）+ Nginx 反代 + 云 RDS；预算控制在 ¥200/月以内。
   - 二期：双节点 + 云 LB + 共享 RDS + Redis（用于 session / 配额计数器，替换数据库写入热点）。
 - **可观测**：
-  - 错误监控：**Sentry 免费版** 接 `api/app.py` 与前端 `apps/dsa-web`，1 万条/月足够 MVP。
+  - 错误监控：**Sentry 免费版** 接 `api/app.py` 与前端 `frontend/web`，1 万条/月足够 MVP。
   - 健康检查：复用 `/health` endpoint + Uptime Robot 免费版（5 分钟拨测）。
   - 日志：结构化 JSON 输出 + 日志卷映射到宿主机；二期再考虑 Loki / CloudWatch。
   - 关键业务埋点：分析 / Agent 调用次数、配额拒绝率、支付下单 → 支付成功率、退款率（默认从 DB 聚合查询，不接专业 BI）。
@@ -268,7 +268,7 @@
 - **免责口径**（所有出口必须遵守）：
   - 文案禁用词：「稳赚」「必涨」「保收益」「推荐买入」「跑赢大盘」「内幕」「绝佳机会」等。
   - 文案推荐词：「AI 辅助分析」「参考观点」「数据驱动复盘」「自动化研究」。
-  - 报告输出（`templates/report_*.j2`）末尾固定渲染免责声明；邮件模板同样。
+  - 报告输出（`backend/templates/report_*.j2`）末尾固定渲染免责声明；邮件模板同样。
   - 落地页 footer 固定一句：「本产品基于 AI 模型生成观点，不构成投资建议。投资有风险，入市需谨慎。」
 - **数据保护**：
   - 注销账号：后端支持用户提交注销 → 7 天冷静期 → 软删（`status='deleted'`）→ 30 天后物理清理个人数据；保留订单与发票按财税法规留存 5 年，普通账户页暂不展示自助注销入口。

@@ -11,9 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [chore] Add `docs/legacy-compat-cleanup.md` and remove low-risk legacy aliases for Agent config, Analysis API request fields, and user public URL environment fallbacks.
+- [chore] Complete remaining low-risk legacy cleanup by removing the Stocks API `codes` response compatibility field and desktop-specific system config import/export service aliases.
+- [修复] 登录/注册页邮箱输入框补充邮箱图标，与密码输入框的图标样式保持一致。
+- [修复] 修复本地前后端分离开发时注册验证邮件默认生成 `localhost:8000/verify-email` 导致邮箱验证页无法生效的问题：邮箱验证链接默认指向 Web 前端 `localhost:5200`，并新增 `USER_FRONTEND_BASE_URL` 支持自定义前端公开地址。
+- [文档] 更新本地前后端启动说明，明确 `--serve-only` 仅启动 FastAPI API、Web 前端开发服务器使用 `frontend/web` 的 `npm run dev` 运行在 5200 端口，生产/本地一体化 WebUI 使用 `--webui-only` 托管构建产物。
+- [chore] ?????????Web ????? `frontend/web/`??????? `frontend/desktop/`?????????? `backend/`?????? `main.py`/`server.py`/`webui.py` ? `src`/`api`/`data_provider`/`bot` ?????????? CI?Docker???????????????
 - [文档] 基于当前前后端实现更新 `docs/to-c-user-stories.md`，校准注册登录、首次引导、分析任务隔离与配额返还、Agent 会话与模型路由、Pro 推送、支付 mock / 人工兜底、售后合规入口和管理员权限等用户故事验收口径。
 - [文档] 进一步校准 `docs/to-c-user-stories.md` 的实现边界：修正系统配置 API 路径，明确 Agent 仅生成请求扣配额、`chat/send` 当前走全局通知链路、模型分档依赖 `allowed_models` 运营配置，并补充发票反馈、管理员访问和后续故事池说明。
-- [改进] `python main.py --serve-only` 与 `server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
+- [改进] `python backend/main.py --serve-only` 与 `backend.server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
+- [改进] 股票自动补全索引与前端静态目录完全解耦：源文件迁至 `backend/src/data/resources/stocks.index.json`，通过 Alembic 新增 `stock_index`/`stock_index_meta` 表和同步脚本写入数据库，前端改为调用公开限流的 `/api/v1/stocks/search`，后端运行时不再读取 `frontend/web/public` 或 `static` 下的股票索引。
 - [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非 Pro 用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
 - [chore] 完整移除 BYOK（Bring Your Own Key）功能：删除 `src/users/byok.py`、`AppUserByokCredential` ORM 模型、`app_user_byok_credentials` 表（通过 Alembic migration `20260522_add_user_preferred_model` 完成 DROP TABLE）及 `can_byok` 计划字段；移除 `/api/v1/account/api-keys` 端点和前端 `ApiKeysPage`；`AccountPage` 改为展示用户模型偏好选择卡（`/api/v1/account/model-preference`）；`QuotaExceededDialog` 和 `QuotaIndicator` 移除 BYOK 相关引导；移除 `DATA_ENCRYPTION_KEY` / `USER_BYOK_FALLBACK_KEY` 环境变量；退订 token 签名密钥回退链由 `UNSUBSCRIBE_SIGNING_KEY → DATA_ENCRYPTION_KEY → ADMIN_API_SECRET` 简化为 `UNSUBSCRIBE_SIGNING_KEY → ADMIN_API_SECRET`；`src/storage/__init__.py`、`src/storage/models/__init__.py`、`src/users/__init__.py` 清除 BYOK 相关导出；所有文档（`to-c-mode.md`、`to-c-product-plan.md`、`to-c-user-stories.md`、`to-c-product-wireframes.md`、`web-frontend-redesign-plan.md`、`INDEX.md`、`INDEX_EN.md`）同步更新。
 - [文档] 新增 `docs/to-c-user-stories.md`，基于当前 To C 多用户、配额、通知、支付、合规与运营后台实现整理核心用户故事、验收口径和实现映射，并在中英文文档索引与产品规划中补充入口。
@@ -37,13 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 新增并更新 `docs/web-frontend-redesign-plan.md`，明确 Web 前端本次按删除式完整重构推进：旧页面结构、旧组件视觉语义、旧样式体系和旧布局方式均视为废弃对象，补充重构后全局、标准内容页、工作台、首页、问股、持仓、回测、响应式、阅读与数据排版方案，并新增信息架构、交互状态、数据可视化、可访问性、性能与删除式重构完成定义；`docs/INDEX.md` 同步增加入口。
 - [改进] Web 前端重构 Phase 1 继续推进：`SidebarNav`、`QuotaIndicator`、`Drawer`、`ConfirmDialog`、`Tooltip`、`RenewalBanner`、`ThemeToggle` 迁移到新 `ui-*` 全局视觉类，减少全局组件对旧 `nav-*`、`cyan`、`elevated` 等旧视觉细节的直接依赖；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
 - [改进] Web 前端重构 Phase 1 继续推进：`StockAutocomplete`、`SettingsField`、`NotificationTestPanel`、`IntelligentImport`、`BacktestPage`、`PortfolioPage`、`ChatPage`、`AccountPage`、`InvoicesPage` 中的原生输入、选择框和文本域迁移到 `ui-input`，TS/TSX 侧清零旧 `input-surface` / `input-focus-glow` 直接引用；`BacktestPage` 测试断言同步切到 `ui-input`；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
-- [chore] Web 前端重构 Phase 1 清理 `apps/dsa-web/src/index.css` 中已无引用的旧 `input-surface` / `input-focus-glow` / `input-appearance-login` 兼容样式和相关 `--input-surface-*` token，保留仍由 `ui-input-login` 使用的登录输入 token；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
+- [chore] Web 前端重构 Phase 1 清理 `frontend/web/src/index.css` 中已无引用的旧 `input-surface` / `input-focus-glow` / `input-appearance-login` 兼容样式和相关 `--input-surface-*` token，保留仍由 `ui-input-login` 使用的登录输入 token；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。
 - [改进] Web 前端重构 Phase 2 启动：首页分析工具栏、移动历史抽屉、任务面板、历史列表、报告概览/资讯/策略/追溯/Markdown 抽屉与 dashboard 状态组件迁移到 `ui-*` 新视觉类，清理这些链路中的 `home-panel-card` / `home-subpanel` / `home-surface-button` / `home-spinner` / `home-markdown-prose` 直接引用，并新增 `ui-prose` 承载报告 Markdown 阅读样式；相关组件测试断言同步更新。
 - [改进] Web 前端重构 Phase 2 继续推进：首页空态新增示例股票快捷入口与大盘复盘 CTA，历史 rail 补齐粘性头部、数量提示和批量清理说明，任务卡片补齐阶段、时间与可访问进度条展示；相关 HomePage、TaskPanel、HistoryList 测试断言同步更新。
 - [改进] Web 前端重构 Phase 2 继续推进：首页选中报告工作区新增独立标题/工具条，展示股票、报告类型和生成时间，并将首页报告操作按钮从旧 `action-primary` 兼容 variant 切换为通用 `outline` / `secondary` 按钮；HomePage 测试断言同步覆盖新工具条。
 - [改进] Web 前端重构 Phase 3 启动：`ChatPage` 外层工作台接入 `ChatWorkspaceLayout`、`ui-card` 和 `ui-drawer-*`，导出/发送会话操作切换为通用 `outline` / `secondary` 按钮，并删除 `Button` 的 `action-primary` / `action-secondary` 兼容 variant 与 `ui-button-tonal` 过渡样式；ChatPage 与 Button 定向测试同步通过。
-- [改进] Web 前端重构 Phase 3 继续推进：`ChatPage` 会话列表、快捷问题、消息头像/气泡、技能 badge/tooltip、复制/导出动作、思考进度和 Markdown 阅读区迁移到 `ui-chat-*` / `ui-prose`，并删除 `apps/dsa-web/src/index.css` 中旧 `chat-*` token 与页面样式；ChatPage 测试断言同步更新。
-- [改进] Web 前端重构 Phase 4 启动：`BacktestPage` 将 `btn-primary`/`btn-secondary` 替换为 `Button` 组件，`backtest-force-btn` 切到 Tailwind 条件类，`backtest-spinner` 切到 `animate-spin`，`backtest-status-chip` 切到 Tailwind 语义类，`MetricRow`/`RunSummary`/`PerformanceCard` 改写为 Tailwind；`PortfolioPage` 移除 `portfolio-page` wrapper class，所有 `btn-secondary` 替换为 `Button variant="outline"`；`apps/dsa-web/src/index.css` 删除 `--backtest-*` 私有 token（light/dark 各 10 个）、旧 backtest 组件 CSS 类（metric/summary/force-btn/spinner/status-chip/empty-state）和 `.portfolio-page .btn-*` 作用域覆盖规则，保留 `backtest-table-*` 并将其 token 引用替换为全局 token 内联值；BacktestPage/PortfolioPage 定向测试 16 条通过，lint/build 通过。
+- [改进] Web 前端重构 Phase 3 继续推进：`ChatPage` 会话列表、快捷问题、消息头像/气泡、技能 badge/tooltip、复制/导出动作、思考进度和 Markdown 阅读区迁移到 `ui-chat-*` / `ui-prose`，并删除 `frontend/web/src/index.css` 中旧 `chat-*` token 与页面样式；ChatPage 测试断言同步更新。
+- [改进] Web 前端重构 Phase 4 启动：`BacktestPage` 将 `btn-primary`/`btn-secondary` 替换为 `Button` 组件，`backtest-force-btn` 切到 Tailwind 条件类，`backtest-spinner` 切到 `animate-spin`，`backtest-status-chip` 切到 Tailwind 语义类，`MetricRow`/`RunSummary`/`PerformanceCard` 改写为 Tailwind；`PortfolioPage` 移除 `portfolio-page` wrapper class，所有 `btn-secondary` 替换为 `Button variant="outline"`；`frontend/web/src/index.css` 删除 `--backtest-*` 私有 token（light/dark 各 10 个）、旧 backtest 组件 CSS 类（metric/summary/force-btn/spinner/status-chip/empty-state）和 `.portfolio-page .btn-*` 作用域覆盖规则，保留 `backtest-table-*` 并将其 token 引用替换为全局 token 内联值；BacktestPage/PortfolioPage 定向测试 16 条通过，lint/build 通过。
 - [改进] Web 前端重构 Phase 4 继续推进：`BacktestPage` 外层包装迁移到 `workspace-page-layout`，原始 `button` 元素（1D Validation / Force 切换按钮）替换为 `Button` 组件，提取 `BacktestConfigBar` 为独立命名子组件；`PortfolioPage` 外层包装迁移到 `WorkspacePageLayout`，提取 `PortfolioControlBar`（账户视图 + 成本口径 + 刷新操作）和 `PortfolioMetricGrid`（四格汇总指标 + 汇率刷新卡）为独立命名子组件；BacktestPage/PortfolioPage 定向测试 16 条通过，lint/build 通过。
 - [改进] Web 前端重构 Phase 4 继续推进：`BacktestPage` 提取 `BacktestMetricSidebar`（左侧性能指标栏）和 `BacktestResultsTable`（结果表格 + 工具栏 + 分页）为独立命名子组件；`PortfolioPage` 提取 `PositionsAndConcentrationPanel`（持仓明细表 + 集中度饼图）和 `PortfolioRiskSummary`（回撤 / 止损预警 / 口径三卡）为独立命名子组件；BacktestPage/PortfolioPage 定向测试 16 条通过，lint/build 通过。
 - [改进] Web 前端重构 Phase 4 继续推进：`PortfolioPage` 提取 `PortfolioManualEntryPanel`（手工录入：交易 / 资金 / 公司行为三张表单）和 `PortfolioImportAndLedger`（券商 CSV 导入 + 事件流水）为独立命名子组件，表单字段变更改用 Partial 更新模式；PortfolioPage 主页面 return 已正式完全切换到各独立命名子组件；PortfolioPage/BacktestPage 定向测试 16 条通过，lint/build 通过。
@@ -52,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] Web 前端重构 Phase 5 继续推进：认证页面 `ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage`、`UserAuthPage` 中 `bg-[var(--login-bg-main,#0a0e17)]` 删除硬编码暗色后备值，`text-white`/`text-white/[opacity]` 替换为 `--login-text-primary`/`--login-text-secondary`/`--login-text-muted` 语义 token，卡片 `border-white/[0.08] bg-white/[0.04]` 替换为 `border-[var(--login-border-card)] bg-[var(--login-bg-card)]`；`LoginPage` 已使用正确 token 无需改动；lint/build 通过。
 - [改进] Web 前端重构 Phase 2/3 完成收口：`HistoryList` 新增客户端搜索过滤框（按股票代码/名称实时过滤，含无匹配空态）；`ChatPage` 技能选择从 inline checkbox 改为圆角 chip 按钮（`ui-chat-skill-chip`，支持 `aria-pressed`，超限提示独立展示）；AI 消息卡从 `w-fit` 改为全宽文档卡 `w-full`，用户消息保持短气泡；`components.css` 新增 `ui-chat-skill-chip`/`ui-chat-skill-chip-active` 样式；相关测试断言同步更新（89 条通过）。
 - [chore] Web 前端重构 Phase 6 最终 cyan 清零：`AccountPage`（邮箱已验证 badge、toggle 开关）、`Pagination`（当前页按钮）、`StockAutocomplete`（loading spinner）、`SettingsHelpButton`（bullet 圆点）、`Collapsible`（icon）、`PaymentDialog`（支付方式选择态、Loader）、`StatCard`（primary tone border）、`StatusDot`（info 状态）中残留的 `text-cyan`/`bg-cyan`/`border-cyan` 全部替换为 `text-primary`/`bg-primary`/`border-primary`；保留 `SuggestionsList.tsx`（US 市场语义色）和 `JsonViewer.tsx`（JSON 键名高亮）两处语义性例外；lint/build 通过。
-- [改进] Web 前端重构 Phase 6 推进：新增 `prose-legal` CSS 类（`apps/dsa-web/src/styles/components.css`）补全 `LegalPageLayout` 法律协议文章排版；`index.css` 大规模清理——删除全部 `--home-*`（light/dark 各约 60 条）和 `--settings-*`（light/dark 各约 23 条）私有 token，删除 `terminal-card`/`terminal-card-hover`/`gradient-border-card`/`glass-card`/`home-panel-card`/`dashboard-card`/`glass-panel`/`glass-panel-lg`/`page-drawer-overlay`/`home-mobile-overlay`/`shell-page-frame` 共 11 组旧视觉 CSS 类，删除全部 `home-*` 组件 CSS 类（subpanel/history-item/surface-button/accent-chip/pill-link/spinner/divider/report-hero/rail-card/insight-card/board/strategy/news/trace/markdown-prose 及其 `.dark` 覆盖，共约 370 行），删除废弃 `badge-*`/`list-item`/`feed-item`/`glow-*`/`animate-pulse-glow`/`animate-slide-up`/`title-gradient` 等孤立样式；修复残留 `.prose :where(th, td)` 中已删除 token `--home-prose-border-strong` 引用，改为内联值；Phase 5/6 四页面/53 条定向测试通过，lint 0 errors，build 通过。
+- [改进] Web 前端重构 Phase 6 推进：新增 `prose-legal` CSS 类（`frontend/web/src/styles/components.css`）补全 `LegalPageLayout` 法律协议文章排版；`index.css` 大规模清理——删除全部 `--home-*`（light/dark 各约 60 条）和 `--settings-*`（light/dark 各约 23 条）私有 token，删除 `terminal-card`/`terminal-card-hover`/`gradient-border-card`/`glass-card`/`home-panel-card`/`dashboard-card`/`glass-panel`/`glass-panel-lg`/`page-drawer-overlay`/`home-mobile-overlay`/`shell-page-frame` 共 11 组旧视觉 CSS 类，删除全部 `home-*` 组件 CSS 类（subpanel/history-item/surface-button/accent-chip/pill-link/spinner/divider/report-hero/rail-card/insight-card/board/strategy/news/trace/markdown-prose 及其 `.dark` 覆盖，共约 370 行），删除废弃 `badge-*`/`list-item`/`feed-item`/`glow-*`/`animate-pulse-glow`/`animate-slide-up`/`title-gradient` 等孤立样式；修复残留 `.prose :where(th, td)` 中已删除 token `--home-prose-border-strong` 引用，改为内联值；Phase 5/6 四页面/53 条定向测试通过，lint 0 errors，build 通过。
 - [改进] Web 前端重构 Phase 5 启动：`NotFoundPage` 将 `btn-primary` 原生按钮替换为 `Button` 组件；`AccountPage`、`OrdersPage`、`InvoicesPage`、`BillingPage`、`NoticesPage`、`AdminPage` 外层包装全部迁移到 `StandardPageLayout`，所有条件分支早返回（未启用 / 未登录 / 加载失败等）同步使用 `StandardPageLayout`；各页面中的 `text-cyan` / `border-cyan` / `bg-cyan` 硬编码颜色替换为 `text-primary` / `border-primary` / `bg-primary` 语义化 token；`NoticesPage` `info` 类型公告配色从 `cyan` 迁移到 `primary`；`SettingsPage` 删除无 CSS 的 `settings-page` 空类，`settings-border` 替换为 `border-border/60`，`shadow-soft-card-strong` 替换为 `shadow-card`；lint/build 通过。
 - [chore] 引入 Alembic 数据库迁移基础设施：新增 `alembic.ini`、`alembic/env.py`（自动读取项目 DB URL）、`alembic/script.py.mako`、基线迁移 `alembic/versions/20250519_8f3a2b1c9d0e_baseline.py`；`DatabaseManager` 启动时对文件型 SQLite 和网络数据库自动执行 `alembic upgrade head`，`:memory:` SQLite（测试环境）保持 `create_all`；`requirements.txt` 追加 `alembic>=1.13.0`；`AGENTS.md` 新增"数据库迁移"章节，明确所有 schema 变更必须通过 Alembic migration 完成。
 - [新功能] Phase 5 退款前端入口：`OrdersPage` paid 订单新增「申请退款」按钮 + 内联弹窗（退款原因 textarea + 提交/取消），调用 `billingApi.requestRefund`，提交成功后原位展示「退款已提交」状态标签。
@@ -123,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] `api/account.ts` 新增 `WatchlistItem`、`WatchlistResponse`、`NotificationPrefs`、`NotificationPrefsResponse` 类型以及 `getWatchlist` / `addWatchlistStock` / `setWatchlist` / `removeWatchlistStock` / `getNotificationPrefs` / `updateNotificationPrefs` 六个 API 方法。
 - [新功能] 协议三件套与注册同意：新增 `/legal/terms` `/legal/privacy` `/legal/risk-disclosure` 静态页面（共享 `LegalPageLayout`），未登录可访问；注册表单新增协议勾选框，后端 `register_user` 增加 `terms_agreed` / `terms_version` 必填校验；`app_users` 新增 `terms_version` `is_admin` 字段，新增 `app_user_consents` 表记录协议版本/IP/UA；`/api/v1/account/status` 与登录/注册响应同步返回 `termsVersion` / `needsReacceptTerms` / `isAdmin` 字段；`src/users/consents.py` 集中维护当前协议版本 `CURRENT_TERMS_VERSION` 与 `needs_reaccept` 判断。
 - [新功能] 前端 `/billing` 下单流程：新增 `PaymentDialog` 组件支持创建订单 → 拉起支付 → 二维码展示 + 每 2s 轮询订单状态（最多 15min）→ 成功后自动刷新订阅；后端 `/orders/{order_no}/pay` 在 `PAYMENT_MOCK_ENABLED` 时返回 mock 二维码 URL，新增 `/orders/{order_no}/mock-pay` 仅供 mock 模式手动模拟成功；`BillingPage` 套餐卡片新增「升级」按钮、底部新增订单/发票/协议入口；登录态用户可在无真实支付通道时通过 mock 完成端到端验证。
-- [新功能] 运营后台 admin 体系：`app_users.is_admin` 字段 + `api/deps.py::get_admin_user` 依赖控制访问；新增 `api/v1/endpoints/admin.py` 提供 `/api/v1/admin/users|orders|refunds|invoices|grant-plan|stats` endpoint，并在 `OrderService` 增加 `list_orders_admin` / `approve_refund` / `reject_refund` / `issue_invoice` / `reject_invoice` 等管理方法；新增 `scripts/grant_admin.py` 命令行授予/撤销 admin 角色；前端新增 `/admin` 页面（`AdminPage`，标签页：概览 / 订单 / 退款 / 发票 / 用户 / 手动 grant），调用 `apps/dsa-web/src/api/admin.ts` 客户端完成所有后台操作。
+- [新功能] 运营后台 admin 体系：`app_users.is_admin` 字段 + `api/deps.py::get_admin_user` 依赖控制访问；新增 `api/v1/endpoints/admin.py` 提供 `/api/v1/admin/users|orders|refunds|invoices|grant-plan|stats` endpoint，并在 `OrderService` 增加 `list_orders_admin` / `approve_refund` / `reject_refund` / `issue_invoice` / `reject_invoice` 等管理方法；新增 `scripts/grant_admin.py` 命令行授予/撤销 admin 角色；前端新增 `/admin` 页面（`AdminPage`，标签页：概览 / 订单 / 退款 / 发票 / 用户 / 手动 grant），调用 `frontend/web/src/api/admin.ts` 客户端完成所有后台操作。
 - [新功能] 对账脚本骨架：新增 `scripts/reconcile_payments.py`，按通道 (wechat / alipay) 拉取通道账单 vs 本地 `app_orders` 输出 `channel_only` / `local_only` / `amount_mismatch` / `status_mismatch` 四类差异，落 `app_reconciliation_diffs` 与 `app_reconciliation_reports` 表；默认 dry-run，`--commit` 写库；通道拉取接口 `fetch_channel_settlements` 与告警出口 `_notify_diffs` 保留 SDK 接入扩展点。
 - [测试] 扩充 `tests/test_users_service.py`：所有 `register_user` 调用补 `terms_agreed=True`；新增 `test_register_rejects_when_terms_not_agreed` / `test_register_rejects_outdated_terms_version` / `test_register_records_consent` 三条用例覆盖协议同意校验、过期版本拒绝、`app_user_consents` 落库语义。
 - [新功能] Phase 6 审计日志：`src/storage.py` 新增 `AppAuditLog` ORM 表；新增 `src/users/audit.py` 提供 `write_audit_log` / `serialize_audit_log`（fire-and-forget，失败只记 warning）；在登录/注册/改密/重置密码/BYOK 写删/兑换码升级/订单创建/退款申请/admin 审批退款/开具发票/手动 grant-plan 等 16 个关键操作写入审计记录；新增 `GET /api/v1/admin/audit-logs` 支持按 action / userId / adminId 过滤；前端 `/admin` 新增「审计日志」标签页，支持按动作类型和用户 ID 筛选并分页展示。
@@ -138,7 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] Plan 到期 / 续费闭环（Phase 2 + Phase 4 收尾）：新增 `app_plan_reminders` ORM 表（含 `(user_id, plan_code, expires_at, reminder_type)` 唯一约束保证幂等）；新增 `src/users/plan_lifecycle.py` 提供 `find_users_needing_reminder` / `send_renewal_reminder` / `find_expired_active_users` / `downgrade_expired_user` / `run_plan_lifecycle_check`，支持 7/3/1 天到期前邮件提醒与过期当日自动降级 free（写一条 `app_subscriptions` source='expire'），所有动作落 `app_audit_logs`；`main.py` `scheduled_task` 在每日推送之后调用 `run_plan_lifecycle_task`，单用户失败不影响其它用户，`--dry-run` 时只扫描不写库。
 - [新功能] `/api/v1/account/status` 返回 `renewal` 字段（`planCode` / `expiresAt` / `daysRemaining` / `willExpireSoon` / `expired` / `thresholdDays`），前端 `AccountStatusResponse` 同步扩充 `AccountRenewal` 类型；新增 `RenewalBanner` 顶栏续费提示组件，挂到 `App.tsx`，到期 ≤ 7 天显示 amber、≤ 1 天/已过期升级配色，关闭后按 `(expiresAt+bucket)` 在 localStorage 缓存 6h，跨周期自动失效。
 - [测试] 新增 `tests/test_plan_lifecycle.py`（12 条）覆盖 7/3/1 桶匹配（含 5 天剩余落 7d）、跳过 free / 过期 / 禁用用户、邮件失败不写记录、重复触发幂等、自动降级写订阅 + 邮件 + 审计、`run_plan_lifecycle_check` 二次运行不重复发送；扩充 `tests/test_billing_account_api.py` 4 条用例覆盖 `/api/v1/account/status` 的 `renewal` 字段在游客 / free / 即将到期 / 已过期四种状态下的输出。
-- [改进] Web 前端删除式重构 Phase 1 起步：新增 `apps/dsa-web/src/styles/` 样式真源入口（tokens/base/components/layouts），基础组件 `Button`、`Card`、`Input`、`Select`、`Checkbox`、`Badge`、`InlineAlert`、`EmptyState`、`PageHeader`、`AppPage`、`Toolbar` 切换到新 `ui-*` 体系，新增标准页/工作台/聊天/认证布局原语，`Shell` 移除旧装饰光斑并接入新骨架；同步更新 `docs/web-frontend-redesign-plan.md` 重构进度与组件测试断言。
+- [改进] Web 前端删除式重构 Phase 1 起步：新增 `frontend/web/src/styles/` 样式真源入口（tokens/base/components/layouts），基础组件 `Button`、`Card`、`Input`、`Select`、`Checkbox`、`Badge`、`InlineAlert`、`EmptyState`、`PageHeader`、`AppPage`、`Toolbar` 切换到新 `ui-*` 体系，新增标准页/工作台/聊天/认证布局原语，`Shell` 移除旧装饰光斑并接入新骨架；同步更新 `docs/web-frontend-redesign-plan.md` 重构进度与组件测试断言。
 
 ## [3.17.1] - 2026-05-16
 
@@ -184,7 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat: Web 首页新增“大盘复盘”触发入口、任务轮询与完成后报告直出；首次启动配置状态可提示缺口并引导到系统设置。
 - feat: 新增通知路由策略，支持按 report、alert、system_error 将通知收窄到指定渠道；Web 设置页支持通知渠道一键测试。
 - feat: 系统设置页新增配置项帮助入口与多语言帮助文案基础设施，首批覆盖自选股、LLM 主模型、LLM 渠道、飞书 Webhook 与 WebUI 监听地址。
-- improve: 大盘复盘 API、CLI、Bot 共用 `build_market_review_runtime` 装配路径，补齐 `litellm_model` / `llm_model_list` 与 legacy key 回退说明。
+- improve: 大盘复盘 API、CLI、Bot 共用 `build_market_review_runtime` 装配路径，补齐 `litellm_model` / `llm_model_list` 与显式 provider key 说明。
 - improve: 个股报告操作建议结合支撑/压力、量能、筹码与主力资金流校准，减少买入/卖出剧烈切换，并补强 Agent 决策兜底。
 - improve: Docker 镜像支持非 root 用户运行，LiteLLM 依赖约束放宽到后续安全 1.x 修复版本。
 - fix: 修正 LLM 渠道测试中 `Model disabled`、provider blocked 等错误分类，避免被误报为网络异常。
@@ -197,7 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat: Add a Web home market-review trigger with task polling and inline report display; setup status now points users to missing configuration.
 - feat: Add notification routing by report, alert, and system_error; add one-click notification channel testing in Web settings.
 - feat: Add settings field help infrastructure with multilingual help text for the first batch of core configuration fields.
-- improve: Share `build_market_review_runtime` across API, CLI, and Bot market review paths; document `litellm_model` / `llm_model_list` and legacy key fallback behavior.
+- improve: Share `build_market_review_runtime` across API, CLI, and Bot market review paths; document `litellm_model` / `llm_model_list` and explicit provider key behavior.
 - improve: Calibrate stock advice with support/resistance, volume, chips, and main-force capital flow; strengthen Agent decision fallback behavior.
 - improve: Run Docker images as a non-root user and relax LiteLLM constraints to allow safe future 1.x fixes.
 - fix: Classify `Model disabled`, provider blocked, and related LLM channel test errors more accurately instead of reporting them as generic network failures.
@@ -250,7 +257,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### 测试
 
-- 补齐 AI 配置页与 `task_queue` 的 LLM 运行时清理/同步回归证据：恢复渠道模型时保留 fallback、编辑模型列表期间不静默清空运行时选择，渠道无可用模型时清理失效 runtime 引用，并覆盖 legacy key 与 `cohere/*`、`google/*`、`xai/*` 直连 provider 保留语义。
+- 补齐 AI 配置页与 `task_queue` 的 LLM 运行时清理/同步回归证据：恢复渠道模型时保留 fallback、编辑模型列表期间不静默清空运行时选择，渠道无可用模型时清理失效 runtime 引用，并覆盖显式 provider key 与 `cohere/*`、`google/*`、`xai/*` 直连 provider 保留语义。
 - 覆盖 Web LLM 配置检测的细分错误分类，以及 JSON、tools、vision、stream 运行时 smoke 的显式触发路径。
 
 ## [3.14.2] - 2026-04-30
@@ -339,7 +346,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### 测试
 
 - 🧪 **稳定市场复盘相关测试的 LiteLLM stub 行为** — 避免本机安装的 LiteLLM 在测试收集顺序变化时影响市场复盘单元测试。
-- 🧪 **pytest 默认跳过前端依赖目录** — 本地存在 `apps/dsa-web/node_modules` 时不再被后端测试递归扫描，避免发布前 gate 被无关目录拖慢。
+- 🧪 **pytest 默认跳过前端依赖目录** — 本地存在 `frontend/web/node_modules` 时不再被后端测试递归扫描，避免发布前 gate 被无关目录拖慢。
 
 ## [3.13.0] - 2026-04-21
 
@@ -381,7 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - 📊 **移除 `sentiment_score` 范围约束**（fixes #942）— 移除 `HistoryItem` 与 `ReportSummary` 响应 Schema 中 `sentiment_score` 的 `ge=0/le=100` 约束，历史库中存储的超范围值不再触发 Pydantic ValidationError。
 - 🖥️ **WebUI 前端资源缺失时发出明确警告** — `webui_frontend.py` 在 `static/index.html` 存在但 `static/assets/` 缺失时发出 warning，避免 CSS/JS 资源缺失导致页面异常变大却无从排查（fixes #944）。
 - 🔗 **分析管线可选服务降级初始化** — `StockAnalysisPipeline` 搜索服务与社交舆情服务任一初始化异常时，记录 warning 并以禁用状态继续运行，避免外部依赖抖动阻塞主分析链路。
-- 🖥️ **桌面端版本展示统一读取 `package.json`** — 统一读取 `apps/dsa-desktop/package.json`，移除 preload 中硬编码的 `0.1.0`，设置页展示真实桌面端版本；修复版本号显示错误（fixes #1048）。
+- 🖥️ **桌面端版本展示统一读取 `package.json`** — 统一读取 `frontend/desktop/package.json`，移除 preload 中硬编码的 `0.1.0`，设置页展示真实桌面端版本；修复版本号显示错误（fixes #1048）。
 - 🐋 **港股名称获取失败修复**（fixes #940）— 修复主数据源字段缺失时无法正确回退到备用字段获取港股名称的问题。
 - 🔄 **SSE 任务流断开时 `CancelledError` 正确 re-raise**（fixes #967）— 修复 SSE 流中断时异常被静默吞掉导致故障无日志可查的问题。
 - 🔄 **Agent SSE 清理阶段后台任务异常正确上报**（fixes #969）— 流结束时后台执行器异常现在正确记录并上报，避免错误无法感知。
@@ -420,7 +427,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### 新功能
 
 - 📊 **回测页新增"次日验证 / 1 日窗口"视图** — 可按股票代码与分析日期范围查看 AI 预测、次日实际涨跌及筛选区间准确率，复用历史分析与 1 日回测结果实现。
-- 🏷️ **Web 设置页新增版本信息卡片** — `apps/dsa-web` 现在会在构建时注入前端包版本与构建时间，系统设置页新增只读"版本信息"区块，展示 `WebUI 版本 / 构建标识 / 构建时间`；当 `package.json` 仍为占位版本 `0.0.0` 时，会自动回退为构建标识，方便 Docker 重建后快速确认当前静态资源是否已经生效。
+- 🏷️ **Web 设置页新增版本信息卡片** — `frontend/web` 现在会在构建时注入前端包版本与构建时间，系统设置页新增只读"版本信息"区块，展示 `WebUI 版本 / 构建标识 / 构建时间`；当 `package.json` 仍为占位版本 `0.0.0` 时，会自动回退为构建标识，方便 Docker 重建后快速确认当前静态资源是否已经生效。
 - 🪟 **Windows 桌面安装器支持自选安装目录** — 安装器改为支持在安装向导中自定义安装目录，安装到非默认盘符后仍沿用现有打包态目录逻辑在安装目录旁读写 `.env`、`data/stock_analysis.db` 和 `logs/desktop.log`，同时保留 `win-unpacked` 免安装分发方式。安装器仅支持当前用户安装、已禁用管理员提权（`allowElevation: false`），并通过 NSIS `.onVerifyInstDir` 阻止选择系统保护目录。
 
 ### 改进
@@ -430,8 +437,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### 修复
 
-- 🚀 **启动早期失败时暴露真实根因** — `python main.py` 现在通过 stderr 暴露真实根因，bootstrap 阶段不再向硬编码 `logs/` 目录写入文件日志，文件日志推迟到 `config.log_dir` 可用后创建，避免健康启动在非预期路径残留日志文件。
-- 🐳 **Docker WebUI 运行时优先复用预构建静态资源** — `prepare_webui_frontend_assets()` 现在会先检查镜像内已有的 `static/index.html` 是否可直接复用；当容器运行时不包含 `apps/dsa-web` 源码目录且未安装 `npm` 时，也不会误报"未找到前端项目，无法自动构建"，从而恢复 Docker 部署后的 WebUI 打开能力。
+- 🚀 **启动早期失败时暴露真实根因** — `python backend/main.py` 现在通过 stderr 暴露真实根因，bootstrap 阶段不再向硬编码 `logs/` 目录写入文件日志，文件日志推迟到 `config.log_dir` 可用后创建，避免健康启动在非预期路径残留日志文件。
+- 🐳 **Docker WebUI 运行时优先复用预构建静态资源** — `prepare_webui_frontend_assets()` 现在会先检查镜像内已有的 `static/index.html` 是否可直接复用；当容器运行时不包含 `frontend/web` 源码目录且未安装 `npm` 时，也不会误报"未找到前端项目，无法自动构建"，从而恢复 Docker 部署后的 WebUI 打开能力。
 - 🐳 **Docker WebUI 系统设置保存后配置生效** — Docker 场景下 WebUI 保存 `STOCK_LIST`、`SCHEDULE_ENABLED`、`SCHEDULE_TIME`、`SCHEDULE_RUN_IMMEDIATELY`、`RUN_IMMEDIATELY` 后，`Config` 会优先读取持久化 `.env` 中的新值，避免被容器创建时注入的旧环境变量覆盖。
 - 📈 **市场复盘 LLM max_tokens 提升** — 市场复盘生成链路将 LLM `max_tokens` 从 `2048` 提升到 `8192`，降低长复盘输出因 `MAX_TOKENS` 提前截断导致内容未完成的概率。
 - ⏰ **内置定时调度器感知 SCHEDULE_TIME 运行时变更** — 调度器现在会在运行中感知 WebUI 保存后的 `SCHEDULE_TIME` 变化，并在下一轮检查时重绑 daily job。
@@ -476,7 +483,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### 修复
 
-- 🌗 **Web 首屏默认主题预设为深色** — `apps/dsa-web/index.html` 现在会在 React 挂载前读取本地保存的主题偏好；若没有已保存值，则立即给 `<html>` 预设 `dark` 并同步 `color-scheme`，避免首页和登录页首屏先闪出浅色主题。
+- 🌗 **Web 首屏默认主题预设为深色** — `frontend/web/index.html` 现在会在 React 挂载前读取本地保存的主题偏好；若没有已保存值，则立即给 `<html>` 预设 `dark` 并同步 `color-scheme`，避免首页和登录页首屏先闪出浅色主题。
 - 🔐 **登录页独立主题层收口** — 登录页输入框、标签、切换按钮和按钮文案现在使用独立的 `--login-*` 视觉 token，不再继承全局浅/深主题文字色；即使浏览器缓存了浅色主题，登录页仍保持稳定的深色视觉与青色密码输入表现，避免密码圆点和文案落成黑色。
 - 🖥️ **首页港股代码输入修复** — Web 首页分析输入框现在可正确接受港股代码与自动完成选中的港股项，补齐 `00700.HK` / `HK00700` 等格式识别，避免提交时误报“请输入有效的股票代码或股票名称”。
 
@@ -524,7 +531,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - 🔎 **自动补全与索引工具扩展到三市场** — 补全索引生成链路现在同时覆盖 A 股、港股、美股，配套新增 Tushare 股票列表抓取工具与更完整的静态索引数据，让首页搜索入口从“能用”走向“更全、更稳”。
 - 🖥️ **Dashboard 与报告查看体验继续收口** — 首页 Dashboard 面板、状态边界、字体层级和完整报告表格密度完成一轮统一；报告详情也补齐了 Markdown/纯文本复制与更可靠的按钮交互，减少历史报告查看与分享时的摩擦。
 - 🤖 **Agent skill 与市场语义边界更清晰** — skill bundle、默认策略、回测汇总语义和兼容接口进一步收敛；同时分析 Prompt 不再默认写死 A 股上下文，美股和港股分析也能按各自市场规则生成更贴切的内容。
-- ⏰ **定时与桌面配置能力更贴近真实使用场景** — 桌面端支持 `.env` 导入导出；`python main.py --schedule --stocks ...` 也不再把启动时股票快照错误带入后续计划执行，定时任务会跟随最新保存的 `STOCK_LIST`。
+- ⏰ **定时与桌面配置能力更贴近真实使用场景** — 桌面端支持 `.env` 导入导出；`python backend/main.py --schedule --stocks ...` 也不再把启动时股票快照错误带入后续计划执行，定时任务会跟随最新保存的 `STOCK_LIST`。
 ### 新功能
 
 - 💾 **桌面端 `.env` 备份/恢复入口**（#754）— 桌面模式下的系统设置页新增 `导出 .env` / `导入 .env` 按钮，可直接备份当前已保存配置，或把备份文件中的键值合并恢复到当前桌面端 `.env`；导入沿用现有 `config_version` 冲突保护与运行时重载链路，不改变现有桌面端便携模式路径。
@@ -544,7 +551,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### 修复
 
-- ⏰ **定时模式不再锁定启动时 CLI 股票快照** — `python main.py --schedule --stocks ...` 现在不会让后续计划执行沿用启动时的旧股票列表；定时任务每次触发前都会重新读取最新保存的 `STOCK_LIST`，确保 WebUI 或 `.env` 更新后的自选股配置能参与后续推送。
+- ⏰ **定时模式不再锁定启动时 CLI 股票快照** — `python backend/main.py --schedule --stocks ...` 现在不会让后续计划执行沿用启动时的旧股票列表；定时任务每次触发前都会重新读取最新保存的 `STOCK_LIST`，确保 WebUI 或 `.env` 更新后的自选股配置能参与后续推送。
 - 🌍 **LLM Prompt 按股票市场动态注入上下文** — 分析链路不再把市场规则写死成 A 股；系统 Prompt 会根据股票代码识别 A 股、港股或美股，并注入对应的角色描述与交易规则提示，减少跨市场分析出现口径错位或结论失真的问题。
 - 🔎 **美股自动补全复用 ticker 去重** — `generate_index_from_csv.py` 在导入 Tushare `us_basic` CSV 时会先按 `ts_code` 折叠复用的美股 ticker，优先保留更可能仍在使用的记录，避免 `stocks.index.json` 出现重复 `canonicalCode` 后让 Web 自动补全展示历史名称或提交歧义代码。
 - 🧾 **Web 报告详情复制交互稳定性修复**（#749）— `ReportDetails` 中“原始分析结果 / 分析快照”的复制按钮补齐可点击层级，避免被下方 JSON 内容覆盖；两个面板的复制提示也改为各自独立，不再出现复制一个后两个按钮同时显示“已复制”的误导反馈。

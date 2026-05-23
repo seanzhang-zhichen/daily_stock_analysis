@@ -4,10 +4,12 @@ set -euo pipefail
 
 syntax_check() {
   echo "==> backend-gate: Python syntax check"
-  python -m py_compile main.py src/config.py src/auth.py src/analyzer.py src/notification.py
-  python -m py_compile src/storage.py src/scheduler.py src/search_service.py
-  python -m py_compile src/market_analyzer.py src/stock_analyzer.py
-  python -m py_compile data_provider/*.py
+  python -m py_compile main.py server.py webui.py
+  python -m py_compile backend/__init__.py
+  python -m py_compile backend/main.py backend/src/config.py backend/src/auth.py backend/src/analyzer.py backend/src/notification.py
+  python -m py_compile backend/src/storage/__init__.py backend/src/scheduler.py backend/src/search_service.py
+  python -m py_compile backend/src/market_analyzer.py backend/src/stock_analyzer.py
+  python -m py_compile backend/data_provider/*.py
 }
 
 flake8_checks() {

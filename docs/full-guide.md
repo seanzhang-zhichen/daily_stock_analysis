@@ -8,19 +8,22 @@
 
 ```
 daily_stock_analysis/
-├── main.py              # 主程序入口
-├── src/                 # 核心业务逻辑
-│   ├── analyzer.py      # AI 分析器
-│   ├── config.py        # 配置管理
-│   ├── notification.py  # 消息推送
-│   └── ...
-├── data_provider/       # 多数据源适配器
-├── bot/                 # 机器人交互模块
-├── api/                 # FastAPI 后端服务
-├── apps/dsa-web/        # React 前端
-├── docker/              # Docker 配置
-├── docs/                # 项目文档
-└── .github/workflows/   # GitHub Actions
+??? main.py              # ???????
+??? server.py            # ?? FastAPI ????
+??? backend/             # ??????
+?   ??? main.py          # ???????
+?   ??? api/             # FastAPI ????
+?   ??? src/             # ??????
+?   ??? data_provider/   # ???????
+?   ??? bot/             # ???????
+?   ??? alembic/         # ?????
+?   ??? strategies/      # ???? YAML
+?   ??? templates/       # ????
+??? frontend/web/        # React ??
+??? frontend/desktop/    # Electron ???
+??? docker/              # Docker ??
+??? docs/                # ????
+??? .github/workflows/   # GitHub Actions
 ```
 
 ## 📑 目录
@@ -393,7 +396,7 @@ daily_stock_analysis/
 
 Dockerfile 使用多阶段构建，前端会在构建镜像时自动打包并内置到 `static/`。
 如需覆盖静态资源，可挂载本地 `static/` 到容器内 `/app/static`。
-运行中的 `server` 容器默认直接复用 `/app/static` 里的预构建产物，不要求容器内保留 `apps/dsa-web` 源码目录或运行时安装 `npm`；若 WebUI 无法打开，请优先确认 `/app/static/index.html` 是否存在。
+运行中的 `server` 容器默认直接复用 `/app/static` 里的预构建产物，不要求容器内保留 `frontend/web` 源码目录或运行时安装 `npm`；若 WebUI 无法打开，请优先确认 `/app/static/index.html` 是否存在。
 
 当前官方镜像发布地址：
 
@@ -439,7 +442,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   zhulinsen/daily_stock_analysis:latest \
-  python main.py --serve-only --host 0.0.0.0 --port 8000
+  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 
 # 定时任务模式
 docker run -d \
@@ -553,7 +556,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   stock-analysis \
-  python main.py --serve-only --host 0.0.0.0 --port 8000
+  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -577,16 +580,16 @@ pip install -r requirements.txt
 ### 命令行参数
 
 ```bash
-python main.py                        # 完整分析（个股 + 大盘复盘）
-python main.py --market-review        # 仅大盘复盘
-python main.py --no-market-review     # 仅个股分析
-python main.py --stocks 600519,300750 # 指定股票
-python main.py --dry-run              # 仅获取数据，不 AI 分析
-python main.py --no-notify            # 不发送推送
-python main.py --schedule             # 定时任务模式
-python main.py --force-run            # 非交易日也强制执行（Issue #373）
-python main.py --debug                # 调试模式（详细日志）
-python main.py --workers 5            # 指定并发数
+python backend/main.py                        # 完整分析（个股 + 大盘复盘）
+python backend/main.py --market-review        # 仅大盘复盘
+python backend/main.py --no-market-review     # 仅个股分析
+python backend/main.py --stocks 600519,300750 # 指定股票
+python backend/main.py --dry-run              # 仅获取数据，不 AI 分析
+python backend/main.py --no-notify            # 不发送推送
+python backend/main.py --schedule             # 定时任务模式
+python backend/main.py --force-run            # 非交易日也强制执行（Issue #373）
+python backend/main.py --debug                # 调试模式（详细日志）
+python backend/main.py --workers 5            # 指定并发数
 ```
 
 ---
@@ -644,15 +647,15 @@ schedule:
 
 ```bash
 # 启动定时模式（启动时立即执行一次，随后每天 18:00 执行）
-python main.py --schedule
+python backend/main.py --schedule
 
 # 启动定时模式（启动时不执行，仅等待下次定时触发）
-python main.py --schedule --no-run-immediately
+python backend/main.py --schedule --no-run-immediately
 ```
 
 > 说明：定时模式每次触发前都会重新读取当前保存的 `STOCK_LIST`。如果同时传入 `--stocks`，该参数不会锁定后续计划执行的股票列表；需要临时只跑指定股票时，请使用非定时的单次运行命令。
 >
-> 从 `python main.py --schedule`、`python main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
+> 从 `python backend/main.py --schedule`、`python backend/main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
 
 #### 环境变量方式
 
@@ -693,7 +696,7 @@ docker run -e SCHEDULE_ENABLED=true -e SCHEDULE_RUN_IMMEDIATELY=false ...
 
 ```bash
 crontab -e
-# 添加：0 18 * * 1-5 cd /path/to/project && python main.py
+# 添加：0 18 * * 1-5 cd /path/to/project && python backend/main.py
 ```
 
 ---
@@ -1034,9 +1037,7 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-sonnet-4-6,openai/gpt-5.4-mini
 
 **视觉模型（图片提取股票代码）**：详见 [LLM 配置指南 - Vision](LLM_CONFIG_GUIDE.md#41-vision-模型图片识别股票代码)。
 
-从图片提取股票代码（如 `/api/v1/stocks/extract-from-image`）使用统一视觉模型接入，底层采用 LiteLLM Vision 与 OpenAI `image_url` 格式，支持 Gemini、Claude、OpenAI、DeepSeek 等 Vision-capable 模型。返回 `items`（code、name、confidence）及兼容的 `codes` 数组。
-
-> 兼容性说明：`/api/v1/stocks/extract-from-image` 响应在原 `codes` 基础上新增 `items` 字段。若下游客户端使用严格 JSON Schema 且不接受未知字段，请同步更新 schema。
+从图片提取股票代码（如 `/api/v1/stocks/extract-from-image`）使用统一视觉模型接入，底层采用 LiteLLM Vision 与 OpenAI `image_url` 格式，支持 Gemini、Claude、OpenAI、DeepSeek 等 Vision-capable 模型。返回 `items`（code、name、confidence）。
 
 **智能导入**：除图片外，还支持 CSV/Excel 文件及剪贴板粘贴（`/api/v1/stocks/parse-import`），自动解析代码/名称列，名称→代码解析支持本地映射、拼音匹配及 AkShare 在线 fallback。依赖 `pypinyin`（拼音匹配）和 `openpyxl`（Excel 解析），已包含在 `requirements.txt` 中。
 
@@ -1052,7 +1053,7 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-sonnet-4-6,openai/gpt-5.4-mini
 ### 调试模式
 
 ```bash
-python main.py --debug
+python backend/main.py --debug
 ```
 
 日志文件位置：
@@ -1135,7 +1136,7 @@ python main.py --debug
 
 ## 本地 WebUI 管理界面
 
-WebUI 与 FastAPI API 服务共用同一服务进程，启动后可在浏览器中完成配置管理、手动分析、任务进度查看、历史报告、回测、持仓管理和智能导入等操作。认证、云服务器访问和 API 调用细节见下方说明。
+WebUI 可用两种方式启动：开发时推荐前后端分离，生产或本地体验时可先构建前端并由 FastAPI 统一托管。启动后可在浏览器中完成配置管理、手动分析、任务进度查看、历史报告、回测、持仓管理和智能导入等操作。认证、云服务器访问和 API 调用细节见下方说明。
 
 ### FastAPI API 服务
 
@@ -1143,10 +1144,15 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 
 ### 启动方式
 
-| 命令 | 说明 |
-|------|------|
-| `python main.py --serve` | 启动 API 服务 + 执行一次完整分析 |
-| `python main.py --serve-only` | 仅启动 API 服务，手动触发分析 |
+| 场景 | 命令 | 访问地址 | 说明 |
+|------|------|------|------|
+| 开发后端 API | `python backend/main.py --serve-only` | `http://127.0.0.1:8000` | 仅启动 FastAPI，不安装、构建或托管前端 |
+| 开发前端 | `cd frontend/web && npm ci && npm run dev` | `http://localhost:5200` | Vite 开发服务器，`/api/*` 代理到 `127.0.0.1:8000` |
+| 一体化 WebUI | `python backend/main.py --webui-only` | `http://127.0.0.1:8000` | 按需准备并托管 `static/` 前端资源，不执行分析 |
+| 一体化 WebUI + 分析 | `python backend/main.py --webui` | `http://127.0.0.1:8000` | 托管 WebUI，并在启动后执行一次完整分析 |
+| API + 分析 | `python backend/main.py --serve` | `http://127.0.0.1:8000` | 仅启动 API，并执行一次完整分析 |
+
+如果希望手动控制前端构建，可先执行 `cd frontend/web && npm ci && npm run build`，构建产物会输出到项目根目录 `static/`，再运行 `python backend/main.py --webui-only`。
 
 ### 功能特性
 
@@ -1248,7 +1254,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results?page=1&limit=20"
 修改默认端口或允许局域网访问：
 
 ```bash
-python main.py --serve-only --host 0.0.0.0 --port 8888
+python backend/main.py --serve-only --host 0.0.0.0 --port 8888
 ```
 
 ### 支持的股票代码格式

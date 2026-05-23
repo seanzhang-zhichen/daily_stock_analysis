@@ -5,7 +5,7 @@ import src.webui_frontend as webui_frontend
 
 def _prepare_fake_repo(tmp_path, monkeypatch):
     repo_root = tmp_path / "repo"
-    module_path = repo_root / "src" / "webui_frontend.py"
+    module_path = repo_root / "backend" / "src" / "webui_frontend.py"
     module_path.parent.mkdir(parents=True)
     module_path.touch()
     monkeypatch.setattr(webui_frontend, "__file__", str(module_path))

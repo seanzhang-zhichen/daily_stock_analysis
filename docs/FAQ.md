@@ -130,7 +130,7 @@ PROXY_PORT=10809
 
 **Q: 配置了 GEMINI_API_KEY 和 LLM_CHANNELS，为什么只用渠道？**
 
-系统按优先级只取一种：高级模型路由 YAML（`LITELLM_CONFIG`）> `LLM_CHANNELS` > legacy keys。但 YAML 仅在文件可正常解析且产出了有效 `model_list` 时才生效；如果 YAML 路径无效或内容为空，系统会自动回退到 `LLM_CHANNELS` 或 legacy keys。一旦某一层级实际生效，更低优先级的配置不参与解析。
+系统按优先级只取一种：高级模型路由 YAML（`LITELLM_CONFIG`）> `LLM_CHANNELS` > 显式 `LITELLM_MODEL` + provider API Key。但 YAML 仅在文件可正常解析且产出了有效 `model_list` 时才生效；如果 YAML 路径无效或内容为空，系统会回退到 `LLM_CHANNELS` 或显式主模型配置。一旦某一层级实际生效，更低优先级的配置不参与解析。
 
 **Q: check_env 输出“未配置可用 AI 模型”怎么办？**
 
@@ -140,9 +140,9 @@ PROXY_PORT=10809
 
 使用渠道模式：设置 `LLM_CHANNELS=aihubmix,deepseek,gemini`，并配置各渠道的 `LLM_{NAME}_BASE_URL`、`LLM_{NAME}_API_KEY`、`LLM_{NAME}_MODELS`。也可在 Web 设置页 → AI 模型 → AI 模型接入 中可视化配置。
 
-**Q: 问股/Agent 提示未配置可用 LLM，但我只有旧的 `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` 配置，怎么办？**
+**Q: 问股/Agent 提示未配置可用 LLM，但我只配置了 `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` API Key，怎么办？**
 
-先确认当前是否启用了 `LITELLM_CONFIG` 或 `LLM_CHANNELS`；如果启用了，上层配置会覆盖 legacy keys。若你没有启用这两层，且 `AGENT_LITELLM_MODEL` 为空，问股 Agent 仍会自动继承 legacy provider 模型：`GEMINI_MODEL`、`OPENAI_MODEL`、`ANTHROPIC_MODEL` 分别映射到对应 provider 前缀的 LiteLLM 模型名。此次修复不会静默迁移或清空旧配置，只是把“真实缺失原因”直接返回到前端，便于你判断到底是缺 key、缺模型名，还是被上层配置覆盖。完整兼容语义见 [LLM 配置指南](LLM_CONFIG_GUIDE.md) 中“问股 Agent / LiteLLM 配置兼容说明”。
+先确认是否显式设置了 `LITELLM_MODEL=provider/model` 或 `AGENT_LITELLM_MODEL=provider/model`。仅填写 provider API Key 不再自动推断主模型；如果启用了 `LITELLM_CONFIG` 或 `LLM_CHANNELS`，上层配置会作为实际模型来源。完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)。
 
 ---
 
@@ -328,8 +328,8 @@ OPENAI_MODEL=deepseek-v4-flash
 **为什么**：
 1. 仓库的 Docker 发布由 `.github/workflows/docker-publish.yml` 触发，只有推送 `v*.*.*` 形式的 Git tag（例如 `v3.12.0`）时才会生成对应发布镜像。
 2. 这意味着 Docker 镜像版本本质上跟随 **GitHub Release / Git tag**，而不是写死在 `main.py`、`server.py` 或其他后端源码里。
-3. `apps/dsa-web/package.json` 里的 `version` 当前是占位值 `0.0.0`，WebUI “版本信息”卡片更适合用来确认静态资源是否已重建，不应当作 Docker 发布版本。
-4. 桌面端版本是单独维护的，写在 `apps/dsa-desktop/package.json` 的 `version` 字段；它只代表 Electron 桌面端，不代表 Docker 镜像版本。
+3. `frontend/web/package.json` 里的 `version` 当前是占位值 `0.0.0`，WebUI “版本信息”卡片更适合用来确认静态资源是否已重建，不应当作 Docker 发布版本。
+4. 桌面端版本是单独维护的，写在 `frontend/desktop/package.json` 的 `version` 字段；它只代表 Electron 桌面端，不代表 Docker 镜像版本。
 
 **怎么查当前 Docker 版本**：
 1. **先看部署命令或 Compose 文件里的镜像 tag**：例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`，其中 `v3.12.0` 就是当前部署版本。
@@ -347,7 +347,7 @@ OPENAI_MODEL=deepseek-v4-flash
 **方法**：
 ```bash
 # 本地运行
-python main.py --market-only
+python backend/main.py --market-only
 
 # GitHub Actions
 # 手动触发时选择 mode: market-only

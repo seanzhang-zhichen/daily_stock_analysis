@@ -1,6 +1,6 @@
 # Web 前端重构计划
 
-本文档记录 `apps/dsa-web/` 前端页面、交互、组件体系与样式体系的完整重构方案。本次重构的定位不是局部换肤、样式微调或在现有页面上继续补丁式优化，而是对旧 Web 前端 UI 进行完全删除式重构：旧页面结构、旧组件视觉语义、旧样式体系、旧布局方式和旧视觉风格全部视为废弃对象，最终目标是从代码中移除，而不是继续兼容或包裹。
+本文档记录 `frontend/web/` 前端页面、交互、组件体系与样式体系的完整重构方案。本次重构的定位不是局部换肤、样式微调或在现有页面上继续补丁式优化，而是对旧 Web 前端 UI 进行完全删除式重构：旧页面结构、旧组件视觉语义、旧样式体系、旧布局方式和旧视觉风格全部视为废弃对象，最终目标是从代码中移除，而不是继续兼容或包裹。
 
 重构边界是：旧前端展示层必须彻底重写并删除，后端 API、业务流程、数据契约、认证/配额/订单/通知等核心业务语义默认保持兼容。允许在前端内部重组目录、替换页面 JSX 结构、重写通用组件 API、删除旧样式、删除旧页面布局、删除旧视觉语义和删除旧工具类；本计划不主动推动后端接口破坏性变更。
 
@@ -21,7 +21,7 @@
 
 ## 2. 当前前端结构概览
 
-当前前端位于 `apps/dsa-web/`，关键结构如下：
+当前前端位于 `frontend/web/`，关键结构如下：
 
 | 区域 | 现状 | 重构关注点 |
 | --- | --- | --- |
@@ -1211,22 +1211,22 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 
 | 文件 / 目录 | 变更类型 |
 | --- | --- |
-| `apps/dsa-web/src/index.css` | 改为样式入口，移除大量旧样式承载职责 |
-| `apps/dsa-web/src/App.css` | 保留最小根容器样式，或并入新 `base.css` 后移除入口引用 |
-| `apps/dsa-web/src/styles/` | 新增样式真源目录 |
-| `apps/dsa-web/src/components/layout/` | 重写 Shell、Sidebar、页面布局骨架 |
-| `apps/dsa-web/src/components/common/` | 重写通用组件体系 |
-| `apps/dsa-web/src/components/history/` | 配合首页重写历史列表 |
-| `apps/dsa-web/src/components/tasks/` | 配合首页重写任务面板 |
-| `apps/dsa-web/src/components/report/` | 重写报告摘要和 Markdown 阅读体验 |
-| `apps/dsa-web/src/components/dashboard/` | 清理或替换旧 dashboard 组件语义 |
-| `apps/dsa-web/src/pages/HomePage.tsx` | 完整重写首页 UI 结构 |
-| `apps/dsa-web/src/pages/ChatPage.tsx` | 完整重写问股页 UI 结构 |
-| `apps/dsa-web/src/pages/PortfolioPage.tsx` | 完整重写持仓页 UI 结构 |
-| `apps/dsa-web/src/pages/BacktestPage.tsx` | 重写为数据工作台风格 |
-| `apps/dsa-web/src/pages/*` | 其他页面按新排版、新布局和新组件体系完整重写 |
-| `apps/dsa-web/src/pages/__tests__/` | 按新页面结构更新测试断言 |
-| `apps/dsa-web/e2e/` | 如有相关覆盖，按新用户路径更新 |
+| `frontend/web/src/index.css` | 改为样式入口，移除大量旧样式承载职责 |
+| `frontend/web/src/App.css` | 保留最小根容器样式，或并入新 `base.css` 后移除入口引用 |
+| `frontend/web/src/styles/` | 新增样式真源目录 |
+| `frontend/web/src/components/layout/` | 重写 Shell、Sidebar、页面布局骨架 |
+| `frontend/web/src/components/common/` | 重写通用组件体系 |
+| `frontend/web/src/components/history/` | 配合首页重写历史列表 |
+| `frontend/web/src/components/tasks/` | 配合首页重写任务面板 |
+| `frontend/web/src/components/report/` | 重写报告摘要和 Markdown 阅读体验 |
+| `frontend/web/src/components/dashboard/` | 清理或替换旧 dashboard 组件语义 |
+| `frontend/web/src/pages/HomePage.tsx` | 完整重写首页 UI 结构 |
+| `frontend/web/src/pages/ChatPage.tsx` | 完整重写问股页 UI 结构 |
+| `frontend/web/src/pages/PortfolioPage.tsx` | 完整重写持仓页 UI 结构 |
+| `frontend/web/src/pages/BacktestPage.tsx` | 重写为数据工作台风格 |
+| `frontend/web/src/pages/*` | 其他页面按新排版、新布局和新组件体系完整重写 |
+| `frontend/web/src/pages/__tests__/` | 按新页面结构更新测试断言 |
+| `frontend/web/e2e/` | 如有相关覆盖，按新用户路径更新 |
 
 ### 11.1 组件迁移矩阵
 
@@ -1279,7 +1279,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 前端改动默认验证：
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm ci
 npm run lint
 npm run build
@@ -1288,7 +1288,7 @@ npm run build
 涉及核心页面时追加：
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm run test
 ```
 
@@ -1304,7 +1304,7 @@ npm run test
 可选补充验证：
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm run test:smoke
 ```
 
@@ -1421,7 +1421,7 @@ npm run test:smoke
 
 | 阶段 | 状态 | 本轮进展 | 后续事项 |
 | Phase 0：重构基线与页面盘点 | 已完成文档基线 | 已在本文档明确页面清单、旧 UI 删除原则、测试与手工检查清单 | 后续随页面迁移补充实际删除范围和风险登记 |
-| Phase 1：新设计系统与全局骨架 | 已完成（代码） | 新增 `apps/dsa-web/src/styles/`，拆分 `tokens.css`、`base.css`、`components.css`、`layouts.css`；`src/index.css` 已接入新样式入口；所有通用组件和全局骨架已迁移到新 `ui-*` 体系；旧页面专属 token 和样式均已清除；搜索 `terminal`/`neon`/`glass`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 无旧引用残留 | 深色模式与窄屏手工验收待进行 |
+| Phase 1：新设计系统与全局骨架 | 已完成（代码） | 新增 `frontend/web/src/styles/`，拆分 `tokens.css`、`base.css`、`components.css`、`layouts.css`；`src/index.css` 已接入新样式入口；所有通用组件和全局骨架已迁移到新 `ui-*` 体系；旧页面专属 token 和样式均已清除；搜索 `terminal`/`neon`/`glass`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 无旧引用残留 | 深色模式与窄屏手工验收待进行 |
 | Phase 2：首页完整重构 | 已完成（代码） | `HistoryList` 新增客户端搜索过滤框（按股票代码/名称），支持无匹配空态提示；首页空态引导、任务面板、报告工具条、批量删除等均已基于新设计系统；旧首页 token 和样式已清零 | 深色模式与窄屏手工验收待进行 |
 | Phase 3：问股页完整重构 | 已完成（代码） | 技能选择从 checkbox 改为 chip 按钮（`ui-chat-skill-chip`），支持 `aria-pressed`，限额提示独立展示；AI 消息改为全宽文档卡（`w-full`），用户消息保持短气泡；`components.css` 新增 `ui-chat-skill-chip` / `ui-chat-skill-chip-active` 样式；所有相关测试已同步更新并通过 | 深色模式与窄屏手工验收待进行 |
 | Phase 4：持仓与回测完整重构 | 已完成 | `BacktestPage` 已将 `btn-primary`/`btn-secondary` 替换为 `Button variant="primary"/"outline"`，提取 `BacktestConfigBar`、`BacktestMetricSidebar`、`BacktestResultsTable` 子组件，外层迁移到 `workspace-page-layout`，`index.css` 删除 `--backtest-*` 私有 token；`PortfolioPage` 外层迁移到 `WorkspacePageLayout`，提取 `PortfolioControlBar`、`PortfolioMetricGrid`、`PositionsAndConcentrationPanel`、`PortfolioRiskSummary`、`PortfolioManualEntryPanel`、`PortfolioImportAndLedger` 全部子组件，所有输入/选择控件已迁移到 `ui-input`，`index.css` 删除旧 portfolio-page 作用域样式；数据页面旧 terminal/glass/neon 引用清零 | 无（已完成） |
@@ -1436,8 +1436,8 @@ npm run test:smoke
 - `npx vitest run src/pages/__tests__/BacktestPage.test.tsx`：通过，1 个文件 8 条测试通过。
 - `npx vitest run src/pages/__tests__/HomePage.test.tsx`：通过，1 个文件 15 条测试通过；仍会输出既有 `StockIndexLoader` 测试环境 URL stderr 和 React `act(...)` warning。
 - `npx vitest run src/pages/__tests__/ChatPage.test.tsx src/components/common/__tests__/Button.test.tsx`：通过，2 个文件 28 条测试通过；仍会输出既有 React `act(...)` warning。
-- `npm --prefix "d:\workplace\daily_stock_analysis\apps\dsa-web" run lint`：通过；仍有既有 `PaymentDialog.tsx` unused eslint-disable warning，未在本轮删除代码注释。
-- `npm --prefix "d:\workplace\daily_stock_analysis\apps\dsa-web" run build`：通过；仍有 Vite 大 chunk 体积提示，属于既有构建优化项。
+- `npm --prefix "d:\workplace\daily_stock_analysis\frontend\web" run lint`：通过；仍有既有 `PaymentDialog.tsx` unused eslint-disable warning，未在本轮删除代码注释。
+- `npm --prefix "d:\workplace\daily_stock_analysis\frontend\web" run build`：通过；仍有 Vite 大 chunk 体积提示，属于既有构建优化项。
 - 搜索 `input-surface` / `input-focus-glow` / `input-appearance-login`：旧兼容类无剩余引用；仅保留 `login-input-surface` token 供 `ui-input-login` 使用。
 - 搜索 `home-panel-card` / `home-subpanel` / `home-surface-button` / `home-spinner` / `home-markdown-prose`：首页、历史、任务、报告、dashboard 状态组件的 TS/TSX 直接旧类引用已清理；`ChatPage` 外层抽屉 / glass / `action-primary` 引用已清理。
 - 搜索 `index.css` 中 `chat-*` / `quick-question-btn` / `skill-desc-tooltip` / `session-item` / `delete-btn`：旧 Chat 页面样式和 token 已清理；`ChatPage.tsx` 仅保留 `ui-chat-*` 与正常布局/test id 命名。

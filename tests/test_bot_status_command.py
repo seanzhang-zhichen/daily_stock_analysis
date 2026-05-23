@@ -74,7 +74,7 @@ def test_status_command_does_not_treat_managed_model_name_as_ready():
     assert "AI 服务未配置" in text
 
 
-def test_status_command_keeps_channel_mode_priority_over_legacy_keys():
+def test_status_command_keeps_channel_mode_priority_over_direct_keys():
     config = Config(
         stock_list=["600519"],
         litellm_model="openai/gpt-4o-mini",
@@ -94,7 +94,7 @@ def test_status_command_keeps_channel_mode_priority_over_legacy_keys():
                 },
             }
         ],
-        openai_api_keys=["openai-legacy-key"],
+        openai_api_keys=["openai-direct-key"],
     )
     command = StatusCommand()
 
@@ -168,7 +168,7 @@ def test_status_command_does_not_treat_invalid_yaml_path_as_active():
     config = Config(
         stock_list=["600519"],
         litellm_config_path="missing.yaml",
-        llm_models_source="legacy_env",
+        llm_models_source="",
         llm_model_list=[],
     )
     command = StatusCommand()
@@ -197,10 +197,7 @@ def test_status_command_treats_direct_env_provider_model_as_ready():
     assert "系统就绪" in text
 
 
-def test_status_command_supports_legacy_key_compatibility_without_explicit_litellm_model(monkeypatch, tmp_path):
-    # When only legacy OpenAI-compatible keys are configured and LITELLM_MODEL is unset,
-    # runtime still infers a usable model path. /status should reflect this compatibility
-    # path instead of reporting hard failure.
+def test_status_command_requires_explicit_litellm_model_for_direct_keys(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("", encoding="utf-8")
     monkeypatch.setenv("ENV_FILE", str(env_file))
@@ -219,7 +216,7 @@ def test_status_command_supports_legacy_key_compatibility_without_explicit_litel
     ):
         monkeypatch.delenv(key, raising=False)
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-legacy-test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-direct-test-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
 
     Config.reset_instance()
@@ -230,8 +227,7 @@ def test_status_command_supports_legacy_key_compatibility_without_explicit_litel
         status = command._collect_status(config)
         text = command._format_status(status, "telegram")
 
-        assert status["ai_available"] is True
-        assert "主模型: openai/gpt-4o-mini" in text
-        assert "AI 服务未配置" not in text
+        assert status["ai_available"] is False
+        assert "AI 服务未配置" in text
     finally:
         Config.reset_instance()

@@ -8,19 +8,22 @@ This document contains the complete configuration guide for the AI Stock Analysi
 
 ```
 daily_stock_analysis/
-├── main.py              # Main entry point
-├── src/                 # Core business logic
-│   ├── analyzer.py      # AI analyzer
-│   ├── config.py        # Configuration management
-│   ├── notification.py  # Message push notifications
-│   └── ...
-├── data_provider/       # Multi-source data adapters
-├── bot/                 # Bot interaction module
-├── api/                 # FastAPI backend service
-├── apps/dsa-web/        # React frontend
-├── docker/              # Docker configuration
-├── docs/                # Project documentation
-└── .github/workflows/   # GitHub Actions
+??? main.py              # Compatibility main entry point
+??? server.py            # Compatibility FastAPI entry point
+??? backend/             # Real backend code
+?   ??? main.py          # Analysis task entry point
+?   ??? api/             # FastAPI backend service
+?   ??? src/             # Core business logic
+?   ??? data_provider/   # Multi-source data adapters
+?   ??? bot/             # Bot interaction module
+?   ??? alembic/         # Database migrations
+?   ??? strategies/      # Built-in strategy YAML files
+?   ??? templates/       # Report templates
+??? frontend/web/        # React frontend
+??? frontend/desktop/    # Electron desktop app
+??? docker/              # Docker configuration
+??? docs/                # Project documentation
+??? .github/workflows/   # GitHub Actions
 ```
 
 ## Table of Contents
@@ -117,7 +120,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `REPORT_TYPE` | Report type: `simple` (concise), `full` (complete), `brief` (3-5 sentences), Docker recommended: `full` | Optional |
 | `REPORT_LANGUAGE` | Report output language: `zh` (default Chinese) / `en` (English); also updates prompt instructions, templates, notification fallbacks, and fixed copy in the Web report view. The bundled `daily_analysis.yml` already maps this variable, so setting it in Actions Secrets/Variables works out of the box | Optional |
 | `REPORT_SHOW_LLM_MODEL` | Whether notification report footers show the LLM model used for analysis. Defaults to `true`; set to `false` to hide runtime model metadata. This switch only affects presentation and does not change provider/model/Base URL, LiteLLM routing, or runtime model save/migration/cleanup behavior. | Optional |
-| `REPORT_TEMPLATES_DIR` | Jinja2 template directory (relative to project root, default `templates`) | Optional |
+| `REPORT_TEMPLATES_DIR` | Jinja2 template directory (relative to project root, default `backend/templates`) | Optional |
 | `REPORT_RENDERER_ENABLED` | Enable Jinja2 template rendering (default `false`, zero regression) | Optional |
 | `REPORT_INTEGRITY_ENABLED` | Enable report integrity checks, retry or placeholder on missing fields (default `true`) | Optional |
 | `REPORT_INTEGRITY_RETRY` | Integrity retry count (default `1`, `0` = placeholder only) | Optional |
@@ -357,7 +360,7 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 
 ## Docker Deployment
 
-The image uses prebuilt frontend assets under `/app/static` at runtime, so the running `server` container does not require the `apps/dsa-web` source tree or runtime `npm`. If WebUI cannot be opened after Docker deployment, first verify that `/app/static/index.html` exists inside the container.
+The image uses prebuilt frontend assets under `/app/static` at runtime, so the running `server` container does not require the `frontend/web` source tree or runtime `npm`. If WebUI cannot be opened after Docker deployment, first verify that `/app/static/index.html` exists inside the container.
 
 Official image registries:
 
@@ -403,7 +406,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   zhulinsen/daily_stock_analysis:latest \
-  python main.py --serve-only --host 0.0.0.0 --port 8000
+  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 
 # Scheduled-task mode
 docker run -d \
@@ -518,7 +521,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   stock-analysis \
-  python main.py --serve-only --host 0.0.0.0 --port 8000
+  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -540,15 +543,15 @@ pip install -r requirements.txt
 ### Command Line Arguments
 
 ```bash
-python main.py                        # Full analysis (stocks + market review)
-python main.py --market-review        # Market review only
-python main.py --no-market-review     # Stock analysis only
-python main.py --stocks 600519,300750 # Specify stocks
-python main.py --dry-run              # Fetch data only, no AI analysis
-python main.py --no-notify            # Don't send notifications
-python main.py --schedule             # Scheduled task mode
-python main.py --debug                # Debug mode (verbose logging)
-python main.py --workers 5            # Specify concurrency
+python backend/main.py                        # Full analysis (stocks + market review)
+python backend/main.py --market-review        # Market review only
+python backend/main.py --no-market-review     # Stock analysis only
+python backend/main.py --stocks 600519,300750 # Specify stocks
+python backend/main.py --dry-run              # Fetch data only, no AI analysis
+python backend/main.py --no-notify            # Don't send notifications
+python backend/main.py --schedule             # Scheduled task mode
+python backend/main.py --debug                # Debug mode (verbose logging)
+python backend/main.py --workers 5            # Specify concurrency
 ```
 
 ---
@@ -579,16 +582,16 @@ Common time reference:
 
 ```bash
 # Start scheduled mode (default 18:00 execution)
-python main.py --schedule
+python backend/main.py --schedule
 
 # Or use crontab
 crontab -e
-# Add: 0 18 * * 1-5 cd /path/to/project && python main.py
+# Add: 0 18 * * 1-5 cd /path/to/project && python backend/main.py
 ```
 
 > Note: Scheduled mode reloads the saved `STOCK_LIST` before each run. If you also pass `--stocks`, it will not pin future scheduled executions to the startup snapshot; use a normal one-off run when you want to analyze a temporary stock list.
 >
-> When the built-in scheduler is started via `python main.py --schedule`, `python main.py --serve --schedule`, or an equivalent local mode, saving a new `SCHEDULE_TIME` from the WebUI will rebind the daily job on the next scheduler poll without restarting the process. The previous trigger time is removed instead of being kept alongside the new one.
+> When the built-in scheduler is started via `python backend/main.py --schedule`, `python backend/main.py --serve --schedule`, or an equivalent local mode, saving a new `SCHEDULE_TIME` from the WebUI will rebind the daily job on the next scheduler poll without restarting the process. The previous trigger time is removed instead of being kept alongside the new one.
 
 ---
 
@@ -911,7 +914,7 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-sonnet-4-6,openai/gpt-5.4-mini
 ### Debug Mode
 
 ```bash
-python main.py --debug
+python backend/main.py --debug
 ```
 
 Log file locations:
@@ -1004,8 +1007,8 @@ FastAPI provides RESTful API service for configuration management and triggering
 
 | Command | Description |
 |------|------|
-| `python main.py --serve` | Start API service + run full analysis once |
-| `python main.py --serve-only` | Start API service only, manually trigger analysis |
+| `python backend/main.py --serve` | Start API service + run full analysis once |
+| `python backend/main.py --serve-only` | Start API service only, manually trigger analysis |
 
 ### Features
 
@@ -1040,8 +1043,8 @@ FastAPI provides RESTful API service for configuration management and triggering
 > Note: `POST /api/v1/analysis/analyze` supports only one stock when `async_mode=false`; batch `stock_codes` requires `async_mode=true`. The async `202` response returns a single `task_id` for one stock, or an `accepted` / `duplicates` summary for batch requests.
 > Note: `POST /api/v1/analysis/analyze` accepts `skills` as an array of strategy IDs; if omitted, server defaults are used. The legacy field `strategies` is still accepted for backward compatibility.
 > Note: The Web Home page exposes an explicit strategy selector. When users do not pick one, `skills` is not sent and legacy behavior is preserved; when selected, it is passed through to this endpoint and persisted in task status/history snapshots.
-> Note: `POST /api/v1/analysis/market-review` follows the same runtime configuration path as CLI/Bot market review (`GeminiAnalyzer(config=...)`, search setup, and prompt/rendering pipeline). The provider compatibility path prioritizes `litellm_model` and `llm_model_list`, then falls back to existing legacy keys (`GEMINI_*`, `OPENAI_*`, `ANTHROPIC_*`, `DEEPSEEK_*`) when those are not set; provider names, Base URL, and LiteLLM routing semantics are otherwise unchanged.
-> Audit note: priority and fallback are defined by `Config._load_from_env()` in `src/config.py` (`LITELLM_CONFIG` > `LLM_CHANNELS` > legacy). Regression coverage is in `tests/test_llm_channel_config.py` (configuration source parsing) and `tests/test_market_review_runtime.py` (shared runtime assembly). The endpoint lock is process/host-level only; multi-instance deployments still need external distributed idempotency controls.
+> Note: `POST /api/v1/analysis/market-review` follows the same runtime configuration path as CLI/Bot market review (`GeminiAnalyzer(config=...)`, search setup, and prompt/rendering pipeline). The provider path requires an explicit `litellm_model` or `llm_model_list`; provider names, Base URL, and LiteLLM routing semantics are otherwise unchanged.
+> Audit note: priority is defined by `Config._load_from_env()` in `src/config.py` (`LITELLM_CONFIG` > `LLM_CHANNELS` > explicit `LITELLM_MODEL` + provider key). Regression coverage is in `tests/test_llm_channel_config.py` (configuration source parsing) and `tests/test_market_review_runtime.py` (shared runtime assembly). The endpoint lock is process/host-level only; multi-instance deployments still need external distributed idempotency controls.
 > Note: Once `/api/v1/analysis/market-review` completes, the report is persisted with `report_type=market_review`; open `/api/v1/history` and `/api/v1/history/{record_id}` (or Markdown history endpoints) to view it directly without re-running analysis.
 > Note: when `/api/v1/analysis/market-review` returns a `task_id`, the WebUI polls `GET /api/v1/analysis/status/{task_id}`. The UI renders clear `pending/processing` progress, shows completion feedback when status becomes `completed`, and surfaces `error` content on `failed`.
 
@@ -1052,7 +1055,7 @@ FastAPI provides RESTful API service for configuration management and triggering
 >   - `tests/test_llm_channel_config.py` (configuration priority and provider/base URL mapping)
 >   - `tests/test_market_review_runtime.py` (`build_market_review_runtime` shared assembly path)
 >   - `tests/test_analysis_api_contract.py` (`/api/v1/analysis/market-review` contract and task status flow)
-> - Rollback path: if regression appears, restore historical `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, and legacy `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` / `DEEPSEEK_*`, or import a desktop backup through `POST /api/v1/system/config/import` and restart; at runtime you can also clear `LITELLM_CONFIG` / `LLM_CHANNELS` to force legacy fallback.
+> - Rollback path: if regression appears, restore historical `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, and legacy `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` / `DEEPSEEK_*`, or import a system config backup through `POST /api/v1/system/config/import` and restart; at runtime you can also clear `LITELLM_CONFIG` / `LLM_CHANNELS` to force legacy fallback.
 
 > Progress-stream note: `GET /api/v1/analysis/tasks/stream` now emits `task_progress` in addition to `task_created / task_started / task_completed / task_failed`. The regular analysis path updates `progress` and `message` across quote preparation, news retrieval, context assembly, LLM generation, and report persistence. Streaming chunks are accumulated only on the server side; history is persisted only after the final JSON parses successfully. If streaming is unavailable before the first chunk, the system falls back to the previous non-stream request. If a stream fails after partial output has already arrived, the system first retries non-stream for the same model, then continues through existing fallback models in the original order (primary + fallback list).
 > If a progress callback fails, the analysis flow continues, and the exception is now logged at warning level to help troubleshoot SSE delivery gaps.
@@ -1105,7 +1108,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results?page=1&limit=20"
 Modify default port or allow LAN access:
 
 ```bash
-python main.py --serve-only --host 0.0.0.0 --port 8888
+python backend/main.py --serve-only --host 0.0.0.0 --port 8888
 ```
 
 ### Supported Stock Code Formats

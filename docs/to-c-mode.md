@@ -27,7 +27,7 @@
 | `USER_FREE_DAILY_AGENT` | `5` | free 档每日 Agent 次数默认值。 |
 | `USER_FREE_MAX_STOCKS` | `3` | free 档自选股上限默认值。 |
 | `USER_EMAIL_BACKEND` | `log` | `log`（默认，仅写日志）/ `smtp`（使用 `EMAIL_SENDER` / `EMAIL_PASSWORD` / `SMTP_HOST` / `SMTP_PORT`）。 |
-| `USER_PUBLIC_BASE_URL` |  | 邮件 / Webhook 内引用本服务的公开 base URL（不含末尾 `/`），用于拼接一键退订链接。未配置时按 `PUBLIC_BASE_URL` → `APP_BASE_URL` → `http://localhost:8000` 兜底。 |
+| `USER_PUBLIC_BASE_URL` |  | Public API base URL for unsubscribe links, without trailing `/`. Defaults to `http://localhost:8000` when unset. |
 | `UNSUBSCRIBE_SIGNING_KEY` |  | 一键退订 token 的 HMAC 签名密钥；缺失时按 `ADMIN_API_SECRET` 兜底，生产环境必须显式配置以保证 token 不可伪造。 |
 | `USER_REGISTER_DISPOSABLE_BLOCK` | `true` | 是否拦截一次性 / 临时邮箱注册（Phase 6 §5.8.1）；命中后注册接口返回 `invalid_email` 且写一条 `auth.register.blocked` 审计日志。 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS` |  | 逗号分隔的额外 disposable 邮箱域名，与内置黑名单合并生效（大小写不敏感）。 |

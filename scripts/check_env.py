@@ -40,6 +40,7 @@ from typing import Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+import backend  # noqa: E402,F401  # trigger backend/__init__.py sys.path injection
 
 # 配置日志
 logging.basicConfig(

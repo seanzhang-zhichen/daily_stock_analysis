@@ -25,6 +25,9 @@ class TokenRoundTripTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop("UNSUBSCRIBE_SIGNING_KEY", None)
         os.environ.pop("USER_PUBLIC_BASE_URL", None)
+        os.environ.pop("USER_FRONTEND_BASE_URL", None)
+        os.environ.pop("PUBLIC_BASE_URL", None)
+        os.environ.pop("APP_BASE_URL", None)
 
     def test_token_round_trip_daily(self) -> None:
         token = us.build_unsubscribe_token(user_id=42, action=us.ACTION_DAILY)
@@ -48,11 +51,9 @@ class TokenRoundTripTests(unittest.TestCase):
 
     def test_tampered_token_rejected(self) -> None:
         token = us.build_unsubscribe_token(user_id=42, action=us.ACTION_DAILY)
-        # 篡改最后一个字符 (签名段)
-        if token.endswith("A"):
-            bad = token[:-1] + "B"
-        else:
-            bad = token[:-1] + "A"
+        payload_b64, sig_b64 = token.split(".", 1)
+        replacement = "B" if sig_b64[0] == "A" else "A"
+        bad = f"{payload_b64}.{replacement}{sig_b64[1:]}"
         self.assertIsNone(us.verify_unsubscribe_token(bad))
 
     def test_wrong_signing_key_rejected(self) -> None:
@@ -82,6 +83,21 @@ class TokenRoundTripTests(unittest.TestCase):
         token = url.split("token=", 1)[1]
         claim = us.verify_unsubscribe_token(token)
         self.assertIsNotNone(claim)
+
+    def test_frontend_public_base_url_defaults_to_local_web_dev_server(self) -> None:
+        self.assertEqual(us.get_frontend_public_base_url(), "http://localhost:5200")
+
+    def test_frontend_public_base_url_prefers_frontend_env(self) -> None:
+        os.environ["USER_PUBLIC_BASE_URL"] = "https://api.example.com/"
+        os.environ["USER_FRONTEND_BASE_URL"] = "https://app.example.com/"
+        self.assertEqual(us.get_frontend_public_base_url(), "https://app.example.com")
+
+    def test_removed_public_base_url_aliases_are_ignored(self) -> None:
+        os.environ["PUBLIC_BASE_URL"] = "https://old-public.example.com/"
+        os.environ["APP_BASE_URL"] = "https://old-app.example.com/"
+
+        self.assertEqual(us.get_public_base_url(), "http://localhost:8000")
+        self.assertEqual(us.get_frontend_public_base_url(), "http://localhost:5200")
 
 
 if __name__ == "__main__":  # pragma: no cover

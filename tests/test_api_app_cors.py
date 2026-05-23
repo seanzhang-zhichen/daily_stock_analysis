@@ -34,6 +34,7 @@ class AppCorsConfigTestCase(unittest.TestCase):
 
         cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
         self.assertIn("http://localhost:5173", cors.kwargs["allow_origins"])
+        self.assertIn("http://localhost:5200", cors.kwargs["allow_origins"])
         self.assertTrue(cors.kwargs["allow_credentials"])
 
 

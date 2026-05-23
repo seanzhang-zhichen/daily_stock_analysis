@@ -47,8 +47,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: |
-            apps/dsa-web/package-lock.json
-            apps/dsa-desktop/package-lock.json
+            frontend/web/package-lock.json
+            frontend/desktop/package-lock.json
 
       - name: Sync desktop app version from release tag
         shell: bash
@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           export VERSION="${RELEASE_TAG#v}"
-          cd apps/dsa-desktop
+          cd frontend/desktop
           npm version "${VERSION}" --no-git-tag-version --allow-same-version
           node -e "const pkg = require('./package.json'); if (pkg.version !== process.env.VERSION) throw new Error('package version mismatch: ' + pkg.version); console.log('desktop version:', pkg.version);"
 
@@ -71,21 +71,21 @@ jobs:
         shell: pwsh
         run: |
           $expectedInstallerName = "daily-stock-analysis-windows-installer-$env:RELEASE_TAG.exe"
-          $installerPath = Join-Path 'apps/dsa-desktop/dist' $expectedInstallerName
+          $installerPath = Join-Path 'frontend/desktop/dist' $expectedInstallerName
           $installerExe = Get-Item -Path $installerPath -ErrorAction SilentlyContinue
           if (-not $installerExe) {
-            throw "No expected NSIS installer found under apps/dsa-desktop/dist: $expectedInstallerName"
+            throw "No expected NSIS installer found under frontend/desktop/dist: $expectedInstallerName"
           }
-          $winUnpacked = 'apps/dsa-desktop/dist/win-unpacked'
+          $winUnpacked = 'frontend/desktop/dist/win-unpacked'
           if (-not (Test-Path $winUnpacked)) {
-            throw 'No win-unpacked directory found under apps/dsa-desktop/dist.'
+            throw 'No win-unpacked directory found under frontend/desktop/dist.'
           }
           New-Item -ItemType Directory -Path 'dist/release-assets' -Force | Out-Null
           $exeTarget = "dist/release-assets/$expectedInstallerName"
           $zipTarget = "dist/release-assets/daily-stock-analysis-windows-noinstall-$env:RELEASE_TAG.zip"
           Copy-Item -Path $installerExe.FullName -Destination $exeTarget -Force
           Compress-Archive -Path $winUnpacked -DestinationPath $zipTarget -CompressionLevel Optimal -Force
-          Get-ChildItem -Path 'apps/dsa-desktop/dist' -File |
+          Get-ChildItem -Path 'frontend/desktop/dist' -File |
             Where-Object { $_.Name -eq 'latest.yml' -or $_.Name -like '*.blockmap' } |
             ForEach-Object {
               Copy-Item -Path $_.FullName -Destination "dist/release-assets/$($_.Name)" -Force
@@ -162,8 +162,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: |
-            apps/dsa-web/package-lock.json
-            apps/dsa-desktop/package-lock.json
+            frontend/web/package-lock.json
+            frontend/desktop/package-lock.json
 
       - name: Sync desktop app version from release tag
         shell: bash
@@ -171,7 +171,7 @@ jobs:
           set -euo pipefail
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           export VERSION="${RELEASE_TAG#v}"
-          cd apps/dsa-desktop
+          cd frontend/desktop
           npm version "${VERSION}" --no-git-tag-version --allow-same-version
           node -e "const pkg = require('./package.json'); if (pkg.version !== process.env.VERSION) throw new Error('package version mismatch: ' + pkg.version); console.log('desktop version:', pkg.version);"
 
@@ -179,7 +179,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/Library/Caches/electron
-          key: electron-macos-${{ matrix.arch }}-${{ hashFiles('apps/dsa-desktop/package-lock.json') }}
+          key: electron-macos-${{ matrix.arch }}-${{ hashFiles('frontend/desktop/package-lock.json') }}
           restore-keys: |
             electron-macos-${{ matrix.arch }}-
 
@@ -195,9 +195,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg_file="$(ls -t apps/dsa-desktop/dist/*${{ matrix.arch }}*.dmg 2>/dev/null | head -n 1 || true)"
+          dmg_file="$(ls -t frontend/desktop/dist/*${{ matrix.arch }}*.dmg 2>/dev/null | head -n 1 || true)"
           if [[ -z "${dmg_file}" ]]; then
-            dmg_file="$(ls -t apps/dsa-desktop/dist/*.dmg | head -n 1)"
+            dmg_file="$(ls -t frontend/desktop/dist/*.dmg | head -n 1)"
           fi
           test -n "$dmg_file"
           mkdir -p dist/release-assets

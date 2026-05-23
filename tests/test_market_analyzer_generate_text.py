@@ -142,7 +142,7 @@ class TestAnalyzerGenerateText:
         assert usage == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
         assert progress_updates == [3, 6]
 
-    def test_call_litellm_legacy_path_uses_legacy_model_list_for_param_recovery(self):
+    def test_call_litellm_configured_model_list_for_param_recovery(self):
         with patch("src.analyzer.get_config") as mock_cfg:
             cfg = MagicMock()
             cfg.litellm_model = "openai/gpt-4o-mini"
@@ -150,25 +150,25 @@ class TestAnalyzerGenerateText:
             cfg.gemini_api_keys = []
             cfg.anthropic_api_keys = []
             cfg.deepseek_api_keys = []
-            cfg.openai_api_keys = ["sk-openai-legacy-a", "sk-openai-legacy-b"]
+            cfg.openai_api_keys = ["sk-openai-a", "sk-openai-b"]
             cfg.openai_base_url = None
             cfg.llm_model_list = [
                 {
-                    "model_name": "__legacy_openai__",
+                    "model_name": "openai/gpt-4o-mini",
                     "litellm_params": {
-                        "model": "__legacy_openai__",
-                        "api_key": "sk-openai-legacy-a",
-                        "api_base": "https://legacy-a.example/v1",
-                        "extra_headers": {"x-tenant": "legacy-a"},
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "sk-openai-a",
+                        "api_base": "https://openai-a.example/v1",
+                        "extra_headers": {"x-tenant": "openai-a"},
                     },
                 },
                 {
-                    "model_name": "__legacy_openai__",
+                    "model_name": "openai/gpt-4o-mini",
                     "litellm_params": {
-                        "model": "__legacy_openai__",
-                        "api_key": "sk-openai-legacy-b",
-                        "api_base": "https://legacy-b.example/v1",
-                        "extra_headers": {"x-tenant": "legacy-b"},
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "sk-openai-b",
+                        "api_base": "https://openai-b.example/v1",
+                        "extra_headers": {"x-tenant": "openai-b"},
                     },
                 },
             ]
@@ -207,8 +207,8 @@ class TestAnalyzerGenerateText:
         ]
 
     @patch("src.analyzer.Router")
-    def test_analyzer_legacy_router_recovery_cache_is_scoped_by_api_base(self, mock_router):
-        """Analyzer legacy recovery should not leak across same model different api_base."""
+    def test_analyzer_direct_router_recovery_cache_is_scoped_by_api_base(self, mock_router):
+        """Analyzer direct-key recovery should not leak across same model different api_base."""
         from src.analyzer import call_litellm_with_param_recovery as real_call
         from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
 

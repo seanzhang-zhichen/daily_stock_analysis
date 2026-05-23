@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 
 def _builtin_strategy_names() -> set[str]:
-    strategies_dir = Path(__file__).resolve().parent.parent / "strategies"
+    strategies_dir = Path(__file__).resolve().parent.parent / "backend" / "strategies"
     return {path.stem for path in strategies_dir.glob("*.yaml")}
 
 
@@ -99,43 +99,21 @@ class TestAgentConfig(unittest.TestCase):
         self.assertEqual(config.agent_litellm_model, 'openai/gpt-4o-mini')
         self.assertTrue(config.is_agent_available())
 
-    def test_agent_models_to_try_inherit_legacy_provider_models(self):
-        """Legacy provider key/model envs should still produce a non-empty Agent model try list."""
+    def test_agent_models_to_try_requires_explicit_primary_model_with_provider_keys(self):
         from src.config import Config, get_effective_agent_models_to_try
 
         test_cases = [
-            (
-                {
-                    "GEMINI_API_KEY": "gemini-test-key",
-                    "GEMINI_MODEL": "gemini-2.5-flash",
-                    "AGENT_LITELLM_MODEL": "",
-                },
-                ["gemini/gemini-2.5-flash", "gemini/gemini-3-flash-preview"],
-            ),
-            (
-                {
-                    "OPENAI_API_KEY": "sk-test-value",
-                    "OPENAI_MODEL": "gpt-4o-mini",
-                    "AGENT_LITELLM_MODEL": "",
-                },
-                ["openai/gpt-4o-mini"],
-            ),
-            (
-                {
-                    "ANTHROPIC_API_KEY": "anthropic-test-key",
-                    "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
-                    "AGENT_LITELLM_MODEL": "",
-                },
-                ["anthropic/claude-3-5-sonnet-20241022"],
-            ),
+            {"GEMINI_API_KEY": "gemini-test-key", "GEMINI_MODEL": "gemini-2.5-flash"},
+            {"OPENAI_API_KEY": "sk-test-value", "OPENAI_MODEL": "gpt-4o-mini"},
+            {"ANTHROPIC_API_KEY": "anthropic-test-key", "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022"},
         ]
 
         with patch("src.config.setup_env"), patch.object(Config, "_parse_litellm_yaml", return_value=[]):
-            for env, expected_models in test_cases:
-                with self.subTest(expected_models=expected_models), patch.dict(os.environ, env, clear=True):
+            for env in test_cases:
+                with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
                     Config._instance = None
                     config = Config._load_from_env()
-                    self.assertEqual(get_effective_agent_models_to_try(config), expected_models)
+                    self.assertEqual(get_effective_agent_models_to_try(config), [])
 
         Config._instance = None
 
@@ -1820,8 +1798,8 @@ class TestAgentConstructionChain(unittest.TestCase):
         self.assertNotIn("temperature", mock_completion.call_args_list[1].kwargs)
 
     @patch("src.agent.llm_adapter.Router")
-    def test_llm_adapter_legacy_router_recovery_cache_is_scoped_to_endpoint(self, mock_router):
-        """Legacy multi-key Router recoveries should not leak across base URLs."""
+    def test_llm_adapter_direct_router_recovery_cache_is_scoped_to_endpoint(self, mock_router):
+        """Direct-key multi-key Router recoveries should not leak across base URLs."""
         from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
 
         clear_litellm_generation_param_recovery_cache()

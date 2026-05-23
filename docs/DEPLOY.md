@@ -77,7 +77,7 @@ docker-compose -f ./docker/docker-compose.yml up -d
 docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer bash
 
 # 手动执行一次分析
-docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python main.py --no-notify
+docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python backend/main.py --no-notify
 ```
 
 ### 5. 数据持久化
@@ -127,19 +127,19 @@ vim .env  # 填入配置
 
 ```bash
 # 单次运行
-python main.py
+python backend/main.py
 
 # 定时任务模式（前台运行）
-python main.py --schedule
+python backend/main.py --schedule
 
 # 后台运行（使用 nohup）
-nohup python main.py --schedule > /dev/null 2>&1 &
+nohup python backend/main.py --schedule > /dev/null 2>&1 &
 
 # 启动 Web 管理界面（云服务器需先在 .env 中设置 WEBUI_HOST=0.0.0.0）
-python main.py --webui-only
+python backend/main.py --webui-only
 
 # 启动 Web 界面（启动时执行一次分析；需每日定时请加 --schedule 或设 SCHEDULE_ENABLED=true）
-python main.py --webui
+python backend/main.py --webui
 ```
 
 > 不知道怎么访问？→ [云服务器 Web 界面访问指南](deploy-webui-cloud.md)
@@ -167,7 +167,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/stock-analyzer
 Environment="PATH=/opt/stock-analyzer/venv/bin"
-ExecStart=/opt/stock-analyzer/venv/bin/python main.py --schedule
+ExecStart=/opt/stock-analyzer/venv/bin/python backend/main.py --schedule
 Restart=always
 RestartSec=30
 
@@ -338,12 +338,12 @@ deploy:
   ```bash
   # 安装 Node.js 18+（推荐 20+，如尚未安装）
   # 构建前端
-  cd apps/dsa-web
+  cd frontend/web
   npm ci
   npm run build
   cd ../..
   # 启动服务
-  python main.py --webui-only
+  python backend/main.py --webui-only
   ```
 
 **验证**：用浏览器开发者工具（F12 → Network）检查是否有 `/assets/index-*.js` 和 `/assets/index-*.css` 的 404 错误；如有，说明资源缺失，按上述步骤重新构建即可。

@@ -1,7 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+Push-Location $repoRoot
+
+try {
 Write-Host 'Building React UI (static assets)...'
-Push-Location 'apps\dsa-web'
+Push-Location (Join-Path $repoRoot 'frontend\web')
 if (!(Test-Path 'node_modules')) {
   npm install
 }
@@ -112,11 +116,12 @@ $pyInstallerArgs = @(
   '--noconfirm',
   '--noconsole',
   '--add-data', 'static;static',
+  '--paths', 'backend',
   '--collect-data', 'litellm',
   '--collect-data', 'tiktoken'
 )
 $pyInstallerArgs += $hiddenImportArgs
-$pyInstallerArgs += 'main.py'
+$pyInstallerArgs += 'backend/main.py'
 
 Write-Host "Running: $pythonBin $($pyInstallerArgs -join ' ')"
 & $pythonBin @pyInstallerArgs
@@ -145,3 +150,6 @@ if (Test-Path $packagedStatic) {
 }
 
 Write-Host 'Backend build completed.'
+} finally {
+  Pop-Location
+}

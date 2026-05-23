@@ -7,9 +7,9 @@
 ## 1. 硬规则
 
 - 遵循现有目录边界：
-  - 后端逻辑优先放在 `src/`、`data_provider/`、`api/`、`bot/`
-  - Web 前端改动在 `apps/dsa-web/`
-  - 桌面端改动在 `apps/dsa-desktop/`
+  - 后端真实代码优先放在 `backend/`；根目录 `src/`、`data_provider/`、`api/`、`bot/` 仅作为兼容 shim
+  - Web 前端改动在 `frontend/web/`
+  - 桌面端改动在 `frontend/desktop/`
   - 部署与流水线改动在 `scripts/`、`.github/workflows/`、`docker/`
 - 未经明确确认，不执行 `git commit`、`git tag`、`git push`。
 - commit message 使用英文，不添加 `Co-Authored-By`。
@@ -50,20 +50,20 @@ python scripts/check_ai_assets.py
 - 项目定位：股票智能分析系统，覆盖 A 股、港股、美股。
 - 主流程：抓取数据 -> 技术分析/新闻检索 -> LLM 分析 -> 生成报告 -> 通知推送。
 - 关键入口：
-  - `main.py`：分析任务主入口
-  - `server.py`：FastAPI 服务入口
-  - `apps/dsa-web/`：Web 前端
-  - `apps/dsa-desktop/`：Electron 桌面端
+  - `main.py`：兼容分析任务入口（真实实现在 `backend/main.py`）
+  - `server.py`：兼容 FastAPI 服务入口（真实实现在 `backend/server.py`）
+  - `frontend/web/`：Web 前端
+  - `frontend/desktop/`：Electron 桌面端
   - `.github/workflows/`：CI、发布、每日任务
 - 核心职责：
-  - `src/core/`：主流程编排
-  - `src/services/`：业务服务层
-  - `src/repositories/`：数据访问层
-  - `src/reports/`：报告生成
-  - `src/schemas/`：Schema / 数据结构
-  - `data_provider/`：多数据源适配与 fallback
-  - `api/`：FastAPI API
-  - `bot/`：机器人接入
+  - `backend/src/core/`：主流程编排
+  - `backend/src/services/`：业务服务层
+  - `backend/src/repositories/`：数据访问层
+  - `backend/src/reports/`：报告生成
+  - `backend/src/schemas/`：Schema / 数据结构
+  - `backend/data_provider/`：多数据源适配与 fallback
+  - `backend/api/`：FastAPI API
+  - `backend/bot/`：机器人接入
   - `scripts/`：本地脚本
   - `.github/scripts/`：GitHub 自动化脚本
   - `tests/`：pytest 测试
@@ -74,15 +74,15 @@ python scripts/check_ai_assets.py
 ### 运行应用
 
 ```bash
-python main.py
-python main.py --debug
-python main.py --dry-run
-python main.py --stocks 600519,hk00700,AAPL
-python main.py --market-review
-python main.py --schedule
-python main.py --serve
-python main.py --serve-only
-uvicorn server:app --reload --host 0.0.0.0 --port 8000
+python backend/main.py
+python backend/main.py --debug
+python backend/main.py --dry-run
+python backend/main.py --stocks 600519,hk00700,AAPL
+python backend/main.py --market-review
+python backend/main.py --schedule
+python backend/main.py --serve
+python backend/main.py --serve-only
+uvicorn backend.backend.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 后端验证
@@ -98,12 +98,12 @@ python -m py_compile <changed_python_files>
 ### Web / Desktop
 
 ```bash
-cd apps/dsa-web
+cd frontend/web
 npm ci
 npm run lint
 npm run build
 
-cd ../dsa-desktop
+cd ../desktop
 npm install
 npm run build
 ```
@@ -153,23 +153,23 @@ gh run view <run_id> --log-failed
 ### 按改动面执行
 
 - Python 后端改动：
-  - 适用范围：`main.py`、`src/`、`data_provider/`、`api/`、`bot/`、`tests/`
+  - 后端真实代码优先放在 `backend/`；根目录 `src/`、`data_provider/`、`api/`、`bot/` 仅作为兼容 shim
   - 优先执行：`./scripts/ci_gate.sh`
   - 最低要求：`python -m py_compile <changed_python_files>`
   - 若影响 API、任务编排、报告生成、通知发送、数据源 fallback、认证、调度，交付说明中要写明是否覆盖了对应路径。
 
 - Web 前端改动：
-  - 适用范围：`apps/dsa-web/`
-  - 默认执行：`cd apps/dsa-web && npm ci && npm run lint && npm run build`
+  - 适用范围：`frontend/web/`
+  - 默认执行：`cd frontend/web && npm ci && npm run lint && npm run build`
   - 若涉及 API 联调、路由、状态管理、Markdown/图表渲染或认证状态，交付说明中要明确说明联动面和未覆盖风险。
 
 - 桌面端改动：
-  - 适用范围：`apps/dsa-desktop/`、`scripts/run-desktop.ps1`、`scripts/build-desktop*.ps1`、`scripts/build-*.sh`、`docs/desktop-package.md`
+  - 适用范围：`frontend/desktop/`、`scripts/run-desktop.ps1`、`scripts/build-desktop*.ps1`、`scripts/build-*.sh`、`docs/desktop-package.md`
   - 默认执行：先构建 Web，再构建桌面端
   - 如受平台限制未能完整验证，需要明确说明是否验证了 Web 构建产物、Electron 构建以及 Release 工作流影响。
 
 - API / Schema / 认证联动改动：
-  - 适用范围：`api/**`、`src/schemas/**`、`src/services/**`、`apps/dsa-web/**`、`apps/dsa-desktop/**`
+  - 适用范围：`backend/api/**`、`backend/src/schemas/**`、`backend/src/services/**`、`frontend/web/**`、`frontend/desktop/**`
   - 至少覆盖对应后端验证 + 受影响客户端构建验证。
   - 若涉及登录、Cookie、会话、轮询状态、字段增删或枚举变化，必须明确写出兼容性影响。
 
@@ -197,7 +197,7 @@ gh run view <run_id> --log-failed
   - 新配置优先做到“不配置也可运行，配置后增强能力”，避免叠加开关和互斥模式。
 
 - 数据源与 fallback：
-  - 修改 `data_provider/` 时，要关注数据源优先级、失败降级、字段标准化、缓存与超时策略。
+  - 修改 `backend/data_provider/` 时，要关注数据源优先级、失败降级、字段标准化、缓存与超时策略。
   - 单一数据源失败不应拖垮整个分析流程，除非需求明确要求 fail-fast。
 
 - API / Web / Desktop 兼容：
@@ -207,7 +207,7 @@ gh run view <run_id> --log-failed
 - 报告 / Prompt / 通知：
   - 修改报告结构、Prompt、提取器、通知模板、机器人链路时，要检查上游输入与下游消费方是否仍兼容。
   - 单一通知渠道失败不应拖垮整个分析主流程，除非需求明确要求 fail-fast。
-  - 修改 `src/services/image_stock_extractor.py` 中 `EXTRACT_PROMPT` 时，要在 PR 描述中附完整最新 prompt。
+  - 修改 `backend/src/services/image_stock_extractor.py` 中 `EXTRACT_PROMPT` 时，要在 PR 描述中附完整最新 prompt。
 
 - 工作流 / 发布 / 打包：
   - 修改自动 tag、Release、Docker 发布、日常分析或桌面端打包流程时，要评估触发条件、产物路径、权限边界和回滚方式。
@@ -245,8 +245,8 @@ gh run view <run_id> --log-failed
 ### 工具与目录
 
 - 配置文件：`alembic.ini`（项目根目录）
-- 环境脚本：`alembic/env.py`（自动读取 `src.config.get_config().get_db_url()`）
-- 迁移脚本：`alembic/versions/`（按日期命名，格式 `YYYYMMDD_<rev>_<slug>.py`）
+- 环境脚本：`backend/alembic/env.py`（自动读取 `src.config.get_config().get_db_url()`）
+- 迁移脚本：`backend/alembic/versions/`（按日期命名，格式 `YYYYMMDD_<rev>_<slug>.py`）
 
 ### 常用命令
 
@@ -272,9 +272,9 @@ alembic stamp 8f3a2b1c9d0e
 
 ### 工作流程
 
-1. 修改 `src/storage/models/` 下的 ORM 模型
+1. 修改 `backend/src/storage/models/` 下的 ORM 模型
 2. 运行 `alembic revision --autogenerate -m "..."` 生成迁移文件
-3. **人工 review** 生成的 `alembic/versions/` 文件，确认 DDL 正确
+3. **人工 review** 生成的 `backend/alembic/versions/` 文件，确认 DDL 正确
 4. 提交迁移文件与模型变更到同一 PR
 5. 生产部署时 `alembic upgrade head`（或由 `DatabaseManager` 启动时自动执行）
 
