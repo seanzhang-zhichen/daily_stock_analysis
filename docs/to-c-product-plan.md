@@ -121,7 +121,7 @@
 > - `conversation_messages`：Web API 会话已按当前 `AppUser.id` 隔离；Bot / CLI 路径仍保留平台维度 session_id。
 > - 自选股：**已完成（Phase 3）**。`app_user_watchlists` 表 + `src/users/watchlist.py` 服务 + `/api/v1/account/watchlist` CRUD 已上线，含 `plan.max_stocks` 上限检查。
 > - 通知偏好：**已完成（Phase 3）**。`app_user_notification_prefs` 表 + `src/users/notification_prefs.py` 服务 + `/api/v1/account/notification-prefs` GET/PATCH 已上线；`daily_push_enabled` / `email_enabled` 仅 Pro 可开启，Webhook 需 `plan.can_webhook=true`。
-> - 语言、模型偏好等：仍依赖 `SystemConfig` 全局表，没有 per-user 视图。
+> - 语言等个人偏好仍依赖 `SystemConfig` 全局表；模型偏好已迁移为 `app_users.preferred_model`，并通过 `/api/v1/account/model-preference` 按当前用户读写。
 
 ### 5.4 商业化与配额
 
@@ -137,13 +137,13 @@
 - 支付：第一版**接入微信 Native + 支付宝 PC**，升级闭环为「下单 → 拉起扫码 → 通道回调 → 服务端开通 → 前端轮询确认」，详见 §11。
 - 兑换码 / 邀请码 / 后台手动开通继续保留，作为线下渠道（KOL 合作、内测用户）的开通方式。
 
-#### 5.4.1 模型路由统一入口（缺口）
+#### 5.4.1 模型路由统一入口（已接入，运营配置待完善）
 
 - `src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`（通过 `_resolve_user_model_route`），按以下优先级解析：
   1. 按 `plan.allowed_models` 过滤管理员配置的可用模型。
   2. 若用户设置了 `preferred_model` 且该模型仍在允许列表中，则优先使用该模型。
   3. 平台 Key 池失败时按 channel `fallback_chain` 重试；`user_id` 已从 API 层 → factory → adapter 全链路透传。
-- **剩余缺口**：`allowed_models` 具体配置尚未入库（`app_plans` 中该字段为空时降级为不限制）；平台 Key 池每日/每分钟限额监控与用量看板。
+- **剩余缺口**：`allowed_models` 具体套餐分档待运营配置（为空时表示不额外限制）；平台 Key 池每日/每分钟限额监控与用量看板。
 
 > 当前实现：`src/users/quota.py` 提供 `try_consume` / `refund` / `get_quota_snapshot`；`quota_guard.py` 把两者串成 `enforce_quota` / `refund_quota` / `quota_exceeded_payload`，已接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；未登录调用不再 bypass。`model_router.py` 提供 `resolve_model_route`，已在 `GeminiAnalyzer` 与 `LLMToolAdapter` 的实际 LLM 调用前生效；平台路由按 `plan.allowed_models` 过滤可用模型并优先采用 `app_users.preferred_model`。
 
@@ -300,7 +300,7 @@
 - `plans` / `subscriptions` / `usage_counters` 表 + 配额服务（已落地，详见 §5.4）。
 - 顶栏配额展示；超额引导（已落地）。
 - 兑换码用户侧兑换已落地；兑换码生成 / 邀请码后台未落地。
-- ✅ `src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`（Phase 4 完成）；平台 Key 配额池统一管理、`allowed_models` 具体配置入库仍为剩余缺口，详见 §5.4.1。
+- ✅ `src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`（Phase 4 完成）；平台 Key 配额池统一管理、`allowed_models` 具体套餐分档运营配置仍为剩余缺口，详见 §5.4.1。
 
 ### Phase 3：调度与通知 To C 化（必须）
 - ✅ 调度器按用户分桶；通知按用户偏好；邮件模板 HTML 化（`markdown2` 渲染 + 报告卡片 + 免责声明）。
@@ -312,7 +312,7 @@
 ### Phase 4：模型偏好 + Pro 能力（必须）
 - ✅ 用户模型偏好已落地；`model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`，平台路由按 `plan.allowed_models` 过滤可用模型并优先使用用户首选模型。
 - ✅ Pro 套餐字段 `can_webhook` / `allowed_models` / `max_stocks` 已就位；Webhook 通知（飞书/企业微信/Discord/TG/通用 JSON）和 per-user 自选股上限已在调度与 watchlist 服务中生效。
-- ⬜ `allowed_models` 具体配置尚未入库（该字段为空时降级为不限制）；`app_plans` 待运营配置后启用高低档模型分档。
+- ⬜ `allowed_models` 具体套餐分档待运营配置（该字段为空时表示不额外限制）；`app_plans` 配置后可启用高低档模型分档。
 
 ### Phase 5：商业化闭环 + 支付（**第一版必做**）
 - ✅ 数据模型 + 服务层：`app_orders` / `app_payment_events` / `app_refunds` / `app_invoices` 四张表 + `src/services/billing/order_service.py`（创建幂等、状态机、fulfill、退款、发票、回调落库）已完成；新增 `app_user_consents` / `app_reconciliation_diffs` / `app_reconciliation_reports` 三张表。

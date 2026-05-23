@@ -8,22 +8,21 @@
 
 ```
 daily_stock_analysis/
-??? main.py              # ???????
-??? server.py            # ?? FastAPI ????
-??? backend/             # ??????
-?   ??? main.py          # ???????
-?   ??? api/             # FastAPI ????
-?   ??? src/             # ??????
-?   ??? data_provider/   # ???????
-?   ??? bot/             # ???????
-?   ??? alembic/         # ?????
-?   ??? strategies/      # ???? YAML
-?   ??? templates/       # ????
-??? frontend/web/        # React ??
-??? frontend/desktop/    # Electron ???
-??? docker/              # Docker ??
-??? docs/                # ????
-??? .github/workflows/   # GitHub Actions
+├── backend/             # 后端真实代码与运行入口
+│   ├── main.py          # CLI / 调度 / API / WebUI 入口
+│   ├── api/             # FastAPI API
+│   ├── src/             # 核心服务、仓储、报告、配置
+│   ├── data_provider/   # 行情与新闻数据源适配
+│   ├── bot/             # 机器人接入
+│   └── alembic/         # 后端迁移辅助文件
+├── frontend/web/        # React Web 前端
+├── frontend/desktop/    # Electron 桌面端
+├── docker/              # Dockerfile 与 Compose
+├── docs/                # 项目文档
+├── tests/               # pytest 测试
+├── scripts/             # 本地脚本
+├── alembic.ini          # Alembic 配置
+└── .github/workflows/   # GitHub Actions
 ```
 
 ## 📑 目录
@@ -467,7 +466,7 @@ docker run -d \
 
 ### Docker Compose 配置
 
-`docker-compose.yml` 使用 YAML 锚点复用配置：
+Compose 配置建议使用 YAML 锚点复用公共配置，并通过容器内真实入口 `backend/main.py` 覆盖服务命令：
 
 ```yaml
 version: '3.8'
@@ -497,9 +496,9 @@ services:
   server:
     <<: *common
     container_name: stock-server
-    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
 ```
 
 ### `.env` 与数据目录映射说明

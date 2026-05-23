@@ -16,6 +16,17 @@ from unittest.mock import MagicMock, patch
 for _mod in ("litellm", "google.generativeai", "google.genai", "anthropic"):
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+if "newspaper" not in sys.modules:
+    _newspaper_stub = MagicMock()
+    _newspaper_stub.Article = MagicMock()
+    _newspaper_stub.Config = MagicMock()
+    sys.modules["newspaper"] = _newspaper_stub
+if "json_repair" not in sys.modules:
+    _json_repair_stub = MagicMock()
+    _json_repair_stub.repair_json = lambda value: value
+    sys.modules["json_repair"] = _json_repair_stub
+
+import src.analyzer
 
 import pytest
 from unittest.mock import PropertyMock
@@ -198,12 +209,12 @@ class TestAnalyzerGenerateText:
         assert len(passed_model_list) == 2
         assert all(item["litellm_params"].get("model") == "openai/gpt-4o-mini" for item in passed_model_list)
         assert [item["litellm_params"]["api_base"] for item in passed_model_list] == [
-            "https://legacy-a.example/v1",
-            "https://legacy-b.example/v1",
+            "https://openai-a.example/v1",
+            "https://openai-b.example/v1",
         ]
         assert [item["litellm_params"]["extra_headers"] for item in passed_model_list] == [
-            {"x-tenant": "legacy-a"},
-            {"x-tenant": "legacy-b"},
+            {"x-tenant": "openai-a"},
+            {"x-tenant": "openai-b"},
         ]
 
     @patch("src.analyzer.Router")
@@ -1326,7 +1337,7 @@ Sector text.
         import ast
         import pathlib
 
-        src = pathlib.Path("src/market_analyzer.py").read_text()
+        src = (pathlib.Path(__file__).resolve().parents[1] / "backend/src/market_analyzer.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
         forbidden = {
             "_model", "_router", "_use_openai", "_use_anthropic",  # historical

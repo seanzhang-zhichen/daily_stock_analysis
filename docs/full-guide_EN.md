@@ -8,22 +8,21 @@ This document contains the complete configuration guide for the AI Stock Analysi
 
 ```
 daily_stock_analysis/
-??? main.py              # Compatibility main entry point
-??? server.py            # Compatibility FastAPI entry point
-??? backend/             # Real backend code
-?   ??? main.py          # Analysis task entry point
-?   ??? api/             # FastAPI backend service
-?   ??? src/             # Core business logic
-?   ??? data_provider/   # Multi-source data adapters
-?   ??? bot/             # Bot interaction module
-?   ??? alembic/         # Database migrations
-?   ??? strategies/      # Built-in strategy YAML files
-?   ??? templates/       # Report templates
-??? frontend/web/        # React frontend
-??? frontend/desktop/    # Electron desktop app
-??? docker/              # Docker configuration
-??? docs/                # Project documentation
-??? .github/workflows/   # GitHub Actions
+├── backend/             # Real backend code and runtime entry points
+│   ├── main.py          # CLI / scheduler / API / WebUI entry point
+│   ├── api/             # FastAPI API
+│   ├── src/             # Core services, repositories, reports, config
+│   ├── data_provider/   # Market/news data source adapters
+│   ├── bot/             # Bot integrations
+│   └── alembic/         # Backend migration helper files
+├── frontend/web/        # React Web frontend
+├── frontend/desktop/    # Electron desktop app
+├── docker/              # Dockerfile and Compose
+├── docs/                # Project documentation
+├── tests/               # pytest tests
+├── scripts/             # Local scripts
+├── alembic.ini          # Alembic configuration
+└── .github/workflows/   # GitHub Actions
 ```
 
 ## Table of Contents
@@ -431,7 +430,7 @@ For pinned deployments or easier rollback, replace `latest` with a concrete vers
 
 ### Docker Compose Configuration
 
-`docker-compose.yml` uses YAML anchors to reuse configuration:
+Compose configuration should use YAML anchors for shared settings and override service commands with the real in-container entry point `backend/main.py`:
 
 ```yaml
 version: '3.8'
@@ -462,7 +461,7 @@ services:
   server:
     <<: *common
     container_name: stock-server
-    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+    command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"
 ```

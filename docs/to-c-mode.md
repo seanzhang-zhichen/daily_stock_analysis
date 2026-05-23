@@ -28,6 +28,7 @@
 | `USER_FREE_MAX_STOCKS` | `3` | free 档自选股上限默认值。 |
 | `USER_EMAIL_BACKEND` | `log` | `log`（默认，仅写日志）/ `smtp`（使用 `EMAIL_SENDER` / `EMAIL_PASSWORD` / `SMTP_HOST` / `SMTP_PORT`）。 |
 | `USER_PUBLIC_BASE_URL` |  | Public API base URL for unsubscribe links, without trailing `/`. Defaults to `http://localhost:8000` when unset. |
+| `USER_FRONTEND_BASE_URL` |  | 前端公开访问地址，用于邮箱验证等前端页面链接；未配置时本地开发默认 `http://localhost:5200`。 |
 | `UNSUBSCRIBE_SIGNING_KEY` |  | 一键退订 token 的 HMAC 签名密钥；缺失时按 `ADMIN_API_SECRET` 兜底，生产环境必须显式配置以保证 token 不可伪造。 |
 | `USER_REGISTER_DISPOSABLE_BLOCK` | `true` | 是否拦截一次性 / 临时邮箱注册（Phase 6 §5.8.1）；命中后注册接口返回 `invalid_email` 且写一条 `auth.register.blocked` 审计日志。 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS` |  | 逗号分隔的额外 disposable 邮箱域名，与内置黑名单合并生效（大小写不敏感）。 |
@@ -79,6 +80,12 @@
 | POST | `/invoices` | 提交发票申请。 |
 | GET | `/invoices` | 查询当前用户发票列表。 |
 
+公开股票搜索：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/stocks/search` | 公开股票搜索 / 自动补全接口，已加入 `AuthMiddleware` 白名单并带 IP 限流；前端 `StockAutocomplete` 通过该接口查询，不再读取前端静态 `stocks.index.json`。 |
+
 ## 4. 数据表
 
 - `app_users`：用户主表（邮箱唯一、PBKDF2 哈希密码、`plan_code`、`status`）。
@@ -94,6 +101,7 @@
 - `app_audit_logs`：关键账号、支付、退订、管理员等操作审计日志。
 - `app_notices`：公告中心。
 - `app_growth_events`：增长埋点事件。
+- `stock_index` / `stock_index_meta`：股票搜索索引与元信息；由 Alembic migration 创建，运行时可从 `backend/src/data/resources/stocks.index.json` 初始化。
 
 ## 5. 中间件与依赖
 

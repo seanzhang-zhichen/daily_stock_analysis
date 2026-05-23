@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 登录/注册页邮箱输入框补充邮箱图标，与密码输入框的图标样式保持一致。
 - [修复] 修复本地前后端分离开发时注册验证邮件默认生成 `localhost:8000/verify-email` 导致邮箱验证页无法生效的问题：邮箱验证链接默认指向 Web 前端 `localhost:5200`，并新增 `USER_FRONTEND_BASE_URL` 支持自定义前端公开地址。
 - [文档] 更新本地前后端启动说明，明确 `--serve-only` 仅启动 FastAPI API、Web 前端开发服务器使用 `frontend/web` 的 `npm run dev` 运行在 5200 端口，生产/本地一体化 WebUI 使用 `--webui-only` 托管构建产物。
-- [chore] ?????????Web ????? `frontend/web/`??????? `frontend/desktop/`?????????? `backend/`?????? `main.py`/`server.py`/`webui.py` ? `src`/`api`/`data_provider`/`bot` ?????????? CI?Docker???????????????
+- [chore] 收敛项目目录边界：Web 前端位于 `frontend/web/`，桌面端位于 `frontend/desktop/`，后端真实代码位于 `backend/`；移除根目录 `main.py` / `server.py` / `webui.py` 与 `src` / `api` / `data_provider` / `bot` 兼容 shim，并同步更新 CI、Docker 与相关文档。
+- [文档] 同步 To C、产品规划与中英文完整指南文档：补充 `USER_FRONTEND_BASE_URL`、公开股票搜索接口与股票索引表说明，校正模型偏好和 `allowed_models` 运营配置状态，并修复完整指南中的项目结构与 Docker Compose 示例。
 - [文档] 基于当前前后端实现更新 `docs/to-c-user-stories.md`，校准注册登录、首次引导、分析任务隔离与配额返还、Agent 会话与模型路由、Pro 推送、支付 mock / 人工兜底、售后合规入口和管理员权限等用户故事验收口径。
 - [文档] 进一步校准 `docs/to-c-user-stories.md` 的实现边界：修正系统配置 API 路径，明确 Agent 仅生成请求扣配额、`chat/send` 当前走全局通知链路、模型分档依赖 `allowed_models` 运营配置，并补充发票反馈、管理员访问和后续故事池说明。
 - [改进] `python backend/main.py --serve-only` 与 `backend.server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
