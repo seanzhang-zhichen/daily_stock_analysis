@@ -44,7 +44,6 @@
 | `/backtest` | `BacktestPage` | 策略评估工作台 | P1 | 参数配置、执行回测、指标/图表/交易结果展示、执行错误反馈 |
 | `/settings` | `SettingsPage` | 标准内容页 | P1 | 后端配置读取/保存、连接检查、危险操作确认、管理员兼容入口 |
 | `/account` | `AccountPage` | 标准内容页 | P2 | 用户资料、权益、配额、续费提示、用户模式判断 |
-| `/account/api-keys` | `ApiKeysPage` | 标准内容页 | P2 | API Key 创建、展示、撤销和敏感信息展示规则 |
 | `/billing` | `BillingPage` | 标准内容页 | P2 | 订阅计划、支付入口、权益说明、配额引导 |
 | `/account/orders` | `OrdersPage` | 标准内容页 | P2 | 订单列表、状态、金额、支付/退款相关入口 |
 | `/account/invoices` | `InvoicesPage` | 标准内容页 | P2 | 发票申请、发票记录、开票信息展示 |
@@ -482,13 +481,13 @@ AnalysisGrid
 | --- | --- | --- |
 | 投研入口 | 首页、问股 | 最短路径进入“分析股票 / 追问 AI” |
 | 资产与策略 | 持仓、回测 | 围绕组合、风险、策略验证组织 |
-| 账户与商业化 | 我的、订阅、订单、发票、API Key | 统一账号、权益、消费记录和 BYOK 管理 |
+| 账户与商业化 | 我的、订阅、订单、发票、模型偏好 | 统一账号、权益、消费记录和模型偏好 |
 | 系统与支持 | 设置、公告、帮助、管理员后台 | 低频但必须可达 |
 
 导航规则：
 
 - 一级导航只保留高频入口，避免把所有子功能摊平。
-- 账号、订单、发票、API Key 不必全部放入主导航，可在“我的”页面内作为二级入口。
+- 账号、订单、发票和模型偏好不必全部放入主导航，可在“我的”页面内作为二级入口。
 - 帮助、主题切换、退出、配额放在侧边栏底部稳定区域。
 - 移动端导航只展示主入口，二级功能进入页面内 tab 或菜单。
 - 管理员入口仅在有权限时展示，且不挤占普通用户主流程。
@@ -806,7 +805,7 @@ AnalysisGrid
 
 ### 8.5 设置与账号类页面
 
-设置、账号、API Key、订阅、订单、发票、管理员页面应使用标准内容页布局：
+设置、账号、订阅、订单、发票、管理员页面应使用标准内容页布局：
 
 - `AppPage` 包裹。
 - `PageHeader` 统一标题与说明。
@@ -820,7 +819,7 @@ AnalysisGrid
 - 设置页按模型、数据源、通知、系统、安全/危险操作分组。
 - 保存类操作优先使用 section 内局部保存，避免用户不知道保存范围。
 - 连接测试、密钥校验和配置错误应在对应 section 内展示。
-- API Key、订单、发票、管理员页面应统一使用 `DataTable` 或同等表格原语。
+- 订单、发票、管理员页面应统一使用 `DataTable` 或同等表格原语。
 - 账号页聚合用户资料、权益、配额和续费入口，不把所有商业化子页面摊到主导航。
 - 管理员页面可以保持更高信息密度，但仍应使用新 token、表格和提示体系。
 
@@ -1153,7 +1152,6 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 - `SettingsPage`。
 - `AccountPage`。
 - `BillingPage`。
-- `ApiKeysPage`。
 - `OrdersPage`。
 - `InvoicesPage`。
 - `AdminPage`。
@@ -1172,7 +1170,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 | 分组 | 页面 | 重点 |
 | --- | --- | --- |
 | 设置与系统 | `SettingsPage`、`NoticesPage`、`NotFoundPage` | 标准内容页、错误与空态、公开访问 |
-| 账号与商业化 | `AccountPage`、`BillingPage`、`ApiKeysPage`、`OrdersPage`、`InvoicesPage` | 表格、权益、配额、支付/开票状态 |
+| 账号与商业化 | `AccountPage`、`BillingPage`、`OrdersPage`、`InvoicesPage` | 表格、权益、配额、支付/开票状态 |
 | 管理员 | `AdminPage` | 高密度数据页、权限态、危险操作 |
 | 认证与引导 | `LoginPage`、`UserAuthPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage` | 表单、redirect、协议、邮箱状态 |
 | 公开协议 | `legal/*` | 长文阅读、公开访问、移动端可读性 |
@@ -1427,7 +1425,7 @@ npm run test:smoke
 | Phase 2：首页完整重构 | 已完成（代码） | `HistoryList` 新增客户端搜索过滤框（按股票代码/名称），支持无匹配空态提示；首页空态引导、任务面板、报告工具条、批量删除等均已基于新设计系统；旧首页 token 和样式已清零 | 深色模式与窄屏手工验收待进行 |
 | Phase 3：问股页完整重构 | 已完成（代码） | 技能选择从 checkbox 改为 chip 按钮（`ui-chat-skill-chip`），支持 `aria-pressed`，限额提示独立展示；AI 消息改为全宽文档卡（`w-full`），用户消息保持短气泡；`components.css` 新增 `ui-chat-skill-chip` / `ui-chat-skill-chip-active` 样式；所有相关测试已同步更新并通过 | 深色模式与窄屏手工验收待进行 |
 | Phase 4：持仓与回测完整重构 | 已完成 | `BacktestPage` 已将 `btn-primary`/`btn-secondary` 替换为 `Button variant="primary"/"outline"`，提取 `BacktestConfigBar`、`BacktestMetricSidebar`、`BacktestResultsTable` 子组件，外层迁移到 `workspace-page-layout`，`index.css` 删除 `--backtest-*` 私有 token；`PortfolioPage` 外层迁移到 `WorkspacePageLayout`，提取 `PortfolioControlBar`、`PortfolioMetricGrid`、`PositionsAndConcentrationPanel`、`PortfolioRiskSummary`、`PortfolioManualEntryPanel`、`PortfolioImportAndLedger` 全部子组件，所有输入/选择控件已迁移到 `ui-input`，`index.css` 删除旧 portfolio-page 作用域样式；数据页面旧 terminal/glass/neon 引用清零 | 无（已完成） |
-| Phase 5：其余页面完整重写 | 已完成主体 | `NotFoundPage`、`AccountPage`、`OrdersPage`、`InvoicesPage`、`ApiKeysPage`、`BillingPage`、`NoticesPage`、`AdminPage`、`SettingsPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage`、`UserAuthPage` 全部迁移完成；legal 页面（`TermsPage`、`PrivacyPage`、`RiskDisclosurePage`、`LegalPageLayout`）已使用 token 体系，本轮新增 `prose-legal` CSS 类到 `components.css` 补全法律协议文章排版 | 深色模式与窄屏手工验收待进行 |
+| Phase 5：其余页面完整重写 | 已完成主体 | `NotFoundPage`、`AccountPage`、`OrdersPage`、`InvoicesPage`、`BillingPage`、`NoticesPage`、`AdminPage`、`SettingsPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage`、`UserAuthPage` 全部迁移完成；legal 页面（`TermsPage`、`PrivacyPage`、`RiskDisclosurePage`、`LegalPageLayout`）已使用 token 体系，本轮新增 `prose-legal` CSS 类到 `components.css` 补全法律协议文章排版 | 深色模式与窄屏手工验收待进行 |
 | Phase 6：旧体系删除与最终收口 | 已完成（代码） | 前序完成 `index.css` 大规模清理（`--home-*`/`--settings-*` token、`terminal-card`/`glass-card` 等旧视觉类全部删除）；本轮清理最后遗留：删除空节 `/* ============ Financial Terminal Tokens ============ */` 和空节 `/* ============ Responsive ============ */`，更新旧 `(from Classic)` / `(from Terminal PR)` / `(Base/Classic)` 历史标注为语义标题（`1. THEME VARIABLES`、`2. GLOBAL STYLES`、`3. UTILITIES & ANIMATIONS`）；搜索 `terminal`/`neon`/`glow`/`glass`/`cyber`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 均无旧引用残留 | 深色模式与窄屏手工验收（手工任务，不可自动化） |
 
 本轮验证：

@@ -112,10 +112,10 @@ cd ../..
 
 构建产物输出到项目根目录的 `static/` 文件夹。
 
-**步骤 2 - 启动后端（同时托管前端静态文件）**
+**步骤 2 - 启动 WebUI 服务（同时托管前端静态文件）**
 
 ```bash
-python main.py --serve-only
+python main.py --webui-only
 ```
 
 **访问地址**
@@ -160,6 +160,9 @@ alembic revision --autogenerate -m "describe_change"
 ```bash
 # 仅启动 API 服务（不执行分析）
 python main.py --serve-only
+
+# 仅启动 WebUI 服务（不执行分析，会按需准备前端静态资源）
+python main.py --webui-only
 
 # 启动 API 服务 + 立即执行一次分析
 python main.py --serve

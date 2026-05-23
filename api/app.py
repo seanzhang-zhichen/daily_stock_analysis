@@ -8,7 +8,7 @@ FastAPI 应用工厂模块
 1. 创建和配置 FastAPI 应用实例
 2. 配置 CORS 中间件
 3. 注册路由和异常处理器
-4. 托管前端静态文件（生产模式）
+4. 默认仅提供 API，按显式配置托管前端静态文件
 
 使用方式：
     from api.app import create_app
@@ -39,7 +39,7 @@ _INDEX_ASSET_REF_PATTERN = re.compile(
     r"""(?:src|href)\s*=\s*["'](/assets/[^"']+)["']""",
     re.IGNORECASE,
 )
-_SAFE_MISSING_ASSET_MEDIA_TYPES = frozenset({"text/css", "text/javascript"})
+_SAFE_MISSING_ASSET_MEDIA_TYPES = frozenset({"text/css", "text/javascript", "application/javascript"})
 _FRONTEND_INDEX_NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -123,7 +123,7 @@ def _missing_asset_media_type(asset_path: str) -> str:
 from api.v1 import api_v1_router
 from api.middlewares.auth import add_auth_middleware
 from api.middlewares.error_handler import add_error_handlers
-from api.v1.schemas.common import HealthResponse
+from api.v1.schemas.common import HealthResponse, RootResponse
 from src.services.system_config_service import SystemConfigService
 
 
@@ -173,12 +173,13 @@ async def app_lifespan(app: FastAPI):
             delattr(app.state, "system_config_service")
 
 
-def create_app(static_dir: Optional[Path] = None) -> FastAPI:
+def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) -> FastAPI:
     """
     创建并配置 FastAPI 应用实例
     
     Args:
         static_dir: 静态文件目录路径（可选，默认为项目根目录下的 static）
+        serve_frontend: 是否托管前端 SPA 静态文件
         
     Returns:
         配置完成的 FastAPI 应用实例
@@ -248,9 +249,17 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     # 根路由和健康检查
     # ============================================================
     
-    has_frontend = static_dir.exists() and (static_dir / "index.html").exists()
+    has_frontend = serve_frontend and static_dir.exists() and (static_dir / "index.html").exists()
     
-    if has_frontend:
+    if not serve_frontend:
+        @app.get("/", response_model=RootResponse, include_in_schema=False)
+        async def root():
+            """根路由 - API-only 模式返回服务状态"""
+            return RootResponse(
+                message="Daily Stock Analysis API is running",
+                version="1.0.0",
+            )
+    elif has_frontend:
         # Surface bundle inconsistencies as soon as the app starts so that
         # blank-page reports (#1064 / #1065 / #1050) can be diagnosed from
         # logs/desktop.log instead of via browser devtools.
@@ -283,7 +292,7 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 <p>Build the frontend first:</p>
 <p><code>cd apps/dsa-web &amp;&amp; npm install &amp;&amp; npm run build</code></p>
 <p>Or start with auto-build:</p>
-<p><code>python main.py --serve-only</code></p>
+<p><code>python main.py --webui-only</code></p>
 <div class="hint"><p>If you only need the API, visit <a href="/docs">/docs</a> for the interactive API documentation.</p></div>
 <p class="status">API Version 1.0.0 &bull; <a href="/api/health">/api/health</a></p>
 </div></body></html>"""
@@ -374,4 +383,4 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
 
 # 默认应用实例（供 uvicorn 直接使用）
-app = create_app()
+app = create_app(serve_frontend=False)

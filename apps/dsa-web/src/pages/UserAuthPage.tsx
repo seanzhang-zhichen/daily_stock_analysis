@@ -6,6 +6,7 @@ import { Button, Input } from '../components/common';
 import { SettingsAlert } from '../components/settings';
 import { isParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
+import { accountApi } from '../api/account';
 
 type Mode = 'login' | 'register';
 
@@ -33,6 +34,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   }, [mode]);
 
   const termsVersion = userMode?.termsVersion;
+  const registrationBlocked = Boolean(mode === 'register' && userMode && !userMode.registrationEnabled);
 
   const inviteRequired = useMemo(
     () => mode === 'register' && Boolean(userMode?.inviteRequired),
@@ -62,7 +64,18 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
       if (mode === 'login') {
         const res = await loginWithEmail(email.trim(), password);
         if (res.success) {
-          navigate(redirect, { replace: true });
+          let next = redirect;
+          if (!rawRedirect) {
+            try {
+              const watchlist = await accountApi.getWatchlist();
+              if (watchlist.count === 0) {
+                next = '/onboarding';
+              }
+            } catch {
+              next = redirect;
+            }
+          }
+          navigate(next, { replace: true });
         } else {
           setError(res.error ?? '登录失败');
         }
@@ -76,7 +89,11 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
           termsVersion,
         });
         if (res.success) {
-          setInfo('注册成功！请前往邮箱完成验证，然后返回登录。');
+          setInfo(
+            userMode?.requireEmailVerification
+              ? '注册成功！请前往邮箱完成验证，然后返回登录。'
+              : '注册成功！请登录后完成首次自选股设置。'
+          );
         } else {
           setError(res.error ?? '注册失败');
         }
@@ -167,153 +184,175 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
         </div>
 
         <div className="w-full max-w-[400px]">
-          {/* Form header */}
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">
-              {mode === 'login' ? '欢迎回来' : '创建账号'}
-            </h2>
-            <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
-              {mode === 'login'
-                ? '登录你的 DSA 账号，继续 AI 股票分析之旅'
-                : '注册免费账号，开启 AI 智能选股体验'}
-            </p>
-          </div>
+          {registrationBlocked ? (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">暂未开放注册</h2>
+                <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
+                  当前站点未开放公开注册，请使用已有账号登录或联系管理员获取邀请。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="primary"
+                size="lg"
+                className="h-11 w-full rounded-xl text-sm font-semibold"
+                onClick={() => navigate(`/login${location.search}`, { replace: true })}
+              >
+                返回登录
+              </Button>
+            </div>
+          ) : (
+            <>
+              {/* Form header */}
+              <div className="mb-8">
+                <h2 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">
+                  {mode === 'login' ? '欢迎回来' : '创建账号'}
+                </h2>
+                <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
+                  {mode === 'login'
+                    ? '登录你的 DSA 账号，继续 AI 股票分析之旅'
+                    : '注册免费账号，开启 AI 智能选股体验'}
+                </p>
+              </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Input
-              id="email"
-              type="email"
-              appearance="login"
-              label="邮箱地址"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={isSubmitting}
-              autoComplete={mode === 'login' ? 'email' : 'new-email'}
-              autoFocus
-            />
-            <Input
-              id="password"
-              type="password"
-              appearance="login"
-              allowTogglePassword
-              iconType="password"
-              label="密码"
-              placeholder={mode === 'register' ? '至少 8 位密码' : '请输入密码'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={isSubmitting}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            />
-            {mode === 'register' && (
-              <Input
-                id="passwordConfirm"
-                type="password"
-                appearance="login"
-                allowTogglePassword
-                iconType="password"
-                label="确认密码"
-                placeholder="再次输入密码"
-                value={passwordConfirm}
-                onChange={(e) => setPasswordConfirm(e.target.value)}
-                disabled={isSubmitting}
-                autoComplete="new-password"
-              />
-            )}
-            {inviteRequired && (
-              <Input
-                id="inviteCode"
-                type="text"
-                appearance="login"
-                label="邀请码"
-                placeholder="请输入邀请码"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-                disabled={isSubmitting}
-              />
-            )}
-
-            {mode === 'register' && (
-              <label className="flex items-start gap-2.5 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-3 text-xs leading-relaxed text-[var(--login-text-secondary)] cursor-pointer hover:bg-[var(--login-bg-card)]/80 transition-colors">
-                <input
-                  id="termsAgreed"
-                  type="checkbox"
-                  className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-white/25 bg-white/10 text-primary accent-primary focus:ring-1 focus:ring-primary/40"
-                  checked={termsAgreed}
-                  onChange={(e) => setTermsAgreed(e.target.checked)}
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <Input
+                  id="email"
+                  type="email"
+                  appearance="login"
+                  label="邮箱地址"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   disabled={isSubmitting}
+                  autoComplete={mode === 'login' ? 'email' : 'new-email'}
+                  autoFocus
                 />
-                <span>
-                  已阅读并同意{' '}
-                  <Link to="/legal/terms" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
-                    《服务协议》
-                  </Link>
-                  {' '}
-                  <Link to="/legal/privacy" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
-                    《隐私政策》
-                  </Link>
-                  {' '}
-                  <Link to="/legal/risk-disclosure" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
-                    《风险揭示书》
-                  </Link>
-                  ，AI 分析不构成投资建议。
-                </span>
-              </label>
-            )}
+                <Input
+                  id="password"
+                  type="password"
+                  appearance="login"
+                  allowTogglePassword
+                  iconType="password"
+                  label="密码"
+                  placeholder={mode === 'register' ? '至少 8 位密码' : '请输入密码'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isSubmitting}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                />
+                {mode === 'register' && (
+                  <Input
+                    id="passwordConfirm"
+                    type="password"
+                    appearance="login"
+                    allowTogglePassword
+                    iconType="password"
+                    label="确认密码"
+                    placeholder="再次输入密码"
+                    value={passwordConfirm}
+                    onChange={(e) => setPasswordConfirm(e.target.value)}
+                    disabled={isSubmitting}
+                    autoComplete="new-password"
+                  />
+                )}
+                {inviteRequired && (
+                  <Input
+                    id="inviteCode"
+                    type="text"
+                    appearance="login"
+                    label="邀请码"
+                    placeholder="请输入邀请码"
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value)}
+                    disabled={isSubmitting}
+                  />
+                )}
 
-            {error && (
-              <SettingsAlert
-                title={mode === 'login' ? '登录失败' : '注册失败'}
-                message={isParsedApiError(error) ? error.message : error}
-                variant="error"
-              />
-            )}
-            {info && <SettingsAlert title="操作成功" message={info} variant="success" />}
+                {mode === 'register' && (
+                  <label className="flex items-start gap-2.5 rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-3 text-xs leading-relaxed text-[var(--login-text-secondary)] cursor-pointer hover:bg-[var(--login-bg-card)]/80 transition-colors">
+                    <input
+                      id="termsAgreed"
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-white/25 bg-white/10 text-primary accent-primary focus:ring-1 focus:ring-primary/40"
+                      checked={termsAgreed}
+                      onChange={(e) => setTermsAgreed(e.target.checked)}
+                      disabled={isSubmitting}
+                    />
+                    <span>
+                      已阅读并同意{' '}
+                      <Link to="/legal/terms" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                        《服务协议》
+                      </Link>
+                      {' '}
+                      <Link to="/legal/privacy" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                        《隐私政策》
+                      </Link>
+                      {' '}
+                      <Link to="/legal/risk-disclosure" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                        《风险揭示书》
+                      </Link>
+                      ，AI 分析不构成投资建议。
+                    </span>
+                  </label>
+                )}
 
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              className="mt-2 h-11 w-full rounded-xl text-sm font-semibold shadow-[0_4px_20px_hsl(var(--primary)/0.35)] transition-all hover:shadow-[0_6px_24px_hsl(var(--primary)/0.45)] hover:scale-[1.01]"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {mode === 'login' ? '登录中…' : '注册中…'}
-                </span>
-              ) : (
-                <span>{mode === 'login' ? '立即登录' : '创建账号'}</span>
-              )}
-            </Button>
-          </form>
+                {error && (
+                  <SettingsAlert
+                    title={mode === 'login' ? '登录失败' : '注册失败'}
+                    message={isParsedApiError(error) ? error.message : error}
+                    variant="error"
+                  />
+                )}
+                {info && <SettingsAlert title="操作成功" message={info} variant="success" />}
 
-          {/* Bottom links */}
-          <div className="mt-6 flex items-center justify-between text-sm text-[var(--login-text-muted)]">
-            {mode === 'login' ? (
-              <>
-                <Link to="/forgot-password" className="hover:text-[var(--login-text-secondary)] transition-colors">
-                  忘记密码？
-                </Link>
-                {userMode?.registrationEnabled ? (
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="lg"
+                  className="mt-2 h-11 w-full rounded-xl text-sm font-semibold shadow-[0_4px_20px_hsl(var(--primary)/0.35)] transition-all hover:shadow-[0_6px_24px_hsl(var(--primary)/0.45)] hover:scale-[1.01]"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {mode === 'login' ? '登录中…' : '注册中…'}
+                    </span>
+                  ) : (
+                    <span>{mode === 'login' ? '立即登录' : '创建账号'}</span>
+                  )}
+                </Button>
+              </form>
+
+              {/* Bottom links */}
+              <div className="mt-6 flex items-center justify-between text-sm text-[var(--login-text-muted)]">
+                {mode === 'login' ? (
+                  <>
+                    <Link to="/forgot-password" className="hover:text-[var(--login-text-secondary)] transition-colors">
+                      忘记密码？
+                    </Link>
+                    {userMode?.registrationEnabled ? (
+                      <Link
+                        to={`/register${location.search}`}
+                        className="text-primary/80 hover:text-primary transition-colors font-medium"
+                      >
+                        没有账号？注册
+                      </Link>
+                    ) : null}
+                  </>
+                ) : (
                   <Link
-                    to={`/register${location.search}`}
+                    to={`/login${location.search}`}
                     className="text-primary/80 hover:text-primary transition-colors font-medium"
                   >
-                    没有账号？注册
+                    ← 返回登录
                   </Link>
-                ) : null}
-              </>
-            ) : (
-              <Link
-                to={`/login${location.search}`}
-                className="text-primary/80 hover:text-primary transition-colors font-medium"
-              >
-                ← 返回登录
-              </Link>
-            )}
-          </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

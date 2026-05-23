@@ -334,6 +334,90 @@ class AgentSkillsEndpointTestCase(unittest.TestCase):
         executor.chat.assert_called_once()
         self.assertEqual(executor.chat.call_args.kwargs["context"]["skills"], [])
         self.assertEqual(payload["content"], "ok")
+
+    def test_agent_chat_refunds_quota_when_executor_returns_failure(self) -> None:
+        config = SimpleNamespace(is_agent_available=lambda: True)
+        executor = MagicMock()
+        executor.chat.return_value = SimpleNamespace(success=False, content="", error="tool failed")
+        request = agent.ChatRequest(message="hello")
+        user = SimpleNamespace(id=7)
+        db = MagicMock()
+        outcome = SimpleNamespace(exceeded=False, consumed=True, on_date=None)
+        real_get_running_loop = asyncio.get_running_loop
+
+        class _ImmediateLoop:
+            def __init__(self, loop):
+                self._loop = loop
+
+            def run_in_executor(self, _executor, func):
+                future = self._loop.create_future()
+                future.set_result(func())
+                return future
+
+        with patch("api.v1.endpoints.agent.get_config", return_value=config), patch(
+            "api.v1.endpoints.agent._build_executor",
+            return_value=executor,
+        ), patch(
+            "api.v1.endpoints.agent.enforce_quota",
+            return_value=outcome,
+        ), patch(
+            "api.v1.endpoints.agent.refund_quota",
+        ) as refund_mock, patch(
+            "api.v1.endpoints.agent.asyncio.get_running_loop",
+            side_effect=lambda: _ImmediateLoop(real_get_running_loop()),
+        ):
+            payload = asyncio.run(agent.agent_chat(request, db=db, current_user=user)).model_dump()
+
+        self.assertFalse(payload["success"])
+        refund_mock.assert_called_once_with(db, user=user, kind="agent", on_date=None)
+        self.assertEqual(db.commit.call_count, 2)
+
+    def test_agent_research_refunds_quota_when_result_is_unsuccessful(self) -> None:
+        async def failed_research(*_args, **_kwargs):
+            return SimpleNamespace(
+                timed_out=False,
+                success=False,
+                report="",
+                sub_questions=[],
+                total_tokens=0,
+                error="research failed",
+            )
+
+        config = SimpleNamespace(
+            is_agent_available=lambda: True,
+            agent_deep_research_budget=30000,
+            agent_deep_research_timeout=180,
+        )
+        request = agent.ResearchRequest(question="why")
+        user = SimpleNamespace(id=7)
+        db = MagicMock()
+        outcome = SimpleNamespace(exceeded=False, consumed=True, on_date=None)
+
+        with patch("api.v1.endpoints.agent.get_config", return_value=config), patch(
+            "api.v1.endpoints.agent.enforce_quota",
+            return_value=outcome,
+        ), patch(
+            "api.v1.endpoints.agent.refund_quota",
+        ) as refund_mock, patch(
+            "src.agent.factory.get_tool_registry",
+            return_value=MagicMock(),
+        ), patch(
+            "src.agent.llm_adapter.LLMToolAdapter",
+            return_value=MagicMock(),
+        ), patch(
+            "src.agent.research.ResearchAgent",
+            return_value=MagicMock(),
+        ), patch(
+            "api.v1.endpoints.agent._run_research_in_background",
+            side_effect=failed_research,
+        ):
+            payload = asyncio.run(agent.agent_research(request, db=db, current_user=user)).model_dump()
+
+        self.assertFalse(payload["success"])
+        refund_mock.assert_called_once_with(db, user=user, kind="agent", on_date=None)
+        self.assertEqual(db.commit.call_count, 2)
+
+
 class AgentModelsSourceDetectionTestCase(unittest.TestCase):
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])

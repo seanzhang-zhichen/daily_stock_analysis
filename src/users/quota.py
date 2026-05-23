@@ -11,7 +11,7 @@
 设计取舍:
 
 - 按用户 + UTC date + kind 做行级 upsert, SQLite / PostgreSQL 均可。
-- 当 BYOK 启用 (用户使用自带 Key) 时, 调用方传 ``bypass=True`` 跳过扣减; 配额仅约束「平台 Key」。
+- 管理员或其它不限额场景可传 ``bypass=True`` 跳过扣减。
 - :class:`QuotaConfig` 由调用方按用户 plan 计算后传入, 本模块不感知套餐。这样 Phase 2 接入 plan 表后无需改这里。
 """
 
@@ -40,7 +40,7 @@ _VALID_KINDS = frozenset({KIND_ANALYSIS, KIND_AGENT, KIND_NOTIFY})
 class QuotaConfig:
     """当前用户在某 kind 上的每日上限快照。
 
-    ``daily_limit <= 0`` 表示不限额 (例如管理员或 BYOK 走自己 Key)。
+    ``daily_limit <= 0`` 表示不限额 (例如管理员)。
     """
 
     daily_limit: int
@@ -111,7 +111,7 @@ def try_consume(
 ) -> bool:
     """原子地扣减 1 次配额, 上限耗尽返回 ``False``。
 
-    ``bypass=True``: BYOK / 管理员场景, 跳过扣减但仍返回 True, 调用方无需分支判断。
+    ``bypass=True``: 管理员等场景跳过扣减但仍返回 True, 调用方无需分支判断。
     ``config.daily_limit <= 0``: 视作不限额, 仍记录用量便于运营观察。
     """
     _ensure_kind(kind)

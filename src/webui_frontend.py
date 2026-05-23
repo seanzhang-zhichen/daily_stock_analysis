@@ -2,8 +2,8 @@
 """
 WebUI frontend asset preparation helper.
 
-Default behavior runs startup-time frontend auto build.
-Set WEBUI_AUTO_BUILD=false to disable auto build and only verify artifacts.
+Used by explicit WebUI startup paths. API-only startup does not call this helper.
+Set WEBUI_AUTO_BUILD=false to disable WebUI auto build and only verify artifacts.
 """
 
 from __future__ import annotations

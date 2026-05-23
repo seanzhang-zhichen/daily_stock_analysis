@@ -243,18 +243,41 @@ class AuthApiTestCase(unittest.TestCase):
         middleware = AuthMiddleware(app=MagicMock())
         call_next = AsyncMock(return_value=Response(status_code=204))
 
-        with patch("api.middlewares.auth.is_auth_enabled", return_value=True):
-            response = asyncio.run(middleware.dispatch(request, call_next))
+        response = asyncio.run(middleware.dispatch(request, call_next))
 
         self.assertEqual(response.status_code, 401)
         call_next.assert_not_awaited()
+
+    def test_payment_callbacks_are_exempt_from_session_auth(self) -> None:
+        middleware = AuthMiddleware(app=MagicMock())
+
+        for path in ("/api/v1/billing/callbacks/wechat", "/api/v1/billing/callbacks/alipay"):
+            with self.subTest(path=path):
+                scope = {
+                    "type": "http",
+                    "method": "POST",
+                    "path": path,
+                    "headers": [],
+                    "query_string": b"",
+                    "scheme": "http",
+                    "client": ("127.0.0.1", 1234),
+                    "server": ("testserver", 80),
+                    "root_path": "",
+                }
+                request = Request(scope)
+                call_next = AsyncMock(return_value=Response(status_code=200))
+
+                response = asyncio.run(middleware.dispatch(request, call_next))
+
+                self.assertEqual(response.status_code, 200)
+                call_next.assert_awaited_once()
 
     def test_protected_api_accessible_with_session(self) -> None:
         scope = {
             "type": "http",
             "method": "GET",
             "path": "/api/v1/system/config",
-            "headers": [(b"cookie", b"dsa_session=test-session")],
+            "headers": [(b"cookie", b"dsa_user_session=test-session")],
             "query_string": b"",
             "scheme": "http",
             "client": ("127.0.0.1", 1234),
@@ -266,9 +289,8 @@ class AuthApiTestCase(unittest.TestCase):
         next_response = Response(status_code=200)
         call_next = AsyncMock(return_value=next_response)
 
-        with patch("api.middlewares.auth.is_auth_enabled", return_value=True):
-            with patch("api.middlewares.auth.verify_session", return_value=True):
-                response = asyncio.run(middleware.dispatch(request, call_next))
+        with patch("api.middlewares.auth._resolve_user_session", return_value=SimpleNamespace(id=1)):
+            response = asyncio.run(middleware.dispatch(request, call_next))
 
         self.assertEqual(response.status_code, 200)
         call_next.assert_awaited_once()
@@ -293,7 +315,7 @@ class AuthApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
-    def test_auth_settings_is_reachable_when_auth_disabled(self) -> None:
+    def test_auth_settings_requires_user_session_even_when_legacy_auth_disabled(self) -> None:
         scope = {
             "type": "http",
             "method": "POST",
@@ -310,11 +332,10 @@ class AuthApiTestCase(unittest.TestCase):
         next_response = Response(status_code=200)
         call_next = AsyncMock(return_value=next_response)
 
-        with patch("api.middlewares.auth.is_auth_enabled", return_value=False):
-            response = asyncio.run(middleware.dispatch(request, call_next))
+        response = asyncio.run(middleware.dispatch(request, call_next))
 
-        self.assertEqual(response.status_code, 200)
-        call_next.assert_awaited_once()
+        self.assertEqual(response.status_code, 401)
+        call_next.assert_not_awaited()
 
     def test_auth_settings_enable_sets_initial_password_and_logs_in(self) -> None:
         self.env_path.write_text(

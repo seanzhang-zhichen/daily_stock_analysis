@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -36,7 +36,6 @@ _ALLOWED_EVENTS = {
     "user.first_analysis",
     "user.upgrade_click",
     "user.upgrade_success",
-    "user.byok_set",
     "user.daily_push_enable",
     "quota.exceeded",
     "payment.initiated",
@@ -103,6 +102,8 @@ class GrowthEventRequest(BaseModel):
         "未知事件名返回 204 静默忽略，不写库。"
     ),
     status_code=204,
+    response_class=Response,
+    response_model=None,
 )
 async def record_growth_event(
     body: GrowthEventRequest,

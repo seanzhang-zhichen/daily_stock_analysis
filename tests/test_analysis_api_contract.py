@@ -3,7 +3,7 @@
 
 import asyncio
 from concurrent.futures import Future
-from datetime import datetime
+from datetime import date, datetime
 import json
 import tempfile
 import unittest
@@ -25,6 +25,7 @@ try:
         _build_analysis_report,
         _load_sync_fundamental_sources,
         get_analysis_status,
+        get_task_list,
     )
 except Exception:  # pragma: no cover - optional dependency environments
     create_app = None
@@ -35,6 +36,7 @@ except Exception:  # pragma: no cover - optional dependency environments
     _build_analysis_report = None
     _load_sync_fundamental_sources = None
     get_analysis_status = None
+    get_task_list = None
 
 from src.enums import ReportType
 from src.services.analysis_service import AnalysisService
@@ -404,6 +406,69 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.result.report["meta"]["current_price"], 1234.5)
         self.assertEqual(result.result.report["meta"]["change_pct"], 0.0)
+
+    def test_get_analysis_status_filters_queue_and_history_by_current_user(self) -> None:
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.get_task.return_value = None
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = []
+        current_user = SimpleNamespace(id=99)
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            with self.assertRaises(Exception) as ctx:
+                get_analysis_status("task-user-99", current_user=current_user)
+
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
+        mock_queue.get_task.assert_called_once_with("task-user-99", user_id=99)
+        mock_db.get_analysis_history.assert_called_once_with(
+            query_id="task-user-99",
+            limit=1,
+            user_id=99,
+        )
+
+    def test_get_task_list_filters_by_current_user(self) -> None:
+        if get_task_list is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.list_all_tasks.return_value = [
+            SimpleNamespace(
+                task_id="task-user-99",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                status=TaskStatus.PROCESSING,
+                progress=50,
+                message="处理中",
+                report_type="detailed",
+                created_at=datetime(2026, 5, 23, 12, 0, 0),
+                started_at=None,
+                completed_at=None,
+                error=None,
+                original_query=None,
+                selection_source=None,
+                skills=None,
+            )
+        ]
+        mock_queue.get_task_stats.return_value = {
+            "total": 1,
+            "pending": 0,
+            "processing": 1,
+            "completed": 0,
+            "failed": 0,
+        }
+        current_user = SimpleNamespace(id=99)
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue):
+            payload = get_task_list(status=None, limit=20, current_user=current_user)
+
+        self.assertEqual(payload.total, 1)
+        self.assertEqual(payload.tasks[0].task_id, "task-user-99")
+        mock_queue.list_all_tasks.assert_called_once_with(limit=20, user_id=99)
+        mock_queue.get_task_stats.assert_called_once_with(user_id=99)
 
     def test_get_analysis_status_returns_market_review_report_from_db(self) -> None:
         if get_analysis_status is None:
@@ -1416,7 +1481,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             static_dir = Path(temp_dir)
             (static_dir / "index.html").write_text("<html>spa</html>", encoding="utf-8")
-            app = create_app(static_dir=static_dir)
+            app = create_app(static_dir=static_dir, serve_frontend=True)
 
             serve_spa = next(
                 route.endpoint for route in app.routes
@@ -1451,7 +1516,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             secret = root / "secret.txt"
             secret.write_text("TOPSECRET", encoding="utf-8")
 
-            app = create_app(static_dir=static_dir)
+            app = create_app(static_dir=static_dir, serve_frontend=True)
             serve_spa = next(
                 route.endpoint for route in app.routes
                 if getattr(route, "path", None) == "/{full_path:path}"
@@ -1614,7 +1679,7 @@ class BatchTaskQueueContractTestCase(unittest.TestCase):
         queue._executor = type("ExecutorStub", (), {"submit": lambda self, *args, **kwargs: Future()})()
         lock_states = []
 
-        def record_broadcast(event_type, data):
+        def record_broadcast(event_type, data, **_kwargs):
             if event_type == "task_created":
                 lock_states.append(queue._data_lock._is_owned())
 
@@ -1632,7 +1697,7 @@ class BatchTaskQueueContractTestCase(unittest.TestCase):
         accepted, _ = queue.submit_tasks_batch(["600519"], report_type="detailed")
 
         events = []
-        queue._broadcast_event = lambda event_type, data: events.append((event_type, data))
+        queue._broadcast_event = lambda event_type, data, **_kwargs: events.append((event_type, data))
 
         updated = queue.update_task_progress(
             accepted[0].task_id,
@@ -1644,6 +1709,84 @@ class BatchTaskQueueContractTestCase(unittest.TestCase):
         self.assertEqual(updated.progress, 62)
         self.assertEqual(updated.message, "LLM 正在生成分析结果")
         self.assertEqual(events, [("task_progress", updated.to_dict())])
+
+    def test_task_queue_scopes_duplicate_and_list_by_user_id(self) -> None:
+        queue = AnalysisTaskQueue(max_workers=1)
+        queue._executor = type("ExecutorStub", (), {"submit": lambda self, *args, **kwargs: Future()})()
+
+        user_one, duplicates_one = queue.submit_tasks_batch(["600519"], report_type="detailed", user_id=1)
+        user_two, duplicates_two = queue.submit_tasks_batch(["600519.SH"], report_type="detailed", user_id=2)
+        user_one_again, duplicates_one_again = queue.submit_tasks_batch(["600519.SH"], report_type="detailed", user_id=1)
+
+        self.assertEqual(len(user_one), 1)
+        self.assertEqual(len(user_two), 1)
+        self.assertEqual(duplicates_one, [])
+        self.assertEqual(duplicates_two, [])
+        self.assertEqual(user_one_again, [])
+        self.assertEqual(duplicates_one_again[0].existing_task_id, user_one[0].task_id)
+        self.assertEqual([task.task_id for task in queue.list_all_tasks(user_id=1)], [user_one[0].task_id])
+        self.assertEqual([task.task_id for task in queue.list_all_tasks(user_id=2)], [user_two[0].task_id])
+        self.assertIsNone(queue.get_task(user_two[0].task_id, user_id=1))
+        self.assertNotIn("user_id", user_one[0].to_dict())
+
+    def test_task_stream_broadcast_filters_by_subscriber_user_id(self) -> None:
+        async def run() -> None:
+            queue = AnalysisTaskQueue(max_workers=1)
+            queue._executor = type("ExecutorStub", (), {"submit": lambda self, *args, **kwargs: Future()})()
+            user_one_events: asyncio.Queue = asyncio.Queue()
+            user_two_events: asyncio.Queue = asyncio.Queue()
+
+            queue.subscribe(user_one_events, user_id=1)
+            queue.subscribe(user_two_events, user_id=2)
+            queue._broadcast_event("task_created", {"task_id": "t1"}, user_id=1)
+            await asyncio.sleep(0)
+
+            self.assertEqual((await user_one_events.get())["data"], {"task_id": "t1"})
+            self.assertTrue(user_two_events.empty())
+            queue.unsubscribe(user_one_events)
+            queue.unsubscribe(user_two_events)
+
+        asyncio.run(run())
+
+    def test_failed_async_analysis_refunds_reserved_quota_with_independent_session(self) -> None:
+        queue = AnalysisTaskQueue(max_workers=1)
+        queue._executor = type("ExecutorStub", (), {"submit": lambda self, *args, **kwargs: Future()})()
+        refund_date = date(2026, 5, 23)
+        accepted, _ = queue.submit_tasks_batch(
+            ["600519"],
+            report_type="detailed",
+            user_id=42,
+            refund_analysis_quota=True,
+            quota_refund_date=refund_date,
+        )
+        task = accepted[0]
+        service_instance = MagicMock()
+        service_instance.analyze_stock.return_value = None
+        service_instance.last_error = "LLM failed"
+        session = MagicMock()
+        manager = MagicMock()
+        manager.get_session.return_value = session
+
+        with patch("src.services.analysis_service.AnalysisService", return_value=service_instance), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=manager), \
+             patch("src.users.quota.refund") as refund_mock:
+            result = queue._execute_task(
+                task.task_id,
+                task.stock_code,
+                task.report_type,
+                False,
+                True,
+                task.skills,
+                user_id=task.user_id,
+                refund_analysis_quota=True,
+                quota_refund_date=refund_date,
+            )
+
+        self.assertIsNone(result)
+        refund_mock.assert_called_once_with(session, user_id=42, kind="analysis", on_date=refund_date)
+        session.commit.assert_called_once()
+        session.close.assert_called_once()
+        self.assertEqual(queue.get_task(task.task_id, user_id=42).status, TaskStatus.FAILED)
 
 
 class ImageStockExtractorContractTestCase(unittest.TestCase):

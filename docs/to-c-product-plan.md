@@ -1,6 +1,6 @@
 ﻿# DSA To C 化产品规划
 
-把当前单租户「自选股 AI 分析系统」改造为面向个人投资者的多租户 To C 产品：邮箱密码注册登录、按用户隔离自选股/报告/通知，混合 Key 商业化（免费额度走平台 Key、付费档解锁配额、Pro 用户可 BYOK），存量数据不迁移、全新建库。
+把当前单租户「自选股 AI 分析系统」改造为面向个人投资者的多租户 To C 产品：邮箱密码注册登录、按用户隔离自选股/报告/通知，所有用户使用平台管理员配置的模型渠道，用户只在当前套餐允许范围内选择模型，存量数据不迁移、全新建库。
 
 > 本文档锁定**产品形态、用户分层、阶段拆分与风险点**，是后续多 Phase 改造的总纲。
 > 当前已落地的工程骨架（环境变量、API、表结构、回滚方式）请参考 [`docs/to-c-mode.md`](./to-c-mode.md)；
@@ -12,10 +12,10 @@
 | Phase | 状态 | 说明 |
 | --- | --- | --- |
 | Phase 0：产品规划 | ✅ 已完成 | 本文档 + 线框 + 用户故事 + 决策锁定。 |
-| Phase 1：用户体系骨架 | ✅ 基本闭环 | `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` / `app_user_byok_credentials` / `app_plans` / `app_subscriptions` / `app_redeem_codes` 等表已建好，`/api/v1/account/*` 已上线，前端 `/login` `/register` `/forgot-password` `/verify-email` 均可用，新用户注册后自动跳转 `/onboarding` 首次引导页；业务 API 已默认要求 `dsa_user_session`，history / analysis / portfolio / alerts / agent 已按当前用户隔离。剩余：语言和模型偏好仍依赖全局 `SystemConfig`。详见 [`to-c-mode.md`](./to-c-mode.md)。 |
-| Phase 2：商业化骨架 | 🟡 主要落地 | 配额服务已通过 `src/users/quota_guard.py` 接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；`AppPlan` / `AppSubscription` / `AppRedeemCode` 三张表 + `resolve_user_plan` / `redeem_code` / `grant_plan` 已上线；`/api/v1/account/redeem`、`/api/v1/account/api-keys`、`/api/v1/billing/{plans,subscription}` endpoint 已上线；前端 `/account` `/billing` `/account/api-keys` 页面 + 顶栏 `QuotaIndicator` + 全局 `QuotaExceededDialog` 已可用；模型路由运行时已接入（见 Phase 4）。Plan 到期 / 续费闭环已落地：`app_plan_reminders` + `src/users/plan_lifecycle.py` 支持 7/3/1 天到期前邮件提醒、过期当日自动降级 free + 通知邮件，`/api/v1/account/status.renewal` + 前端 `RenewalBanner` 顶栏续费提示已上线。剩余：套餐 / 订阅的运营后台、平台 Key 配额池统一管理、支付闭环。 |
-| Phase 3：调度与通知 To C 化 | ✅ 基本闭环 | 新增 `app_user_watchlists`（per-user 自选股，含 `max_stocks` 上限）与 `app_user_notification_prefs`（`daily_push_enabled` / `email_enabled` / Webhook）两张表；服务层 `src/users/watchlist.py` / `src/users/notification_prefs.py`；API `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) 已上线；`main.py` `run_per_user_scheduled_analysis` 按开启日推的用户分桶执行分析、调用 `src/users/notification_delivery.py` 发送 HTML 邮件（含一键退订链接，渲染走 `markdown2`）并按 `webhook_type` 分发到飞书 / 企业微信 / Discord / Telegram / 通用 JSON；新增 `src/users/unsubscribe.py` HMAC 无状态退订 token + `GET /api/v1/account/notification-prefs/unsubscribe` 公开端点（已加入 `AuthMiddleware` 白名单），操作写 `app_audit_logs`。前端 `AccountPage` 已新增「我的自选股」与「通知偏好」卡片（含 Pro Webhook 配置 UI）。剩余：HTML 邮件模板的视觉打磨（运营素材定稿后）、多用户并发调度（当前串行）。 |
-| Phase 4：BYOK + Pro 能力 | ✅ 主要落地 | `app_user_byok_credentials` 表 + `src/users/byok.py` + `/api/v1/account/api-keys` CRUD 已就位，前端 BYOK 管理页已可用；`src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`：BYOK 路由注入用户 key/base 并绕过 Router，平台路由按 `plan.allowed_models` 过滤模型列表；`user_id` 从 API 层 → factory → adapter 全链路已透传。Plan 到期自动降级已通过 `src/users/plan_lifecycle.py::downgrade_expired_user` 落地，调度器每日触发后回退 `plan_code` 至 free 并写 `app_subscriptions` source='expire'。剩余：Pro/BYOK 档位的前端权益文案强化、`allowed_models` 具体配置入库。 |
+| Phase 1：用户体系骨架 | ✅ 基本闭环 | `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` / `app_plans` / `app_subscriptions` / `app_redeem_codes` 等表已建好，`/api/v1/account/*` 已上线，前端 `/login` `/register` `/forgot-password` `/verify-email` 均可用，首次登录且自选股为空时进入 `/onboarding`，邮箱验证成功后的登录入口也携带 `/onboarding` 跳转；业务 API 已默认要求 `dsa_user_session`，history / analysis / portfolio / alerts / agent 已按当前用户隔离。剩余：语言偏好仍依赖全局 `SystemConfig`。详见 [`to-c-mode.md`](./to-c-mode.md)。 |
+| Phase 2：商业化骨架 | 🟡 主要落地 | 配额服务已通过 `src/users/quota_guard.py` 接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；`AppPlan` / `AppSubscription` / `AppRedeemCode` 三张表 + `resolve_user_plan` / `redeem_code` / `grant_plan` 已上线；`/api/v1/account/redeem`、`/api/v1/account/model-preference`、`/api/v1/billing/{plans,subscription}` endpoint 已上线；前端 `/account` `/billing` 页面 + 顶栏 `QuotaIndicator` + 全局 `QuotaExceededDialog` 已可用；模型路由运行时已接入（见 Phase 4）。Plan 到期 / 续费闭环已落地：`app_plan_reminders` + `src/users/plan_lifecycle.py` 支持 7/3/1 天到期前邮件提醒、过期当日自动降级 free + 通知邮件，`/api/v1/account/status.renewal` + 前端 `RenewalBanner` 顶栏续费提示已上线。剩余：套餐 / 订阅的运营后台、平台 Key 配额池统一管理、支付闭环。 |
+| Phase 3：调度与通知 To C 化 | ✅ 基本闭环 | 新增 `app_user_watchlists`（per-user 自选股，含 `max_stocks` 上限）与 `app_user_notification_prefs`（`daily_push_enabled` / `email_enabled` / Webhook）两张表；服务层 `src/users/watchlist.py` / `src/users/notification_prefs.py`；API `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) 已上线；`main.py` `run_per_user_scheduled_analysis` 按开启日推且当前仍为 Pro 的用户分桶执行分析、调用 `src/users/notification_delivery.py` 发送 HTML 邮件（含一键退订链接，渲染走 `markdown2`）并按 `webhook_type` 分发到飞书 / 企业微信 / Discord / Telegram / 通用 JSON；新增 `src/users/unsubscribe.py` HMAC 无状态退订 token + `GET /api/v1/account/notification-prefs/unsubscribe` 公开端点（已加入 `AuthMiddleware` 白名单），操作写 `app_audit_logs`。前端 `AccountPage` 已新增「我的自选股」与「通知偏好」卡片（含 Pro Webhook 配置 UI）。剩余：HTML 邮件模板的视觉打磨（运营素材定稿后）、多用户并发调度（当前串行）。 |
+| Phase 4：模型偏好 + Pro 能力 | ✅ 主要落地 | `app_users.preferred_model` 与 `/api/v1/account/model-preference` 已就位，前端账户页支持用户选择管理员配置模型；`src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`：平台路由在 `plan.allowed_models` 非空时过滤模型列表，空列表表示不额外限制，并优先使用用户首选模型；`user_id` 从 API 层 → factory → adapter 全链路已透传。Plan 到期自动降级已通过 `src/users/plan_lifecycle.py::downgrade_expired_user` 落地，调度器每日触发后回退 `plan_code` 至 free 并写 `app_subscriptions` source='expire'。剩余：`allowed_models` 具体运营配置与平台 Key 用量看板。 |
 | Phase 5：商业化闭环（含支付） | 🟡 数据层 + API + 前端 + 下单/退款 SDK 已落地，待生产验证 | **已落地**：`app_orders` / `app_payment_events` / `app_refunds` / `app_invoices` 四张 ORM 表 + `src/services/billing/order_service.py` 服务层（订单创建幂等、状态机流转、`fulfill_order` 调 `grant_plan`、退款/发票申请、回调落库）；`/api/v1/billing/` 扩充 orders / pay / cancel / callbacks/wechat / callbacks/alipay / refunds / invoices 全部用户侧 endpoint，`PAYMENT_MOCK_ENABLED=true` 时 `/pay` 返回 mock 二维码 URL + `/orders/{order_no}/mock-pay` 手动模拟成功；前端 `BillingPage` 接入 `PaymentDialog`（创建订单 → 二维码 → 每 2s 轮询状态 → 成功刷新订阅），`/account/orders` / `/account/invoices` 页面已上线；`OrdersPage` 已补充 paid 订单「申请退款」按钮 + 退款理由弹窗；运营后台 `/api/v1/admin/*` + `/admin` Web 页面（订单 / 退款审核 / 发票审核 / 手动 grant-plan / 用户管理）已上线；对账脚本骨架 `scripts/reconcile_payments.py` + `app_reconciliation_diffs` / `app_reconciliation_reports` 表已落地（dry-run 可跑，SDK 拉单接口待接入）；**新**：`WechatGateway.place_order`（V3 Native 下单 → 返回 `code_url`）/ `refund`（`/v3/refund/domestic/refunds`）与 `AlipayGateway.place_order`（`alipay.trade.precreate` → 返回 `qr_code`）/ `refund`（`alipay.trade.refund`）均已接入；`/pay` 在 `PAYMENT_ENABLED=true` 时调用 `gateway.place_order()`；退款后收回 Pro 权益 `order_service.approve_refund` 已落地（`plan_expires_at` 回退 + `plan_code='free'`）；退款审核结果邮件通知用户（approve/reject 均发）已在 `api/v1/endpoints/admin.py` 落地。**剩余**：发票 `issued_url` 写回（依赖电子发票 SaaS 接入）、生产小额端对端验证（待商户准入下证后执行）。 |
 | Phase 6：可观测、运营与合规 | 🟡 主要落地 | **已落地**：协议三件套 `/legal/terms` `/legal/privacy` `/legal/risk-disclosure` 静态页 + 注册勾选同意 + `app_user_consents` 落库（含协议版本 / IP / UA）；`app_users.is_admin` + `get_admin_user` 依赖 + `/admin` 运营后台 + `scripts/grant_admin.py` 命令行已上线；对账脚本骨架 `scripts/reconcile_payments.py` 已就绪；注册防刷护栏 `src/users/registration_guard.py` 已上线（含一次性邮箱黑名单、IP/邮箱限频、MX 域名校验可选开关 `USER_EMAIL_MX_CHECK_ENABLED`）；**账号注销**（7 天冷静期 + 软删 + 30 天物理清除个人数据，保留订单/发票 5 年）`src/users/deletion.py` + `/api/v1/account/deletion` GET/POST/DELETE 已上线；**个人数据导出** `src/users/data_export.py` + `POST /api/v1/account/data-export` 已上线；**增长埋点** `AppGrowthEvent` + `POST /api/v1/usage/events` 已上线；**Sentry 错误监控** `sentry-sdk[fastapi]` + `api/app.py::_init_sentry` 已集成，配置 `SENTRY_DSN` 即启用；**公告中心** `AppNotice` 表 + `/api/v1/notices` endpoint（公开列表 + 管理员 CRUD）+ 前端 `/notices` 页面 + 侧边栏铃铛图标（含近期公告数角标）+ Admin 标签「公告管理」已上线；**客服入口 / FAQ** 侧边栏「帮助」进入站内 `/help` 页面，展示 FAQ、反馈指引、配置入口与免责声明；前端 `AccountPage` 底部仅保留退出登录入口，不展示数据导出与账号注销区块；**SQLite 备份脚本** `scripts/backup_db.py` 已创建（在线热备份 + 时间戳命名 + 保留策略 + gzip 可选 + 外部上传钩子 `BACKUP_UPLOAD_SCRIPT`，支持 dry-run）。**剩余**：恢复演练（人工执行）、行为验证码 / hCaptcha、Prometheus 监控看板（可用 Sentry 替代 MVP）。 |
 | Phase 7：移动端 / 小程序 | ⬜ 后置 | MVP 不投入；现网 Web 站满足移动端响应式即可，原生入口留到 PMF 验证之后。 |
@@ -23,15 +23,15 @@
 ## 1. 现状速览（决定改造边界）
 
 - **认证**：业务 API 已切换为 `dsa_user_session` 多用户 session；未登录业务请求返回 401。
-- **数据**：历史、分析、Portfolio、Alert、Agent 会话、自选股、通知偏好已在 API 层按当前用户隔离；SystemConfig（模型偏好、LLM 渠道）仍是全局配置残留。
-- **配置**：`.env` + `SystemConfig` 是「机器一份」全局配置；API Key（BYOK）、自选股、通知渠道已 per-user 化；模型偏好仍无 per-user 视图。
-- **任务**：调度器已改为按用户分桶（`run_per_user_scheduled_analysis`），读取各用户自选股与通知偏好，单用户失败不影响其他用户；Webhook 通知已在调度层通过 `dispatch_user_webhook` 实际发送（Pro 用户可用）。
-- **前端**：`apps/dsa-web` 已有邮箱登录（含 `/verify-email`）、注册后 `/onboarding` 首次引导、账户页（自选股 + 通知偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、BYOK 管理、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股与通知偏好已完成 per-user 化，模型偏好仍依赖全局 `SystemConfig`。
+- **数据**：历史、分析、Portfolio、Alert、Agent 会话、自选股、通知偏好已在 API 层按当前用户隔离；LLM 渠道仍由平台管理员全局配置。
+- **配置**：`.env` + `SystemConfig` 是「机器一份」全局配置；自选股、通知渠道和模型偏好已 per-user 化，用户模型偏好只允许从管理员配置且套餐允许的模型中选择。
+- **任务**：调度器已改为按用户分桶（`run_per_user_scheduled_analysis`），读取各用户当前套餐、自选股与通知偏好，仅对仍具备 Pro 权益的用户执行每日自动分析，单用户失败不影响其他用户；分析任务队列、任务状态和 SSE 已按当前用户隔离；Webhook 通知已在调度层通过 `dispatch_user_webhook` 实际发送（Pro 用户可用）。
+- **前端**：`apps/dsa-web` 已有邮箱登录（含 `/verify-email`）、登录后 `/onboarding` 首次引导、账户页（自选股 + 通知偏好 + 模型偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股、通知偏好和模型偏好已完成 per-user 化。
 - **桌面端**：`apps/dsa-desktop` 是 Electron 单机壳，To C 化默认不强依赖它。
 
 ## 2. 目标产品形态（一句话）
 
-「一个网页就能用的个人股票 AI 分析助手」：免费用户每天可分析少量自选股、查看 AI 决策仪表盘和大盘复盘，付费用户解锁更多自选股、更高级模型、订阅推送、Agent 问股；硬核用户可 BYOK 自费跑。
+「一个网页就能用的个人股票 AI 分析助手」：免费用户每天可分析少量自选股、查看 AI 决策仪表盘和大盘复盘，付费用户解锁更多自选股、更高级模型、订阅推送、Agent 问股；所有模型调用均通过平台管理员配置的模型渠道完成。
 
 **第一版形态收敛**：
 
@@ -42,15 +42,14 @@
 
 ## 3. 用户分层与权益
 
-| 档位 | 价格示意 | 自选股上限 | 单日 AI 分析次数 | 模型 | Agent 问股 | 通知渠道 | BYOK | 续费 / 退款 |
-|------|---------|----------|------------------|------|-----------|----------|------|------------|
-| **游客** | 免费 | 仅查看 demo 报告 | 0 | - | 不可用 | - | - | - |
-| **免费会员** | 0 | 3 只 | 5 次/天 | 平台基础模型 | 5 次/天 | 邮箱 | 否 | - |
-| **Pro 月付** | ¥39 / 月（建议起价） | 30 只 | 50 次/天 | 平台高级模型 | 50 次/天 | 邮箱 + 自定义 webhook | 可选 | 手动续费；7 天无理由退款（未消费） |
-| **Pro 年付** | ¥299 / 年（约 75 折） | 30 只 | 50 次/天 | 平台高级模型 | 50 次/天 | 邮箱 + 自定义 webhook | 可选 | 手动续费；7 天无理由退款（按已使用天数比例扣除） |
-| **BYOK 模式** | 仍需任意付费档 | 无平台限制 | 仅受自身 Key 限制 | 用户自填 | 用户自填 | 同 Pro | 是 | 跟随其付费档 |
+| 档位 | 价格示意 | 自选股上限 | 单日 AI 分析次数 | 模型 | Agent 问股 | 通知渠道 | 续费 / 退款 |
+|------|---------|----------|------------------|------|-----------|----------|------------|
+| **游客** | 免费 | 仅查看 demo 报告 | 0 | - | 不可用 | - | - |
+| **免费会员** | 0 | 3 只 | 5 次/天 | 管理员允许的基础模型 | 5 次/天 | 邮箱 | - |
+| **Pro 月付** | ¥39 / 月（建议起价） | 30 只 | 50 次/天 | 管理员允许的高级模型 | 50 次/天 | 邮箱 + 自定义 webhook | 手动续费；7 天无理由退款（未消费） |
+| **Pro 年付** | ¥299 / 年（约 75 折） | 30 只 | 50 次/天 | 管理员允许的高级模型 | 50 次/天 | 邮箱 + 自定义 webhook | 手动续费；7 天无理由退款（按已使用天数比例扣除） |
 
-> 上限数值与价格仅为基线方案，具体由运营压价后定；核心是**配额** + **能力门槛** + **BYOK 兜底** + **明确退款口径**。
+> 上限数值与价格仅为基线方案，具体由运营压价后定；核心是**配额** + **能力门槛** + **模型分档** + **明确退款口径**。
 > 已在 `.env` 中以 `USER_FREE_DAILY_ANALYSIS=5` / `USER_FREE_DAILY_AGENT=5` / `USER_FREE_MAX_STOCKS=3` 锁定免费档初值，详见 [`to-c-mode.md`](./to-c-mode.md)。
 > 第一版**不做自动续费 / 连续包月**（合规门槛与回款风险更低），续费需用户主动下单；自动续费推迟到二期。
 > 新用户首单可叠加**限时折扣**（如首月 ¥9.9 体验价）通过 `app_redeem_codes` + 活动码方式发放，避免影响标价。
@@ -65,8 +64,8 @@
 4. **手动分析**：在 Web 上随时点击「立即分析」生成单只股票决策报告（受配额）。
 5. **Agent 问股**：在 `/chat` 页面与 AI 多轮交互，问询某只股票（受配额）。
 6. **历史报告**：能查看自己历史报告、对比变化（仅自己可见）。
-7. **配额可见**：Header 显示「今日剩余 X 次」，达到上限引导升级或填 BYOK Key。
-8. **升级 / BYOK**：在「会员中心」选择套餐升级，使用**微信扫码或支付宝扫码**付款，到账后立即开通；高级用户可在「我的 API Key」填自己的 Key。
+7. **配额可见**：Header 显示「今日剩余 X 次」，达到上限引导升级。
+8. **升级 / 模型偏好**：在「会员中心」选择套餐升级，使用**微信扫码或支付宝扫码**付款，到账后立即开通；用户可在账户页从管理员配置且套餐允许的模型中选择首选模型。
 9. **续费**：到期前 7 天 + 1 天分别邮件提醒，并在顶栏弹出续费提示；用户一键发起续费订单，过期不续自动降级 free。
 10. **退款**：在 `/account/orders` 申请退款，未消费订单 7 天内无理由退款，已消费订单按规则计算应退金额；退款由运营在后台审核 → 调用支付通道退款 API。
 11. **发票**：付费成功后可在 `/account/invoices` 申请电子普通发票，运营审核后发邮件回执（MVP 可手工开具，二期接电子发票 SaaS）。
@@ -76,13 +75,13 @@
 | # | 用户故事 | 状态 | 当前证据 / 缺口 |
 | --- | --- | --- | --- |
 | 1 | 注册登录 | ✅ 已落地 | `/api/v1/account/register` / `login` / `request-password-reset` / `reset-password` / `verify-email` 已上线，前端 `/login` / `/register` / `/forgot-password` / `/verify-email` 均可用；`VerifyEmailPage` 自动读取 URL `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。 |
-| 2 | 首次引导 | ✅ 已落地 | per-user 自选股 API 已上线；注册成功（无需邮箱验证时）自动跳转 `/onboarding`，引导用户通过 `StockAutocomplete` 添加 1–3 只自选股（调用 watchlist API），进度条显示填写状态，完成后进入主页；`AccountPage` 亦可随时补充自选股。 |
-| 3 | 每日订阅 | ✅ 已落地 | 用户可通过 `PATCH /api/v1/account/notification-prefs` 开启 `daily_push_enabled`；调度器 `run_per_user_scheduled_analysis` 按用户读取自选股、执行分析后调用 `send_daily_email`（HTML 模板 + `markdown2` 渲染 + 一键退订链接）和 `dispatch_user_webhook`（按 `webhook_type` 投递到飞书 / 企业微信 / Discord / Telegram / 通用 JSON），单用户 / 单渠道失败不影响其他用户；点击邮件中的「一键退订」即可通过 `GET /api/v1/account/notification-prefs/unsubscribe?token=...` 自助关闭推送，写入 `app_audit_logs`。前端 `AccountPage` 已支持每日推送 / 邮件通知 / Pro Webhook 开关。剩余：HTML 模板视觉打磨与多用户并发调度优化。 |
-| 4 | 手动分析 | ✅ 已落地 | `/api/v1/analysis/analyze` 已要求登录、注入 `current_user.id` 并接入 `quota_guard`；同步 / 异步任务均可记录归属用户。 |
-| 5 | Agent 问股 | ✅ 主要落地 | `/api/v1/agent/*` 已要求登录并接入 Agent 配额；`LLMToolAdapter.call_completion` 已通过 `_resolve_user_model_route` 接入模型路由，BYOK 用户注入自带 key/base 并绕过平台 Router，平台路由按 `plan.allowed_models` 过滤可用模型；plan 到期已由 `plan_lifecycle` 自动降级到 free，过期用户不会继续吃 Pro 模型。剩余：`allowed_models` 具体配置入库。 |
+| 2 | 首次引导 | ✅ 已落地 | per-user 自选股 API 已上线；登录成功且无显式 `redirect` 时会检查自选股数量，为空则进入 `/onboarding`；邮箱验证成功页的登录入口携带 `/onboarding` redirect；引导页通过 `StockAutocomplete` 添加 1–3 只自选股（调用 watchlist API），进度条显示填写状态，完成后进入主页；`AccountPage` 亦可随时补充自选股。 |
+| 3 | 每日订阅 | ✅ 已落地 | 用户可通过 `PATCH /api/v1/account/notification-prefs` 开启 `daily_push_enabled`；调度器 `run_per_user_scheduled_analysis` 按用户当前套餐、自选股和通知偏好分桶，仅对当前仍为 Pro 的用户执行每日自动分析；分析后调用 `send_daily_email`（HTML 模板 + `markdown2` 渲染 + 一键退订链接）和 `dispatch_user_webhook`（按 `webhook_type` 投递到飞书 / 企业微信 / Discord / Telegram / 通用 JSON），单用户 / 单渠道失败不影响其他用户；点击邮件中的「一键退订」即可通过 `GET /api/v1/account/notification-prefs/unsubscribe?token=...` 自助关闭推送，写入 `app_audit_logs`。前端 `AccountPage` 已支持每日推送 / 邮件通知 / Pro Webhook 开关。剩余：HTML 模板视觉打磨与多用户并发调度优化。 |
+| 4 | 手动分析 | ✅ 已落地 | `/api/v1/analysis/analyze` 已要求登录、注入 `current_user.id` 并接入 `quota_guard`；同步 / 异步任务均记录归属用户；`/analysis/tasks`、`/tasks/stream` 和 `/status/{task_id}` 均按当前用户过滤；异步后台业务失败会按任务 `user_id` 返还分析配额。 |
+| 5 | Agent 问股 | ✅ 主要落地 | `/api/v1/agent/*` 已要求登录并接入 Agent 配额；非流式 `/agent/chat` 和 `/agent/research` 返回 `success=false` 时会返还已扣配额，异常 / 超时 / 流式 error 也保持返还；`LLMToolAdapter.call_completion` 已通过 `_resolve_user_model_route` 接入模型路由，平台路由在 `plan.allowed_models` 非空时过滤可用模型并优先使用用户首选模型；plan 到期已由 `plan_lifecycle` 自动降级到 free，过期用户不会继续吃 Pro 模型。剩余：`allowed_models` 具体运营配置。 |
 | 6 | 历史报告 | ✅ 已落地 | `/api/v1/history/*` 已按 `current_user.id` 查询，`analysis_history.user_id` 写入链路已补齐。 |
 | 7 | 配额可见 | ✅ 已落地 | 前端顶栏 `QuotaIndicator` 与全局 `QuotaExceededDialog` 已可用，后端 `get_quota_snapshot` / `quota_exceeded_payload` 已接入。 |
-| 8 | 升级 / BYOK | 🟡 主要落地 | `/billing` PaymentDialog（创建订单 → 二维码 → 每 2s 轮询 → 成功刷新）已上线；`WechatGateway.place_order` / `AlipayGateway.place_order` SDK 已接入，`PAYMENT_ENABLED=true` 时调用真实通道；`/account/api-keys` BYOK 管理已可用，`model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`。剩余：生产环境小额端对端验证（待商户准入下证后执行）。 |
+| 8 | 升级 / 模型偏好 | 🟡 主要落地 | `/billing` PaymentDialog（创建订单 → 二维码 → 每 2s 轮询 → 成功刷新）已上线；`WechatGateway.place_order` / `AlipayGateway.place_order` SDK 已接入，`PAYMENT_ENABLED=true` 时调用真实通道；`/account/model-preference` 已支持用户选择管理员配置且当前套餐允许的模型，`model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`。剩余：生产环境小额端对端验证（待商户准入下证后执行）。 |
 | 9 | 续费 | 🟡 主要落地 | `app_plan_reminders` + `src/users/plan_lifecycle.py` 已上线：调度器每日触发后扫描到期前 7/3/1 天用户发邮件提醒（按 `(user_id, plan_code, expires_at, reminder_type)` 幂等），过期用户写一条 `app_subscriptions` source='expire' 并发送降级通知邮件，所有动作落 `app_audit_logs`；`/api/v1/account/status.renewal` 暴露 `daysRemaining` / `willExpireSoon` / `expired` 字段，前端 `RenewalBanner` 在顶部渲染粘性提示并提供「立即续费」入口 → `/billing?renew=1`。剩余：邮件模板 HTML / 落地页风格美化、续费成功后的二次邮件回执。 |
 | 10 | 退款 | 🟡 主要落地 | `app_refunds` 表、`OrderService.create_refund`、`POST /api/v1/billing/refunds`、`GET /api/v1/billing/refunds/{refund_no}` 已上线；`OrdersPage` 已补充 paid 订单「申请退款」按钮 + 退款理由弹窗（`billingApi.requestRefund`）；`/api/v1/admin/refunds/{refund_no}/approve` + `reject` 已上线，`approve_refund` 调用 `gateway.refund()` 拿通道退款单号并立即降级用户 `plan_code='free'` + `plan_expires_at` 回退；退款审核结果（通过/拒绝）邮件通知用户已在 `api/v1/endpoints/admin.py` 落地；运营后台 `/admin` 退款审核页面已可用。剩余：生产小额验证。 |
 | 11 | 发票 | 🟡 主要落地 | `app_invoices` 表、`OrderService.create_invoice`、`POST /api/v1/billing/invoices`、`GET /api/v1/billing/invoices` 已上线；前端 `/account/invoices` 申请表单 + 历史列表已可用；`/api/v1/admin/invoices/{invoice_no}/issue` + `reject` 已上线，`issue_invoice` 审批后自动发送邮件回执（含 `issued_url`）。剩余：运营将 `issued_url` 写回（依赖电子发票 SaaS 接入或手工开具后填入）、生产小额验证。 |
@@ -111,7 +110,7 @@
 - 给业务表统一加 `user_id`（已经有 `owner_id` 的统一改名/语义对齐）：
   - `analysis_history`、`portfolio_*`、`alerts_*`、自选股表、Agent 会话表、用户配置表。
 - 仓储层（`src/repositories/*`、`src/services/*`）所有查询/写入加 `user_id` 过滤。
-- 新增「用户配置」表 / 服务，替代部分原 `SystemConfig` 中属于个人的字段（自选股、通知偏好、语言、模型偏好、自定义 Key 等）。
+- 新增「用户配置」表 / 服务，替代部分原 `SystemConfig` 中属于个人的字段（自选股、通知偏好、语言、模型偏好等）。
 - 行情、新闻、基本面这些**全市场公共数据**保持全局共享、按 `code` 缓存，不做用户隔离。
 - 旧数据：直接丢弃 / 重置 schema（用户已确认）。
 
@@ -126,14 +125,14 @@
 
 ### 5.4 商业化与配额
 
-- 已有表：`app_plans` / `app_subscriptions` / `app_user_usage_counters` / `app_redeem_codes` / `app_user_byok_credentials`（详见 `src/storage/`）。
+- 已有表：`app_plans` / `app_subscriptions` / `app_user_usage_counters` / `app_redeem_codes`（详见 `src/storage/`）。
 - **新增表（Phase 5 已落地，详见 §11.2）**：
   - `app_orders`：订单主表（含金额、币种、状态、provider、外部交易号、quote 快照）。
   - `app_payment_events`：支付通道回调流水（用于回放对账，幂等去重）。
   - `app_refunds`：退款记录。
   - `app_invoices`：电子发票申请（MVP 可手工，但请求记录入库）。
   - `app_promotions` / `app_coupons`（可选）：限时活动 / 优惠券，先复用 `app_redeem_codes` 也可。
-- 已有 `quota` 服务：分析 / Agent / 通知前先扣配额；BYOK 用户走自己的 Key，不计平台配额。
+- 已有 `quota` 服务：分析 / Agent / 通知前先扣配额；管理员等不限额场景可显式 bypass。
 - 模型路由：`src/users/model_router.py` 已新增按 `plan.allowed_models` 解析的统一入口，并已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`；详见 §5.4.1。
 - 支付：第一版**接入微信 Native + 支付宝 PC**，升级闭环为「下单 → 拉起扫码 → 通道回调 → 服务端开通 → 前端轮询确认」，详见 §11。
 - 兑换码 / 邀请码 / 后台手动开通继续保留，作为线下渠道（KOL 合作、内测用户）的开通方式。
@@ -141,12 +140,12 @@
 #### 5.4.1 模型路由统一入口（缺口）
 
 - `src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`（通过 `_resolve_user_model_route`），按以下优先级解析：
-  1. 若 `plan.can_byok` 且用户已配置 BYOK 凭证 → 走 BYOK 路由（注入 `api_key` / `api_base`，绕过平台 Router）。
-  2. 否则按 `plan.allowed_models` 过滤可用模型，走平台 Key 池。
+  1. 按 `plan.allowed_models` 过滤管理员配置的可用模型。
+  2. 若用户设置了 `preferred_model` 且该模型仍在允许列表中，则优先使用该模型。
   3. 平台 Key 池失败时按 channel `fallback_chain` 重试；`user_id` 已从 API 层 → factory → adapter 全链路透传。
 - **剩余缺口**：`allowed_models` 具体配置尚未入库（`app_plans` 中该字段为空时降级为不限制）；平台 Key 池每日/每分钟限额监控与用量看板。
 
-> 当前实现：`src/users/quota.py` 提供 `try_consume` / `refund` / `get_quota_snapshot`；`quota_guard.py` 把两者串成 `enforce_quota` / `refund_quota` / `quota_exceeded_payload`，已接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；未登录调用不再 bypass。`model_router.py` 提供 `resolve_model_route` / `as_litellm_kwargs`，已在 `GeminiAnalyzer` 与 `LLMToolAdapter` 的实际 LLM 调用前生效；BYOK 路由绕过 LiteLLM Router 直接调用，平台路由按 `plan.allowed_models` 过滤可用模型。
+> 当前实现：`src/users/quota.py` 提供 `try_consume` / `refund` / `get_quota_snapshot`；`quota_guard.py` 把两者串成 `enforce_quota` / `refund_quota` / `quota_exceeded_payload`，已接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；未登录调用不再 bypass。`model_router.py` 提供 `resolve_model_route`，已在 `GeminiAnalyzer` 与 `LLMToolAdapter` 的实际 LLM 调用前生效；平台路由按 `plan.allowed_models` 过滤可用模型并优先采用 `app_users.preferred_model`。
 
 ### 5.5 调度与推送
 
@@ -162,15 +161,15 @@
 
 - 路由：增加 `/register`、`/forgot-password`、`/billing`、`/account`；现有 `LoginPage` 重写为「登录 / 注册 / 找回密码」三态。
 - AuthContext 改为基于 user session，含 `user.plan`、`quota` 等。
-- 顶栏显示「今日剩余配额」，超额时弹出「升级 / 填写 BYOK」引导。
+- 顶栏显示「今日剩余配额」，超额时弹出升级引导。
 - `SettingsPage` 拆分：
   - `账户设置`（邮箱、密码、订阅状态）。
   - `自选股 & 通知偏好`（per-user）。
-  - `BYOK API Key`（仅 Pro 显示）。
+  - `模型偏好`（从管理员配置且当前套餐允许的模型中选择）。
 - 桌面端 `apps/dsa-desktop`：MVP 不强改，仅改登录调用。后续可作为 Pro 用户福利。
 
-> 当前实现：`/login`、`/register`、`/forgot-password`、`/verify-email`、`/onboarding`、`/account`、`/billing`、`/account/api-keys`、`/account/orders`、`/account/invoices`、`/admin`、`/notices`、`/help`、`/legal/terms`、`/legal/privacy`、`/legal/risk-disclosure` 均已上线。`/verify-email`（`VerifyEmailPage`）自动读取 `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。注册成功后自动跳转 `/onboarding` 引导添加自选股；`AccountPage` 已新增「我的自选股」与「通知偏好」卡片，含每日推送开关、邮件通知开关、Pro Webhook 配置 UI，页面底部仅保留退出登录入口；顶栏 `QuotaIndicator` 在登录后显示当日剩余，全局 `QuotaExceededDialog` 监听 `dsa:quota-exceeded` 事件并提供升级 / BYOK 引导。`/billing` 已接入 `PaymentDialog`（二维码 + 2s 轮询 + mock 调试按钮）。`/account/orders` 支持列表 + 取消 + 退款弹窗，`/account/invoices` 支持申请 + 历史列表。侧边栏铃铛图标显示近期公告数角标，帮助客服入口进入站内 `/help` 页面。`UserAuthPage` 注册表单已有协议三件套勾选框，未勾选时禁用提交。AuthContext 已暴露 `userMode`（含 `plan` / `quota`）/ `loginWithEmail` / `registerWithEmail` / `effectiveLoggedIn`。
-> 未完成：模型偏好 per-user 设置页（仍依赖全局 `SystemConfig`）；邀请/推荐功能入口。
+> 当前实现：`/login`、`/register`、`/forgot-password`、`/verify-email`、`/onboarding`、`/account`、`/billing`、`/account/orders`、`/account/invoices`、`/admin`、`/notices`、`/help`、`/legal/terms`、`/legal/privacy`、`/legal/risk-disclosure` 均已上线。`/verify-email`（`VerifyEmailPage`）自动读取 `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。注册成功后自动跳转 `/onboarding` 引导添加自选股；`AccountPage` 已新增「我的自选股」「通知偏好」与「模型偏好」卡片，含每日推送开关、邮件通知开关、Pro Webhook 配置 UI 和当前套餐可选模型选择，页面底部仅保留退出登录入口；顶栏 `QuotaIndicator` 在登录后显示当日剩余，全局 `QuotaExceededDialog` 监听 `dsa:quota-exceeded` 事件并提供升级引导。`/billing` 已接入 `PaymentDialog`（二维码 + 2s 轮询 + mock 调试按钮）。`/account/orders` 支持列表 + 取消 + 退款弹窗，`/account/invoices` 支持申请 + 历史列表。侧边栏铃铛图标显示近期公告数角标，帮助客服入口进入站内 `/help` 页面。`UserAuthPage` 注册表单已有协议三件套勾选框，未勾选时禁用提交。AuthContext 已暴露 `userMode`（含 `plan` / `quota`）/ `loginWithEmail` / `registerWithEmail` / `effectiveLoggedIn`。
+> 未完成：邀请/推荐功能入口。
 > 关键页面线框请参考 [`docs/to-c-product-wireframes.md`](./to-c-product-wireframes.md)。
 
 ### 5.7 运营后台（最小）
@@ -184,12 +183,11 @@
 
 - 密码：bcrypt / argon2，不长期沿用当前 PBKDF2 哈希方案。
 - session：httpOnly cookie + CSRF token；或改 JWT（看部署形态）。
-- BYOK Key 落库：用 `DATA_ENCRYPTION_KEY`（环境变量）做对称加密。
 - 邮件验证、密码重置：一次性 token + 短 TTL + 速率限制（沿用 `check_rate_limit` 思路按 IP/邮箱）。
 - 免责声明：注册流程显式同意「投资风险自负」「服务条款」「隐私政策」。
 - 数据隔离测试：所有业务接口必须有 per-user 隔离的回归测试。
 
-> 当前实现：Phase 1 暂用 PBKDF2；后续切换到 bcrypt / argon2 时需要同时迁移历史哈希。session 走 httpOnly cookie。BYOK 加密已在 `src/users/byok.py` 启用：优先 `cryptography.fernet`（依赖 `DATA_ENCRYPTION_KEY` 环境变量），未安装/未配置时回退到 HMAC + XOR 兜底（仅防明文落库，强度弱，生产环境必须配 Fernet）。登录失败 / 密码重置请求有基础内存限频。注册流程已强制勾选协议三件套，`app_user_consents` 表落库协议版本 / IP / UA，`/api/v1/account/status` 返回 `termsVersion` / `needsReacceptTerms`。未完成：CSRF token（session 仅 httpOnly cookie，尚无 double-submit CSRF 防护）；行为验证码 / hCaptcha（注册防刷仍依赖限频 + 黑名单）；密码哈希迁移到 bcrypt/argon2。
+> 当前实现：Phase 1 暂用 PBKDF2；后续切换到 bcrypt / argon2 时需要同时迁移历史哈希。session 走 httpOnly cookie。登录失败 / 密码重置请求有基础内存限频。注册流程已强制勾选协议三件套，`app_user_consents` 表落库协议版本 / IP / UA，`/api/v1/account/status` 返回 `termsVersion` / `needsReacceptTerms`。未完成：CSRF token（session 仅 httpOnly cookie，尚无 double-submit CSRF 防护）；行为验证码 / hCaptcha（注册防刷仍依赖限频 + 黑名单）；密码哈希迁移到 bcrypt/argon2。
 
 #### 5.8.1 注册防刷与账号风控
 
@@ -227,9 +225,8 @@
 - **备份**：
   - PostgreSQL：每日 pg_dump，**保留 7 日 + 周度归档保留 4 周**；备份文件加密上传 OSS / S3。
   - SQLite 期内：每日 cron 复制 `data/*.db` 到云盘；上线前演练一次恢复流程。
-  - BYOK 加密密钥 `DATA_ENCRYPTION_KEY` 需要离线备份（如 1Password / 团队密管），丢失即所有 BYOK 凭证不可恢复。
 - **审计日志**：
-  - 关键操作（登录、密码修改、邮箱修改、套餐变更、订单创建 / 支付 / 退款、BYOK Key 写入、管理员操作）写入独立的 `app_audit_logs` 表或专用日志文件，**永不删除**，便于合规追溯。
+  - 关键操作（登录、密码修改、邮箱修改、套餐变更、订单创建 / 支付 / 退款、模型偏好修改、管理员操作）写入独立的 `app_audit_logs` 表或专用日志文件，**永不删除**，便于合规追溯。
 - **运行手册**：
   - `docs/runbook-to-c.md`（待写）：包含「支付回调失败排查」「邮件送达失败排查」「数据库恢复演练」「商户号 / 私钥轮换」等 SOP。
 
@@ -312,8 +309,8 @@
 - ⬜ 邮件接 SES / 阿里云邮件推送, 自建 SMTP 仅做兜底（运维侧, 取决于商户选型）。
 - ⬜ HTML 模板视觉打磨与多用户并发调度（用户量上来后再优化）。
 
-### Phase 4：BYOK + Pro 能力（必须）
-- ✅ BYOK Key 加密落库 + 管理页已落地；`model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`，BYOK 路由绕过平台 Router，平台路由按 `plan.allowed_models` 过滤可用模型。
+### Phase 4：模型偏好 + Pro 能力（必须）
+- ✅ 用户模型偏好已落地；`model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`，平台路由按 `plan.allowed_models` 过滤可用模型并优先使用用户首选模型。
 - ✅ Pro 套餐字段 `can_webhook` / `allowed_models` / `max_stocks` 已就位；Webhook 通知（飞书/企业微信/Discord/TG/通用 JSON）和 per-user 自选股上限已在调度与 watchlist 服务中生效。
 - ⬜ `allowed_models` 具体配置尚未入库（该字段为空时降级为不限制）；`app_plans` 待运营配置后启用高低档模型分档。
 
@@ -348,7 +345,7 @@
 - **数据隔离漏洞**：多租户最常见 bug；需要在 repository 层强约束 + 集中拦截 + 单测覆盖。
 - **投顾合规风险**：A 股 / 港股 / 美股的「证券投资咨询」属于持牌业务。所有产品文案、报告输出口径必须定性为「AI 辅助分析」而非「投资建议」，注册需勾选三件套，每页/每邮件附免责，落地页避免「稳赚 / 必涨 / 推荐买入」等措辞。详见 §5.11。
 - **邮件送达率**：自建 SMTP 易进垃圾箱，第一版直接接 SES / 阿里云邮件推送 / SendGrid 之一；通知模板做 SPF / DKIM / DMARC。
-- **BYOK Key 安全**：必须加密落库，日志/报错不能泄露明文，导出/转移时再次确认；MVP 强制要求生产环境配 `DATA_ENCRYPTION_KEY`，启动时若未配置直接 fail-fast 或退回为只读 BYOK。
+- **平台模型成本与权限**：用户只能选择管理员配置且当前套餐允许的模型；套餐降级、模型下架或渠道不可用时必须自动回退到可用平台模型，避免暴露部署级密钥或内部模型配置。
 - **支付通道风险**（新）：
   - **商户准入失败**：微信 / 支付宝个体户准入需提供经营范围、对公账户、法人身份证；周期约 1–3 周。**应在 Phase 1 同步推进，避免阻塞 Phase 5**。
   - **资金对账偏差**：必须有**每日对账任务**（拉通道账单 vs 本地订单），偏差落告警；MVP 可手工核单，但脚本必须就绪。
@@ -380,7 +377,7 @@
 **工程侧**：
 
 - 邮件发送服务选型（SES / 阿里云邮件推送 / SendGrid，三选一）。
-- BYOK 支持的 provider 范围（OpenAI / Anthropic / Gemini / Anspire / AIHubMix / 自定义 OpenAI 兼容端点）。
+- 平台模型 provider 范围与套餐分档策略（OpenAI / Anthropic / Gemini / Anspire / AIHubMix / 自定义 OpenAI 兼容端点等由管理员配置）。
 - 是否在 Phase 5 前把 SQLite 迁到 PostgreSQL（推荐迁，订单 / 退款写入并发风险较高）。
 - 监控选型（Sentry 免费版 + Uptime Robot 已足够 MVP；后期再引入 Prometheus / Grafana）。
 - 是否上线 PWA 支持（移动端体验决定）。
@@ -422,7 +419,7 @@
 为防止平台 Key 失血，定义以下红线：
 
 - **免费档单用户日成本** 不超过 **¥0.5**（按当前 LLM 价格估算）；超过即触发 §5.4.1 的全局熔断。
-- **平台 Pro 用户单月成本** 不超过订阅价格的 **40%**（即毛利率 ≥ 60%）；持续两个月跌破即评估涨价或上调 BYOK 优先级。
+- **平台 Pro 用户单月成本** 不超过订阅价格的 **40%**（即毛利率 ≥ 60%）；持续两个月跌破即评估涨价、调整配额或收紧高成本模型分档。
 
 ## 10. 落地节奏与里程碑
 
@@ -437,7 +434,7 @@
 | W2 | Phase 2 收尾：模型路由统一入口 `src/users/model_router.py`，平台 Key 池监控 | 协议三件套起草（用户协议 / 隐私政策 / 投资风险） | M2：免费档不会拖垮平台 Key 预算 |
 | W3 | Phase 3 启动：调度器按用户分桶 + 通知按用户偏好 | 选定邮件 SaaS（SES / 阿里云 / SendGrid） | M3：单用户失败降级落地 |
 | W4 | Phase 3 收尾：邮件模板个性化 + 退订链接 | 接入邮件 SaaS + DKIM/SPF/DMARC 配置 | M4：邮件送达率 ≥ 95% |
-| W5 | Phase 4：BYOK 路由层 + Pro Webhook 通知 | 监控接 Sentry + Uptime Robot | M5：Pro 用户首条 webhook 推送 |
+| W5 | Phase 4：模型偏好路由层 + Pro Webhook 通知 | 监控接 Sentry + Uptime Robot | M5：Pro 用户首条 webhook 推送 |
 | W6 | Phase 5 数据层：`app_orders` / `app_payment_events` / `app_refunds` / `app_invoices` 表 + 服务层 | 商户准入下证（理论上 W4 应已下证） | M6：本地可创建订单（不连真支付） |
 | W7 | Phase 5 通道层：微信 Native + 支付宝 PC SDK 接入；下单 / 拉取二维码 / 状态轮询 | `/billing` 前端改造（套餐选择 → 二维码弹窗） | M7：沙箱环境完整跑通下单 → 支付 → 开通 |
 | W8 | Phase 5 安全 + 对账：回调签名校验、幂等、状态机；每日对账任务 | `/account/orders` / `/account/invoices` 前端 | M8：生产环境跑通真实小额付款 |
@@ -822,5 +819,5 @@ RECONCILE_WEBHOOK_URL=             # 对账差异 Webhook（飞书/企业微信/
 - [`docs/to-c-mode.md`](./to-c-mode.md)：Phase 1 工程骨架（环境变量、API、表结构、回滚方式）。
 - [`docs/to-c-product-wireframes.md`](./to-c-product-wireframes.md)：关键页面线框（登录/注册/账户/会员中心/配额提示）。
 - [`docs/notifications.md`](./notifications.md)：通知渠道基线（Phase 3 推送将基于此扩展为按用户偏好）。
-- [`docs/LLM_CONFIG_GUIDE.md`](./LLM_CONFIG_GUIDE.md)：LLM 渠道配置（Phase 4 BYOK 路由将基于此扩展）。
+- [`docs/LLM_CONFIG_GUIDE.md`](./LLM_CONFIG_GUIDE.md)：LLM 渠道配置（Phase 4 模型偏好路由将基于此扩展）。
 - [`docs/CHANGELOG.md`](./CHANGELOG.md)：版本变更记录，To C 化各 Phase 的提交信息会按惯例落到此处。

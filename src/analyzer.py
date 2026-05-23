@@ -35,7 +35,7 @@ from src.config import (
 from src.llm.generation_params import apply_litellm_generation_params
 from src.llm.errors import call_litellm_with_param_recovery
 from src.storage import AppUser, get_db, persist_llm_usage
-from src.users.model_router import ModelRoute, as_litellm_kwargs, resolve_model_route
+from src.users.model_router import ModelRoute, resolve_model_route
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import (
     get_signal_level,
@@ -2081,8 +2081,6 @@ class GeminiAnalyzer:
     ) -> Any:
         """Dispatch a LiteLLM completion through router or direct fallback."""
         effective_kwargs = dict(call_kwargs)
-        if model_route is not None and model_route.uses_byok:
-            return litellm.completion(**effective_kwargs)
         if use_channel_router and self._router and model in router_model_names:
             return self._router.completion(**effective_kwargs)
         if self._router and model == config.litellm_model and not use_channel_router:
@@ -2300,9 +2298,7 @@ class GeminiAnalyzer:
         if not models_to_try:
             raise _AllModelsFailedError("No LLM models are available for the current user plan")
 
-        use_channel_router = self._has_channel_config(config) and not (
-            model_route is not None and model_route.uses_byok
-        )
+        use_channel_router = self._has_channel_config(config)
 
         last_error = None
         last_response_text: Optional[str] = None
@@ -2335,13 +2331,9 @@ class GeminiAnalyzer:
                         self._router
                         and model == config.litellm_model
                         and not use_channel_router
-                        and not (model_route is not None and model_route.uses_byok)
                     )
                 )
-                if model_route is not None and model_route.uses_byok:
-                    call_kwargs.update(as_litellm_kwargs(model_route))
-                    recovery_model_list = []
-                elif not uses_router:
+                if not uses_router:
                     try:
                         keys = get_api_keys_for_model(model, config)
                     except AttributeError:

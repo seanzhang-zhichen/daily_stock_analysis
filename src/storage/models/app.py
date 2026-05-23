@@ -2,7 +2,7 @@
 """
 To C 用户体系（Phase 1+）相关数据模型。
 
-包含用户、会话、邮件验证、用量计数、套餐、订阅、兑换码、BYOK、自选股、
+包含用户、会话、邮件验证、用量计数、套餐、订阅、兑换码、自选股、
 通知偏好、订单、支付事件、退款、发票、用户协议、对账以及审计日志等表。
 """
 
@@ -42,6 +42,7 @@ class AppUser(Base):
     status = Column(String(16), nullable=False, default='active', index=True)  # active/disabled
     plan_code = Column(String(32), nullable=False, default='free', index=True)
     plan_expires_at = Column(DateTime, nullable=True)
+    preferred_model = Column(String(128), nullable=True)
     email_verified_at = Column(DateTime, nullable=True)
     last_login_at = Column(DateTime, nullable=True)
     # Phase 5/6 追加: 平台运营管理员标记 + 协议同意版本
@@ -59,6 +60,7 @@ class AppUser(Base):
             'status': self.status,
             'plan_code': self.plan_code,
             'plan_expires_at': self.plan_expires_at.isoformat() if self.plan_expires_at else None,
+            'preferred_model': self.preferred_model,
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
             'is_admin': bool(self.is_admin),
@@ -127,7 +129,6 @@ class AppPlan(Base):
     daily_agent_limit = Column(Integer, nullable=False, default=5)
     max_stocks = Column(Integer, nullable=False, default=3)
     allowed_models = Column(Text)  # JSON: ["gpt-4o-mini"] 等
-    can_byok = Column(Boolean, nullable=False, default=False)
     can_webhook = Column(Boolean, nullable=False, default=False)
     price_cents = Column(Integer, nullable=False, default=0)
     currency = Column(String(8), nullable=False, default='CNY')
@@ -168,26 +169,6 @@ class AppRedeemCode(Base):
     expires_at = Column(DateTime, nullable=True, index=True)  # 兑换码本身的过期, 与 grant_days 区分
     note = Column(String(255))
     created_at = Column(DateTime, default=datetime.now, nullable=False)
-
-
-class AppUserByokCredential(Base):
-    """用户自带 API Key（加密存储），按 provider 维度 upsert。"""
-
-    __tablename__ = 'app_user_byok_credentials'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
-    provider = Column(String(32), nullable=False, index=True)  # openai / anspire / aihubmix / gemini / anthropic
-    encrypted_key = Column(Text, nullable=False)  # base64(fernet) 或同等格式
-    base_url = Column(String(255))
-    model = Column(String(128))
-    status = Column(String(16), nullable=False, default='active')  # active / invalid
-    created_at = Column(DateTime, default=datetime.now, nullable=False)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint('user_id', 'provider', name='uix_app_user_byok_user_provider'),
-    )
 
 
 class AppUserWatchlist(Base):
@@ -446,7 +427,6 @@ class AppAuditLog(Base):
     常见 action 值::
 
         auth.login / auth.register / auth.change_password / auth.reset_password
-        byok.upsert / byok.delete
         plan.redeem / plan.grant
         order.create / order.cancel
         refund.create / refund.approve / refund.reject
@@ -478,7 +458,7 @@ class AppGrowthEvent(Base):
     常见 event 值::
 
         page.view / user.register / user.first_analysis / user.upgrade_click
-        user.upgrade_success / user.byok_set / user.daily_push_enable
+        user.upgrade_success / user.daily_push_enable
         quota.exceeded / payment.initiated / payment.success
     """
 
@@ -529,7 +509,6 @@ __all__ = [
     "AppPlan",
     "AppSubscription",
     "AppRedeemCode",
-    "AppUserByokCredential",
     "AppUserWatchlist",
     "AppUserNotificationPref",
     "AppOrder",

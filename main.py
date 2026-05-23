@@ -51,7 +51,6 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from data_provider.base import canonical_stock_code
-from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
 from src.logging_config import setup_logging
 
@@ -496,6 +495,10 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
                 plan = resolve_user_plan(session, user, settings=user_settings)
                 user_email = user.email
 
+            if not plan.is_pro:
+                logger.info("[per-user 调度] 用户 %d 当前非 Pro，跳过每日自动分析", user_id)
+                continue
+
             if not watchlist:
                 logger.info("[per-user 调度] 用户 %d 自选股为空，跳过", user_id)
                 continue
@@ -836,7 +839,12 @@ def run_full_analysis(
         logger.exception(f"分析流程执行失败: {e}")
 
 
-def start_api_server(host: str, port: int, config: Config) -> None:
+def start_api_server(
+    host: str,
+    port: int,
+    config: Config,
+    serve_frontend: bool = False,
+) -> None:
     """
     在后台线程启动 FastAPI 服务
 
@@ -844,14 +852,18 @@ def start_api_server(host: str, port: int, config: Config) -> None:
         host: 监听地址
         port: 监听端口
         config: 配置对象
+        serve_frontend: 是否托管 WebUI 静态资源
     """
     import threading
     import uvicorn
+    from api.app import create_app
+
+    app = create_app(serve_frontend=serve_frontend)
 
     def run_server():
         level_name = (config.log_level or "INFO").lower()
         uvicorn.run(
-            "api.app:app",
+            app,
             host=host,
             port=port,
             log_level=level_name,
@@ -863,10 +875,15 @@ def start_api_server(host: str, port: int, config: Config) -> None:
     logger.info(f"FastAPI 服务已启动: http://{host}:{port}")
 
 
-def _is_truthy_env(var_name: str, default: str = "true") -> bool:
-    """Parse common truthy / falsy environment values."""
-    value = os.getenv(var_name, default).strip().lower()
-    return value not in {"0", "false", "no", "off"}
+def _should_prepare_webui_frontend_assets(args, config: Config) -> bool:
+    explicit_webui_requested = bool(
+        getattr(args, "webui", False) or getattr(args, "webui_only", False)
+    )
+    legacy_webui_enabled = bool(
+        getattr(config, "webui_enabled", False)
+        and not (getattr(args, "serve", False) or getattr(args, "serve_only", False))
+    )
+    return explicit_webui_requested or legacy_webui_enabled
 
 
 def start_bot_stream_clients(config: Config) -> None:
@@ -1006,6 +1023,8 @@ def main() -> int:
         stock_codes = [canonical_stock_code(c) for c in args.stocks.split(',') if (c or "").strip()]
         logger.info(f"使用命令行指定的股票列表: {stock_codes}")
 
+    prepare_webui_frontend = _should_prepare_webui_frontend_assets(args, config)
+
     # === 处理 --webui / --webui-only 参数，映射到 --serve / --serve-only ===
     if args.webui:
         args.serve = True
@@ -1028,10 +1047,20 @@ def main() -> int:
 
     bot_clients_started = False
     if start_serve:
-        if not prepare_webui_frontend_assets():
-            logger.warning("前端静态资源未就绪，继续启动 FastAPI 服务（Web 页面可能不可用）")
+        if prepare_webui_frontend:
+            from src.webui_frontend import prepare_webui_frontend_assets
+
+            if not prepare_webui_frontend_assets():
+                logger.warning("前端静态资源未就绪，继续启动 FastAPI 服务（Web 页面可能不可用）")
+        else:
+            logger.info("跳过 WebUI 前端静态资源准备（不会安装依赖或构建前端）")
         try:
-            start_api_server(host=args.host, port=args.port, config=config)
+            start_api_server(
+                host=args.host,
+                port=args.port,
+                config=config,
+                serve_frontend=prepare_webui_frontend,
+            )
             bot_clients_started = True
         except Exception as e:
             logger.error(f"启动 FastAPI 服务失败: {e}")
@@ -1039,10 +1068,14 @@ def main() -> int:
     if bot_clients_started:
         start_bot_stream_clients(config)
 
-    # === 仅 Web 服务模式：不自动执行分析 ===
+    # === 仅服务模式：不自动执行分析 ===
     if args.serve_only:
-        logger.info("模式: 仅 Web 服务")
-        logger.info(f"Web 服务运行中: http://{args.host}:{args.port}")
+        if prepare_webui_frontend:
+            logger.info("模式: 仅 WebUI 服务")
+            logger.info(f"WebUI 服务运行中: http://{args.host}:{args.port}")
+        else:
+            logger.info("模式: 仅 API 服务")
+            logger.info(f"API 服务运行中: http://{args.host}:{args.port}")
         logger.info("通过 /api/v1/analysis/analyze 接口触发分析")
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出...")

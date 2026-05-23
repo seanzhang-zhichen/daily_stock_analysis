@@ -2,12 +2,11 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, KeyRound, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Sparkles, X } from 'lucide-react';
 import {
   QUOTA_EXCEEDED_EVENT,
   type QuotaExceededDetail,
 } from '../../api';
-import { useAuth } from '../../hooks';
 
 const KIND_LABEL: Record<string, string> = {
   analysis: 'AI 分析',
@@ -19,12 +18,10 @@ const KIND_LABEL: Record<string, string> = {
  * Global QuotaExceededDialog (wireframe §7).
  *
  * 监听 ``window`` 上的 ``dsa:quota-exceeded`` 自定义事件 (由 axios interceptor
- * 在收到 402 ``quota_exceeded`` 时派发), 弹出统一的「升级 / BYOK / 关闭」对话框。
- * 这样所有触发分析 / Agent 调用的页面无需重复实现配额超限提示。
+ * 在收到 402 ``quota_exceeded`` 时派发), 弹出统一的配额超限提示。
  */
 export const QuotaExceededDialog: React.FC = () => {
   const navigate = useNavigate();
-  const { userMode } = useAuth();
   const [detail, setDetail] = useState<QuotaExceededDetail | null>(null);
 
   useEffect(() => {
@@ -47,11 +44,10 @@ export const QuotaExceededDialog: React.FC = () => {
   const close = () => setDetail(null);
 
   const kindLabel = KIND_LABEL[detail.kind] ?? detail.kind;
-  const canByok = userMode?.plan?.canByok ?? false;
-  // Pro 用户额度耗尽时优先引导 BYOK; free 用户引导升级
-  const primaryAction = canByok
-    ? { label: '配置我的 API Key', target: '/account/api-keys?from=quota' }
-    : { label: '升级到 Pro', target: `/billing?from=quota&kind=${encodeURIComponent(detail.kind)}` };
+  const primaryAction = {
+    label: '升级或续费套餐',
+    target: `/billing?from=quota&kind=${encodeURIComponent(detail.kind)}`,
+  };
 
   const dialog = (
     <div
@@ -103,7 +99,7 @@ export const QuotaExceededDialog: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-secondary-text">
-            额度每天 0 点 (UTC) 重置, 或通过以下方式立即继续:
+            额度每天 0 点 (UTC) 重置, 或升级到更高套餐后继续使用:
           </p>
         </div>
 
@@ -116,22 +112,10 @@ export const QuotaExceededDialog: React.FC = () => {
             }}
             className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary-gradient px-5 text-sm font-medium text-primary-foreground shadow-lg shadow-cyan/20 transition hover:brightness-105"
           >
-            {canByok ? <KeyRound className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+            <Sparkles className="h-4 w-4" />
             {primaryAction.label}
             <ArrowRight className="h-4 w-4" />
           </button>
-          {!canByok ? (
-            <button
-              type="button"
-              onClick={() => {
-                close();
-                navigate('/account/api-keys?from=quota');
-              }}
-              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border/70 bg-card px-5 text-sm text-secondary-text transition hover:bg-hover hover:text-foreground"
-            >
-              <KeyRound className="h-4 w-4" /> 升级后还可以配置 BYOK
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={close}

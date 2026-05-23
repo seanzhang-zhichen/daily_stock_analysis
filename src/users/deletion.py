@@ -172,7 +172,7 @@ def cleanup_deleted_users(db: Session, *, dry_run: bool = False) -> int:
 
     规则：
     - ``status='deleted'`` 且 ``deletion_requested_at`` 早于 ``now - (COOLING_OFF + RETENTION)``
-    - 清除：email / password_hash / deletion_requested_at（置为 NULL）、自选股、通知偏好、BYOK 凭证、session
+    - 清除：email / password_hash / deletion_requested_at（置为 NULL）、自选股、通知偏好、session
     - 保留：id / status / plan_code / created_at / updated_at（统计用）；订单 / 发票 / 审计日志（财税合规）
 
     Args:
@@ -214,7 +214,6 @@ def _purge_user_personal_data(db: Session, user: AppUser) -> None:
     # 清除关联表个人数据
     db.execute(text("DELETE FROM app_user_watchlists WHERE user_id = :uid"), {"uid": uid})
     db.execute(text("DELETE FROM app_user_notification_prefs WHERE user_id = :uid"), {"uid": uid})
-    db.execute(text("DELETE FROM app_user_byok_credentials WHERE user_id = :uid"), {"uid": uid})
     db.execute(text("DELETE FROM app_user_sessions WHERE user_id = :uid"), {"uid": uid})
     db.execute(text("DELETE FROM app_user_email_verifications WHERE user_id = :uid"), {"uid": uid})
 

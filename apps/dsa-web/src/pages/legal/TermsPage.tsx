@@ -55,7 +55,6 @@ const TermsPage: React.FC = () => {
         </li>
         <li>退款请通过 <code className="rounded bg-card/40 px-1">/account/orders</code> 提交申请，由运营在 3 个工作日内审核。</li>
         <li>同一用户累计申请退款 ≥ 2 次时进入人工二审；存在恶意刷退、违规使用的账户将被拒绝退款并冻结。</li>
-        <li>BYOK 模式下您使用自费 API Key 产生的费用由相应 LLM 服务商收取，不在本服务退款范围内。</li>
       </ul>
 
       <h2 className="mt-8 text-base font-semibold">5. 用户行为规范</h2>
@@ -81,7 +80,7 @@ const TermsPage: React.FC = () => {
         <li>因 AI 模型局限性、行情数据延迟或第三方数据源中断导致的报告偏差；</li>
         <li>因您自行决策投资股票产生的盈亏；</li>
         <li>因不可抗力（如自然灾害、监管政策、网络故障）导致的服务中断；</li>
-        <li>因您泄露账户密码或 BYOK API Key 引发的损失。</li>
+        <li>因您泄露账户密码或会话凭证引发的损失。</li>
       </ul>
 
       <h2 className="mt-8 text-base font-semibold">8. 协议变更</h2>

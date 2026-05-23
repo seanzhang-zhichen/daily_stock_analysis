@@ -53,7 +53,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [To C 产品规划](to-c-product-plan.md) | 用户分层、配额权益、阶段路线、风险点（产品总纲） |
-| [To C 用户故事](to-c-user-stories.md) | 面向游客、免费会员、Pro / BYOK 用户和管理员的核心用户故事、验收口径与实现映射 |
+| [To C 用户故事](to-c-user-stories.md) | 面向游客、免费会员、Pro 用户和管理员的核心用户故事、验收口径与实现映射 |
 | [To C 关键页面线框](to-c-product-wireframes.md) | 登录 / 注册 / 账户 / 会员中心 / 配额提示等关键页面线框 |
 | [To C 多用户模式](to-c-mode.md) | 默认启用的多用户认证、API、表结构、配额与隔离边界 |
 

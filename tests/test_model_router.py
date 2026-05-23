@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for src/users/model_router.py.
-
-Covers resolve_model_route() with the new platform_primary_model /
-platform_models parameters, BYOK path, plan-filtered path, and the
-as_litellm_kwargs helper.
-"""
+"""Unit tests for src/users/model_router.py."""
 
 import sys
 import unittest
@@ -15,21 +10,9 @@ from tests.litellm_stub import ensure_litellm_stub
 ensure_litellm_stub()
 
 from src.users.model_router import (
-    ModelRoute,
     _filter_allowed_models,
-    as_litellm_kwargs,
     resolve_model_route,
 )
-
-
-class TestModelRoute(unittest.TestCase):
-    def test_uses_byok_true(self):
-        r = ModelRoute(source="byok", primary_model="gpt-4o", models_to_try=["gpt-4o"])
-        self.assertTrue(r.uses_byok)
-
-    def test_uses_byok_false(self):
-        r = ModelRoute(source="platform", primary_model="gemini/gemini-2.0-flash", models_to_try=[])
-        self.assertFalse(r.uses_byok)
 
 
 class TestFilterAllowedModels(unittest.TestCase):
@@ -41,32 +24,6 @@ class TestFilterAllowedModels(unittest.TestCase):
 
     def test_none_match_returns_empty(self):
         self.assertEqual(_filter_allowed_models(["a"], ["z"]), [])
-
-
-class TestAsLitellmKwargs(unittest.TestCase):
-    def test_byok_route_includes_api_key_and_base(self):
-        r = ModelRoute(
-            source="byok",
-            primary_model="openai/gpt-4o",
-            models_to_try=["openai/gpt-4o"],
-            api_key="sk-test",
-            api_base="https://custom.api",
-        )
-        kwargs = as_litellm_kwargs(r)
-        self.assertEqual(kwargs["model"], "openai/gpt-4o")
-        self.assertEqual(kwargs["api_key"], "sk-test")
-        self.assertEqual(kwargs["api_base"], "https://custom.api")
-
-    def test_platform_route_omits_key_and_base(self):
-        r = ModelRoute(
-            source="platform",
-            primary_model="gemini/gemini-2.0-flash",
-            models_to_try=["gemini/gemini-2.0-flash"],
-        )
-        kwargs = as_litellm_kwargs(r)
-        self.assertEqual(kwargs["model"], "gemini/gemini-2.0-flash")
-        self.assertNotIn("api_key", kwargs)
-        self.assertNotIn("api_base", kwargs)
 
 
 class TestResolveModelRoute(unittest.TestCase):
@@ -87,7 +44,7 @@ class TestResolveModelRoute(unittest.TestCase):
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="gemini/gemini-2.0-flash"):
             route = resolve_model_route(db, user=None, config=cfg)
         self.assertEqual(route.source, "platform")
-        self.assertFalse(route.uses_byok)
+        self.assertEqual(route.primary_model, "gemini/gemini-2.0-flash")
 
     def test_explicit_platform_models_respected(self):
         db = self._make_db()
@@ -97,7 +54,7 @@ class TestResolveModelRoute(unittest.TestCase):
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="default"), \
              patch("src.users.model_router.resolve_user_plan") as mock_plan, \
              patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
-            mock_plan.return_value = MagicMock(can_byok=False, allowed_models=[])
+            mock_plan.return_value = MagicMock(allowed_models=[])
             user = MagicMock()
             route = resolve_model_route(db, user=user, config=cfg, platform_models=explicit)
         self.assertEqual(route.models_to_try, explicit)
@@ -111,31 +68,27 @@ class TestResolveModelRoute(unittest.TestCase):
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="gpt-4o"), \
              patch("src.users.model_router.resolve_user_plan") as mock_plan, \
              patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
-            mock_plan.return_value = MagicMock(can_byok=False, allowed_models=allowed)
+            mock_plan.return_value = MagicMock(allowed_models=allowed)
             user = MagicMock()
             route = resolve_model_route(db, user=user, config=cfg, platform_models=platform)
         self.assertEqual(route.models_to_try, ["gpt-4o-mini"])
         self.assertEqual(route.primary_model, "gpt-4o-mini")
 
-    def test_byok_route_returned_when_can_byok_and_credential_found(self):
+    def test_user_preferred_model_is_prioritized_when_allowed(self):
         db = self._make_db()
         cfg = self._make_config()
-        byok = ModelRoute(
-            source="byok",
-            primary_model="openai/gpt-4o",
-            models_to_try=["openai/gpt-4o"],
-            api_key="sk-user",
-        )
-        with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=[]), \
-             patch("src.users.model_router.get_effective_agent_primary_model", return_value="gemini/gemini-2.0-flash"), \
+        platform = ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"]
+        with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=platform), \
+             patch("src.users.model_router.get_effective_agent_primary_model", return_value="gpt-4o"), \
              patch("src.users.model_router.resolve_user_plan") as mock_plan, \
-             patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()), \
-             patch("src.users.model_router._select_byok_credential", return_value=byok):
-            mock_plan.return_value = MagicMock(can_byok=True, allowed_models=[])
+             patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
+            mock_plan.return_value = MagicMock(allowed_models=["gpt-4o", "gpt-4o-mini"])
             user = MagicMock()
+            user.preferred_model = "gpt-4o-mini"
             route = resolve_model_route(db, user=user, config=cfg)
-        self.assertTrue(route.uses_byok)
-        self.assertEqual(route.api_key, "sk-user")
+        self.assertEqual(route.source, "platform")
+        self.assertEqual(route.primary_model, "gpt-4o-mini")
+        self.assertEqual(route.models_to_try, ["gpt-4o-mini", "gpt-4o"])
 
 
 class TestLLMToolAdapterRouting(unittest.TestCase):

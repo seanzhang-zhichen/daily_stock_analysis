@@ -345,7 +345,7 @@ class _BillingSvcBase(unittest.TestCase):
         try:
             session.add(AppPlan(
                 code="pro", name="Pro", daily_analysis_limit=50,
-                daily_agent_limit=50, max_stocks=30, can_byok=True,
+                daily_agent_limit=50, max_stocks=30,
                 can_webhook=True, price_cents=3900,
             ))
             session.commit()

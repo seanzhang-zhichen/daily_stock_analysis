@@ -76,7 +76,7 @@ const HelpPage: React.FC = () => {
             <div>
               <h2 className="text-sm font-semibold text-foreground">账户与配额</h2>
               <p className="mt-1 text-sm leading-6 text-secondary-text">
-                在账户页管理自选股、通知偏好、BYOK API Key、个人数据导出和账号安全操作。
+                在账户页管理自选股、通知偏好、模型偏好、个人数据导出和账号安全操作。
               </p>
             </div>
           </div>
@@ -118,7 +118,7 @@ const HelpPage: React.FC = () => {
                 <CreditCard className="h-4 w-4 text-primary" /> 配额用完怎么办？
               </h2>
               <p className="text-sm leading-6 text-secondary-text">
-                达到当日上限后，可等待次日刷新、升级套餐，或在支持 BYOK 的套餐中配置自己的模型 API Key。
+                达到当日上限后，可等待次日刷新或升级套餐以获得更高配额。
               </p>
             </section>
             <section className="space-y-2">

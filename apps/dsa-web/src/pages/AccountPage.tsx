@@ -5,7 +5,6 @@ import {
   Bell,
   CheckCircle2,
   CreditCard,
-  KeyRound,
   Loader2,
   Lock,
   LogOut,
@@ -15,9 +14,10 @@ import {
   Webhook,
 } from 'lucide-react';
 import { Button, Input, Card } from '../components/common';
+import { Select } from '../components/common';
 import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
-import { accountApi, type NotificationPrefs } from '../api/account';
+import { accountApi, type ModelPreferenceResponse, type NotificationPrefs } from '../api/account';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
 
@@ -58,6 +58,10 @@ const AccountPage: React.FC = () => {
   const [error, setError] = useState<FormError>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [modelPreference, setModelPreference] = useState<ModelPreferenceResponse | null>(null);
+  const [modelPreferenceLoading, setModelPreferenceLoading] = useState(false);
+  const [modelPreferenceSaving, setModelPreferenceSaving] = useState(false);
+  const [modelPreferenceError, setModelPreferenceError] = useState<string | null>(null);
 
   // 通知偏好
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
@@ -85,11 +89,39 @@ const AccountPage: React.FC = () => {
     }
   }, []);
 
+  const loadModelPreference = useCallback(async () => {
+    setModelPreferenceLoading(true);
+    setModelPreferenceError(null);
+    try {
+      const res = await accountApi.getModelPreference();
+      setModelPreference(res);
+    } catch (err) {
+      setModelPreferenceError(getParsedApiError(err).message);
+    } finally {
+      setModelPreferenceLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (userMode?.loggedIn) {
       void loadPrefs();
+      void loadModelPreference();
     }
-  }, [userMode?.loggedIn, loadPrefs]);
+  }, [userMode?.loggedIn, loadPrefs, loadModelPreference]);
+
+  const handleModelPreferenceChange = useCallback(async (value: string) => {
+    setModelPreferenceSaving(true);
+    setModelPreferenceError(null);
+    try {
+      const res = await accountApi.updateModelPreference(value || null);
+      setModelPreference(res);
+      await refreshStatus();
+    } catch (err) {
+      setModelPreferenceError(getParsedApiError(err).message);
+    } finally {
+      setModelPreferenceSaving(false);
+    }
+  }, [refreshStatus]);
 
   const handleTogglePref = useCallback(
     async (field: 'dailyPushEnabled' | 'emailEnabled', value: boolean) => {
@@ -240,7 +272,7 @@ const AccountPage: React.FC = () => {
           </p>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">账户设置</h1>
           <p className="text-sm text-secondary-text/80">
-            管理你的账户信息、订阅状态、安全设置以及自带 API Key (BYOK)。
+            管理你的账户信息、订阅状态、安全设置、模型偏好和通知偏好。
           </p>
         </div>
       </div>
@@ -302,14 +334,36 @@ const AccountPage: React.FC = () => {
               {plan?.isPro ? '管理订阅' : '升级到 Pro'}
             </Button>
           </Link>
-          {plan?.canByok ? (
-            <Link to="/account/api-keys">
-              <Button variant="outline">
-                <KeyRound className="h-4 w-4" /> 管理我的 API Key
-              </Button>
-            </Link>
-          ) : null}
         </div>
+      </Card>
+
+      <Card title="模型偏好" subtitle="MODEL">
+        {modelPreferenceLoading ? (
+          <div className="flex items-center gap-2 text-secondary-text text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {modelPreferenceError ? (
+              <SettingsAlert title="操作失败" message={modelPreferenceError} variant="error" />
+            ) : null}
+            <Select
+              id="account-model-preference"
+              label="默认模型"
+              placeholder="跟随平台默认"
+              value={modelPreference?.preferredModel ?? ''}
+              options={[
+                { value: '', label: `跟随平台默认${modelPreference?.effectiveModel ? `（${modelPreference.effectiveModel}）` : ''}` },
+                ...((modelPreference?.models ?? []).map((model) => ({ value: model, label: model }))),
+              ]}
+              onChange={(value) => void handleModelPreferenceChange(value)}
+              disabled={modelPreferenceSaving || (modelPreference?.models.length ?? 0) === 0}
+            />
+            <p className="text-xs leading-6 text-secondary-text">
+              可选模型由平台管理员在后台配置，并受当前套餐的模型权限限制；所有调用均使用平台后台配置的 Key。
+            </p>
+          </div>
+        )}
       </Card>
 
       {/* 通知偏好 */}

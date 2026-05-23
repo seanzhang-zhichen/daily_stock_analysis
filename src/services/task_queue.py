@@ -19,7 +19,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any, TYPE_CHECKING, Tuple, Literal, Callable
 
@@ -40,6 +40,11 @@ def _dedupe_stock_code_key(stock_code: str) -> str:
     underlying stock, e.g. ``600519`` and ``600519.SH``.
     """
     return canonical_stock_code(normalize_stock_code(stock_code))
+
+
+def _dedupe_task_key(stock_code: str, user_id: Optional[int] = None) -> str:
+    owner = f"user:{int(user_id)}" if user_id is not None else "global"
+    return f"{owner}:{_dedupe_stock_code_key(stock_code)}"
 
 
 class TaskStatus(str, Enum):
@@ -74,6 +79,8 @@ class TaskInfo:
     skills: Optional[List[str]] = None
     # To C 模式下的归属用户 ID
     user_id: Optional[int] = None
+    refund_analysis_quota: bool = False
+    quota_refund_date: Optional[date] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
@@ -113,6 +120,8 @@ class TaskInfo:
             selection_source=self.selection_source,
             skills=list(self.skills) if self.skills is not None else None,
             user_id=self.user_id,
+            refund_analysis_quota=self.refund_analysis_quota,
+            quota_refund_date=self.quota_refund_date,
         )
 
 
@@ -165,7 +174,7 @@ class AnalysisTaskQueue:
         self._futures: Dict[str, Future] = {}           # task_id -> Future
         
         # SSE 订阅者列表（asyncio.Queue 实例）
-        self._subscribers: List['AsyncQueue'] = []
+        self._subscribers: List[Tuple['AsyncQueue', Optional[int]]] = []
         self._subscribers_lock = threading.Lock()
         
         # 主事件循环引用（用于跨线程广播）
@@ -254,7 +263,7 @@ class AnalysisTaskQueue:
     
     # ========== 任务提交与查询 ==========
     
-    def is_analyzing(self, stock_code: str) -> bool:
+    def is_analyzing(self, stock_code: str, user_id: Optional[int] = None) -> bool:
         """
         检查股票是否正在分析中
         
@@ -264,11 +273,11 @@ class AnalysisTaskQueue:
         Returns:
             True 表示正在分析中
         """
-        dedupe_key = _dedupe_stock_code_key(stock_code)
+        dedupe_key = _dedupe_task_key(stock_code, user_id)
         with self._data_lock:
             return dedupe_key in self._analyzing_stocks
     
-    def get_analyzing_task_id(self, stock_code: str) -> Optional[str]:
+    def get_analyzing_task_id(self, stock_code: str, user_id: Optional[int] = None) -> Optional[str]:
         """
         获取正在分析该股票的任务 ID
         
@@ -278,7 +287,7 @@ class AnalysisTaskQueue:
         Returns:
             任务 ID，如果没有则返回 None
         """
-        dedupe_key = _dedupe_stock_code_key(stock_code)
+        dedupe_key = _dedupe_task_key(stock_code, user_id)
         with self._data_lock:
             return self._analyzing_stocks.get(dedupe_key)
 
@@ -307,6 +316,7 @@ class AnalysisTaskQueue:
         report_type: str = "detailed",
         force_refresh: bool = False,
         skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> TaskInfo:
         """
         Submit a single analysis task.
@@ -337,6 +347,7 @@ class AnalysisTaskQueue:
             report_type=report_type,
             force_refresh=force_refresh,
             skills=skills,
+            user_id=user_id,
         )
         if duplicates:
             raise duplicates[0]
@@ -353,6 +364,8 @@ class AnalysisTaskQueue:
         notify: bool = True,
         skills: Optional[List[str]] = None,
         user_id: Optional[int] = None,
+        refund_analysis_quota: bool = False,
+        quota_refund_date: Optional[date] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -374,7 +387,7 @@ class AnalysisTaskQueue:
 
         with self._data_lock:
             for stock_code in canonical_codes:
-                dedupe_key = _dedupe_stock_code_key(stock_code)
+                dedupe_key = _dedupe_task_key(stock_code, user_id)
                 if dedupe_key in self._analyzing_stocks:
                     existing_task_id = self._analyzing_stocks[dedupe_key]
                     duplicates.append(DuplicateTaskError(stock_code, existing_task_id))
@@ -393,6 +406,8 @@ class AnalysisTaskQueue:
                     selection_source=selection_source,
                     skills=task_skills,
                     user_id=user_id,
+                    refund_analysis_quota=bool(refund_analysis_quota),
+                    quota_refund_date=quota_refund_date,
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -406,7 +421,9 @@ class AnalysisTaskQueue:
                         force_refresh,
                         notify,
                         task_skills,
-                        user_id,
+                        user_id=user_id,
+                        refund_analysis_quota=bool(refund_analysis_quota),
+                        quota_refund_date=quota_refund_date,
                     )
                 except Exception:
                     # Roll back the current batch to avoid partial submission.
@@ -422,7 +439,7 @@ class AnalysisTaskQueue:
             # Broadcasting here also preserves batch rollback semantics because we only
             # reach this point after every submit in the batch has succeeded.
             for task_info in accepted:
-                self._broadcast_event("task_created", task_info.to_dict())
+                self._broadcast_event("task_created", task_info.to_dict(), user_id=task_info.user_id)
 
         return accepted, duplicates
 
@@ -435,6 +452,7 @@ class AnalysisTaskQueue:
         report_type: str = "detailed",
         message: Optional[str] = "任务已加入队列",
         task_id: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> TaskInfo:
         """
         Submit a generic background callable with task lifecycle tracking.
@@ -450,6 +468,7 @@ class AnalysisTaskQueue:
             status=TaskStatus.PENDING,
             message=message,
             report_type=report_type,
+            user_id=user_id,
         )
 
         with self._data_lock:
@@ -463,7 +482,7 @@ class AnalysisTaskQueue:
                 raise
 
             self._futures[task_id] = future
-            self._broadcast_event("task_created", task_info.to_dict())
+            self._broadcast_event("task_created", task_info.to_dict(), user_id=task_info.user_id)
 
         return task_info.copy()
 
@@ -476,11 +495,11 @@ class AnalysisTaskQueue:
 
             task = self._tasks.pop(task_id, None)
             if task:
-                dedupe_key = _dedupe_stock_code_key(task.stock_code)
+                dedupe_key = _dedupe_task_key(task.stock_code, task.user_id)
                 if self._analyzing_stocks.get(dedupe_key) == task_id:
                     del self._analyzing_stocks[dedupe_key]
     
-    def get_task(self, task_id: str) -> Optional[TaskInfo]:
+    def get_task(self, task_id: str, user_id: Optional[int] = None) -> Optional[TaskInfo]:
         """
         获取任务信息
         
@@ -492,9 +511,11 @@ class AnalysisTaskQueue:
         """
         with self._data_lock:
             task = self._tasks.get(task_id)
+            if task and user_id is not None and task.user_id != user_id:
+                return None
             return task.copy() if task else None
     
-    def list_pending_tasks(self) -> List[TaskInfo]:
+    def list_pending_tasks(self, user_id: Optional[int] = None) -> List[TaskInfo]:
         """
         获取所有进行中的任务（pending + processing）
         
@@ -505,9 +526,10 @@ class AnalysisTaskQueue:
             return [
                 task.copy() for task in self._tasks.values()
                 if task.status in (TaskStatus.PENDING, TaskStatus.PROCESSING)
+                and (user_id is None or task.user_id == user_id)
             ]
     
-    def list_all_tasks(self, limit: int = 50) -> List[TaskInfo]:
+    def list_all_tasks(self, limit: int = 50, user_id: Optional[int] = None) -> List[TaskInfo]:
         """
         获取所有任务（按创建时间倒序）
         
@@ -519,13 +541,16 @@ class AnalysisTaskQueue:
         """
         with self._data_lock:
             tasks = sorted(
-                self._tasks.values(),
+                [
+                    task for task in self._tasks.values()
+                    if user_id is None or task.user_id == user_id
+                ],
                 key=lambda t: t.created_at,
                 reverse=True
             )
             return [t.copy() for t in tasks[:limit]]
     
-    def get_task_stats(self) -> Dict[str, int]:
+    def get_task_stats(self, user_id: Optional[int] = None) -> Dict[str, int]:
         """
         获取任务统计信息
         
@@ -534,13 +559,16 @@ class AnalysisTaskQueue:
         """
         with self._data_lock:
             stats = {
-                "total": len(self._tasks),
+                "total": 0,
                 "pending": 0,
                 "processing": 0,
                 "completed": 0,
                 "failed": 0,
             }
             for task in self._tasks.values():
+                if user_id is not None and task.user_id != user_id:
+                    continue
+                stats["total"] += 1
                 stats[task.status.value] = stats.get(task.status.value, 0) + 1
             return stats
 
@@ -577,7 +605,7 @@ class AnalysisTaskQueue:
 
             task_snapshot = task.copy()
 
-        self._broadcast_event(event_type, task_snapshot.to_dict())
+        self._broadcast_event(event_type, task_snapshot.to_dict(), user_id=task_snapshot.user_id)
         return task_snapshot
     
     # ========== 任务执行 ==========
@@ -590,7 +618,10 @@ class AnalysisTaskQueue:
         force_refresh: bool,
         notify: bool = True,
         skills: Optional[List[str]] = None,
+        *,
         user_id: Optional[int] = None,
+        refund_analysis_quota: bool = False,
+        quota_refund_date: Optional[date] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -615,7 +646,7 @@ class AnalysisTaskQueue:
             task.message = "正在分析中..."
             task.progress = 10
         
-        self._broadcast_event("task_started", task.to_dict())
+        self._broadcast_event("task_started", task.to_dict(), user_id=task.user_id)
         
         try:
             # 导入分析服务（延迟导入避免循环依赖）
@@ -651,11 +682,11 @@ class AnalysisTaskQueue:
                         task.stock_name = result.get("stock_name", task.stock_name)
                         
                         # 从分析中集合移除
-                        dedupe_key = _dedupe_stock_code_key(task.stock_code)
+                        dedupe_key = _dedupe_task_key(task.stock_code, task.user_id)
                         if dedupe_key in self._analyzing_stocks:
                             del self._analyzing_stocks[dedupe_key]
                 
-                self._broadcast_event("task_completed", task.to_dict())
+                self._broadcast_event("task_completed", task.to_dict(), user_id=task.user_id)
                 logger.info(f"[TaskQueue] 任务完成: {task_id} ({stock_code})")
                 
                 # 清理过期任务
@@ -679,11 +710,14 @@ class AnalysisTaskQueue:
                     task.message = f"分析失败: {error_msg[:50]}"
                     
                     # 从分析中集合移除
-                    dedupe_key = _dedupe_stock_code_key(task.stock_code)
+                    dedupe_key = _dedupe_task_key(task.stock_code, task.user_id)
                     if dedupe_key in self._analyzing_stocks:
                         del self._analyzing_stocks[dedupe_key]
             
-            self._broadcast_event("task_failed", task.to_dict())
+            if task:
+                self._broadcast_event("task_failed", task.to_dict(), user_id=task.user_id)
+                if task.refund_analysis_quota:
+                    self._refund_analysis_quota(task.user_id, task.quota_refund_date)
             
             # 清理过期任务
             self._cleanup_old_tasks()
@@ -714,7 +748,7 @@ class AnalysisTaskQueue:
             task.started_at = datetime.now()
             task.message = "任务执行中"
             task.progress = 10
-            self._broadcast_event("task_started", task.to_dict())
+            self._broadcast_event("task_started", task.to_dict(), user_id=task.user_id)
 
         try:
             result = run_task()
@@ -730,7 +764,7 @@ class AnalysisTaskQueue:
                     task.result = result
                     task.message = "任务执行完成"
 
-            self._broadcast_event("task_completed", task.to_dict())
+            self._broadcast_event("task_completed", task.to_dict(), user_id=task.user_id)
             logger.info(f"[TaskQueue] 自定义任务完成: {task_id}")
 
             self._cleanup_old_tasks()
@@ -751,7 +785,7 @@ class AnalysisTaskQueue:
                     task.message = f"任务失败: {error_msg[:80]}"
 
             if task:
-                self._broadcast_event("task_failed", task.to_dict())
+                self._broadcast_event("task_failed", task.to_dict(), user_id=task.user_id)
 
             self._cleanup_old_tasks()
             return None
@@ -792,7 +826,27 @@ class AnalysisTaskQueue:
     
     # ========== SSE 事件广播 ==========
     
-    def subscribe(self, queue: 'AsyncQueue') -> None:
+    def _refund_analysis_quota(self, user_id: Optional[int], quota_date: Optional[date]) -> None:
+        if user_id is None:
+            return
+        try:
+            from src.storage import DatabaseManager
+            from src.users.quota import KIND_ANALYSIS, refund
+
+            session = DatabaseManager.get_instance().get_session()
+            try:
+                refund(session, user_id=int(user_id), kind=KIND_ANALYSIS, on_date=quota_date)
+                session.commit()
+            finally:
+                session.close()
+        except Exception:
+            logger.warning(
+                "[TaskQueue] 任务失败后的分析配额返还失败: user_id=%s",
+                user_id,
+                exc_info=True,
+            )
+
+    def subscribe(self, queue: 'AsyncQueue', user_id: Optional[int] = None) -> None:
         """
         订阅任务事件
         
@@ -800,7 +854,7 @@ class AnalysisTaskQueue:
             queue: asyncio.Queue 实例，用于接收事件
         """
         with self._subscribers_lock:
-            self._subscribers.append(queue)
+            self._subscribers.append((queue, user_id))
             # 捕获当前事件循环（应在主线程的 async 上下文中调用）
             try:
                 self._main_loop = asyncio.get_running_loop()
@@ -820,11 +874,16 @@ class AnalysisTaskQueue:
             queue: 要取消订阅的 asyncio.Queue 实例
         """
         with self._subscribers_lock:
-            if queue in self._subscribers:
-                self._subscribers.remove(queue)
+            before = len(self._subscribers)
+            self._subscribers = [
+                (subscriber_queue, subscriber_user_id)
+                for subscriber_queue, subscriber_user_id in self._subscribers
+                if subscriber_queue is not queue
+            ]
+            if len(self._subscribers) != before:
                 logger.debug(f"[TaskQueue] 订阅者离开，当前订阅者数: {len(self._subscribers)}")
     
-    def _broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    def _broadcast_event(self, event_type: str, data: Dict[str, Any], user_id: Optional[int] = None) -> None:
         """
         广播事件到所有订阅者
         
@@ -847,7 +906,9 @@ class AnalysisTaskQueue:
             logger.warning("[TaskQueue] 无法广播事件：主事件循环未设置")
             return
         
-        for queue in subscribers:
+        for queue, subscriber_user_id in subscribers:
+            if subscriber_user_id is not None and subscriber_user_id != user_id:
+                continue
             try:
                 # 使用 call_soon_threadsafe 将事件放入 asyncio 队列
                 # 这是从工作线程向主事件循环发送消息的安全方式

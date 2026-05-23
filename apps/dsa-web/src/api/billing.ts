@@ -6,7 +6,6 @@ export type BillingPlan = {
   dailyAnalysisLimit: number;
   dailyAgentLimit: number;
   maxStocks: number;
-  canByok: boolean;
   canWebhook: boolean;
   priceCents: number;
   currency: string;
@@ -42,7 +41,6 @@ export type BillingSubscriptionResponse = {
     dailyAnalysisLimit: number;
     dailyAgentLimit: number;
     maxStocks: number;
-    canByok: boolean;
     canWebhook: boolean;
     expiresAt: string | null;
     isActivePaid: boolean;

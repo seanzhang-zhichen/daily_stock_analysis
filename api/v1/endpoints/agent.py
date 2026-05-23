@@ -50,6 +50,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _current_user_id_or_none(current_user: Any) -> Optional[int]:
+    user_id = getattr(current_user, "id", None)
+    if user_id is None:
+        return None
+    return int(user_id)
+
+
 # To C 多用户隔离: 登录用户的 session_id 被加上 ``u{user_id}:`` 前缀,
 # 走 :func:`extract_user_id_from_session` 反解 并把消息写入对应 user 名下;
 # Bot / CLI 路径不走这里, session_id 保持原样。
@@ -187,19 +194,25 @@ async def agent_chat(
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
-    # Phase 2: per-user agent quota
-    outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
-    if outcome.exceeded:
-        db.commit()
-        return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-    if outcome.consumed:
-        db.commit()
+    current_user_id = _current_user_id_or_none(current_user)
+    effective_user = current_user if current_user_id is not None else None
+    outcome = None
+    if current_user_id is not None:
+        outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
+        if outcome.exceeded:
+            db.commit()
+            return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+        if outcome.consumed:
+            db.commit()
 
-    session_id = _scope_session_id(request.session_id, current_user)
+    session_id = _scope_session_id(request.session_id, effective_user)
     
     try:
         skills = request.effective_skills
-        executor = _build_executor(config, skills or None, user_id=current_user.id if current_user else None)
+        if current_user_id is None:
+            executor = _build_executor(config, skills or None)
+        else:
+            executor = _build_executor(config, skills or None, user_id=current_user_id)
 
         # Pass explicit skills into context for the orchestrator.
         # Direct assignment so caller-provided skills always take precedence
@@ -216,15 +229,20 @@ async def agent_chat(
                                   context=ctx),
         )
 
+        result_success = bool(getattr(result, "success", False))
+        if outcome and outcome.consumed and not result_success:
+            refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            db.commit()
+
         return ChatResponse(
-            success=result.success,
+            success=result_success,
             content=result.content,
             session_id=session_id,
             error=result.error
         )
             
     except Exception as e:
-        if outcome.consumed:
+        if outcome and outcome.consumed:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
             db.commit()
         logger.error(f"Agent chat API failed: {e}")
@@ -388,12 +406,15 @@ async def agent_research(
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
     # Phase 2: deep research 也走 agent 配额池
-    outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
-    if outcome.exceeded:
-        db.commit()
-        return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-    if outcome.consumed:
-        db.commit()
+    current_user_id = _current_user_id_or_none(current_user)
+    outcome = None
+    if current_user_id is not None:
+        outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
+        if outcome.exceeded:
+            db.commit()
+            return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+        if outcome.consumed:
+            db.commit()
 
     question = request.question
     context: Optional[Dict[str, Any]] = None
@@ -407,7 +428,7 @@ async def agent_research(
         from src.agent.llm_adapter import LLMToolAdapter
 
         registry = get_tool_registry()
-        llm_adapter = LLMToolAdapter(config, user_id=current_user.id if current_user else None)
+        llm_adapter = LLMToolAdapter(config, user_id=current_user_id)
         budget = getattr(config, "agent_deep_research_budget", 30000)
 
         agent = ResearchAgent(
@@ -426,7 +447,7 @@ async def agent_research(
         )
         if getattr(result, "timed_out", False):
             logger.warning("Agent research API timed out after %ss", research_timeout)
-            if outcome.consumed:
+            if outcome and outcome.consumed:
                 refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
                 db.commit()
             return ResearchResponse(
@@ -437,15 +458,20 @@ async def agent_research(
                 error=f"Deep research timed out after {research_timeout}s",
             )
 
+        result_success = bool(getattr(result, "success", False))
+        if outcome and outcome.consumed and not result_success:
+            refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            db.commit()
+
         return ResearchResponse(
-            success=result.success,
+            success=result_success,
             content=result.report,
             sources=[f"Sub-question {i+1}: {q}" for i, q in enumerate(result.sub_questions)],
             token_usage=result.total_tokens,
-            error=result.error if not result.success else None,
+            error=result.error if not result_success else None,
         )
     except Exception as e:
-        if outcome.consumed:
+        if outcome and outcome.consumed:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
             db.commit()
         logger.error("Agent research API failed: %s", e)

@@ -51,7 +51,7 @@ This is the entry point for project documentation. The README covers the project
 | Document | Contents |
 | --- | --- |
 | [To C Product Plan](to-c-product-plan.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Product plan for user tiers, quota benefits, roadmap, and risks |
-| [To C User Stories](to-c-user-stories.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | User stories, acceptance criteria, and implementation mapping for visitors, free users, Pro / BYOK users, and admins |
+| [To C User Stories](to-c-user-stories.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | User stories, acceptance criteria, and implementation mapping for visitors, free users, Pro users, and admins |
 | [To C Wireframes](to-c-product-wireframes.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Wireframes for login, account, billing, quota prompts, and onboarding |
 | [To C Multi-user Mode](to-c-mode.md) <sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> (Chinese-only) | Multi-user authentication, APIs, tables, quotas, and isolation boundaries |
 

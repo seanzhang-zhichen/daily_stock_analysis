@@ -8,7 +8,7 @@ Daily Stock Analysis - FastAPI 后端服务入口
 1. 提供 RESTful API 服务
 2. 配置 CORS 跨域支持
 3. 健康检查接口
-4. 托管前端静态文件（生产模式）
+4. 默认仅提供 API，WebUI 需通过显式入口启用
 
 启动方式：
     uvicorn server:app --reload --host 0.0.0.0 --port 8000

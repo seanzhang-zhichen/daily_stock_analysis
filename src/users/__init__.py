@@ -38,19 +38,8 @@ from src.users.plans import (  # noqa: F401
     redeem_code,
     resolve_user_plan,
 )
-from src.users.byok import (  # noqa: F401
-    ByokCredentialView,
-    SUPPORTED_PROVIDERS,
-    decrypt_secret,
-    delete_credential,
-    encrypt_secret,
-    get_decrypted_key,
-    list_credentials,
-    upsert_credential,
-)
 from src.users.model_router import (  # noqa: F401
     ModelRoute,
-    as_litellm_kwargs,
     resolve_model_route,
 )
 from src.users.watchlist import (  # noqa: F401

@@ -3,7 +3,7 @@
 
 挂载位置: ``/api/v1/account/*``。
 
-提供多用户账户注册、登录、状态查询、密码与 BYOK 管理等接口。
+提供多用户账户注册、登录、状态查询、密码与模型偏好等接口。
 """
 
 from __future__ import annotations
@@ -26,12 +26,7 @@ from src.users.config import (
     load_user_mode_settings,
 )
 from src.users.consents import CURRENT_TERMS_VERSION, needs_reaccept
-from src.users.byok import (
-    SUPPORTED_PROVIDERS,
-    delete_credential as svc_delete_byok,
-    list_credentials as svc_list_byok,
-    upsert_credential as svc_upsert_byok,
-)
+from src.config import get_config, get_configured_llm_models, get_effective_agent_models_to_try
 from src.users.errors import UserError, UserErrorCode
 from src.users.notification_prefs import (
     update_prefs as svc_update_prefs,
@@ -123,13 +118,10 @@ class RedeemRequest(BaseModel):
     code: str = Field(default="")
 
 
-class ByokUpsertRequest(BaseModel):
+class ModelPreferenceUpdateRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    provider: str = Field(default="")
-    api_key: str = Field(default="", alias="apiKey")
-    base_url: str | None = Field(default=None, alias="baseUrl")
-    model: str | None = Field(default=None)
+    preferred_model: str | None = Field(default=None, alias="preferredModel")
 
 
 class WatchlistAddRequest(BaseModel):
@@ -220,6 +212,7 @@ def _serialize_user(user) -> dict:
         "email": user.email,
         "plan": user.plan_code,
         "planExpiresAt": user.plan_expires_at.isoformat() if user.plan_expires_at else None,
+        "preferredModel": getattr(user, "preferred_model", None),
         "emailVerified": user.email_verified_at is not None,
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
@@ -284,7 +277,6 @@ def _status_payload(
             "dailyAnalysisLimit": plan.daily_analysis_limit,
             "dailyAgentLimit": plan.daily_agent_limit,
             "maxStocks": plan.max_stocks,
-            "canByok": plan.can_byok,
             "canWebhook": plan.can_webhook,
             "expiresAt": plan.expires_at.isoformat() if plan.expires_at else None,
         }
@@ -594,7 +586,6 @@ async def account_redeem(
             "dailyAnalysisLimit": plan.daily_analysis_limit,
             "dailyAgentLimit": plan.daily_agent_limit,
             "maxStocks": plan.max_stocks,
-            "canByok": plan.can_byok,
             "canWebhook": plan.can_webhook,
             "expiresAt": plan.expires_at.isoformat() if plan.expires_at else None,
         },
@@ -602,112 +593,78 @@ async def account_redeem(
 
 
 # ============================================================
-# BYOK API keys (Phase 4 backend ready, exposing the management endpoints)
+# Model preference
 # ============================================================
 
 
-def _serialize_byok(view) -> dict:
-    return {
-        "id": view.id,
-        "provider": view.provider,
-        "baseUrl": view.base_url,
-        "model": view.model,
-        "status": view.status,
-        "keyPreview": view.key_preview,
-        "updatedAt": view.updated_at.isoformat() if view.updated_at else None,
-    }
-
-
-@router.get("/api-keys", summary="列出当前用户的 BYOK Key (脱敏)")
-async def account_list_api_keys(request: Request, db: Session = Depends(get_db)):
-    try:
-        settings, user = _require_current_user(request, db)
-    except UserError as exc:
-        return _user_error_response(exc)
-
+def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
     plan = svc_resolve_user_plan(db, user, settings=settings)
-    views = svc_list_byok(db, user_id=user.id)
-    db.commit()
+    config = get_config()
+    models = get_effective_agent_models_to_try(config) + get_configured_llm_models(
+        getattr(config, "llm_model_list", []) or []
+    )
+    if plan.allowed_models:
+        allowed = set(plan.allowed_models)
+        models = [model for model in models if model in allowed]
+    seen = set()
+    return [model for model in models if model and not (model in seen or seen.add(model))]
+
+
+@router.get("/model-preference", summary="获取当前用户可选模型与模型偏好")
+async def account_get_model_preference(request: Request, db: Session = Depends(get_db)):
+    try:
+        settings, user = _require_current_user(request, db)
+    except UserError as exc:
+        return _user_error_response(exc)
+
+    models = _allowed_models_for_user(db, user, settings)
+    preferred = (getattr(user, "preferred_model", None) or "").strip()
+    effective = preferred if preferred in models else (models[0] if models else None)
     return {
-        "supportedProviders": sorted(SUPPORTED_PROVIDERS),
-        "canByok": plan.can_byok,
-        "credentials": [_serialize_byok(v) for v in views],
+        "models": models,
+        "preferredModel": preferred or None,
+        "effectiveModel": effective,
     }
 
 
-@router.post("/api-keys", summary="新增或更新一个 provider 的 BYOK Key")
-async def account_upsert_api_key(
+@router.patch("/model-preference", summary="更新当前用户模型偏好")
+async def account_update_model_preference(
     request: Request,
-    body: ByokUpsertRequest,
+    body: ModelPreferenceUpdateRequest,
     db: Session = Depends(get_db),
 ):
     try:
         settings, user = _require_current_user(request, db)
-        plan = svc_resolve_user_plan(db, user, settings=settings)
-        if not plan.can_byok:
-            raise UserError(UserErrorCode.REGISTRATION_DISABLED, "当前套餐不支持 BYOK, 请先升级到 Pro")
-        view = svc_upsert_byok(
-            db,
-            user=user,
-            provider=body.provider,
-            api_key=body.api_key,
-            base_url=body.base_url,
-            model=body.model,
-        )
+        models = _allowed_models_for_user(db, user, settings)
+        preferred = (body.preferred_model or "").strip()
+        if preferred and preferred not in models:
+            raise UserError(UserErrorCode.VALIDATION_ERROR, "当前套餐不可选择该模型")
+        user.preferred_model = preferred or None
+        db.add(user)
         _commit_or_rollback(db)
     except UserError as exc:
         db.rollback()
         return _user_error_response(exc)
     except Exception:
         db.rollback()
-        logger.exception("byok upsert failed")
+        logger.exception("model preference update failed")
         return JSONResponse(
             status_code=500,
-            content={"error": "internal_error", "message": "保存 API Key 失败, 请稍后重试"},
+            content={"error": "internal_error", "message": "保存模型偏好失败, 请稍后重试"},
         )
     write_audit_log(
-        db, "byok.upsert",
+        db, "account.model_preference.update",
         user_id=int(user.id),
-        target_ref=body.provider,
+        target_ref=user.preferred_model,
         ip=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    return {"credential": _serialize_byok(view)}
-
-
-@router.delete("/api-keys/{provider}", summary="删除指定 provider 的 BYOK Key")
-async def account_delete_api_key(
-    provider: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    try:
-        _, user = _require_current_user(request, db)
-        deleted = svc_delete_byok(db, user_id=user.id, provider=provider)
-        _commit_or_rollback(db)
-    except UserError as exc:
-        db.rollback()
-        return _user_error_response(exc)
-    except Exception:
-        db.rollback()
-        logger.exception("byok delete failed")
-        return JSONResponse(
-            status_code=500,
-            content={"error": "internal_error", "message": "删除失败, 请稍后重试"},
-        )
-    if not deleted:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "not_found", "message": "未找到对应的 API Key"},
-        )
-    write_audit_log(
-        db, "byok.delete",
-        user_id=int(user.id),
-        target_ref=provider,
-        ip=get_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
-    )
-    return Response(status_code=204)
+    models = _allowed_models_for_user(db, user, load_user_mode_settings())
+    return {
+        "models": models,
+        "preferredModel": user.preferred_model,
+        "effectiveModel": user.preferred_model or (models[0] if models else None),
+    }
 
 
 # ============================================================

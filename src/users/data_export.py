@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from src.storage import (
     AppOrder,
     AppSubscription,
-    AppUserByokCredential,
     AppUserConsent,
     AppUserNotificationPref,
     AppUserWatchlist,
@@ -32,8 +31,6 @@ from src.users.email import EmailBackend, EmailMessageDTO, get_email_backend
 from src.users.errors import UserError, UserErrorCode
 
 logger = logging.getLogger(__name__)
-
-_BYOK_MASK = "**masked**"
 
 
 def _dt(val: Optional[datetime]) -> Optional[str]:
@@ -65,12 +62,6 @@ def _collect_user_data(db: Session, user_id: int) -> Dict[str, Any]:
     # 订单
     orders: List[AppOrder] = (
         db.query(AppOrder).filter(AppOrder.user_id == user_id).all()
-    )
-    # BYOK 凭证（仅暴露 provider + model，不暴露密钥）
-    byok: List[AppUserByokCredential] = (
-        db.query(AppUserByokCredential)
-        .filter(AppUserByokCredential.user_id == user_id)
-        .all()
     )
     # 协议同意记录
     consents: List[AppUserConsent] = (
@@ -124,10 +115,6 @@ def _collect_user_data(db: Session, user_id: int) -> Dict[str, Any]:
                 "created_at": _dt(o.created_at),
             }
             for o in orders
-        ],
-        "byok_providers": [
-            {"provider": b.provider, "model": b.model, "base_url": b.base_url, "api_key": _BYOK_MASK}
-            for b in byok
         ],
         "consents": [
             {

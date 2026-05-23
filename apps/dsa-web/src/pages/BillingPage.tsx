@@ -131,20 +131,6 @@ const PlanCard: React.FC<{
           />
           自定义 Webhook 推送 {plan.canWebhook ? '' : '(不支持)'}
         </li>
-        <li
-          className={cn(
-            'flex gap-2',
-            plan.canByok ? 'text-foreground/90' : 'text-secondary-text/70'
-          )}
-        >
-          <CheckCircle2
-            className={cn(
-              'h-4 w-4 shrink-0',
-              plan.canByok ? 'text-primary' : 'text-border'
-            )}
-          />
-          支持 BYOK (自带 API Key) {plan.canByok ? '' : '(不支持)'}
-        </li>
       </ul>
       {canUpgrade && onUpgrade && (
         <Button
@@ -278,8 +264,7 @@ const BillingPage: React.FC = () => {
   }
 
   const plans = plansResponse?.plans ?? [];
-  const recommendedCode =
-    plans.find((p) => p.code === 'pro')?.code ?? plans.find((p) => p.canByok)?.code;
+  const recommendedCode = plans.find((p) => p.code === 'pro')?.code ?? plans[0]?.code;
 
   return (
     <StandardPageLayout>
@@ -289,7 +274,7 @@ const BillingPage: React.FC = () => {
         </p>
         <h1 className="text-2xl font-semibold text-foreground">会员中心</h1>
         <p className="text-sm text-secondary-text">
-          升级到 Pro 解锁更多自选股、高级模型、Webhook 推送, 以及自带 API Key (BYOK)。
+          升级到 Pro 解锁更多自选股、高级模型与 Webhook 推送。
         </p>
       </div>
 
@@ -318,7 +303,6 @@ const BillingPage: React.FC = () => {
             <div>
               <p className="text-xs uppercase tracking-wider text-secondary-text">能力</p>
               <p className="mt-1 text-sm text-foreground">
-                {subscription.plan.canByok ? 'BYOK · ' : ''}
                 {subscription.plan.canWebhook ? 'Webhook · ' : ''}
                 每日 {subscription.plan.dailyAnalysisLimit > 0 ? subscription.plan.dailyAnalysisLimit : '∞'} /{' '}
                 {subscription.plan.dailyAgentLimit > 0 ? subscription.plan.dailyAgentLimit : '∞'}

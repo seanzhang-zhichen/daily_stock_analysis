@@ -137,7 +137,6 @@ class TestQuotaGuard(unittest.TestCase):
             daily_analysis_limit=5,
             daily_agent_limit=5,
             max_stocks=30,
-            can_byok=True,
         )
         self.db.add(pro_plan)
         self.user.plan_code = "pro"

@@ -27,7 +27,7 @@ from src.config import (
 from src.llm.errors import call_litellm_with_param_recovery
 from src.llm.generation_params import apply_litellm_generation_params
 from src.storage import AppUser, get_db
-from src.users.model_router import ModelRoute, as_litellm_kwargs, resolve_model_route
+from src.users.model_router import ModelRoute, resolve_model_route
 
 logger = logging.getLogger(__name__)
 
@@ -453,9 +453,7 @@ class LLMToolAdapter:
             call_kwargs["tools"] = tools
 
         # Use Router for primary model (multi-key), direct litellm for others
-        use_channel_router = self._has_channel_config() and not (
-            model_route is not None and model_route.uses_byok
-        )
+        use_channel_router = self._has_channel_config()
         _router_model_names = set(get_configured_llm_models(self._config.llm_model_list))
         agent_primary_model = get_effective_agent_primary_model(self._config)
         uses_router = (
@@ -464,16 +462,12 @@ class LLMToolAdapter:
                 self._router
                 and model == agent_primary_model
                 and not use_channel_router
-                and not (model_route is not None and model_route.uses_byok)
             )
         )
         recovery_model_list = self._config.llm_model_list
         if self._router and model == agent_primary_model and not use_channel_router:
             recovery_model_list = self._legacy_router_model_list or self._config.llm_model_list
-        if model_route is not None and model_route.uses_byok:
-            call_kwargs.update(as_litellm_kwargs(model_route))
-            recovery_model_list = []
-        elif not uses_router:
+        if not uses_router:
             keys = get_api_keys_for_model(model, self._config)
             if keys:
                 call_kwargs["api_key"] = keys[0]
@@ -497,7 +491,6 @@ class LLMToolAdapter:
             self._router
             and model == agent_primary_model
             and not use_channel_router
-            and not (model_route is not None and model_route.uses_byok)
         ):
             # Legacy path: Router for primary model multi-key
             response = call_litellm_with_param_recovery(

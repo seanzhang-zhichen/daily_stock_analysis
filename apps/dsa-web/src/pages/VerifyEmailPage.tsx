@@ -96,7 +96,7 @@ const VerifyEmailPage: React.FC = () => {
                   <p className="mt-1 text-xs text-[var(--login-text-muted)]">你的账号已激活，现在可以登录使用 DSA。</p>
                 </div>
               </div>
-              <Link to="/login" className="block">
+              <Link to="/login?redirect=/onboarding" className="block">
                 <Button
                   variant="primary"
                   size="lg"

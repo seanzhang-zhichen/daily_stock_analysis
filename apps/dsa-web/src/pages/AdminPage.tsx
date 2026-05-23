@@ -691,7 +691,7 @@ const GrantPlanTab: React.FC = () => {
 
 const ACTION_OPTIONS = [
   '', 'auth.login', 'auth.register', 'auth.change_password', 'auth.reset_password',
-  'byok.upsert', 'byok.delete', 'plan.redeem', 'plan.grant',
+  'plan.redeem', 'plan.grant',
   'order.create', 'order.cancel',
   'refund.create', 'refund.approve', 'refund.reject',
   'invoice.issue', 'invoice.reject',

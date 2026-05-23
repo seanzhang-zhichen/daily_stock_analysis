@@ -157,7 +157,7 @@ def test_missing_asset_returns_safe_404_content_types(tmp_path: Path) -> None:
     (assets_dir / "index-abc.css").write_text("/* ok */", encoding="utf-8")
     _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
 
-    client = TestClient(create_app(static_dir=static_dir))
+    client = TestClient(create_app(static_dir=static_dir, serve_frontend=True))
 
     js_response = client.get("/assets/index-missing.js")
     css_response = client.get("/assets/index-missing.css")
@@ -165,7 +165,7 @@ def test_missing_asset_returns_safe_404_content_types(tmp_path: Path) -> None:
 
     assert js_response.status_code == 404
     assert js_response.text == "asset not found"
-    assert js_response.headers["content-type"].startswith("text/javascript")
+    assert js_response.headers["content-type"].split(";", 1)[0] in {"text/javascript", "application/javascript"}
 
     assert css_response.status_code == 404
     assert css_response.text == "asset not found"
@@ -188,14 +188,14 @@ def test_existing_asset_is_served_from_explicit_assets_route(tmp_path: Path) -> 
     css_file.write_text("body{color:#fff}", encoding="utf-8")
     _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
 
-    client = TestClient(create_app(static_dir=static_dir))
+    client = TestClient(create_app(static_dir=static_dir, serve_frontend=True))
 
     js_response = client.get("/assets/index-abc.js")
     css_response = client.get("/assets/index-abc.css")
 
     assert js_response.status_code == 200
     assert js_response.text == "console.log('ok')"
-    assert js_response.headers["content-type"].startswith("text/javascript")
+    assert js_response.headers["content-type"].split(";", 1)[0] in {"text/javascript", "application/javascript"}
 
     assert css_response.status_code == 200
     assert css_response.text == "body{color:#fff}"
@@ -213,7 +213,7 @@ def test_existing_asset_supports_head_and_conditional_requests(tmp_path: Path) -
     (assets_dir / "index-abc.css").write_text("body{color:#fff}", encoding="utf-8")
     _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
 
-    client = TestClient(create_app(static_dir=static_dir))
+    client = TestClient(create_app(static_dir=static_dir, serve_frontend=True))
 
     get_response = client.get("/assets/index-abc.js")
     etag = get_response.headers["etag"]
@@ -228,7 +228,7 @@ def test_existing_asset_supports_head_and_conditional_requests(tmp_path: Path) -
     assert head_response.status_code == 200
     assert head_response.content == b""
     assert head_response.headers["etag"] == etag
-    assert head_response.headers["content-type"].startswith("text/javascript")
+    assert head_response.headers["content-type"].split(";", 1)[0] in {"text/javascript", "application/javascript"}
 
     assert cached_response.status_code == 304
     assert cached_response.content == b""
@@ -245,7 +245,7 @@ def test_frontend_index_responses_are_not_cacheable(tmp_path: Path) -> None:
     (assets_dir / "index-abc.css").write_text("/* ok */", encoding="utf-8")
     _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
 
-    client = TestClient(create_app(static_dir=static_dir))
+    client = TestClient(create_app(static_dir=static_dir, serve_frontend=True))
 
     root_response = client.get("/")
     direct_index_response = client.get("/index.html")
@@ -260,6 +260,29 @@ def test_frontend_index_responses_are_not_cacheable(tmp_path: Path) -> None:
         )
         assert response.headers["pragma"] == "no-cache"
         assert response.headers["expires"] == "0"
+
+
+def test_api_only_app_does_not_register_frontend_routes(tmp_path: Path) -> None:
+    from api.app import create_app
+
+    static_dir = tmp_path / "static"
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "index-abc.js").write_text("// ok", encoding="utf-8")
+    (assets_dir / "index-abc.css").write_text("/* ok */", encoding="utf-8")
+    _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
+
+    app = create_app(static_dir=static_dir)
+    route_paths = {getattr(route, "path", None) for route in app.routes}
+
+    assert "/assets/{asset_path:path}" not in route_paths
+    assert "/{full_path:path}" not in route_paths
+
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "Daily Stock Analysis API is running"
 
 
 @pytest.mark.parametrize(
@@ -287,7 +310,7 @@ def test_asset_traversal_attempts_are_rejected(
     outside_secret = tmp_path / "secret.txt"
     outside_secret.write_text("top secret", encoding="utf-8")
 
-    client = TestClient(create_app(static_dir=static_dir))
+    client = TestClient(create_app(static_dir=static_dir, serve_frontend=True))
     response = client.get(request_path)
 
     assert response.status_code == 404

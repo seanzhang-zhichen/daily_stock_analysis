@@ -21,11 +21,11 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -90,6 +90,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
+
+
+def _current_user_id_or_none(current_user: Any) -> Optional[int]:
+    user_id = getattr(current_user, "id", None)
+    if user_id is None:
+        return None
+    return int(user_id)
 
 
 def _market_review_lock_path(config: Config) -> Path:
@@ -221,7 +228,6 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
 )
 def trigger_analysis(
         request: AnalyzeRequest,
-        http_request: Request,
         config: Config = Depends(get_config_dep),
         db: Session = Depends(get_db),
         current_user: AppUser = Depends(get_current_user),
@@ -249,7 +255,7 @@ def trigger_analysis(
         HTTPException: 409 - 股票正在分析中
         HTTPException: 500 - 分析失败
     """
-    # 校验请求参数
+    current_user_id = _current_user_id_or_none(current_user)
     stock_codes = []
     if request.stock_code:
         stock_codes.append(request.stock_code)
@@ -311,38 +317,41 @@ def trigger_analysis(
                     "message": "同步模式仅支持单只股票分析，请使用 async_mode=true 进行批量分析"
                 }
             )
-        # 同步路径只扣 1 次配额; 失败时退还
-        outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
-        if outcome.exceeded:
-            db.commit()
-            return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-        if outcome.consumed:
-            db.commit()
+        outcome = None
+        if current_user_id is not None:
+            outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
+            if outcome.exceeded:
+                db.commit()
+                return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+            if outcome.consumed:
+                db.commit()
         try:
             return _handle_sync_analysis(
                 stock_codes[0],
                 request,
-                user_id=current_user.id,
+                user_id=current_user_id,
             )
         except Exception:
-            if outcome.consumed:
+            if outcome and outcome.consumed:
                 refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
                 db.commit()
             raise
 
     # 异步批量: 按提交的股票数扣减 N 次, 任一未通过即整批拒绝
     consumed_count = 0
-    if len(stock_codes) > 0:
+    consumed_on_date = None
+    if current_user_id is not None and len(stock_codes) > 0:
         for _ in stock_codes:
             outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
             if outcome.exceeded:
                 # 退还本批次已扣的配额, 保持原子性
                 for _i in range(consumed_count):
-                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
                 db.commit()
                 return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
             if outcome.consumed:
                 consumed_count += 1
+                consumed_on_date = consumed_on_date or outcome.on_date
         if consumed_count > 0:
             db.commit()
 
@@ -351,13 +360,15 @@ def trigger_analysis(
         response = _handle_async_analysis_batch(
             stock_codes,
             request,
-            user_id=current_user.id,
+            user_id=current_user_id,
+            refund_analysis_quota=consumed_count > 0,
+            quota_refund_date=consumed_on_date,
         )
     except Exception:
         # 提交队列前异常时, 退还所有已扣配额
         if consumed_count > 0:
             for _i in range(consumed_count):
-                refund_quota(db, user=current_user, kind=KIND_ANALYSIS)
+                refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
             db.commit()
         raise
 
@@ -375,7 +386,7 @@ def trigger_analysis(
             elif payload.get("error") == "duplicate_task":
                 duplicate_count = 1
         for _i in range(min(duplicate_count, consumed_count)):
-            refund_quota(db, user=current_user, kind=KIND_ANALYSIS)
+            refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
         if duplicate_count > 0:
             db.commit()
     return response
@@ -385,6 +396,8 @@ def _handle_async_analysis_batch(
     stock_codes: list,
     request: AnalyzeRequest,
     user_id: Optional[int] = None,
+    refund_analysis_quota: bool = False,
+    quota_refund_date: Optional[date] = None,
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
@@ -413,8 +426,12 @@ def _handle_async_analysis_batch(
         report_type=request.report_type,
         force_refresh=request.force_refresh,
         notify=notify,
-        user_id=user_id,
     )
+    if user_id is not None:
+        submit_kwargs["user_id"] = user_id
+    if refund_analysis_quota:
+        submit_kwargs["refund_analysis_quota"] = True
+        submit_kwargs["quota_refund_date"] = quota_refund_date
     if skills is not None:
         submit_kwargs["skills"] = skills
 
@@ -569,9 +586,11 @@ def _handle_sync_analysis(
 def trigger_market_review(
     request: Optional[MarketReviewRequest] = Body(None),
     config: Config = Depends(get_config_dep),
+    current_user: AppUser = Depends(get_current_user),
 ) -> MarketReviewAccepted:
     """Trigger market review from Web/API without blocking the request."""
     request = request or MarketReviewRequest()
+    current_user_id = _current_user_id_or_none(current_user)
 
     override_region = _compute_market_review_override_region(config)
     if override_region == "":
@@ -605,6 +624,7 @@ def trigger_market_review(
             stock_name="大盘复盘",
             message="大盘复盘任务已提交",
             task_id=task_id,
+            user_id=current_user_id,
         )
     except Exception:
         _release_market_review_lock(lock_token)
@@ -637,6 +657,7 @@ def get_task_list(
         description="筛选状态：pending, processing, completed, failed（支持逗号分隔多个）"
     ),
     limit: int = Query(20, description="返回数量限制", ge=1, le=100),
+    current_user: AppUser = Depends(get_current_user),
 ) -> TaskListResponse:
     """
     获取分析任务列表
@@ -649,9 +670,10 @@ def get_task_list(
         TaskListResponse: 任务列表响应
     """
     task_queue = get_task_queue()
+    current_user_id = _current_user_id_or_none(current_user)
     
     # 获取所有任务
-    all_tasks = task_queue.list_all_tasks(limit=limit)
+    all_tasks = task_queue.list_all_tasks(limit=limit, user_id=current_user_id)
     
     # 状态筛选
     if status:
@@ -659,7 +681,7 @@ def get_task_list(
         all_tasks = [t for t in all_tasks if t.status.value in status_list]
     
     # 统计信息
-    stats = task_queue.get_task_stats()
+    stats = task_queue.get_task_stats(user_id=current_user_id)
     
     # 转换为 Schema
     task_infos = [
@@ -677,6 +699,7 @@ def get_task_list(
             error=t.error,
             original_query=t.original_query,
             selection_source=t.selection_source,
+            skills=getattr(t, "skills", None),
         )
         for t in all_tasks
     ]
@@ -701,7 +724,7 @@ def get_task_list(
     summary="任务状态 SSE 流",
     description="通过 Server-Sent Events 实时推送任务状态变化"
 )
-async def task_stream():
+async def task_stream(current_user: AppUser = Depends(get_current_user)):
     """
     SSE 任务状态流
     
@@ -717,6 +740,8 @@ async def task_stream():
     Returns:
         StreamingResponse: SSE 事件流
     """
+    current_user_id = _current_user_id_or_none(current_user)
+
     async def event_generator():
         task_queue = get_task_queue()
         event_queue: asyncio.Queue = asyncio.Queue()
@@ -725,12 +750,12 @@ async def task_stream():
         yield _format_sse_event("connected", {"message": "Connected to task stream"})
         
         # 发送当前进行中的任务
-        pending_tasks = task_queue.list_pending_tasks()
+        pending_tasks = task_queue.list_pending_tasks(user_id=current_user_id)
         for task in pending_tasks:
             yield _format_sse_event("task_created", task.to_dict())
         
         # 订阅任务事件
-        task_queue.subscribe(event_queue)
+        task_queue.subscribe(event_queue, user_id=current_user_id)
         
         try:
             while True:
@@ -788,7 +813,10 @@ def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
     summary="查询分析任务状态",
     description="根据 task_id 查询单个任务的状态"
 )
-def get_analysis_status(task_id: str) -> TaskStatus:
+def get_analysis_status(
+    task_id: str,
+    current_user: AppUser = Depends(get_current_user),
+) -> TaskStatus:
     """
     查询分析任务状态
     
@@ -803,9 +831,10 @@ def get_analysis_status(task_id: str) -> TaskStatus:
     Raises:
         HTTPException: 404 - 任务不存在
     """
+    current_user_id = _current_user_id_or_none(current_user)
     # 1. 先从任务队列查询
     task_queue = get_task_queue()
-    task = task_queue.get_task(task_id)
+    task = task_queue.get_task(task_id, user_id=current_user_id)
     
     if task:
         result: Optional[AnalysisResultResponse] = None
@@ -842,7 +871,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
     try:
         from src.storage import DatabaseManager
         db = DatabaseManager.get_instance()
-        records = db.get_analysis_history(query_id=task_id, limit=1)
+        records = db.get_analysis_history(query_id=task_id, limit=1, user_id=current_user_id)
 
         if records:
             record = records[0]

@@ -14,6 +14,8 @@ import os
 import sys
 import unittest
 from datetime import datetime, timedelta
+from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -52,6 +54,21 @@ class _RecordingEmailBackend:
         self.sent.append(message)
 
 
+class _SessionScope:
+    def __enter__(self):
+        return object()
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _fake_module(name: str, **attrs):
+    module = ModuleType(name)
+    for key, value in attrs.items():
+        setattr(module, key, value)
+    return module
+
+
 class _Base(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine(
@@ -69,7 +86,6 @@ class _Base(unittest.TestCase):
             daily_analysis_limit=50,
             daily_agent_limit=50,
             max_stocks=30,
-            can_byok=True,
             can_webhook=True,
             price_cents=2900,
         )
@@ -333,6 +349,58 @@ class TestRunLifecycleCheck(_Base):
         # 已降级用户应稳定在 free 档
         self.db.refresh(expired)
         self.assertEqual(expired.plan_code, "free")
+
+
+class TestPerUserScheduledAnalysis(unittest.TestCase):
+    def test_skips_non_pro_user_before_running_pipeline(self):
+        import main
+
+        pipeline_cls = MagicMock()
+        get_db = MagicMock(return_value=SimpleNamespace(session_scope=lambda: _SessionScope()))
+        get_users_with_daily_push = MagicMock(return_value=[7])
+        get_user_by_id = MagicMock(return_value=SimpleNamespace(id=7, email="u@example.com", status="active"))
+        list_stocks = MagicMock(return_value=[SimpleNamespace(stock_code="600519")])
+        get_prefs = MagicMock(return_value=SimpleNamespace(email_enabled=True, webhook_url=None, webhook_type=None))
+        resolve_user_plan = MagicMock(return_value=SimpleNamespace(is_pro=False, can_webhook=False))
+
+        fake_modules = {
+            "src.core.pipeline": _fake_module("src.core.pipeline", StockAnalysisPipeline=pipeline_cls),
+            "src.notification": _fake_module("src.notification", NotificationService=MagicMock()),
+            "src.storage": _fake_module("src.storage", get_db=get_db),
+            "src.users.config": _fake_module(
+                "src.users.config",
+                is_user_mode_enabled=MagicMock(return_value=True),
+                load_user_mode_settings=MagicMock(return_value=SimpleNamespace()),
+            ),
+            "src.users.email": _fake_module("src.users.email", get_email_backend=MagicMock(return_value=object())),
+            "src.users.notification_delivery": _fake_module(
+                "src.users.notification_delivery",
+                DailyEmailContext=MagicMock(),
+                dispatch_user_webhook=MagicMock(),
+                send_daily_email=MagicMock(),
+            ),
+            "src.users.notification_prefs": _fake_module(
+                "src.users.notification_prefs",
+                get_prefs=get_prefs,
+                get_users_with_daily_push=get_users_with_daily_push,
+            ),
+            "src.users.plans": _fake_module("src.users.plans", resolve_user_plan=resolve_user_plan),
+            "src.users.repository": _fake_module("src.users.repository", get_user_by_id=get_user_by_id),
+            "src.users.watchlist": _fake_module("src.users.watchlist", list_stocks=list_stocks),
+        }
+
+        with patch.dict(sys.modules, fake_modules):
+            main.run_per_user_scheduled_analysis(
+                SimpleNamespace(report_type="simple"),
+                SimpleNamespace(workers=1, dry_run=False),
+            )
+
+        pipeline_cls.assert_not_called()
+        get_users_with_daily_push.assert_called_once()
+        get_user_by_id.assert_called_once()
+        list_stocks.assert_called_once()
+        get_prefs.assert_called_once()
+        resolve_user_plan.assert_called_once()
 
 
 if __name__ == "__main__":

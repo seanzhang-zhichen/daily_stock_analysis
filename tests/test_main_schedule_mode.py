@@ -293,6 +293,50 @@ class MainScheduleModeTestCase(unittest.TestCase):
         start_api_server.assert_not_called()
         run_full_analysis.assert_not_called()
 
+    def test_serve_only_skips_webui_frontend_preparation(self) -> None:
+        args = self._make_args(serve_only=True)
+        config = self._make_config(webui_enabled=False)
+
+        with patch("main.parse_arguments", return_value=args), \
+             patch("main.get_config", return_value=config), \
+             patch("main.setup_logging"), \
+             patch("main.start_api_server") as start_api_server, \
+             patch("main.time.sleep", side_effect=KeyboardInterrupt), \
+             patch("src.webui_frontend.prepare_webui_frontend_assets") as prepare_assets, \
+             patch.dict(os.environ, {"WEBUI_HOST": "", "WEBUI_AUTO_BUILD": "true"}, clear=False):
+            exit_code = main.main()
+
+        self.assertEqual(exit_code, 0)
+        start_api_server.assert_called_once_with(
+            host="0.0.0.0",
+            port=8000,
+            config=config,
+            serve_frontend=False,
+        )
+        prepare_assets.assert_not_called()
+
+    def test_webui_only_prepares_webui_frontend_assets(self) -> None:
+        args = self._make_args(webui_only=True)
+        config = self._make_config(webui_enabled=False)
+
+        with patch("main.parse_arguments", return_value=args), \
+             patch("main.get_config", return_value=config), \
+             patch("main.setup_logging"), \
+             patch("main.start_api_server") as start_api_server, \
+             patch("main.time.sleep", side_effect=KeyboardInterrupt), \
+             patch("src.webui_frontend.prepare_webui_frontend_assets", return_value=True) as prepare_assets, \
+             patch.dict(os.environ, {"WEBUI_HOST": ""}, clear=False):
+            exit_code = main.main()
+
+        self.assertEqual(exit_code, 0)
+        start_api_server.assert_called_once_with(
+            host="0.0.0.0",
+            port=8000,
+            config=config,
+            serve_frontend=True,
+        )
+        prepare_assets.assert_called_once_with()
+
     def test_reload_runtime_config_preserves_process_env_overrides(self) -> None:
         self.env_path.write_text(
             "OPENAI_API_KEY=stale-file\nSCHEDULE_TIME=09:30\n",

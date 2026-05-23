@@ -38,10 +38,6 @@ const PrivacyPage: React.FC = () => {
           <strong>付费与订单</strong>：套餐选择、订单金额、支付方式、支付通道交易号、发票抬头与邮箱（仅在您主动申请发票时）。
         </li>
         <li>
-          <strong>BYOK 凭证</strong>：当您配置自带 API Key 时，我们会以 Fernet 对称加密的方式落库；
-          仅在您发起对应分析 / 问股请求时由后端解密一次，不在日志中输出。
-        </li>
-        <li>
           <strong>设备与诊断信息</strong>：浏览器类型、操作系统、错误堆栈（用于排错与产品优化）。
         </li>
       </ul>
@@ -70,7 +66,7 @@ const PrivacyPage: React.FC = () => {
         </li>
         <li>
           <strong>LLM 服务商</strong>（如 OpenAI / Anthropic / 百度文心 / 通义千问等）：当您发起分析或 Agent 问股时，
-          我们会将您输入的提示词、行情上下文等内容传给所选模型；BYOK 模式下使用您自填的 API Key 直接调用。
+          我们会将您输入的提示词、行情上下文等内容传给您选择或平台配置的模型。
         </li>
         <li>
           <strong>行情与新闻数据源</strong>（如 AKShare、Baostock、Tushare、AlphaVantage 等）：仅传递股票代码等公开标识，不传递用户身份信息。
@@ -82,13 +78,11 @@ const PrivacyPage: React.FC = () => {
         <li>账户信息保留至您主动注销账户后 30 天清理；</li>
         <li>订单、发票、退款记录依据财税法规保留 5 年；</li>
         <li>分析报告与会话日志默认保留 12 个月，您可随时通过《账户设置》删除；</li>
-        <li>BYOK 凭证在您删除该 provider 配置后立即从数据库移除，无逻辑保留。</li>
       </ul>
 
       <h2 className="mt-8 text-base font-semibold">5. 信息安全措施</h2>
       <ul className="list-disc space-y-1 pl-5">
         <li>密码采用 PBKDF2-SHA256 加盐哈希存储，逐步升级到 Argon2/bcrypt；</li>
-        <li>BYOK API Key 使用 Fernet 对称加密落库，密钥单独从环境变量注入；</li>
         <li>会话 Cookie 默认 httpOnly + SameSite=Lax + 在 HTTPS 下 Secure；</li>
         <li>支付与回调入口启用签名校验、IP 白名单、幂等去重；</li>
         <li>日志中默认对邮箱、Token、API Key 等敏感字段做掩码。</li>
@@ -98,7 +92,7 @@ const PrivacyPage: React.FC = () => {
       <p>根据 PIPL / GDPR 等法律，您对自己的个人信息享有以下权利：</p>
       <ul className="list-disc space-y-1 pl-5">
         <li>查询与访问：在《账户设置》查看您的注册信息、自选股、订单与历史报告；</li>
-        <li>更正：随时修改邮箱密码、自选股列表、通知偏好与 BYOK 凭证；</li>
+        <li>更正：随时修改邮箱密码、自选股列表、通知偏好与模型偏好；</li>
         <li>删除与注销：通过工单或邮件申请注销账户，账户进入 7 天冷静期后软删；</li>
         <li>数据导出：通过《账户设置》申请导出个人数据，24 小时内邮件下载链接（MVP 阶段为人工处理）；</li>
         <li>撤回同意：您可随时通过注销账户撤回对协议三件套的同意，但部分功能将不可用。</li>

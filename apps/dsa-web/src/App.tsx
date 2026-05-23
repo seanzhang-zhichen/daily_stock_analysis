@@ -13,7 +13,6 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import AccountPage from './pages/AccountPage';
 import WatchlistPage from './pages/WatchlistPage';
 import BillingPage from './pages/BillingPage';
-import ApiKeysPage from './pages/ApiKeysPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import OnboardingPage from './pages/OnboardingPage';
 import OrdersPage from './pages/OrdersPage';
@@ -113,12 +112,6 @@ const AppContent: React.FC = () => {
             path="/watchlist"
             element={
               userModeEnabled ? <WatchlistPage /> : <Navigate to="/settings" replace />
-            }
-          />
-          <Route
-            path="/account/api-keys"
-            element={
-              userModeEnabled ? <ApiKeysPage /> : <Navigate to="/settings" replace />
             }
           />
           <Route

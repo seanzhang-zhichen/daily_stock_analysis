@@ -39,7 +39,6 @@ class ResolvedPlan:
     daily_agent_limit: int
     max_stocks: int
     allowed_models: List[str]
-    can_byok: bool
     can_webhook: bool
     expires_at: Optional[datetime]
 
@@ -71,7 +70,6 @@ def _free_plan_from_settings(settings: UserModeSettings) -> ResolvedPlan:
         daily_agent_limit=settings.free_daily_agent,
         max_stocks=settings.free_max_stocks,
         allowed_models=[],
-        can_byok=False,
         can_webhook=False,
         expires_at=None,
     )
@@ -115,7 +113,6 @@ def resolve_user_plan(
         daily_agent_limit=int(row.daily_agent_limit),
         max_stocks=int(row.max_stocks),
         allowed_models=_parse_allowed_models(row.allowed_models),
-        can_byok=bool(row.can_byok),
         can_webhook=bool(row.can_webhook),
         expires_at=user.plan_expires_at,
     )

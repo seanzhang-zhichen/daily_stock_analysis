@@ -53,8 +53,8 @@ function formatRemaining(remaining: number | null | undefined, limit: number) {
  * both desktop and mobile drawer. Handles three tones:
  *
  *  - neutral:   还有余量, 中性色
- *  - warning:   今日额度耗尽, 引导到 /billing 或 /account/api-keys
- *  - brand:     不限额 / BYOK / 自部署模式, 品牌色
+ *  - warning:   今日额度耗尽, 引导到 /billing
+ *  - brand:     不限额 / 自部署模式, 品牌色
  *
  * The component renders nothing when To C 用户体系未启用 — 单管理员模式不需要
  * 额度提示。
@@ -97,9 +97,6 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
     const isExhausted = isAnalysisExhausted && isAgentExhausted;
 
     if (isExhausted) {
-      const hint = plan?.canByok
-        ? '今日已用完 · 切换 BYOK'
-        : '今日已用完 · 升级 Pro';
       return {
         kind: 'metered' as const,
         tone: 'warning' as const,
@@ -107,7 +104,7 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
           agentRemaining,
           agentLimit
         )}`,
-        hint,
+        hint: '今日已用完 · 升级 Pro',
         analysisRemaining,
         analysisLimit,
         agentRemaining,
@@ -136,11 +133,7 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
 
   const tone: Tone = summary.tone;
   const exhausted = summary.kind === 'metered' && summary.tone === 'warning';
-  const target = exhausted
-    ? userMode?.plan?.canByok
-      ? '/account/api-keys'
-      : '/billing'
-    : '/account';
+  const target = exhausted ? '/billing' : '/account';
 
   const Icon = tone === 'brand' ? Sparkles : Gauge;
 

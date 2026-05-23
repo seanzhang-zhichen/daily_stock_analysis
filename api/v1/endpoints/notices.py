@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -231,6 +231,8 @@ def update_notice(
     "/{notice_id}",
     summary="（管理员）删除公告",
     status_code=204,
+    response_class=Response,
+    response_model=None,
 )
 def delete_notice(
     notice_id: int,

@@ -5,6 +5,7 @@ export type AccountUser = {
   email: string;
   plan: string;
   planExpiresAt: string | null;
+  preferredModel: string | null;
   emailVerified: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -29,7 +30,6 @@ export type AccountPlan = {
   dailyAnalysisLimit: number;
   dailyAgentLimit: number;
   maxStocks: number;
-  canByok: boolean;
   canWebhook: boolean;
   expiresAt: string | null;
 };
@@ -84,20 +84,10 @@ export type RedeemResponse = {
   plan: AccountPlan;
 };
 
-export type ByokCredential = {
-  id: number;
-  provider: string;
-  baseUrl: string | null;
-  model: string | null;
-  status: string;
-  keyPreview: string;
-  updatedAt: string | null;
-};
-
-export type ByokListResponse = {
-  supportedProviders: string[];
-  canByok: boolean;
-  credentials: ByokCredential[];
+export type ModelPreferenceResponse = {
+  models: string[];
+  preferredModel: string | null;
+  effectiveModel: string | null;
 };
 
 export type WatchlistItem = {
@@ -206,28 +196,16 @@ export const accountApi = {
     return data;
   },
 
-  async listApiKeys(): Promise<ByokListResponse> {
-    const { data } = await apiClient.get<ByokListResponse>('/api/v1/account/api-keys');
+  async getModelPreference(): Promise<ModelPreferenceResponse> {
+    const { data } = await apiClient.get<ModelPreferenceResponse>('/api/v1/account/model-preference');
     return data;
   },
 
-  async upsertApiKey(input: {
-    provider: string;
-    apiKey: string;
-    baseUrl?: string;
-    model?: string;
-  }): Promise<{ credential: ByokCredential }> {
-    const { data } = await apiClient.post<{ credential: ByokCredential }>('/api/v1/account/api-keys', {
-      provider: input.provider,
-      apiKey: input.apiKey,
-      baseUrl: input.baseUrl,
-      model: input.model,
+  async updateModelPreference(preferredModel: string | null): Promise<ModelPreferenceResponse> {
+    const { data } = await apiClient.patch<ModelPreferenceResponse>('/api/v1/account/model-preference', {
+      preferredModel,
     });
     return data;
-  },
-
-  async deleteApiKey(provider: string): Promise<void> {
-    await apiClient.delete(`/api/v1/account/api-keys/${encodeURIComponent(provider)}`);
   },
 
   // Watchlist

@@ -5,7 +5,7 @@
 - ``/api/v1/billing/plans``: 未启用 To C 模式时优雅降级; 启用时返回兜底套餐目录。
 - ``/api/v1/billing/subscription``: 未登录返回 401; 登录后返回当前 plan + 历史。
 - ``/api/v1/account/redeem``: 兑换码合法 -> 升级到 Pro; 重复使用 -> 失败。
-- ``/api/v1/account/api-keys``: free 用户无法写入; Pro 用户可以 CRUD。
+- ``/api/v1/account/model-preference``: 用户只能在套餐允许的平台模型中选择偏好。
 
 测试用 SQLite + monkeypatched env 启用 To C 模式, 不依赖 LLM 运行时。
 """
@@ -17,7 +17,6 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta
-from typing import Optional
 from unittest.mock import MagicMock
 
 # Keep this test runnable when optional LLM runtime deps are not installed.
@@ -35,7 +34,6 @@ from src.storage import (
     AppPlan,
     AppRedeemCode,
     AppUser,
-    AppUserByokCredential,
     DatabaseManager,
 )
 from src.users.passwords import hash_password
@@ -48,7 +46,6 @@ def _enable_user_mode(monkeypatch_env: dict) -> None:
     monkeypatch_env["USER_FREE_DAILY_ANALYSIS"] = "5"
     monkeypatch_env["USER_FREE_DAILY_AGENT"] = "5"
     monkeypatch_env["USER_FREE_MAX_STOCKS"] = "3"
-    monkeypatch_env["USER_BYOK_FALLBACK_KEY"] = "unit-test-key"
 
 
 class _BaseApi(unittest.TestCase):
@@ -68,12 +65,15 @@ class _BaseApi(unittest.TestCase):
                 "USER_FREE_DAILY_ANALYSIS",
                 "USER_FREE_DAILY_AGENT",
                 "USER_FREE_MAX_STOCKS",
-                "USER_BYOK_FALLBACK_KEY",
                 "ADMIN_AUTH_ENABLED",
+                "LITELLM_MODEL",
+                "LITELLM_FALLBACK_MODELS",
             ]
         }
         os.environ["DATABASE_PATH"] = self._db_path
         os.environ["ADMIN_AUTH_ENABLED"] = "false"
+        os.environ["LITELLM_MODEL"] = "openai/gpt-4o-mini"
+        os.environ["LITELLM_FALLBACK_MODELS"] = "openai/gpt-4o"
         _enable_user_mode(os.environ)
 
         Config._instance = None
@@ -132,7 +132,7 @@ class _BaseApi(unittest.TestCase):
                 daily_analysis_limit=50,
                 daily_agent_limit=50,
                 max_stocks=30,
-                can_byok=True,
+                allowed_models='["openai/gpt-4o-mini","openai/gpt-4o"]',
                 can_webhook=True,
                 price_cents=2900,
             )
@@ -222,7 +222,7 @@ class TestRedeem(_BaseApi):
         body = res.json()
         self.assertEqual(body["plan"]["code"], "pro")
         self.assertTrue(body["plan"]["isPro"])
-        self.assertTrue(body["plan"]["canByok"])
+        self.assertNotIn("can" + "B" + "yok", body["plan"])
 
         # 再次兑换同一个 code 应失败
         res2 = self.client.post("/api/v1/account/redeem", json={"code": "VIP-AAAA"})
@@ -230,24 +230,20 @@ class TestRedeem(_BaseApi):
         self.assertEqual(res2.json()["error"], "invite_code_invalid")
 
 
-class TestApiKeysEndpoint(_BaseApi):
+class TestModelPreferenceEndpoint(_BaseApi):
     def test_list_requires_login(self):
-        res = self.client.get("/api/v1/account/api-keys")
+        res = self.client.get("/api/v1/account/model-preference")
         self.assertEqual(res.status_code, 401)
 
-    def test_free_user_cannot_upsert(self):
+    def test_free_user_can_read_platform_models(self):
         user = self._create_user()
         self._login(user)
-        res = self.client.post(
-            "/api/v1/account/api-keys",
-            json={"provider": "openai", "apiKey": "sk-abc-12345"},
-        )
-        self.assertEqual(res.status_code, 403)
-        self.assertEqual(res.json()["error"], "registration_disabled")
+        res = self.client.get("/api/v1/account/model-preference")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["models"], ["openai/gpt-4o-mini", "openai/gpt-4o"])
 
-    def test_pro_user_can_upsert_and_delete(self):
+    def test_user_can_update_allowed_model_preference(self):
         self._seed_pro_plan()
-        # 直接把用户开成 pro
         user = self._create_user()
         sess = self.db_manager.get_session()
         try:
@@ -262,35 +258,14 @@ class TestApiKeysEndpoint(_BaseApi):
 
         self._login(user)
 
-        # 列表 + canByok=True
-        res_list = self.client.get("/api/v1/account/api-keys")
-        self.assertEqual(res_list.status_code, 200)
-        body = res_list.json()
-        self.assertTrue(body["canByok"])
-        self.assertEqual(body["credentials"], [])
-
-        # upsert
-        res = self.client.post(
-            "/api/v1/account/api-keys",
-            json={"provider": "openai", "apiKey": "sk-test-abcd1234"},
+        res = self.client.patch(
+            "/api/v1/account/model-preference",
+            json={"preferredModel": "openai/gpt-4o"},
         )
         self.assertEqual(res.status_code, 200, res.text)
-        cred = res.json()["credential"]
-        self.assertEqual(cred["provider"], "openai")
-        self.assertEqual(cred["status"], "active")
-        self.assertTrue(cred["keyPreview"].startswith("***"))
+        self.assertEqual(res.json()["preferredModel"], "openai/gpt-4o")
 
-        # 列表里能看到
-        res_list2 = self.client.get("/api/v1/account/api-keys")
-        self.assertEqual(len(res_list2.json()["credentials"]), 1)
-
-        # 删除
-        res_del = self.client.delete("/api/v1/account/api-keys/openai")
-        self.assertEqual(res_del.status_code, 204)
-        res_del2 = self.client.delete("/api/v1/account/api-keys/openai")
-        self.assertEqual(res_del2.status_code, 404)
-
-    def test_unsupported_provider_rejected(self):
+    def test_rejects_disallowed_model_preference(self):
         self._seed_pro_plan()
         user = self._create_user()
         sess = self.db_manager.get_session()
@@ -304,9 +279,9 @@ class TestApiKeysEndpoint(_BaseApi):
         finally:
             sess.close()
         self._login(user)
-        res = self.client.post(
-            "/api/v1/account/api-keys",
-            json={"provider": "rogue_provider", "apiKey": "sk-x"},
+        res = self.client.patch(
+            "/api/v1/account/model-preference",
+            json={"preferredModel": "anthropic/claude-3-5-sonnet"},
         )
         self.assertEqual(res.status_code, 400)
 

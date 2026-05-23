@@ -10,8 +10,8 @@
 
 无状态意味着不依赖额外的 DB 表 (避免再加一张过期清理表), 通过 ``issued_at``
 + 服务端常量 ``UNSUBSCRIBE_TTL_SECONDS`` 控制有效期 (默认 90 天)。
-密钥优先取 ``UNSUBSCRIBE_SIGNING_KEY``, 缺失时回退到 ``DATA_ENCRYPTION_KEY``
-或 ``ADMIN_API_SECRET``, 三者都缺失时仍会启用一段固定 fallback 仅供本地开发,
+密钥优先取 ``UNSUBSCRIBE_SIGNING_KEY``, 缺失时回退到 ``ADMIN_API_SECRET``,
+两者都缺失时仍会启用一段固定 fallback 仅供本地开发,
 生产环境必须显式配置以保证 token 不可伪造。
 """
 
@@ -42,12 +42,12 @@ def _load_signing_key() -> bytes:
 
     生产环境应显式配置 ``UNSUBSCRIBE_SIGNING_KEY``; 其它兜底仅为开发便利。
     """
-    for env_name in ("UNSUBSCRIBE_SIGNING_KEY", "DATA_ENCRYPTION_KEY", "ADMIN_API_SECRET"):
+    for env_name in ("UNSUBSCRIBE_SIGNING_KEY", "ADMIN_API_SECRET"):
         raw = (os.getenv(env_name) or "").strip()
         if raw:
             return raw.encode("utf-8")
     logger.warning(
-        "UNSUBSCRIBE_SIGNING_KEY / DATA_ENCRYPTION_KEY / ADMIN_API_SECRET 均未配置, "
+        "UNSUBSCRIBE_SIGNING_KEY / ADMIN_API_SECRET 均未配置, "
         "退订 token 使用本地开发默认密钥, 生产部署必须显式配置。"
     )
     return b"dsa-unsubscribe-dev-key"
