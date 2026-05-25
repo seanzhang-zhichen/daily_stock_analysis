@@ -7,14 +7,20 @@ FROM node:20-slim AS web-builder
 
 WORKDIR /app/frontend/web
 
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
 COPY frontend/web/package.json frontend/web/package-lock.json ./
-RUN npm ci
+RUN npm config set registry "$NPM_REGISTRY" && npm ci
 
 COPY frontend/web/ ./
 RUN npm run build
 
 # Pin to bookworm: wkhtmltopdf was removed from Debian testing (2025)
 FROM python:3.11-slim-bookworm
+
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 设置工作目录
 WORKDIR /app
@@ -24,7 +30,15 @@ ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 安装系统依赖（wkhtmltopdf 含 wkhtmltoimage，用于 Markdown 转图片 Issue #289）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i \
+        -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
+        -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+        -e "s|http://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+        -e "s|https://deb.debian.org/debian|${APT_MIRROR}|g" \
+        -e "s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+        -e "s|https://security.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
+    && apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     curl \
     gosu \
@@ -44,7 +58,7 @@ COPY requirements.txt ./
 COPY backend/requirements.txt ./backend/requirements.txt
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt
 
 # Copy application code
 COPY alembic.ini ./

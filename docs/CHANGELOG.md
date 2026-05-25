@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [chore] Add `docs/legacy-compat-cleanup.md` and remove low-risk legacy aliases for Agent config, Analysis API request fields, and user public URL environment fallbacks.
+- [文档] 更新线上服务器 Docker 部署排障说明，补充 `entrypoint.sh` LF 行尾、容器启动入口 `backend/main.py`、以及 Docker 中 MySQL `DATABASE_URL` 不应使用 `localhost` 的配置说明。
 - [chore] Complete remaining low-risk legacy cleanup by removing the Stocks API `codes` response compatibility field and desktop-specific system config import/export service aliases.
 - [修复] 登录/注册页邮箱输入框补充邮箱图标，与密码输入框的图标样式保持一致。
 - [修复] 修复本地前后端分离开发时注册验证邮件默认生成 `localhost:8000/verify-email` 导致邮箱验证页无法生效的问题：邮箱验证链接默认指向 Web 前端 `localhost:5200`，并新增 `USER_FRONTEND_BASE_URL` 支持自定义前端公开地址。
+- [改进] Docker 构建新增 npm、Debian apt 与 pip 镜像源构建参数，默认使用国内镜像加速依赖下载，并在 `.env.example` 与中英文部署文档中补充覆盖方式。
 - [文档] 更新本地前后端启动说明，明确 `--serve-only` 仅启动 FastAPI API、Web 前端开发服务器使用 `frontend/web` 的 `npm run dev` 运行在 5200 端口，生产/本地一体化 WebUI 使用 `--webui-only` 托管构建产物。
 - [chore] 收敛项目目录边界：Web 前端位于 `frontend/web/`，桌面端位于 `frontend/desktop/`，后端真实代码位于 `backend/`；移除根目录 `main.py` / `server.py` / `webui.py` 与 `src` / `api` / `data_provider` / `bot` 兼容 shim，并同步更新 CI、Docker 与相关文档。
 - [文档] 同步 To C、产品规划与中英文完整指南文档：补充 `USER_FRONTEND_BASE_URL`、公开股票搜索接口与股票索引表说明，校正模型偏好和 `allowed_models` 运营配置状态，并修复完整指南中的项目结构与 Docker Compose 示例。

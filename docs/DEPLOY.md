@@ -42,6 +42,15 @@ cp .env.example .env
 vim .env  # 填入真实的 API Key 等配置
 ```
 
+如果 Docker 构建时下载 npm / apt / pip 依赖较慢，默认 Compose 构建参数已使用国内镜像源；也可以在 `.env` 中覆盖：
+
+```env
+DOCKER_NPM_REGISTRY=https://registry.npmmirror.com
+DOCKER_APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+DOCKER_APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+DOCKER_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
 ### 3. 一键启动
 
 ```bash
@@ -347,6 +356,87 @@ deploy:
   ```
 
 **验证**：用浏览器开发者工具（F12 → Network）检查是否有 `/assets/index-*.js` 和 `/assets/index-*.css` 的 404 错误；如有，说明资源缺失，按上述步骤重新构建即可。
+
+### 7. Docker 启动时报 `docker-entrypoint.sh: no such file or directory`
+
+**症状**：
+
+```text
+exec /usr/local/bin/docker-entrypoint.sh: no such file or directory
+```
+
+**根因**：在 Windows 环境中，如果 `docker/entrypoint.sh` 被检出或编辑成 CRLF 行尾，Linux 容器会把 shebang 解释为 `/bin/sh\r`，表现为入口脚本“找不到”。仓库已在 `.gitattributes` 中声明 `*.sh` 和 `docker/entrypoint.sh` 使用 LF，但旧工作区或旧镜像仍可能保留 CRLF。
+
+**解决方法**：
+
+```bash
+git checkout -- docker/entrypoint.sh docker/Dockerfile
+git ls-files --eol docker/entrypoint.sh docker/Dockerfile
+docker-compose -f ./docker/docker-compose.yml build --no-cache
+docker-compose -f ./docker/docker-compose.yml up -d
+```
+
+`git ls-files --eol` 中 `docker/entrypoint.sh` 应显示 `w/lf`。如果仍为 `w/crlf`，请先将该文件转换为 LF 后再重新构建镜像。
+
+### 8. Docker 启动时报 `/app/main.py` 不存在
+
+**症状**：
+
+```text
+python: can't open file '/app/main.py': [Errno 2] No such file or directory
+```
+
+**根因**：当前镜像复制真实后端代码到 `/app/backend/`，容器内入口应使用 `backend/main.py`。如果 `docker-compose.yml` 仍覆盖为 `python main.py ...`，就会查找不存在的 `/app/main.py`。
+
+**解决方法**：确认 `docker/docker-compose.yml` 的 `server` 服务命令为：
+
+```yaml
+command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+```
+
+修改后重建容器：
+
+```bash
+docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
+```
+
+### 9. Docker 中 MySQL 不能使用 `localhost`
+
+**症状**：
+
+```text
+Can't connect to MySQL server on 'localhost'
+```
+
+**根因**：容器内的 `localhost` 指向当前应用容器本身，不是宿主机，也不是其他 MySQL 容器。只要 `.env` 配置了 `DATABASE_URL`，`DATABASE_PATH` 会被忽略。
+
+**推荐配置**：
+
+- **使用默认 SQLite**：清空或注释 `DATABASE_URL`，并使用容器内持久化路径。
+
+  ```env
+  DATABASE_URL=
+  DATABASE_PATH=/app/data/stock_analysis.db
+  ```
+
+- **MySQL 在宿主机上**：将 `localhost` 改为 Docker 访问宿主机的地址。
+
+  ```env
+  DATABASE_URL=mysql+pymysql://user:password@host.docker.internal:3306/dsa_db
+  ```
+
+- **MySQL 也在 Compose 内**：将主机名改为 MySQL 服务名，例如 `mysql`。
+
+  ```env
+  DATABASE_URL=mysql+pymysql://user:password@mysql:3306/dsa_db
+  ```
+
+改完 `.env` 后重启服务：
+
+```bash
+docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
+docker-compose -f ./docker/docker-compose.yml logs -f server
+```
 
 ---
 

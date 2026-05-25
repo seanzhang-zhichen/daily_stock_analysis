@@ -42,6 +42,15 @@ cp .env.example .env
 vim .env  # Fill in real API Keys and configuration
 ```
 
+If Docker builds are slow when downloading npm / apt / pip dependencies, the default Compose build args already use mirror endpoints. You can override them in `.env`:
+
+```env
+DOCKER_NPM_REGISTRY=https://registry.npmmirror.com
+DOCKER_APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+DOCKER_APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+DOCKER_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
 ### 3. One-Click Start
 
 ```bash
@@ -294,6 +303,87 @@ deploy:
   resources:
     limits:
       memory: 1G
+```
+
+### 5. Docker reports `docker-entrypoint.sh: no such file or directory`
+
+**Symptom**:
+
+```text
+exec /usr/local/bin/docker-entrypoint.sh: no such file or directory
+```
+
+**Cause**: On Windows, `docker/entrypoint.sh` may be checked out or edited with CRLF line endings. Linux containers then read the shebang as `/bin/sh\r`, which appears as an entrypoint “not found” error. The repository declares LF line endings for shell scripts in `.gitattributes`, but an old working tree or old image may still contain CRLF.
+
+**Fix**:
+
+```bash
+git checkout -- docker/entrypoint.sh docker/Dockerfile
+git ls-files --eol docker/entrypoint.sh docker/Dockerfile
+docker-compose -f ./docker/docker-compose.yml build --no-cache
+docker-compose -f ./docker/docker-compose.yml up -d
+```
+
+`docker/entrypoint.sh` should show `w/lf` in `git ls-files --eol`. If it still shows `w/crlf`, convert the file to LF before rebuilding the image.
+
+### 6. Docker reports `/app/main.py` does not exist
+
+**Symptom**:
+
+```text
+python: can't open file '/app/main.py': [Errno 2] No such file or directory
+```
+
+**Cause**: The image copies the real backend code to `/app/backend/`, so the container entrypoint should use `backend/main.py`. If `docker-compose.yml` overrides the command with `python main.py ...`, Python will look for the non-existent `/app/main.py`.
+
+**Fix**: Confirm that the `server` service in `docker/docker-compose.yml` uses:
+
+```yaml
+command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+```
+
+Then recreate the container:
+
+```bash
+docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
+```
+
+### 7. MySQL in Docker cannot use `localhost`
+
+**Symptom**:
+
+```text
+Can't connect to MySQL server on 'localhost'
+```
+
+**Cause**: Inside a container, `localhost` points to the application container itself, not the host machine and not another MySQL container. When `DATABASE_URL` is set in `.env`, `DATABASE_PATH` is ignored.
+
+**Recommended configuration**:
+
+- **Use default SQLite**: leave `DATABASE_URL` empty and use the container persistence path.
+
+  ```env
+  DATABASE_URL=
+  DATABASE_PATH=/app/data/stock_analysis.db
+  ```
+
+- **MySQL runs on the host machine**: replace `localhost` with the Docker host address.
+
+  ```env
+  DATABASE_URL=mysql+pymysql://user:password@host.docker.internal:3306/dsa_db
+  ```
+
+- **MySQL also runs in Compose**: use the MySQL service name, for example `mysql`.
+
+  ```env
+  DATABASE_URL=mysql+pymysql://user:password@mysql:3306/dsa_db
+  ```
+
+After editing `.env`, restart the service:
+
+```bash
+docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
+docker-compose -f ./docker/docker-compose.yml logs -f server
 ```
 
 ---
