@@ -3,6 +3,13 @@
 # 适用于 append-only 的 changelog 文件。
 docs/CHANGELOG.md merge=union
 
+# Shell 脚本以及 Docker entrypoint 在 Linux 容器内执行，必须使用 LF 行尾。
+# 否则 Windows 上 core.autocrlf=true 会把它们 checkout 成 CRLF，导致容器中
+# shebang 解释器变成 "/bin/sh\r"，启动报 "no such file or directory"。
+*.sh                text eol=lf
+docker/entrypoint.sh text eol=lf
+docker/Dockerfile   text eol=lf
+
 # Documentation image/design assets are binary. Keep GitHub review diffs from
 # trying to decode moved binary files as UTF-8.
 sources/**/*.ai binary
