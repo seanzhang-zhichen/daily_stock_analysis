@@ -14,7 +14,7 @@
 | 部署到服务器或云平台 | [部署指南](DEPLOY.md) | [云端 WebUI 部署](deploy-webui-cloud.md)、[Zeabur 部署](docker/zeabur-deployment.md) |
 | 使用 Bot / IM 接入 | [Bot 命令与接入](bot-command.md) | [Bot 平台配置](bot/) |
 | 排查运行问题 | [FAQ](FAQ.md) | [更新日志](CHANGELOG.md) |
-| 参与开发或提交 PR | [贡献指南](CONTRIBUTING.md) | [API 规格](architecture/api_spec.json) |
+| 参与开发或提交 PR | [贡献指南](CONTRIBUTING.md) | [后端理解指南](backend/)、[API 规格](architecture/api_spec.json) |
 
 ## 快速开始
 
@@ -71,6 +71,12 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [后端理解指南](backend/) | 后端架构、API、数据管道、存储模型、To C 用户体系与计费的系统性说明 |
+| [后端架构总览](backend/overview.md) | 后端目录、启动入口、FastAPI、分析管道、Agent、数据源、存储和通知总览 |
+| [后端 API 层](backend/api.md) | 认证、依赖注入、接口分组、错误响应和主要 API 行为 |
+| [后端数据管道](backend/data-pipeline.md) | 股票代码规范化、数据源 fallback、LLM/Agent 分析、异步任务和通知链路 |
+| [后端存储层](backend/storage.md) | SQLAlchemy 模型、Repository、Alembic migration 与用户数据隔离边界 |
+| [后端用户体系与计费](backend/user-system.md) | 注册登录、Session、套餐、配额、订单支付、退款发票和管理员能力 |
 | [API 规格](architecture/api_spec.json) | FastAPI OpenAPI 规格产物 |
 | [贡献指南](CONTRIBUTING.md) | Issue、PR、测试、文档同步和协作要求 |
 

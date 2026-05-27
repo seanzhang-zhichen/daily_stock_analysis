@@ -162,6 +162,15 @@ def _init_sentry() -> None:
         logger.warning("Sentry init failed: %s", exc)
 
 
+def _init_llm_observability() -> None:
+    """初始化 LLM 可观测回调（Langfuse 等，仅在相关 key 已配置时生效）。"""
+    try:
+        from src.llm.observability import setup_llm_observability
+        setup_llm_observability()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM observability init failed: %s", exc)
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     """Initialize and release shared services for the app lifecycle."""
@@ -192,6 +201,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
         static_dir = Path(__file__).resolve().parents[2] / "static"
 
     _init_sentry()
+    _init_llm_observability()
 
     # 创建 FastAPI 实例
     app = FastAPI(

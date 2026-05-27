@@ -1002,6 +1002,9 @@ def main() -> int:
     logger.info(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
+    from src.llm.observability import setup_llm_observability
+    setup_llm_observability()
+
     # 验证配置
     warnings = config.validate()
     for warning in warnings:
@@ -1222,4 +1225,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    try:
+        from src.llm.observability import flush_llm_observability
+
+        flush_llm_observability()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("LLM observability flush skipped: %s", exc)
+    sys.exit(exit_code)

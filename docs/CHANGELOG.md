@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [文档] 新增 `docs/backend/` 后端理解指南，系统梳理后端架构总览、API 层、数据管道、存储模型以及 To C 用户体系与计费流程，并在中英文文档索引补充入口。
+- [新功能] 集成 Langfuse LLM 可观测：配置 LANGFUSE_SECRET_KEY / LANGFUSE_PUBLIC_KEY 后，所有 LLM 调用（分析、Agent、大盘复盘）自动上报完整 Trace（prompt / response / token / 耗时）；未配置时无副作用。
+- [修复] Langfuse 可观测兼容新版 `LANGFUSE_BASE_URL` 配置并保留 `LANGFUSE_HOST` 映射，CLI 退出前会尝试 flush，减少短任务 Trace 未上报的问题。
 - [修复] 回测页面结果与指标按当前登录用户隔离，不再混入其他用户的历史分析记录。
 - [修复] 告警触发历史（`/api/v1/alerts/triggers`）和告警通知记录（`/api/v1/alerts/notifications`）现在按当前用户隔离，不再返回其他用户的数据。
 - [改进] 侧边栏隐藏"持仓"入口，聚焦 Agent 分析与问股主线；`/portfolio` 路由与后端 API 暂保留，已有数据与直链访问不受影响。

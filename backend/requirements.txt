@@ -70,3 +70,4 @@ python-multipart>=0.0.6     # FastAPI File/Form upload support
 
 # 可观测（Phase 6）
 sentry-sdk[fastapi]>=2.0.0  # 错误监控, 需配置 SENTRY_DSN 才会上报; 留空时无副作用
+langfuse>=2.0.0             # LLM Trace 观测, 需配置 LANGFUSE_SECRET_KEY 才会上报; 留空时无副作用
