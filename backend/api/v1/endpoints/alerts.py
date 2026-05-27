@@ -263,6 +263,7 @@ def list_triggers(
     status: Optional[str] = Query(None, description="Optional status filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    current_user: AppUser = Depends(get_current_user),
 ) -> AlertTriggerListResponse:
     service = AlertService()
     try:
@@ -271,6 +272,7 @@ def list_triggers(
                 rule_id=rule_id,
                 target=target,
                 status=status,
+                user_id=current_user.id,
                 page=page,
                 page_size=page_size,
             )
@@ -291,6 +293,7 @@ def list_notifications(
     success: Optional[bool] = Query(None, description="Optional success filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    current_user: AppUser = Depends(get_current_user),
 ) -> AlertNotificationListResponse:
     service = AlertService()
     try:
@@ -299,6 +302,7 @@ def list_notifications(
                 trigger_id=trigger_id,
                 channel=channel,
                 success=success,
+                user_id=current_user.id,
                 page=page,
                 page_size=page_size,
             )

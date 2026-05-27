@@ -3,7 +3,6 @@ import { motion } from 'motion/react';
 import {
   BarChart3,
   Bell,
-  BriefcaseBusiness,
   HelpCircle,
   Home,
   LogOut,
@@ -38,7 +37,6 @@ type NavItem = {
 const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'home', label: '首页', to: '/', icon: Home, exact: true },
   { key: 'chat', label: '问股', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
-  { key: 'portfolio', label: '持仓', to: '/portfolio', icon: BriefcaseBusiness },
   { key: 'backtest', label: '回测', to: '/backtest', icon: BarChart3 },
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
   { key: 'notices', label: '公告', to: '/notices', icon: Bell },

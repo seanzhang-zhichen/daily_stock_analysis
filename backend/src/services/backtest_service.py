@@ -37,6 +37,7 @@ class BacktestService:
         eval_window_days: Optional[int] = None,
         min_age_days: Optional[int] = None,
         limit: int = 200,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         config = get_config()
 
@@ -61,6 +62,7 @@ class BacktestService:
             eval_window_days=int(eval_window_days),
             engine_version=str(engine_version),
             force=force,
+            user_id=user_id,
         )
 
         processed = 0
@@ -222,6 +224,7 @@ class BacktestService:
         page: int = 1,
         analysis_date_from: Optional[date] = None,
         analysis_date_to: Optional[date] = None,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
@@ -234,6 +237,7 @@ class BacktestService:
                 engine_version=engine_version,
                 analysis_date_from=analysis_date_from,
                 analysis_date_to=analysis_date_to,
+                user_id=user_id,
             )
             if windows:
                 eval_window_days = windows[0]
@@ -248,6 +252,7 @@ class BacktestService:
             days=None,
             offset=offset,
             limit=limit,
+            user_id=user_id,
         )
         items = [self._result_to_dict(result, stock_name, trend_prediction) for result, stock_name, trend_prediction, _ in rows]
         return {"total": total, "page": page, "limit": limit, "items": items}
@@ -260,6 +265,7 @@ class BacktestService:
         eval_window_days: Optional[int] = None,
         analysis_date_from: Optional[date] = None,
         analysis_date_to: Optional[date] = None,
+        user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
@@ -273,6 +279,7 @@ class BacktestService:
                 engine_version=engine_version,
                 analysis_date_from=analysis_date_from,
                 analysis_date_to=analysis_date_to,
+                user_id=user_id,
             )
             if count > self.MAX_DYNAMIC_SUMMARY_ROWS:
                 raise ValueError(
@@ -284,6 +291,7 @@ class BacktestService:
                 engine_version=engine_version,
                 analysis_date_from=analysis_date_from,
                 analysis_date_to=analysis_date_to,
+                user_id=user_id,
             )
             return self._build_dynamic_summary(
                 rows=rows,

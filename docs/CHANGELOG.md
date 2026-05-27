@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [修复] 回测页面结果与指标按当前登录用户隔离，不再混入其他用户的历史分析记录。
+- [修复] 告警触发历史（`/api/v1/alerts/triggers`）和告警通知记录（`/api/v1/alerts/notifications`）现在按当前用户隔离，不再返回其他用户的数据。
+- [改进] 侧边栏隐藏"持仓"入口，聚焦 Agent 分析与问股主线；`/portfolio` 路由与后端 API 暂保留，已有数据与直链访问不受影响。
+- [文档] 新增 `docs/product-design-brief.md`，面向设计人员整理 DSA 产品定位、目标用户、核心流程、页面范围、视觉方向、响应式要求和设计交付物清单，并在文档中心补充入口。
 - [chore] Add `docs/legacy-compat-cleanup.md` and remove low-risk legacy aliases for Agent config, Analysis API request fields, and user public URL environment fallbacks.
 - [文档] 更新线上服务器 Docker 部署排障说明，补充 `entrypoint.sh` LF 行尾、容器启动入口 `backend/main.py`、以及 Docker 中 MySQL `DATABASE_URL` 不应使用 `localhost` 的配置说明。
 - [chore] Complete remaining low-risk legacy cleanup by removing the Stocks API `codes` response compatibility field and desktop-specific system config import/export service aliases.

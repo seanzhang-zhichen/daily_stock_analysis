@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { BarChart3, Loader2, ShieldCheck, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Loader2, ShieldCheck, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { Button, Input } from '../components/common';
 import { SettingsAlert } from '../components/settings';
 import { isParsedApiError, type ParsedApiError } from '../api/error';
@@ -346,9 +346,10 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                 ) : (
                   <Link
                     to={`/login${location.search}`}
-                    className="text-primary/80 hover:text-primary transition-colors font-medium"
+                    className="inline-flex items-center gap-1.5 text-primary/70 hover:text-primary transition-colors font-medium group"
                   >
-                    ← 返回登录
+                    <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+                    返回登录
                   </Link>
                 )}
               </div>

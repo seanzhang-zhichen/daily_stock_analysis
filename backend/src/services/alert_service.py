@@ -593,6 +593,7 @@ class AlertService:
         rule_id: Optional[int] = None,
         target: Optional[str] = None,
         status: Optional[str] = None,
+        user_id: Optional[int] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -600,6 +601,7 @@ class AlertService:
             rule_id=rule_id,
             target=target,
             status=status,
+            user_id=user_id,
             page=page,
             page_size=page_size,
         )
@@ -616,6 +618,7 @@ class AlertService:
         trigger_id: Optional[int] = None,
         channel: Optional[str] = None,
         success: Optional[bool] = None,
+        user_id: Optional[int] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -623,6 +626,7 @@ class AlertService:
             trigger_id=trigger_id,
             channel=channel,
             success=success,
+            user_id=user_id,
             page=page,
             page_size=page_size,
         )

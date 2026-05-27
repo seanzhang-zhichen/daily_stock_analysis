@@ -46,6 +46,7 @@
 | [实时告警中心](alerts.md) | EventMonitor 基线、告警契约、存储评估和 Phase 边界 |
 | [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界 |
 | [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明 |
+| [产品设计需求描述](product-design-brief.md) | 面向设计人员的产品定位、核心流程、页面范围、视觉方向与交付物要求 |
 | [Web 前端重构计划](web-frontend-redesign-plan.md) | Web 前端视觉、布局、组件和样式治理重构方案 |
 
 ## To C / 多用户

@@ -689,7 +689,7 @@ def upgrade() -> None:
     sa.Column('analysis_date', sa.Date(), nullable=True),
     sa.Column('eval_window_days', sa.Integer(), nullable=False),
     sa.Column('engine_version', sa.String(length=16), nullable=False),
-    sa.Column('eval_status', sa.String(length=16), nullable=False),
+    sa.Column('eval_status', sa.String(length=32), nullable=False),
     sa.Column('evaluated_at', sa.DateTime(), nullable=True),
     sa.Column('operation_advice', sa.String(length=20), nullable=True),
     sa.Column('position_recommendation', sa.String(length=8), nullable=True),

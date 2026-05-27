@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
-import { Check, Minus, X } from 'lucide-react';
+import { Check, HelpCircle, Info, Minus, X } from 'lucide-react';
 import { backtestApi } from '../api/backtest';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
@@ -124,9 +124,16 @@ function boolIcon(value?: boolean | null) {
 
 // ============ Metric Row ============
 
-const MetricRow: React.FC<{ label: string; value: string; accent?: boolean }> = ({ label, value, accent }) => (
+const MetricRow: React.FC<{ label: string; value: string; hint?: string; accent?: boolean }> = ({ label, value, hint, accent }) => (
   <div className="flex items-center justify-between border-b border-border/10 py-2 last:border-b-0">
-    <span className="text-xs text-secondary-text">{label}</span>
+    <span className="flex items-center gap-1 text-xs text-secondary-text">
+      {label}
+      {hint ? (
+        <Tooltip content={hint} focusable>
+          <HelpCircle className="h-3 w-3 cursor-help text-muted-text" />
+        </Tooltip>
+      ) : null}
+    </span>
     <span className={cn('font-mono text-sm font-semibold', accent ? 'text-primary' : 'text-foreground')}>{value}</span>
   </div>
 );
@@ -138,13 +145,13 @@ const PerformanceCard: React.FC<{ metrics: PerformanceMetrics; title: string }> 
     <div className="mb-3">
       <span className="label-uppercase">{title}</span>
     </div>
-    <MetricRow label="方向命中率" value={pct(metrics.directionAccuracyPct)} accent />
-    <MetricRow label="胜率" value={pct(metrics.winRatePct)} accent />
-    <MetricRow label="平均模拟收益" value={pct(metrics.avgSimulatedReturnPct)} />
-    <MetricRow label="平均实际涨跌幅" value={pct(metrics.avgStockReturnPct)} />
-    <MetricRow label="止损触发率" value={pct(metrics.stopLossTriggerRate)} />
-    <MetricRow label="止盈触发率" value={pct(metrics.takeProfitTriggerRate)} />
-    <MetricRow label="平均触达天数" value={metrics.avgDaysToFirstHit != null ? metrics.avgDaysToFirstHit.toFixed(1) : '--'} />
+    <MetricRow label="方向命中率" hint="AI 判断的涨跌方向与实际方向一致的比例" value={pct(metrics.directionAccuracyPct)} accent />
+    <MetricRow label="胜率" hint="按 AI 建议进行模拟交易，最终盈利的比例" value={pct(metrics.winRatePct)} accent />
+    <MetricRow label="平均模拟收益" hint="按 AI 建议模拟交易的平均收益率（含止盈止损）" value={pct(metrics.avgSimulatedReturnPct)} />
+    <MetricRow label="平均实际涨跌幅" hint="股票在验证周期内的真实平均涨跌幅" value={pct(metrics.avgStockReturnPct)} />
+    <MetricRow label="止损触发率" hint="模拟交易中触发止损的比例" value={pct(metrics.stopLossTriggerRate)} />
+    <MetricRow label="止盈触发率" hint="模拟交易中触发止盈的比例" value={pct(metrics.takeProfitTriggerRate)} />
+    <MetricRow label="平均触达天数" hint="从分析日到首次触发止盈或止损的平均天数" value={metrics.avgDaysToFirstHit != null ? metrics.avgDaysToFirstHit.toFixed(1) : '--'} />
     <div className="flex items-center justify-between border-t border-border/20 pt-2 mt-2">
       <span className="text-xs text-muted-text">验证数</span>
       <span className="text-xs text-secondary-text font-mono">
@@ -188,7 +195,6 @@ type BacktestConfigBarProps = {
   forceRerun: boolean;
   isRunning: boolean;
   isLoadingResults: boolean;
-  isLoadingPerf: boolean;
   isNextDayValidation: boolean;
   runResult: BacktestRunResponse | null;
   runError: ParsedApiError | null;
@@ -196,10 +202,9 @@ type BacktestConfigBarProps = {
   onAnalysisDateFromChange: (v: string) => void;
   onAnalysisDateToChange: (v: string) => void;
   onEvalDaysChange: (v: string) => void;
-  onForceRerunToggle: () => void;
+  onForceRerunToggle: (e?: React.ChangeEvent<HTMLInputElement>) => void;
   onFilter: () => void;
   onRun: () => void;
-  onShowNextDay: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
 };
 
@@ -211,7 +216,6 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
   forceRerun,
   isRunning,
   isLoadingResults,
-  isLoadingPerf,
   isNextDayValidation,
   runResult,
   runError,
@@ -222,7 +226,6 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
   onForceRerunToggle,
   onFilter,
   onRun,
-  onShowNextDay,
   onKeyDown,
 }) => (
   <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
@@ -247,7 +250,12 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         筛选
       </Button>
       <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
-        <span className="text-xs text-muted-text">验证周期</span>
+        <Tooltip content="AI 给出结论后，往后看几个交易日来评估对错。填 1 = 只看下一个交易日" focusable>
+          <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
+            验证周期
+            <HelpCircle className="h-3 w-3" />
+          </span>
+        </Tooltip>
         <input
           type="number"
           min={1}
@@ -260,7 +268,12 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
         />
       </div>
       <div className="flex items-center gap-2 whitespace-nowrap">
-        <span className="text-xs text-muted-text">开始日期</span>
+        <Tooltip content="只统计这段时间内 AI 做出的历史分析" focusable>
+          <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
+            开始日期
+            <HelpCircle className="h-3 w-3" />
+          </span>
+        </Tooltip>
         <input
           type="date"
           aria-label="分析开始日期"
@@ -283,32 +296,24 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
           className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
         />
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onShowNextDay}
-        disabled={isLoadingResults || isLoadingPerf}
-        className={cn(
-          'whitespace-nowrap',
-          isNextDayValidation && 'border-primary/40 bg-primary/10 text-primary',
-        )}
-      >
-        <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', isNextDayValidation ? 'bg-primary' : 'bg-border')} />
-        次日验证
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onForceRerunToggle}
-        disabled={isRunning}
-        className={cn(
-          'whitespace-nowrap',
-          forceRerun && 'border-primary/40 bg-primary/10 text-primary',
-        )}
-      >
-        <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', forceRerun ? 'bg-primary' : 'bg-border')} />
-        强制重算
-      </Button>
+      <Tooltip content="开启后会重新计算已有的回测记录，否则会跳过已完成的条目" focusable>
+        <label className={cn(
+          'flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-sm transition-colors',
+          isRunning && 'cursor-not-allowed opacity-60',
+          forceRerun
+            ? 'border-primary/40 bg-primary/10 text-primary'
+            : 'border-border/60 bg-surface text-secondary-text hover:border-border hover:text-foreground',
+        )}>
+          <input
+            type="checkbox"
+            checked={forceRerun}
+            onChange={onForceRerunToggle}
+            disabled={isRunning}
+            className="h-3.5 w-3.5 cursor-pointer accent-primary disabled:cursor-not-allowed"
+          />
+          强制重算
+        </label>
+      </Tooltip>
       <Button
         variant="primary"
         onClick={onRun}
@@ -525,11 +530,26 @@ const BacktestPage: React.FC = () => {
     document.title = '策略回测 - DSA';
   }, []);
 
+  // Defaults: 10-day eval window, last 30 days analysis range
+  const defaultDates = (() => {
+    const toIso = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    const today = new Date();
+    const from = new Date();
+    from.setDate(today.getDate() - 30);
+    return { from: toIso(from), to: toIso(today) };
+  })();
+  const DEFAULT_EVAL_DAYS = '10';
+
   // Input state
   const [codeFilter, setCodeFilter] = useState('');
-  const [analysisDateFrom, setAnalysisDateFrom] = useState('');
-  const [analysisDateTo, setAnalysisDateTo] = useState('');
-  const [evalDays, setEvalDays] = useState('');
+  const [analysisDateFrom, setAnalysisDateFrom] = useState(defaultDates.from);
+  const [analysisDateTo, setAnalysisDateTo] = useState(defaultDates.to);
+  const [evalDays, setEvalDays] = useState(DEFAULT_EVAL_DAYS);
   const [forceRerun, setForceRerun] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<BacktestRunResponse | null>(null);
@@ -616,18 +636,12 @@ const BacktestPage: React.FC = () => {
     }
   }, []);
 
-  // Initial load — fetch performance first, then filter results by its window
+  // Initial load — use defaults for eval window and date range
   useEffect(() => {
     const init = async () => {
-      // Get latest performance (unfiltered returns most recent summary)
-      const overall = await backtestApi.getOverallPerformance();
-      setOverallPerf(overall);
-      // Use the summary's eval_window_days to filter results consistently
-      const windowDays = overall?.evalWindowDays;
-      if (windowDays && !evalDays) {
-        setEvalDays(String(windowDays));
-      }
-      fetchResults(1, undefined, windowDays, undefined, undefined);
+      const windowDays = parseInt(DEFAULT_EVAL_DAYS, 10);
+      fetchPerformance(undefined, windowDays, defaultDates.from, defaultDates.to);
+      fetchResults(1, undefined, windowDays, defaultDates.from, defaultDates.to);
     };
     init();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -672,14 +686,6 @@ const BacktestPage: React.FC = () => {
     }
   };
 
-  const handleShowNextDay = () => {
-    const code = codeFilter.trim() || undefined;
-    setEvalDays('1');
-    setCurrentPage(1);
-    fetchResults(1, code, 1, analysisDateFrom, analysisDateTo);
-    fetchPerformance(code, 1, analysisDateFrom, analysisDateTo);
-  };
-
   // Pagination
   const totalPages = Math.ceil(totalResults / pageSize);
   const handlePageChange = (page: number) => {
@@ -689,6 +695,14 @@ const BacktestPage: React.FC = () => {
 
   return (
     <main className="workspace-page-layout flex flex-col min-h-[calc(100vh-2rem)] !p-0">
+      <div className="flex-shrink-0 border-b border-white/5 bg-primary/5 px-3 py-2 sm:px-4">
+        <div className="flex max-w-5xl items-start gap-2 text-xs text-secondary-text">
+          <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary" />
+          <p className="leading-relaxed">
+            <span className="font-medium text-foreground">策略回测</span>：用历史真实行情来验证 AI 过往分析结论是否准确。设置条件后点「开始验证」，左侧会汇总命中率等整体指标，右侧逐条展示 AI 当时的结论与实际表现对比。
+          </p>
+        </div>
+      </div>
       <BacktestConfigBar
         codeFilter={codeFilter}
         analysisDateFrom={analysisDateFrom}
@@ -697,7 +711,6 @@ const BacktestPage: React.FC = () => {
         forceRerun={forceRerun}
         isRunning={isRunning}
         isLoadingResults={isLoadingResults}
-        isLoadingPerf={isLoadingPerf}
         isNextDayValidation={isNextDayValidation}
         runResult={runResult}
         runError={runError}
@@ -708,7 +721,6 @@ const BacktestPage: React.FC = () => {
         onForceRerunToggle={() => setForceRerun((prev) => !prev)}
         onFilter={handleFilter}
         onRun={handleRun}
-        onShowNextDay={handleShowNextDay}
         onKeyDown={handleKeyDown}
       />
 

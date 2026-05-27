@@ -43,7 +43,7 @@ class BacktestResult(Base):
     engine_version = Column(String(16), nullable=False, default='v1')
 
     # 状态
-    eval_status = Column(String(16), nullable=False, default='pending')
+    eval_status = Column(String(32), nullable=False, default='pending')
     evaluated_at = Column(DateTime, default=datetime.now, index=True)
 
     # 建议快照（避免未来分析字段变化导致回测不可解释）
