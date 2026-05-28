@@ -507,7 +507,7 @@ class OrderService:
 
         # 通道退款调用 (仅在调用方未显式传入 provider_refund_no 时尝试)
         if not provider_refund_no and order is not None:
-            provider_refund_no = self._invoke_gateway_refund(refund, order)
+            provider_refund_no = self._invoke_gateway_refund(db, refund, order)
 
         if provider_refund_no:
             refund.provider_refund_no = provider_refund_no
@@ -664,7 +664,7 @@ class OrderService:
 
     # ── gateway 退款调用 ───────────────────────────────────────────────────
 
-    def _invoke_gateway_refund(self, refund: AppRefund, order: AppOrder) -> Optional[str]:
+    def _invoke_gateway_refund(self, db: Session, refund: AppRefund, order: AppOrder) -> Optional[str]:
         """尝试通过通道 gateway 发起退款, 失败时回退到人工模式。
 
         Returns:
@@ -676,7 +676,7 @@ class OrderService:
             return None
 
         try:
-            gateway = get_gateway(provider)
+            gateway = get_gateway(provider, db=db)
         except Exception:  # noqa: BLE001
             logger.warning("get_gateway(%s) raised", provider, exc_info=True)
             return None

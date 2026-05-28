@@ -20,7 +20,6 @@ from src.storage import (
     AppUser,
     Base,
 )
-from src.users.config import UserModeSettings
 from src.users.errors import UserError
 from src.users.passwords import hash_password
 from src.users.plans import (
@@ -28,25 +27,6 @@ from src.users.plans import (
     redeem_code,
     resolve_user_plan,
 )
-
-
-def _enabled_settings() -> UserModeSettings:
-    return UserModeSettings(
-        enabled=True,
-        public_registration_enabled=True,
-        require_email_verification=False,
-        session_ttl_hours=24,
-        verification_ttl_hours=24,
-        reset_ttl_hours=2,
-        free_daily_analysis=5,
-        free_daily_agent=5,
-        free_max_stocks=3,
-        invite_codes=(),
-        register_disposable_block=True,
-        register_ip_daily_max=10,
-        register_email_daily_max=3,
-        register_rate_window_hours=24,
-    )
 
 
 class _Base(unittest.TestCase):
@@ -66,6 +46,26 @@ class _Base(unittest.TestCase):
         self.db.commit()
         self.db.refresh(self.user)
 
+    def seed_free_plan(
+        self,
+        *,
+        daily_analysis_limit: int = 5,
+        daily_agent_limit: int = 5,
+        max_stocks: int = 3,
+    ) -> AppPlan:
+        plan = AppPlan(
+            code="free",
+            name="Free",
+            daily_analysis_limit=daily_analysis_limit,
+            daily_agent_limit=daily_agent_limit,
+            max_stocks=max_stocks,
+            can_webhook=False,
+            price_cents=0,
+        )
+        self.db.add(plan)
+        self.db.commit()
+        return plan
+
     def tearDown(self) -> None:
         self.db.close()
         self.engine.dispose()
@@ -74,6 +74,7 @@ class _Base(unittest.TestCase):
 class TestPlansAndRedeem(_Base):
     def setUp(self) -> None:
         super().setUp()
+        self.seed_free_plan()
         # 建立 Pro 套餐定义
         self.pro_plan = AppPlan(
             code="pro",
@@ -88,10 +89,24 @@ class TestPlansAndRedeem(_Base):
         self.db.commit()
 
     def test_resolve_plan_free_by_default(self):
-        plan = resolve_user_plan(self.db, self.user, settings=_enabled_settings())
+        plan = resolve_user_plan(self.db, self.user)
         self.assertEqual(plan.code, "free")
         self.assertEqual(plan.daily_analysis_limit, 5)
         self.assertEqual(plan.max_stocks, 3)
+
+    def test_resolve_plan_free_uses_db_config_when_present(self):
+        row = self.db.query(AppPlan).filter(AppPlan.code == "free").first()
+        row.name = "Free Custom"
+        row.daily_analysis_limit = 8
+        row.daily_agent_limit = 6
+        row.max_stocks = 4
+        self.db.commit()
+        plan = resolve_user_plan(self.db, self.user)
+        self.assertEqual(plan.code, "free")
+        self.assertEqual(plan.daily_analysis_limit, 8)
+        self.assertEqual(plan.daily_agent_limit, 6)
+        self.assertEqual(plan.max_stocks, 4)
+        self.assertFalse(plan.can_webhook)
 
     def test_grant_plan_extends_expiry(self):
         sub = grant_plan(self.db, self.user, plan_code="pro", grant_days=30, source="manual")
@@ -100,7 +115,7 @@ class TestPlansAndRedeem(_Base):
         self.assertEqual(self.user.plan_code, "pro")
         self.assertIsNotNone(self.user.plan_expires_at)
 
-        plan = resolve_user_plan(self.db, self.user, settings=_enabled_settings())
+        plan = resolve_user_plan(self.db, self.user)
         self.assertEqual(plan.code, "pro")
         self.assertEqual(plan.daily_analysis_limit, 50)
 
@@ -160,8 +175,14 @@ class TestPlansAndRedeem(_Base):
         self.user.plan_expires_at = datetime.utcnow() - timedelta(days=1)
         self.db.add(self.user)
         self.db.commit()
-        plan = resolve_user_plan(self.db, self.user, settings=_enabled_settings())
+        plan = resolve_user_plan(self.db, self.user)
         self.assertEqual(plan.code, "free")
+
+    def test_missing_free_plan_raises(self):
+        self.db.query(AppPlan).filter(AppPlan.code == "free").delete()
+        self.db.commit()
+        with self.assertRaises(UserError):
+            resolve_user_plan(self.db, self.user)
 
 
 if __name__ == "__main__":

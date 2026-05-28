@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.config import get_config
 from src.storage.base import Base
+from src.storage.models.app import AppPlan
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -127,6 +128,8 @@ class _DatabaseManagerBase:
         if self._sqlite_file_db or not self._is_sqlite_engine:
             self._run_alembic_upgrade()
 
+        self._seed_builtin_app_plans()
+
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
 
@@ -192,6 +195,33 @@ class _DatabaseManagerBase:
             logger.info("Alembic 迁移完成（upgrade to head）")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Alembic upgrade 失败（非致命）: %s", exc)
+
+    def _seed_builtin_app_plans(self) -> None:
+        session = self._SessionLocal()
+        try:
+            exists = session.query(AppPlan.id).filter(AppPlan.code == "free").first()
+            if exists is not None:
+                return
+            session.add(
+                AppPlan(
+                    code="free",
+                    name="免费会员",
+                    daily_analysis_limit=5,
+                    daily_agent_limit=5,
+                    max_stocks=3,
+                    can_webhook=False,
+                    price_cents=0,
+                    currency="CNY",
+                    is_active=True,
+                )
+            )
+            session.commit()
+            logger.info("已初始化基础 free 套餐配置")
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            logger.warning("初始化基础 free 套餐配置失败（非致命）: %s", exc)
+        finally:
+            session.close()
 
     def _install_sqlite_pragma_handler(self) -> None:
         """为 SQLite 连接安装竞争保护参数。"""

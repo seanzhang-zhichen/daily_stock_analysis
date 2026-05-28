@@ -31,7 +31,6 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.storage import AppUser
-from src.users.config import UserModeSettings, load_user_mode_settings
 from src.users.plans import ResolvedPlan, resolve_user_plan
 from src.users.quota import (
     KIND_AGENT,
@@ -96,7 +95,6 @@ def enforce_quota(
     *,
     user: AppUser,
     kind: str,
-    settings: Optional[UserModeSettings] = None,
     on_date: Optional[date] = None,
 ) -> QuotaOutcome:
     """统一的「读 plan + 尝试扣 1 次配额」入口。
@@ -108,13 +106,12 @@ def enforce_quota(
     - ``bypassed=True``: 没有真正扣减, 业务无需关心。
     """
 
-    settings = settings or load_user_mode_settings()
     target_date = on_date or _today_utc()
 
     if user is None:
         raise ValueError("quota enforcement requires an authenticated user")
 
-    plan = resolve_user_plan(db, user, settings=settings)
+    plan = resolve_user_plan(db, user)
     daily_limit = _plan_limit_for(plan, kind)
 
     config = QuotaConfig(daily_limit=daily_limit)

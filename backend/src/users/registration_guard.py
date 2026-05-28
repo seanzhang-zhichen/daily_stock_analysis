@@ -163,6 +163,8 @@ class RegistrationGuardConfig:
     email_daily_max: int = 3
     window_hours: int = 24
     mx_check_enabled: bool = False  # 默认关闭, 设 USER_EMAIL_MX_CHECK_ENABLED=true 启用
+    disposable_domains: tuple[str, ...] = ()
+    disposable_domains_replace: bool = False
 
 
 # --- 邮箱域名 MX 校验 --------------------------------------------------------
@@ -280,7 +282,12 @@ def preflight_registration(
     normalized_email = (email or "").strip().lower()
 
     # 1. 一次性邮箱黑名单
-    if cfg.disposable_block_enabled and is_disposable_email(normalized_email):
+    blacklist = None
+    if cfg.disposable_domains or cfg.disposable_domains_replace:
+        custom_domains = frozenset(domain.strip().lower() for domain in cfg.disposable_domains if domain.strip())
+        blacklist = custom_domains if cfg.disposable_domains_replace else DEFAULT_DISPOSABLE_DOMAINS | custom_domains
+
+    if cfg.disposable_block_enabled and is_disposable_email(normalized_email, blacklist=blacklist):
         _record_blocked(
             db,
             email=normalized_email,

@@ -455,7 +455,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
     from src.core.pipeline import StockAnalysisPipeline
     from src.notification import NotificationService
     from src.storage import get_db as _get_storage_db
-    from src.users.config import is_user_mode_enabled, load_user_mode_settings
+    from src.users.config import is_user_mode_enabled
     from src.users.email import get_email_backend
     from src.users.notification_delivery import (
         DailyEmailContext,
@@ -482,8 +482,6 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
 
     email_backend = get_email_backend()
     report_type = getattr(config, "report_type", "simple")
-    user_settings = load_user_mode_settings()
-
     for user_id in user_ids:
         try:
             with db.session_scope() as session:
@@ -492,7 +490,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
                     continue
                 watchlist = list_stocks(session, user_id=user_id)
                 prefs = get_prefs(session, user_id=user_id)
-                plan = resolve_user_plan(session, user, settings=user_settings)
+                plan = resolve_user_plan(session, user)
                 user_email = user.email
 
             if not plan.is_pro:

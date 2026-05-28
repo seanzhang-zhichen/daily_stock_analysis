@@ -13,19 +13,19 @@
 
 `ENABLE_USER_REGISTRATION` 已不再作为总开关。`src.users.config.load_user_mode_settings()` 固定返回 `enabled=True`，`is_user_mode_enabled()` 固定返回 `True`。
 
-## 2. 环境变量
+## 2. 运营配置
 
-| 变量 | 默认值 | 说明 |
+注册、风控、支付开关和协议版本等 To C 运营配置优先从 `app_platform_settings` 读取，并可在运营后台 `/admin` 的「注册与合规」页管理；同名环境变量作为未入库时的兜底默认值。邮件后端、公开访问地址和退订签名等部署级配置仍只从环境变量读取。
+
+| 配置项 / 环境变量 | 默认值 | 说明 |
 |------|--------|------|
-| `USER_PUBLIC_REGISTRATION_ENABLED` | `true` | 是否允许公开注册；关闭后仍保留多用户体系，但注册入口应由运营建号或邀请流程承接。 |
-| `USER_REQUIRE_EMAIL_VERIFICATION` | `false` | 启用后注册不会立即创建 session，必须验证邮箱。 |
+| `USER_PUBLIC_REGISTRATION_ENABLED` | `true` | 是否允许公开自助注册；关闭后仍保留多用户体系，但注册入口应由运营建号或后续邀请流程承接。 |
+| 邮箱验证 | 强制开启 | 注册不会立即创建 session，必须完成邮箱验证；当前不作为运营配置项。 |
 | `USER_INVITE_CODES` |  | 逗号分隔，配置后注册必填邀请码。 |
+| `USER_TERMS_VERSION` | `CURRENT_TERMS_VERSION` | 当前协议版本；调整后未接受该版本的用户会被标记为需要重新确认。 |
 | `USER_SESSION_TTL_HOURS` | `336`（14 天） | session cookie 过期时间。 |
 | `USER_VERIFICATION_TTL_HOURS` | `24` | 邮箱验证 token 有效期。 |
 | `USER_RESET_TTL_HOURS` | `2` | 密码重置 token 有效期。 |
-| `USER_FREE_DAILY_ANALYSIS` | `5` | free 档每日分析次数默认值。 |
-| `USER_FREE_DAILY_AGENT` | `5` | free 档每日 Agent 次数默认值。 |
-| `USER_FREE_MAX_STOCKS` | `3` | free 档自选股上限默认值。 |
 | `USER_EMAIL_BACKEND` | `log` | `log`（默认，仅写日志）/ `smtp`（使用 `EMAIL_SENDER` / `EMAIL_PASSWORD` / `SMTP_HOST` / `SMTP_PORT`）。 |
 | `USER_PUBLIC_BASE_URL` |  | Public API base URL for unsubscribe links, without trailing `/`. Defaults to `http://localhost:8000` when unset. |
 | `USER_FRONTEND_BASE_URL` |  | 前端公开访问地址，用于邮箱验证等前端页面链接；未配置时本地开发默认 `http://localhost:5200`。 |
@@ -36,6 +36,11 @@
 | `USER_REGISTER_RATE_WINDOW_HOURS` | `24` | 注册尝试频率限制的滚动窗口长度（小时）。 |
 | `USER_REGISTER_IP_DAILY_MAX` | `10` | 同一 IP 在滚动窗口内允许的最大注册尝试次数；超过后续请求返回 `rate_limited`。设为 `0` 关闭 IP 限频。 |
 | `USER_REGISTER_EMAIL_DAILY_MAX` | `3` | 同一邮箱（哈希）在滚动窗口内允许的最大注册尝试次数；超过后续请求返回 `rate_limited`。设为 `0` 关闭邮箱限频。 |
+| `USER_EMAIL_MX_CHECK_ENABLED` | `false` | 开启后注册时校验邮箱域名是否可解析；网络异常时放行。 |
+| `PAYMENT_ENABLED` | `false` | 是否启用真实支付通道；支付密钥和证书仍只从部署环境变量读取。 |
+| `ORDER_EXPIRE_MINUTES` | `15` | 新创建订单的支付有效期。 |
+
+支付证书、三方密钥、回调安全 IP、告警 Webhook 等部署级或敏感配置仍保留在 `.env` / 部署密钥中，不进入运营配置表。
 
 ## 3. API
 

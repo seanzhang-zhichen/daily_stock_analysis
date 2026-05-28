@@ -1,5 +1,5 @@
 import apiClient from './index';
-import type { BillingInvoice, BillingOrder, BillingRefund } from './billing';
+import type { BillingInvoice, BillingOrder, BillingPlan, BillingRefund } from './billing';
 
 export type AdminUser = {
   id: number;
@@ -26,6 +26,29 @@ export type AdminGrantSubscription = {
   startedAt: string | null;
   expiresAt: string | null;
   note: string | null;
+};
+
+export type AdminPlan = BillingPlan & {
+  source?: 'default' | 'db';
+  isPersisted?: boolean;
+  allowedModels?: string[];
+};
+
+export type AdminPlatformSetting = {
+  key: string;
+  title: string;
+  description: string;
+  category: 'registration' | 'risk_control' | 'compliance' | string;
+  valueType: 'boolean' | 'integer' | 'string' | string;
+  value: string | number | boolean;
+  rawValue: string;
+  defaultValue: string | number | boolean;
+  source: 'db' | 'env' | 'default' | string;
+  minimum?: number | null;
+  maximum?: number | null;
+  maxLength?: number | null;
+  multiline?: boolean;
+  updatedAt?: string | null;
 };
 
 export type AuditLogEntry = {
@@ -61,6 +84,45 @@ export const adminApi = {
     const { data } = await apiClient.get<{ users: AdminUser[]; count: number }>(
       '/api/v1/admin/users',
       { params }
+    );
+    return data;
+  },
+
+  async listPlans(): Promise<{ plans: AdminPlan[]; count: number }> {
+    const { data } = await apiClient.get<{ plans: AdminPlan[]; count: number }>('/api/v1/admin/plans');
+    return data;
+  },
+
+  async updatePlan(planCode: string, input: {
+    name: string;
+    dailyAnalysisLimit: number;
+    dailyAgentLimit: number;
+    maxStocks: number;
+    canWebhook: boolean;
+    priceCents: number;
+    currency: string;
+    isActive: boolean;
+  }): Promise<{ plan: AdminPlan }> {
+    const { data } = await apiClient.put<{ plan: AdminPlan }>(
+      `/api/v1/admin/plans/${encodeURIComponent(planCode)}`,
+      input
+    );
+    return data;
+  },
+
+  async listPlatformSettings(): Promise<{ settings: AdminPlatformSetting[]; count: number }> {
+    const { data } = await apiClient.get<{ settings: AdminPlatformSetting[]; count: number }>(
+      '/api/v1/admin/platform-settings'
+    );
+    return data;
+  },
+
+  async updatePlatformSettings(input: {
+    settings: Array<{ key: string; value: string | number | boolean }>;
+  }): Promise<{ settings: AdminPlatformSetting[]; count: number }> {
+    const { data } = await apiClient.put<{ settings: AdminPlatformSetting[]; count: number }>(
+      '/api/v1/admin/platform-settings',
+      input
     );
     return data;
   },

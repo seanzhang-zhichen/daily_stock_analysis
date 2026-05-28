@@ -470,9 +470,9 @@ ReAct 循环（Reasoning + Acting），最多 `AGENT_MAX_STEPS_DEFAULT`（默认
 
 **文件：** `backend/src/users/plans.py`
 
-| 档位 | 默认每日分析次数 | 默认每日 Agent 次数 | 自选股上限 |
+| 档位 | 每日分析次数 | 每日 Agent 次数 | 自选股上限 |
 |------|-----------------|---------------------|------------|
-| free | 5（`USER_FREE_DAILY_ANALYSIS`） | 5（`USER_FREE_DAILY_AGENT`） | 3（`USER_FREE_MAX_STOCKS`） |
+| free | 由 `AppPlan` 表配置 | 同上 | 同上 |
 | pro/pro_yearly | 由 `AppPlan` 表配置 | 同上 | 同上 |
 
 `resolve_user_plan(db, user)` — 核心函数，读取 `AppUser.plan_code + plan_expires_at`，套餐过期自动降级为 free（内存态，不写库）。

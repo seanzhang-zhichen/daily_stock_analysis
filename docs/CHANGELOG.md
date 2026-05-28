@@ -33,8 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 基于当前前后端实现更新 `docs/to-c-user-stories.md`，校准注册登录、首次引导、分析任务隔离与配额返还、Agent 会话与模型路由、Pro 推送、支付 mock / 人工兜底、售后合规入口和管理员权限等用户故事验收口径。
 - [文档] 进一步校准 `docs/to-c-user-stories.md` 的实现边界：修正系统配置 API 路径，明确 Agent 仅生成请求扣配额、`chat/send` 当前走全局通知链路、模型分档依赖 `allowed_models` 运营配置，并补充发票反馈、管理员访问和后续故事池说明。
 - [改进] `python backend/main.py --serve-only` 与 `backend.server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
+- [新功能] 运营后台新增「注册与合规」配置页，支持通过数据库管理公开注册、邀请码、注册风控、协议版本、支付开关与订单超时时间等 To C 运营配置，支付密钥/证书仍保留在部署环境变量中。
+- [测试] 新增平台运营配置单元测试，覆盖 `.env` 兜底、数据库覆盖、支付配置序列化与非法值校验。
 - [改进] 股票自动补全索引与前端静态目录完全解耦：源文件迁至 `backend/src/data/resources/stocks.index.json`，通过 Alembic 新增 `stock_index`/`stock_index_meta` 表和同步脚本写入数据库，前端改为调用公开限流的 `/api/v1/stocks/search`，后端运行时不再读取 `frontend/web/public` 或 `static` 下的股票索引。
 - [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非 Pro 用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
+- [新功能] 运营后台新增「套餐与用量」配置：平台管理员可在 `/admin` 配置免费档和会员套餐的每日分析次数、Agent 次数、自选股上限、价格与上架状态，并继续支持为指定用户手动开通会员；套餐权益以 `app_plans` 记录为运行期来源。
+- [改进] 免费档配额不再通过环境变量配置，套餐权益统一由 `app_plans` 数据库记录维护。
 - [chore] 完整移除 BYOK（Bring Your Own Key）功能：删除 `src/users/byok.py`、`AppUserByokCredential` ORM 模型、`app_user_byok_credentials` 表（通过 Alembic migration `20260522_add_user_preferred_model` 完成 DROP TABLE）及 `can_byok` 计划字段；移除 `/api/v1/account/api-keys` 端点和前端 `ApiKeysPage`；`AccountPage` 改为展示用户模型偏好选择卡（`/api/v1/account/model-preference`）；`QuotaExceededDialog` 和 `QuotaIndicator` 移除 BYOK 相关引导；移除 `DATA_ENCRYPTION_KEY` / `USER_BYOK_FALLBACK_KEY` 环境变量；退订 token 签名密钥回退链由 `UNSUBSCRIBE_SIGNING_KEY → DATA_ENCRYPTION_KEY → ADMIN_API_SECRET` 简化为 `UNSUBSCRIBE_SIGNING_KEY → ADMIN_API_SECRET`；`src/storage/__init__.py`、`src/storage/models/__init__.py`、`src/users/__init__.py` 清除 BYOK 相关导出；所有文档（`to-c-mode.md`、`to-c-product-plan.md`、`to-c-user-stories.md`、`to-c-product-wireframes.md`、`web-frontend-redesign-plan.md`、`INDEX.md`、`INDEX_EN.md`）同步更新。
 - [文档] 新增 `docs/to-c-user-stories.md`，基于当前 To C 多用户、配额、通知、支付、合规与运营后台实现整理核心用户故事、验收口径和实现映射，并在中英文文档索引与产品规划中补充入口。
 - [文档] 基于当前 To C 多用户、支付、通知和前端页面实现更新 `docs/to-c-mode.md`、`docs/to-c-product-wireframes.md` 与 `docs/to-c-product-plan.md`，修正页面状态、API 列表、数据表、已落地能力与剩余缺口说明。

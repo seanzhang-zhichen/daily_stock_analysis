@@ -17,7 +17,7 @@
 | 游客 | 未登录访问者，可查看公开公告、法律协议，并进入登录 / 注册流程。 | `/login`、`/register`、`/notices`、`/legal/*` |
 | 免费会员 | 已注册并登录的普通用户，可管理少量自选股、执行有限次数分析和 Agent 问股。 | `/`、`/chat`、`/watchlist`、`/account`、`/billing` |
 | Pro 会员 | 已开通付费套餐的用户，可获得更高配额、更多自选股、按套餐配置解锁的模型选项、Webhook 和报告推送能力。 | `/billing`、`/account`、`/account/orders`、`/account/invoices` |
-| 平台管理员 | 具备 `is_admin=True` 的运营人员，处理用户、订单、退款、发票、公告和手动开通。 | `/admin` |
+| 平台管理员 | 具备 `is_admin=True` 的运营人员，处理用户、套餐用量、订单、退款、发票、公告和手动开通。 | `/admin` |
 
 ## 2. 用户旅程总览
 
@@ -31,7 +31,7 @@
 | 订阅推送 | 自动收到个人报告。 | 通知偏好、每日调度、邮件、一键退订、Webhook。 | ✅ 主要落地 |
 | 升级付费 | 解锁更高配额和高级能力。 | 套餐页、订单、微信 / 支付宝扫码、兑换码、续费提示、本地 mock / 人工兜底。 | 🟡 待生产小额验证 |
 | 售后与合规 | 申请退款、发票、数据导出或注销。 | 订单页、退款申请、发票申请、管理员审核、导出 / 注销 API。 | 🟡 数据导出 / 注销显式入口待运营确认 |
-| 运营管理 | 处理用户与商业化后台事务。 | Admin 后台、审计日志、公告管理、手动 grant-plan。 | ✅ 主要落地 |
+| 运营管理 | 处理用户与商业化后台事务。 | Admin 后台、套餐与每日用量配置、审计日志、公告管理、手动 grant-plan。 | ✅ 主要落地 |
 
 ## 3. 核心用户故事
 
@@ -273,7 +273,7 @@
 **验收标准**：
 
 - 只有 `is_admin=True` 的登录用户能正常使用 `/admin` 和 `/api/v1/admin/*`。
-- 管理员可筛选用户、查看订单、审核退款、处理发票、手动开通套餐和查看审计 / 统计数据。
+- 管理员可筛选用户、配置免费档和会员套餐每日用量、查看订单、审核退款、处理发票、手动开通套餐和查看审计 / 统计数据。
 - 管理员可创建、发布、下架和删除公告。
 - 管理员操作写入 `app_audit_logs`。
 - 普通 C 端用户看不到 `/settings` 与 `/admin` 入口，直接访问 `/settings` 会回到 `/account`，访问管理员 API 返回 403；直接访问 `/admin` 会因管理员 API 权限失败而不可用。
@@ -281,7 +281,7 @@
 **当前实现依据**：
 
 - 前端：`AdminPage`、`SidebarNav` 权限控制。
-- API：`/api/v1/admin/me|users|orders|refunds|invoices|grant-plan|audit-logs|stats`，系统配置 API 也依赖管理员权限。
+- API：`/api/v1/admin/me|users|plans|orders|refunds|invoices|grant-plan|audit-logs|stats`，系统配置 API 也依赖管理员权限。
 - 权限：`api.deps.get_admin_user`、`app_users.is_admin`、`api/v1/endpoints/system_config.py` 的 router 级管理员依赖。
 
 ## 4. 关键验收边界

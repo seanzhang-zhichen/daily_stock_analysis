@@ -19,6 +19,7 @@
 - ``POST /admin/invoices/{invoice_no}/issue``: 标记已开具 (附下载 URL)
 - ``POST /admin/invoices/{invoice_no}/reject``: 拒绝发票申请
 - ``POST /admin/grant-plan``: 手动开通套餐 (§11.10 兜底 / KOL / 客服补单)
+- ``GET /admin/plans`` / ``PUT /admin/plans/{plan_code}``: 套餐与每日用量配置
 - ``GET /admin/stats``: 简单聚合指标
 """
 
@@ -26,9 +27,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -38,6 +39,7 @@ from src.storage import (
     AppAuditLog,
     AppInvoice,
     AppOrder,
+    AppPlan,
     AppRefund,
     AppSubscription,
     AppUser,
@@ -50,7 +52,15 @@ from src.services.billing.order_service import (
     serialize_order,
     serialize_refund,
 )
-from src.users.plans import grant_plan as svc_grant_plan
+from src.users.plans import (
+    grant_plan as svc_grant_plan,
+    list_plan_catalog,
+    serialize_plan_row,
+)
+from src.users.platform_settings import (
+    serialize_platform_settings,
+    upsert_platform_settings,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,6 +90,27 @@ class GrantPlanRequest(BaseModel):
     plan_code: str = Field(..., alias="planCode")
     grant_days: int = Field(..., alias="grantDays")
     note: Optional[str] = Field(default=None)
+
+
+class UpsertPlanRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+    name: str = Field(..., min_length=1, max_length=64)
+    daily_analysis_limit: int = Field(..., alias="dailyAnalysisLimit", ge=0)
+    daily_agent_limit: int = Field(..., alias="dailyAgentLimit", ge=0)
+    max_stocks: int = Field(..., alias="maxStocks", ge=0)
+    can_webhook: bool = Field(default=False, alias="canWebhook")
+    price_cents: int = Field(default=0, alias="priceCents", ge=0)
+    currency: str = Field(default="CNY", min_length=1, max_length=8)
+    is_active: bool = Field(default=True, alias="isActive")
+
+
+class PlatformSettingUpdate(BaseModel):
+    key: str = Field(..., min_length=1, max_length=64)
+    value: Any
+
+
+class PlatformSettingsUpdateRequest(BaseModel):
+    settings: list[PlatformSettingUpdate] = Field(default_factory=list)
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -131,6 +162,15 @@ def _serialize_admin_user(user: AppUser) -> dict:
         "termsVersion": getattr(user, "terms_version", None),
         "status": user.status,
     }
+
+
+def _normalize_plan_code(plan_code: str) -> str:
+    code = (plan_code or "").strip().lower()
+    if not code or len(code) > 32:
+        raise HTTPException(status_code=422, detail="套餐代码不合法")
+    if not all(ch.isalnum() or ch in ("_", "-") for ch in code):
+        raise HTTPException(status_code=422, detail="套餐代码只能包含字母、数字、下划线或连字符")
+    return code
 
 
 # --- /admin/me -------------------------------------------------------------
@@ -373,6 +413,113 @@ async def admin_grant_plan(
             "note": sub.note,
         },
     }
+
+
+# --- /admin/plans ----------------------------------------------------------
+
+
+@router.get("/plans", summary="(admin) 套餐与每日用量配置")
+async def admin_list_plans(
+    db: Session = Depends(get_db),
+    _: AppUser = Depends(get_admin_user),
+):
+    plans = list_plan_catalog(
+        db,
+        include_inactive=True,
+        include_allowed_models=True,
+    )
+    return {"plans": plans, "count": len(plans)}
+
+
+@router.put("/plans/{plan_code}", summary="(admin) 保存套餐与每日用量配置")
+async def admin_upsert_plan(
+    body: UpsertPlanRequest,
+    plan_code: str = Path(...),
+    db: Session = Depends(get_db),
+    current_admin: AppUser = Depends(get_admin_user),
+):
+    code = _normalize_plan_code(plan_code)
+    row = db.query(AppPlan).filter(AppPlan.code == code).first()
+    if row is None:
+        row = AppPlan(code=code)
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="套餐名称不能为空")
+
+    row.name = name
+    row.daily_analysis_limit = int(body.daily_analysis_limit)
+    row.daily_agent_limit = int(body.daily_agent_limit)
+    row.max_stocks = int(body.max_stocks)
+    row.can_webhook = False if code == "free" else bool(body.can_webhook)
+    row.price_cents = 0 if code == "free" else int(body.price_cents)
+    row.currency = (body.currency or "CNY").strip().upper()[:8] or "CNY"
+    row.is_active = True if code == "free" else bool(body.is_active)
+    db.add(row)
+
+    try:
+        db.commit()
+        db.refresh(row)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    write_audit_log(
+        db,
+        "admin.plan.upsert",
+        admin_id=int(current_admin.id),
+        target_ref=code,
+        detail={
+            "name": row.name,
+            "dailyAnalysisLimit": row.daily_analysis_limit,
+            "dailyAgentLimit": row.daily_agent_limit,
+            "maxStocks": row.max_stocks,
+            "canWebhook": row.can_webhook,
+            "priceCents": row.price_cents,
+            "currency": row.currency,
+            "isActive": row.is_active,
+        },
+    )
+    return {"plan": serialize_plan_row(row, include_allowed_models=True)}
+
+
+# --- /admin/platform-settings ---------------------------------------------
+
+
+@router.get("/platform-settings", summary="(admin) To C 运营平台配置")
+async def admin_list_platform_settings(
+    db: Session = Depends(get_db),
+    _: AppUser = Depends(get_admin_user),
+):
+    settings = serialize_platform_settings(db)
+    return {"settings": settings, "count": len(settings)}
+
+
+@router.put("/platform-settings", summary="(admin) 保存 To C 运营平台配置")
+async def admin_update_platform_settings(
+    body: PlatformSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_admin: AppUser = Depends(get_admin_user),
+):
+    if not body.settings:
+        raise HTTPException(status_code=422, detail="settings 不能为空")
+    payload = [{"key": item.key, "value": item.value} for item in body.settings]
+    try:
+        settings = upsert_platform_settings(db, payload, admin_id=int(current_admin.id))
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    write_audit_log(
+        db,
+        "admin.platform_setting.update",
+        admin_id=int(current_admin.id),
+        detail={"keys": [item.key for item in body.settings]},
+    )
+    return {"settings": settings, "count": len(settings)}
 
 
 # --- /admin/audit-logs ----------------------------------------------------

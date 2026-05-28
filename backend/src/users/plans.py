@@ -3,15 +3,13 @@
 
 设计取舍:
 
-- free 档的默认权益来自 :class:`UserModeSettings` 中的 ``free_daily_*``
-  / ``free_max_stocks``。
+- 套餐权益以 ``app_plans`` 为唯一运行期配置源。
 - ``redeem_code(user, code)`` 会写一条 :class:`AppSubscription`, 并更新
   ``AppUser.plan_code`` / ``plan_expires_at``, 同时把兑换码标记为已用。
 - 不直接接支付通道; ``source='paid'`` 仍可被外部脚本写入。
 
 调用顺序示例 (endpoint 内):
-    settings = load_user_mode_settings()
-    plan = resolve_user_plan(db, user, settings=settings)
+    plan = resolve_user_plan(db, user)
     quota_cfg = QuotaConfig(daily_limit=plan.daily_analysis_limit)
 """
 
@@ -25,7 +23,6 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from src.storage import AppPlan, AppRedeemCode, AppSubscription, AppUser
-from src.users.config import UserModeSettings, load_user_mode_settings
 from src.users.errors import UserError, UserErrorCode
 
 
@@ -62,17 +59,80 @@ def _parse_allowed_models(raw: Optional[str]) -> List[str]:
     return [str(item).strip() for item in parsed if str(item).strip()]
 
 
-def _free_plan_from_settings(settings: UserModeSettings) -> ResolvedPlan:
+def _resolved_plan_from_row(row: AppPlan, *, expires_at: Optional[datetime]) -> ResolvedPlan:
+    code = (row.code or "").strip().lower()
     return ResolvedPlan(
-        code=_FREE_PLAN_CODE,
-        name="Free",
-        daily_analysis_limit=settings.free_daily_analysis,
-        daily_agent_limit=settings.free_daily_agent,
-        max_stocks=settings.free_max_stocks,
-        allowed_models=[],
-        can_webhook=False,
-        expires_at=None,
+        code=code,
+        name=row.name,
+        daily_analysis_limit=int(row.daily_analysis_limit),
+        daily_agent_limit=int(row.daily_agent_limit),
+        max_stocks=int(row.max_stocks),
+        allowed_models=_parse_allowed_models(row.allowed_models),
+        can_webhook=False if code == _FREE_PLAN_CODE else bool(row.can_webhook),
+        expires_at=expires_at,
     )
+
+
+def serialize_plan_row(row: AppPlan, *, include_allowed_models: bool = False, source: str = "db") -> dict:
+    code = (row.code or "").strip().lower()
+    payload = {
+        "code": code,
+        "name": row.name,
+        "dailyAnalysisLimit": int(row.daily_analysis_limit),
+        "dailyAgentLimit": int(row.daily_agent_limit),
+        "maxStocks": int(row.max_stocks),
+        "canWebhook": False if code == _FREE_PLAN_CODE else bool(row.can_webhook),
+        "priceCents": 0 if code == _FREE_PLAN_CODE else int(row.price_cents),
+        "currency": row.currency or "CNY",
+        "isActive": True if code == _FREE_PLAN_CODE else bool(row.is_active),
+        "source": source,
+        "isPersisted": source == "db",
+    }
+    if include_allowed_models:
+        payload["allowedModels"] = _parse_allowed_models(row.allowed_models)
+    return payload
+
+
+def _sort_plan_payloads(plans: List[dict]) -> List[dict]:
+    order = {"free": 0, "pro": 1, "pro_yearly": 2}
+    return sorted(
+        plans,
+        key=lambda p: (
+            order.get(str(p.get("code") or ""), 100),
+            int(p.get("priceCents") or 0),
+            str(p.get("code") or ""),
+        ),
+    )
+
+
+def list_plan_catalog(
+    db: Session,
+    *,
+    include_inactive: bool = False,
+    include_allowed_models: bool = False,
+) -> List[dict]:
+    plans_by_code = {}
+    rows = db.query(AppPlan).order_by(AppPlan.price_cents.asc(), AppPlan.code.asc()).all()
+    for row in rows:
+        code = (row.code or "").strip().lower()
+        if code == _FREE_PLAN_CODE or bool(row.is_active) or include_inactive:
+            plans_by_code[code] = serialize_plan_row(
+                row,
+                include_allowed_models=include_allowed_models,
+                source="db",
+            )
+        else:
+            plans_by_code.pop(code, None)
+    return _sort_plan_payloads(
+        [p for p in plans_by_code.values() if include_inactive or bool(p.get("isActive", True))]
+    )
+
+
+def _free_plan_from_db(db: Session) -> ResolvedPlan:
+    row = db.query(AppPlan).filter(AppPlan.code == _FREE_PLAN_CODE).first()
+    if row is None:
+        raise UserError(UserErrorCode.NOT_FOUND, "app_plans 缺少 free 套餐配置")
+    return _resolved_plan_from_row(row, expires_at=None)
 
 
 def get_plan_by_code(db: Session, plan_code: str) -> Optional[AppPlan]:
@@ -86,36 +146,24 @@ def get_plan_by_code(db: Session, plan_code: str) -> Optional[AppPlan]:
 def resolve_user_plan(
     db: Session,
     user: AppUser,
-    *,
-    settings: Optional[UserModeSettings] = None,
 ) -> ResolvedPlan:
     """根据用户的 ``plan_code`` + ``plan_expires_at`` 解析当前生效套餐。
 
     - 过期后自动回退到 free 套餐 (但不会持久化, 由调用方决定何时同步)。
     - ``AppPlan`` 表里查不到对应行时, 回退到 free 档。
     """
-    settings = settings or load_user_mode_settings()
     now = datetime.utcnow()
 
     code = (user.plan_code or _FREE_PLAN_CODE).strip().lower()
     expired = user.plan_expires_at is not None and user.plan_expires_at < now
     if expired or code == _FREE_PLAN_CODE:
-        return _free_plan_from_settings(settings)
+        return _free_plan_from_db(db)
 
     row = get_plan_by_code(db, code)
     if row is None:
-        return _free_plan_from_settings(settings)
+        return _free_plan_from_db(db)
 
-    return ResolvedPlan(
-        code=row.code,
-        name=row.name,
-        daily_analysis_limit=int(row.daily_analysis_limit),
-        daily_agent_limit=int(row.daily_agent_limit),
-        max_stocks=int(row.max_stocks),
-        allowed_models=_parse_allowed_models(row.allowed_models),
-        can_webhook=bool(row.can_webhook),
-        expires_at=user.plan_expires_at,
-    )
+    return _resolved_plan_from_row(row, expires_at=user.plan_expires_at)
 
 
 def grant_plan(

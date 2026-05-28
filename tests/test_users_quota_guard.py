@@ -23,7 +23,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.storage import AppPlan, AppUser, Base
-from src.users.config import UserModeSettings
 from src.users.passwords import hash_password
 from src.users.quota import KIND_AGENT, KIND_ANALYSIS, get_used
 from src.users.quota_guard import (
@@ -32,27 +31,6 @@ from src.users.quota_guard import (
     quota_exceeded_payload,
     refund_quota,
 )
-
-
-def _enabled_settings(**overrides) -> UserModeSettings:
-    base = dict(
-        enabled=True,
-        public_registration_enabled=True,
-        require_email_verification=False,
-        session_ttl_hours=24,
-        verification_ttl_hours=24,
-        reset_ttl_hours=2,
-        free_daily_analysis=2,
-        free_daily_agent=2,
-        free_max_stocks=3,
-        invite_codes=(),
-        register_disposable_block=True,
-        register_ip_daily_max=10,
-        register_email_daily_max=3,
-        register_rate_window_hours=24,
-    )
-    base.update(overrides)
-    return UserModeSettings(**base)
 
 
 class TestQuotaGuard(unittest.TestCase):
@@ -72,6 +50,15 @@ class TestQuotaGuard(unittest.TestCase):
         self.db.add(self.user)
         self.db.commit()
         self.db.refresh(self.user)
+        self.free_plan = AppPlan(
+            code="free",
+            name="Free",
+            daily_analysis_limit=2,
+            daily_agent_limit=2,
+            max_stocks=3,
+        )
+        self.db.add(self.free_plan)
+        self.db.commit()
 
     def tearDown(self) -> None:
         self.db.close()
@@ -81,13 +68,13 @@ class TestQuotaGuard(unittest.TestCase):
 
     def test_no_user_raises(self):
         with self.assertRaises(ValueError):
-            enforce_quota(self.db, user=None, kind=KIND_ANALYSIS, settings=_enabled_settings())
+            enforce_quota(self.db, user=None, kind=KIND_ANALYSIS)
 
     # --- consume / exceeded -----------------------------------------------
 
     def test_first_consume_returns_consumed(self):
         outcome = enforce_quota(
-            self.db, user=self.user, kind=KIND_ANALYSIS, settings=_enabled_settings()
+            self.db, user=self.user, kind=KIND_ANALYSIS
         )
         self.assertTrue(outcome.consumed)
         self.assertFalse(outcome.exceeded)
@@ -98,16 +85,15 @@ class TestQuotaGuard(unittest.TestCase):
         self.assertIsNotNone(outcome.plan)
 
     def test_exceeded_when_limit_hit(self):
-        settings = _enabled_settings()
         # 用满前 2 次
-        first = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
-        second = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+        first = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
+        second = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         self.assertTrue(first.consumed)
         self.assertTrue(second.consumed)
         self.assertEqual(second.remaining, 0)
 
         # 第 3 次应该 exceeded
-        third = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+        third = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         self.assertFalse(third.consumed)
         self.assertTrue(third.exceeded)
         self.assertEqual(third.used, 2)
@@ -115,16 +101,15 @@ class TestQuotaGuard(unittest.TestCase):
         self.assertEqual(third.remaining, 0)
 
     def test_kinds_are_isolated(self):
-        settings = _enabled_settings()
         for _ in range(2):
-            enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+            enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         # analysis 已耗尽
         exceeded = enforce_quota(
-            self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings
+            self.db, user=self.user, kind=KIND_ANALYSIS
         )
         self.assertTrue(exceeded.exceeded)
         # agent 仍可继续扣
-        agent = enforce_quota(self.db, user=self.user, kind=KIND_AGENT, settings=settings)
+        agent = enforce_quota(self.db, user=self.user, kind=KIND_AGENT)
         self.assertTrue(agent.consumed)
 
     # --- unlimited / pro plan ---------------------------------------------
@@ -144,22 +129,23 @@ class TestQuotaGuard(unittest.TestCase):
         self.db.add(self.user)
         self.db.commit()
 
-        settings = _enabled_settings()
         for _ in range(5):
             outcome = enforce_quota(
-                self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings
+                self.db, user=self.user, kind=KIND_ANALYSIS
             )
             self.assertTrue(outcome.consumed)
             self.assertEqual(outcome.limit, 5)
         # 第 6 次应该 exceeded
-        sixth = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+        sixth = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         self.assertTrue(sixth.exceeded)
 
-    def test_unlimited_settings_records_usage_but_never_exceeds(self):
-        settings = _enabled_settings(free_daily_analysis=0)
+    def test_unlimited_plan_records_usage_but_never_exceeds(self):
+        self.free_plan.daily_analysis_limit = 0
+        self.db.add(self.free_plan)
+        self.db.commit()
         for _ in range(3):
             outcome = enforce_quota(
-                self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings
+                self.db, user=self.user, kind=KIND_ANALYSIS
             )
             self.assertTrue(outcome.consumed)
             self.assertFalse(outcome.exceeded)
@@ -169,8 +155,7 @@ class TestQuotaGuard(unittest.TestCase):
     # --- refund -----------------------------------------------------------
 
     def test_refund_decreases_usage(self):
-        settings = _enabled_settings()
-        outcome = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+        outcome = enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         self.assertTrue(outcome.consumed)
         self.assertEqual(get_used(self.db, user_id=self.user.id, kind=KIND_ANALYSIS), 1)
         refund_quota(self.db, user=self.user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
@@ -179,11 +164,10 @@ class TestQuotaGuard(unittest.TestCase):
     # --- payload formatting ----------------------------------------------
 
     def test_quota_exceeded_payload_shape(self):
-        settings = _enabled_settings()
         for _ in range(2):
-            enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings)
+            enforce_quota(self.db, user=self.user, kind=KIND_ANALYSIS)
         exceeded = enforce_quota(
-            self.db, user=self.user, kind=KIND_ANALYSIS, settings=settings
+            self.db, user=self.user, kind=KIND_ANALYSIS
         )
         payload = quota_exceeded_payload(exceeded)
         self.assertEqual(payload["error"], "quota_exceeded")

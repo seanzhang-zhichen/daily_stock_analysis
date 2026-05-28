@@ -206,7 +206,8 @@ def _attach_session_cookie(
     response.set_cookie(value=issued.cookie_value, **params)
 
 
-def _serialize_user(user) -> dict:
+def _serialize_user(user, *, terms_version: str | None = None) -> dict:
+    current_terms_version = (terms_version or CURRENT_TERMS_VERSION).strip()
     return {
         "id": user.id,
         "email": user.email,
@@ -218,7 +219,7 @@ def _serialize_user(user) -> dict:
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
         "isAdmin": bool(getattr(user, "is_admin", False)),
         "termsVersion": getattr(user, "terms_version", None),
-        "needsReacceptTerms": needs_reaccept(user),
+        "needsReacceptTerms": needs_reaccept(user, current_terms_version),
     }
 
 
@@ -269,7 +270,7 @@ def _status_payload(
     plan_payload = None
     renewal_payload = None
     if user is not None:
-        plan = svc_resolve_user_plan(db, user, settings=settings)
+        plan = svc_resolve_user_plan(db, user)
         plan_payload = {
             "code": plan.code,
             "name": plan.name,
@@ -302,21 +303,16 @@ def _status_payload(
         "requireEmailVerification": settings.require_email_verification,
         "inviteRequired": bool(settings.invite_codes),
         "loggedIn": user is not None,
-        "user": _serialize_user(user) if user is not None else None,
-        "limits": {
-            "freeDailyAnalysis": settings.free_daily_analysis,
-            "freeDailyAgent": settings.free_daily_agent,
-            "freeMaxStocks": settings.free_max_stocks,
-        },
+        "user": _serialize_user(user, terms_version=settings.terms_version) if user is not None else None,
         "plan": plan_payload,
         "quota": quota_payload,
         "renewal": renewal_payload,
-        "termsVersion": CURRENT_TERMS_VERSION,
+        "termsVersion": settings.terms_version,
     }
 
 
-def _get_settings_or_disabled():
-    return load_user_mode_settings()
+def _get_settings_or_disabled(db: Session | None = None):
+    return load_user_mode_settings(db)
 
 
 def _commit_or_rollback(db: Session) -> None:
@@ -333,7 +329,7 @@ def _commit_or_rollback(db: Session) -> None:
 @router.get("/status", summary="C 端用户态")
 async def account_status(request: Request, db: Session = Depends(get_db)):
     """无需登录即可访问, 用于前端启动时拉取用户态。"""
-    settings = load_user_mode_settings()
+    settings = load_user_mode_settings(db)
     return _status_payload(settings, request, db)
 
 
@@ -344,7 +340,7 @@ async def account_register(
     db: Session = Depends(get_db),
 ):
     try:
-        settings = _get_settings_or_disabled()
+        settings = _get_settings_or_disabled(db)
         result = svc_register(
             db,
             email=body.email,
@@ -372,7 +368,7 @@ async def account_register(
         ip=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    return JSONResponse(content={"user": _serialize_user(result.user)})
+    return JSONResponse(content={"user": _serialize_user(result.user, terms_version=settings.terms_version)})
 
 
 @router.post("/login", summary="邮箱密码登录")
@@ -382,7 +378,7 @@ async def account_login(
     db: Session = Depends(get_db),
 ):
     try:
-        settings = _get_settings_or_disabled()
+        settings = _get_settings_or_disabled(db)
         issued = svc_login(
             db,
             email=body.email,
@@ -406,7 +402,7 @@ async def account_login(
         ip=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    response = JSONResponse(content={"user": _serialize_user(issued.user)})
+    response = JSONResponse(content={"user": _serialize_user(issued.user, terms_version=settings.terms_version)})
     _attach_session_cookie(response, request, issued, settings)
     return response
 
@@ -434,19 +430,19 @@ async def account_logout(request: Request, db: Session = Depends(get_db)):
 @router.post("/verify-email", summary="邮箱验证")
 async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     try:
-        settings = _get_settings_or_disabled()
+        settings = _get_settings_or_disabled(db)
         user = svc_verify_email(db, token=body.token, settings=settings)
         _commit_or_rollback(db)
     except UserError as exc:
         db.rollback()
         return _user_error_response(exc)
-    return {"user": _serialize_user(user)}
+    return {"user": _serialize_user(user, terms_version=settings.terms_version)}
 
 
 @router.post("/request-password-reset", summary="发起密码重置邮件")
 async def account_request_reset(body: RequestResetRequest, db: Session = Depends(get_db)):
     try:
-        settings = _get_settings_or_disabled()
+        settings = _get_settings_or_disabled(db)
         try:
             svc_request_password_reset(db, email=body.email, settings=settings)
         except UserError as exc:
@@ -468,7 +464,7 @@ async def account_request_reset(body: RequestResetRequest, db: Session = Depends
 @router.post("/reset-password", summary="使用 token 重置密码")
 async def account_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
     try:
-        settings = _get_settings_or_disabled()
+        settings = _get_settings_or_disabled(db)
         svc_reset_password(
             db,
             token=body.token,
@@ -485,7 +481,7 @@ async def account_reset_password(body: ResetPasswordRequest, db: Session = Depen
 
 
 def _require_current_user(request: Request, db: Session):
-    settings = load_user_mode_settings()
+    settings = load_user_mode_settings(db)
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
     if user is None:
@@ -496,10 +492,10 @@ def _require_current_user(request: Request, db: Session):
 @router.get("/me", summary="当前登录用户信息")
 async def account_me(request: Request, db: Session = Depends(get_db)):
     try:
-        _, user = _require_current_user(request, db)
+        settings, user = _require_current_user(request, db)
     except UserError as exc:
         return _user_error_response(exc)
-    return {"user": _serialize_user(user)}
+    return {"user": _serialize_user(user, terms_version=settings.terms_version)}
 
 
 @router.post("/change-password", summary="登录态下修改密码")
@@ -568,9 +564,9 @@ async def account_redeem(
         user_agent=request.headers.get("user-agent"),
     )
     db.refresh(user)
-    plan = svc_resolve_user_plan(db, user, settings=settings)
+    plan = svc_resolve_user_plan(db, user)
     return {
-        "user": _serialize_user(user),
+        "user": _serialize_user(user, terms_version=settings.terms_version),
         "subscription": {
             "id": sub.id,
             "planCode": sub.plan_code,
@@ -598,7 +594,7 @@ async def account_redeem(
 
 
 def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
-    plan = svc_resolve_user_plan(db, user, settings=settings)
+    plan = svc_resolve_user_plan(db, user)
     config = get_config()
     models = get_effective_agent_models_to_try(config) + get_configured_llm_models(
         getattr(config, "llm_model_list", []) or []
@@ -659,7 +655,7 @@ async def account_update_model_preference(
         ip=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    models = _allowed_models_for_user(db, user, load_user_mode_settings())
+    models = _allowed_models_for_user(db, user, load_user_mode_settings(db))
     return {
         "models": models,
         "preferredModel": user.preferred_model,
@@ -679,8 +675,8 @@ def _serialize_watchlist_item(item) -> dict:
 @router.get("/watchlist", summary="获取当前用户自选股列表")
 async def account_get_watchlist(request: Request, db: Session = Depends(get_db)):
     try:
-        settings, user = _require_current_user(request, db)
-        plan = svc_resolve_user_plan(db, user, settings=settings)
+        _, user = _require_current_user(request, db)
+        plan = svc_resolve_user_plan(db, user)
     except UserError as exc:
         return _user_error_response(exc)
 
@@ -700,8 +696,8 @@ async def account_add_watchlist(
     db: Session = Depends(get_db),
 ):
     try:
-        settings, user = _require_current_user(request, db)
-        plan = svc_resolve_user_plan(db, user, settings=settings)
+        _, user = _require_current_user(request, db)
+        plan = svc_resolve_user_plan(db, user)
         item = svc_add_stock(
             db,
             user=user,
@@ -730,8 +726,8 @@ async def account_set_watchlist(
     db: Session = Depends(get_db),
 ):
     try:
-        settings, user = _require_current_user(request, db)
-        plan = svc_resolve_user_plan(db, user, settings=settings)
+        _, user = _require_current_user(request, db)
+        plan = svc_resolve_user_plan(db, user)
         stock_codes = [
             (s.get("stockCode") or s.get("stock_code") or "").strip()
             for s in body.stocks
@@ -830,8 +826,8 @@ async def account_update_notification_prefs(
     db: Session = Depends(get_db),
 ):
     try:
-        settings, user = _require_current_user(request, db)
-        plan = svc_resolve_user_plan(db, user, settings=settings)
+        _, user = _require_current_user(request, db)
+        plan = svc_resolve_user_plan(db, user)
         prefs = svc_update_prefs(
             db,
             user_id=user.id,

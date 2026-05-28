@@ -24,101 +24,28 @@ Phase 5 (订单 / 回调 / 退款 / 发票):
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Body
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user, get_db
-from src.storage import AppOrder, AppPlan, AppRefund, AppInvoice, AppSubscription, AppUser
-from src.users.config import (
-    SESSION_COOKIE_NAME,
-    UserModeSettings,
-    load_user_mode_settings,
-)
-from src.users.plans import resolve_user_plan
+from src.storage import AppOrder, AppRefund, AppInvoice, AppSubscription, AppUser
+from src.users.config import SESSION_COOKIE_NAME
+from src.users.plans import list_plan_catalog, resolve_user_plan
 from src.users.sessions import resolve_session
 from src.services.billing import OrderService
 from src.services.billing.gateways import get_gateway
 from src.services.billing.security import check_callback_ip, record_sig_failure
 from src.users.audit import write_audit_log
+from src.users.platform_settings import get_platform_setting_value
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _serialize_plan_row(row: AppPlan) -> dict:
-    return {
-        "code": row.code,
-        "name": row.name,
-        "dailyAnalysisLimit": int(row.daily_analysis_limit),
-        "dailyAgentLimit": int(row.daily_agent_limit),
-        "maxStocks": int(row.max_stocks),
-        "canWebhook": bool(row.can_webhook),
-        "priceCents": int(row.price_cents),
-        "currency": row.currency or "CNY",
-        "isActive": bool(row.is_active),
-    }
-
-
-def _fallback_plan_catalog(settings: UserModeSettings) -> List[dict]:
-    """当 ``app_plans`` 为空时返回的内置兜底套餐目录。
-
-    与产品规划文档 §3 的初始档位保持一致: free + pro (月) + pro (年)。
-    价格留空 (``priceCents=0``) 表示「未对外定价」, 由运营在表里覆盖。
-    """
-    return [
-        {
-            "code": "free",
-            "name": "免费会员",
-            "dailyAnalysisLimit": settings.free_daily_analysis,
-            "dailyAgentLimit": settings.free_daily_agent,
-            "maxStocks": settings.free_max_stocks,
-            "canWebhook": False,
-            "priceCents": 0,
-            "currency": "CNY",
-            "isActive": True,
-        },
-        {
-            "code": "pro",
-            "name": "Pro 月付",
-            "dailyAnalysisLimit": 50,
-            "dailyAgentLimit": 50,
-            "maxStocks": 30,
-            "canWebhook": True,
-            "priceCents": 0,
-            "currency": "CNY",
-            "isActive": True,
-        },
-        {
-            "code": "pro_yearly",
-            "name": "Pro 年付",
-            "dailyAnalysisLimit": 50,
-            "dailyAgentLimit": 50,
-            "maxStocks": 30,
-            "canWebhook": True,
-            "priceCents": 0,
-            "currency": "CNY",
-            "isActive": True,
-        },
-    ]
-
-
-def _list_plans(db: Session, settings: UserModeSettings) -> List[dict]:
-    rows = (
-        db.query(AppPlan)
-        .filter(AppPlan.is_active.is_(True))
-        .order_by(AppPlan.price_cents.asc(), AppPlan.code.asc())
-        .all()
-    )
-    if not rows:
-        return _fallback_plan_catalog(settings)
-    return [_serialize_plan_row(r) for r in rows]
 
 
 def _serialize_subscription(row: AppSubscription) -> dict:
@@ -133,7 +60,7 @@ def _serialize_subscription(row: AppSubscription) -> dict:
     }
 
 
-def _resolve_request_user(request: Request, db: Session, settings: UserModeSettings) -> Optional[AppUser]:
+def _resolve_request_user(request: Request, db: Session) -> Optional[AppUser]:
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_value:
         return None
@@ -143,13 +70,12 @@ def _resolve_request_user(request: Request, db: Session, settings: UserModeSetti
 @router.get("/plans", summary="列出当前可见套餐目录")
 async def billing_plans(request: Request, db: Session = Depends(get_db)):
     """套餐目录, 不需要登录即可访问 (用于落地页 / 注册流引导)。"""
-    settings = load_user_mode_settings()
-    plans = _list_plans(db, settings)
+    plans = list_plan_catalog(db)
 
-    user = _resolve_request_user(request, db, settings)
+    user = _resolve_request_user(request, db)
     current_plan_payload = None
     if user is not None:
-        plan = resolve_user_plan(db, user, settings=settings)
+        plan = resolve_user_plan(db, user)
         current_plan_payload = {
             "code": plan.code,
             "name": plan.name,
@@ -170,8 +96,7 @@ async def billing_subscription(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    settings = load_user_mode_settings()
-    plan = resolve_user_plan(db, current_user, settings=settings)
+    plan = resolve_user_plan(db, current_user)
     history_rows = (
         db.query(AppSubscription)
         .filter(AppSubscription.user_id == current_user.id)
@@ -214,9 +139,12 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
-def _payment_enabled() -> bool:
-    """每次调用时读取 (而非启动期一次性), 便于测试动态翻转。"""
-    return _flag("PAYMENT_ENABLED")
+def _payment_enabled(db: Session) -> bool:
+    return bool(get_platform_setting_value(db, "PAYMENT_ENABLED"))
+
+
+def _order_expire_minutes(db: Session) -> int:
+    return int(get_platform_setting_value(db, "ORDER_EXPIRE_MINUTES"))
 
 
 def _payment_mock_enabled() -> bool:
@@ -263,6 +191,7 @@ async def create_order(
             client_ip=client_ip,
             user_agent=ua,
             coupon_code=body.get("couponCode"),
+            expire_minutes=_order_expire_minutes(db),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -323,8 +252,8 @@ async def pay_order(
         except Exception as exc:  # noqa: BLE001
             logger.warning("mark_pending 失败 (order=%s): %s", order_no, exc)
 
-    if _payment_enabled():
-        gateway = get_gateway(order.provider)
+    if _payment_enabled(db):
+        gateway = get_gateway(order.provider, db=db)
         if gateway is None:
             raise HTTPException(
                 status_code=503,
@@ -477,7 +406,7 @@ async def wechat_callback(request: Request, db: Session = Depends(get_db)):
         )
         return {"code": "SUCCESS", "message": "OK"}
 
-    gateway = get_gateway("wechat")
+    gateway = get_gateway("wechat", db=db)
     if gateway is None:
         _legacy_record_unverified(
             db, "wechat", raw, signature=signature_hdr,
@@ -526,7 +455,7 @@ async def alipay_callback(request: Request, db: Session = Depends(get_db)):
         )
         return PlainTextResponse("success")
 
-    gateway = get_gateway("alipay")
+    gateway = get_gateway("alipay", db=db)
     if gateway is None:
         notify_id = ""
         for part in raw.split("&"):

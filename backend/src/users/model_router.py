@@ -14,7 +14,6 @@ from src.config import (
     get_effective_agent_primary_model,
 )
 from src.storage import AppUser
-from src.users.config import load_user_mode_settings
 from src.users.plans import ResolvedPlan, resolve_user_plan
 
 
@@ -91,7 +90,7 @@ def resolve_model_route(
             provider=_provider_from_model(platform_primary),
         )
 
-    plan = resolve_user_plan(db, user, settings=load_user_mode_settings())
+    plan = resolve_user_plan(db, user)
     filtered_models = _filter_allowed_models(candidate_platform_models, plan.allowed_models)
     preferred = _select_preferred_model(user, filtered_models)
     primary = preferred or (filtered_models[0] if filtered_models else platform_primary)

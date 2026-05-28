@@ -137,6 +137,17 @@ class AppPlan(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
 
+class AppPlatformSetting(Base):
+    __tablename__ = 'app_platform_settings'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(64), nullable=False, unique=True, index=True)
+    value = Column(Text, nullable=True)
+    updated_by = Column(Integer, ForeignKey('app_users.id'), nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+
 class AppSubscription(Base):
     """用户订阅历史 (含 trial / paid / invite)。
 
@@ -175,7 +186,7 @@ class AppUserWatchlist(Base):
     """用户自选股表 (Phase 3)。
 
     每个用户有独立的自选股列表，上限由 ``plan.max_stocks`` 控制。
-    免费档默认 ``USER_FREE_MAX_STOCKS``（默认 3 只），Pro 档由 ``AppPlan.max_stocks`` 决定。
+    各套餐上限由 ``AppPlan.max_stocks`` 决定。
     """
 
     __tablename__ = 'app_user_watchlists'
@@ -507,6 +518,7 @@ __all__ = [
     "AppUserEmailVerification",
     "AppUserUsageCounter",
     "AppPlan",
+    "AppPlatformSetting",
     "AppSubscription",
     "AppRedeemCode",
     "AppUserWatchlist",

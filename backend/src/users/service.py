@@ -155,6 +155,8 @@ def register_user(
         email_daily_max=settings.register_email_daily_max,
         window_hours=settings.register_rate_window_hours,
         mx_check_enabled=settings.register_mx_check_enabled,
+        disposable_domains=settings.disposable_email_domains,
+        disposable_domains_replace=settings.disposable_email_domains_replace,
     )
     record_registration_attempt(db, email=email_normalized, ip=ip, user_agent=user_agent)
     preflight_registration(
@@ -176,7 +178,7 @@ def register_user(
             "请阅读并同意《用户服务协议》《隐私政策》《投资风险揭示书》后再注册",
         )
 
-    expected_version = CURRENT_TERMS_VERSION
+    expected_version = (settings.terms_version or CURRENT_TERMS_VERSION).strip()
     submitted_version = (terms_version or "").strip()
     if submitted_version and submitted_version != expected_version:
         raise UserError(

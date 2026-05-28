@@ -528,8 +528,6 @@ GET /api/v1/analysis/tasks/stream
 | `SEARCH_PROVIDER` | 搜索服务提供商 |
 | `SCHEDULE_TIME` | 每日调度时间 |
 | `NOTIFICATION_CHANNELS` | 通知渠道路由 |
-| `USER_FREE_DAILY_ANALYSIS` | 免费用户每日分析次数 |
-| `USER_FREE_DAILY_AGENT` | 免费用户每日 Agent 次数 |
 
 ---
 

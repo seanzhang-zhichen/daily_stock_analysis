@@ -29,7 +29,6 @@ vi.mock('../../api/account', () => ({
       inviteRequired: false,
       loggedIn: false,
       user: null,
-      limits: { freeDailyAnalysis: 0, freeDailyAgent: 0, freeMaxStocks: 0 },
       plan: null,
       quota: null,
       renewal: null,

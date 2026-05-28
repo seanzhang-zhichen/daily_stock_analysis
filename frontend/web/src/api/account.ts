@@ -50,11 +50,6 @@ export type AccountStatusResponse = {
   inviteRequired: boolean;
   loggedIn: boolean;
   user: AccountUser | null;
-  limits: {
-    freeDailyAnalysis: number;
-    freeDailyAgent: number;
-    freeMaxStocks: number;
-  };
   plan: AccountPlan | null;
   quota: AccountQuota | null;
   renewal: AccountRenewal | null;

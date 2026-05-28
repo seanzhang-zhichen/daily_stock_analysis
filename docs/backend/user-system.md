@@ -208,11 +208,15 @@ POST /api/v1/account/register
 
 ### 注册保护配置
 
-| 环境变量 | 默认 | 说明 |
+下列运营配置可通过 `/admin` 的「注册与合规」页写入 `app_platform_settings`；未写入数据库时继续读取 `.env` 作为默认值/兜底。
+
+| 配置项 | 默认 | 说明 |
 |----------|------|------|
-| `USER_PUBLIC_REGISTRATION_ENABLED` | true | 是否允许公开注册 |
+| `USER_PUBLIC_REGISTRATION_ENABLED` | true | 是否允许公开自助注册 |
 | `USER_INVITE_CODES` | 空 | 邀请码列表，逗号分隔 |
 | `USER_REGISTER_DISPOSABLE_BLOCK` | true | 是否拦截一次性邮箱 |
+| `USER_DISPOSABLE_EMAIL_DOMAINS` | 空 | 追加的一次性邮箱域名黑名单 |
+| `USER_DISPOSABLE_EMAIL_DOMAINS_REPLACE` | false | 是否用自定义黑名单替换内置黑名单 |
 | `USER_REGISTER_IP_DAILY_MAX` | 10 | 每 IP 每日注册上限 |
 | `USER_REGISTER_EMAIL_DAILY_MAX` | 3 | 单邮箱每日尝试上限 |
 | `USER_REGISTER_RATE_WINDOW_HOURS` | 24 | 限流窗口 |
@@ -325,16 +329,19 @@ resolve_user_plan(db, user)
 2. `plan_expires_at` 已过期 → 返回免费档（不立即写库）
 3. `app_plans` 找不到对应套餐 → 返回免费档
 4. 找到有效套餐 → 返回 `ResolvedPlan`
+5. `app_plans` 必须存在 `code=free` 行；免费档每日分析、Agent 次数和自选股上限以该行配置为准
 
-### 免费档默认值
+### 免费档配置
 
-来自 `UserModeSettings`：
+免费档权益来自 `app_plans` 的 `code=free` 行；Alembic 迁移会在缺失时写入基础免费档记录，后续可在运营后台 `/admin` 的「套餐与用量」页签维护：
 
-| 权益 | 环境变量 | 默认 |
-|------|----------|------|
-| 每日分析次数 | `USER_FREE_DAILY_ANALYSIS` | 5 |
-| 每日 Agent 次数 | `USER_FREE_DAILY_AGENT` | 5 |
-| 自选股上限 | `USER_FREE_MAX_STOCKS` | 3 |
+| 权益 | 数据库字段 |
+|------|----------|
+| 每日分析次数 | `app_plans.daily_analysis_limit` |
+| 每日 Agent 次数 | `app_plans.daily_agent_limit` |
+| 自选股上限 | `app_plans.max_stocks` |
+
+`free` 档固定不允许 Webhook、价格为 0、始终上架，防止误配置影响基础用户。
 
 ### allowed_models 语义
 
@@ -590,6 +597,7 @@ pending → issued
 ### 管理员可操作
 
 - 用户列表与详情
+- 配置免费档和会员套餐的每日分析次数、Agent 次数、自选股上限、价格与上架状态
 - 手动开通/续期套餐
 - 禁用/启用用户
 - 审核退款
@@ -623,13 +631,13 @@ pending → issued
 
 注册时必须同意协议，协议升版后可要求用户重新接受。
 
-当前协议版本由：
+当前协议版本优先由数据库配置 `USER_TERMS_VERSION` 控制，未配置时回退到代码常量：
 
 ```python
 CURRENT_TERMS_VERSION
 ```
 
-控制。
+控制。调整 `USER_TERMS_VERSION` 后，账号状态接口会据此计算 `needsReacceptTerms`。
 
 ### 审计日志
 
@@ -642,6 +650,8 @@ CURRENT_TERMS_VERSION
 - `auth.change_password`
 - `plan.redeem`
 - `plan.grant`
+- `admin.plan.upsert`
+- `admin.platform_setting.update`
 - `order.create`
 - `refund.create`
 - `admin.grant_plan`
@@ -666,22 +676,25 @@ CURRENT_TERMS_VERSION
 
 ## 关键配置
 
-| 环境变量 | 默认 | 说明 |
+To C 运营配置优先从 `app_platform_settings` 读取，并可在运营后台「注册与合规」页管理；`.env` 中同名变量作为新库初始化前的兜底默认值。支付密钥、证书、回调地址等部署级敏感配置仍只通过环境变量提供，不进入数据库。
+
+| 配置项 | 默认 | 说明 |
 |----------|------|------|
-| `USER_PUBLIC_REGISTRATION_ENABLED` | true | 是否允许公开注册 |
+| `USER_PUBLIC_REGISTRATION_ENABLED` | true | 是否允许公开自助注册 |
 | `USER_INVITE_CODES` | 空 | 注册邀请码列表 |
+| `USER_TERMS_VERSION` | `CURRENT_TERMS_VERSION` | 当前用户协议版本 |
 | `USER_SESSION_TTL_HOURS` | 336 | Session 有效期（14 天） |
 | `USER_VERIFICATION_TTL_HOURS` | 24 | 邮箱验证 Token 有效期 |
 | `USER_RESET_TTL_HOURS` | 2 | 密码重置 Token 有效期 |
-| `USER_FREE_DAILY_ANALYSIS` | 5 | 免费用户每日分析次数 |
-| `USER_FREE_DAILY_AGENT` | 5 | 免费用户每日 Agent 次数 |
-| `USER_FREE_MAX_STOCKS` | 3 | 免费用户自选股上限 |
 | `USER_REGISTER_DISPOSABLE_BLOCK` | true | 是否拦截一次性邮箱 |
+| `USER_DISPOSABLE_EMAIL_DOMAINS` | 空 | 追加的一次性邮箱域名黑名单 |
+| `USER_DISPOSABLE_EMAIL_DOMAINS_REPLACE` | false | 是否用自定义黑名单替换内置黑名单 |
 | `USER_REGISTER_IP_DAILY_MAX` | 10 | IP 注册频率限制 |
 | `USER_REGISTER_EMAIL_DAILY_MAX` | 3 | 邮箱注册频率限制 |
 | `USER_EMAIL_MX_CHECK_ENABLED` | false | 是否检查邮箱 MX |
 | `USER_FRONTEND_BASE_URL` | `http://localhost:5200` | 注册验证邮件前端链接 |
 | `PAYMENT_ENABLED` | false | 是否启用真实支付 |
+| `ORDER_EXPIRE_MINUTES` | 15 | 新订单支付超时时间 |
 | `WECHAT_PAY_*` | 空 | 微信支付配置 |
 | `ALIPAY_*` | 空 | 支付宝配置 |
 

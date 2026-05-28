@@ -65,14 +65,12 @@ def _enabled_settings(**overrides) -> UserModeSettings:
         session_ttl_hours=24,
         verification_ttl_hours=24,
         reset_ttl_hours=2,
-        free_daily_analysis=5,
-        free_daily_agent=5,
-        free_max_stocks=3,
         invite_codes=(),
         register_disposable_block=True,
         register_ip_daily_max=10,
         register_email_daily_max=3,
         register_rate_window_hours=24,
+        register_mx_check_enabled=False,
     )
     base.update(overrides)
     return UserModeSettings(**base)

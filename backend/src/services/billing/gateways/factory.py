@@ -17,7 +17,10 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
+from sqlalchemy.orm import Session
+
 from src.services.billing.gateways.base import PaymentGateway
+from src.users.platform_settings import get_platform_setting_value
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,7 @@ def _build_alipay() -> Optional[PaymentGateway]:
     )
 
 
-def get_gateway(provider: str) -> Optional[PaymentGateway]:
+def get_gateway(provider: str, db: Optional[Session] = None) -> Optional[PaymentGateway]:
     """根据 provider 返回 gateway 实例; 未配置或 PAYMENT_ENABLED=false 时返回 None。
 
     Args:
@@ -129,7 +132,7 @@ def get_gateway(provider: str) -> Optional[PaymentGateway]:
     if provider in _OVERRIDES:
         return _OVERRIDES[provider]
 
-    if not _flag("PAYMENT_ENABLED"):
+    if not bool(get_platform_setting_value(db, "PAYMENT_ENABLED")):
         return None
 
     if provider == "wechat":

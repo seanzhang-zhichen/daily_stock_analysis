@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
+  Settings,
   Pin,
   RotateCcw,
   Search,
@@ -17,14 +18,14 @@ import {
 import { Button, Card, Input, Loading } from '../components/common';
 import { StandardPageLayout } from '../components/common/PageLayouts';
 import { SettingsAlert } from '../components/settings';
-import { adminApi, type AdminStats, type AdminUser, type AuditLogEntry } from '../api/admin';
+import { adminApi, type AdminPlan, type AdminPlatformSetting, type AdminStats, type AdminUser, type AuditLogEntry } from '../api/admin';
 import { noticesApi, type Notice } from '../api/notices';
 import type { BillingInvoice, BillingOrder, BillingRefund } from '../api/billing';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
 import { cn } from '../utils/cn';
 
-type TabKey = 'overview' | 'orders' | 'refunds' | 'invoices' | 'users' | 'grant' | 'audit' | 'notices';
+type TabKey = 'overview' | 'orders' | 'refunds' | 'invoices' | 'users' | 'plans' | 'platform' | 'grant' | 'audit' | 'notices';
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'overview', label: '总览', icon: BarChart3 },
@@ -32,6 +33,8 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   { key: 'refunds', label: '退款审核', icon: RotateCcw },
   { key: 'invoices', label: '发票审核', icon: FileText },
   { key: 'users', label: '用户', icon: Users },
+  { key: 'plans', label: '套餐与用量', icon: ClipboardList },
+  { key: 'platform', label: '注册/支付/合规', icon: Settings },
   { key: 'grant', label: '手动开通', icon: CheckCircle2 },
   { key: 'audit', label: '审计日志', icon: ClipboardList },
   { key: 'notices', label: '公告管理', icon: Bell },
@@ -582,6 +585,396 @@ const UsersTab: React.FC = () => {
   );
 };
 
+type PlanDraft = {
+  name: string;
+  dailyAnalysisLimit: string;
+  dailyAgentLimit: string;
+  maxStocks: string;
+  canWebhook: boolean;
+  priceCents: string;
+  currency: string;
+  isActive: boolean;
+};
+
+const planToDraft = (plan: AdminPlan): PlanDraft => ({
+  name: plan.name,
+  dailyAnalysisLimit: String(plan.dailyAnalysisLimit),
+  dailyAgentLimit: String(plan.dailyAgentLimit),
+  maxStocks: String(plan.maxStocks),
+  canWebhook: plan.canWebhook,
+  priceCents: String(plan.priceCents),
+  currency: plan.currency || 'CNY',
+  isActive: plan.isActive,
+});
+
+const parseNonNegativeInt = (value: string, label: string): number => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label}必须为非负整数`);
+  }
+  return parsed;
+};
+
+const PlanConfigTab: React.FC = () => {
+  const [plans, setPlans] = useState<AdminPlan[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, PlanDraft>>({});
+  const [loading, setLoading] = useState(false);
+  const [savingCode, setSavingCode] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [error, setError] = useState<ParsedApiError | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await adminApi.listPlans();
+      setPlans(res.plans);
+      setDrafts(Object.fromEntries(res.plans.map((plan) => [plan.code, planToDraft(plan)])));
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const updateDraft = (code: string, patch: Partial<PlanDraft>) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [code]: {
+        ...(prev[code] ?? planToDraft(plans.find((plan) => plan.code === code) as AdminPlan)),
+        ...patch,
+      },
+    }));
+  };
+
+  const handleSave = async (plan: AdminPlan) => {
+    const draft = drafts[plan.code];
+    if (!draft) return;
+    setError(null);
+    setInfo(null);
+    setSavingCode(plan.code);
+    try {
+      const payload = {
+        name: draft.name.trim(),
+        dailyAnalysisLimit: parseNonNegativeInt(draft.dailyAnalysisLimit, '每日分析次数'),
+        dailyAgentLimit: parseNonNegativeInt(draft.dailyAgentLimit, '每日 Agent 次数'),
+        maxStocks: parseNonNegativeInt(draft.maxStocks, '自选股上限'),
+        canWebhook: plan.code === 'free' ? false : draft.canWebhook,
+        priceCents: plan.code === 'free' ? 0 : parseNonNegativeInt(draft.priceCents, '价格分'),
+        currency: (draft.currency || 'CNY').trim().toUpperCase(),
+        isActive: plan.code === 'free' ? true : draft.isActive,
+      };
+      if (!payload.name) {
+        throw new Error('套餐名称不能为空');
+      }
+      const res = await adminApi.updatePlan(plan.code, payload);
+      setPlans((prev) => prev.map((item) => (item.code === plan.code ? res.plan : item)));
+      setDrafts((prev) => ({ ...prev, [plan.code]: planToDraft(res.plan) }));
+      setInfo(`已保存 ${res.plan.name} 的用量配置。`);
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setSavingCode(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card title="套餐与每日用量" subtitle={`PLANS (${plans.length})`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-secondary-text">
+            可配置免费用户和会员套餐的每日分析次数、Agent 问股次数与自选股上限。数值为 0 表示不限额。
+          </p>
+          <Button type="button" size="sm" variant="secondary" onClick={refresh} isLoading={loading}>
+            刷新
+          </Button>
+        </div>
+        {error ? <SettingsAlert title="操作失败" message={error.message} variant="error" className="mb-4" /> : null}
+        {info ? <SettingsAlert title="保存成功" message={info} variant="success" className="mb-4" /> : null}
+        {loading && plans.length === 0 ? <Loading /> : null}
+        <div className="grid gap-4 xl:grid-cols-3">
+          {plans.map((plan) => {
+            const draft = drafts[plan.code] ?? planToDraft(plan);
+            const isFree = plan.code === 'free';
+            return (
+              <div key={plan.code} className="rounded-xl border border-border/60 bg-card/40 p-4">
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-mono text-xs text-secondary-text">{plan.code}</p>
+                    <h3 className="text-base font-semibold text-foreground">{plan.name}</h3>
+                  </div>
+                  <span
+                    className={cn(
+                      'rounded-full px-2 py-0.5 text-xs',
+                      plan.isPersisted ? 'bg-primary/10 text-primary' : 'bg-secondary-text/10 text-secondary-text'
+                    )}
+                  >
+                    {plan.isPersisted ? '已配置' : '默认'}
+                  </span>
+                </div>
+                <div className="grid gap-3">
+                  <Input
+                    id={`plan-${plan.code}-name`}
+                    label="套餐名称"
+                    value={draft.name}
+                    onChange={(e) => updateDraft(plan.code, { name: e.target.value })}
+                    disabled={savingCode === plan.code}
+                  />
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Input
+                      id={`plan-${plan.code}-analysis`}
+                      type="number"
+                      label="每日分析"
+                      value={draft.dailyAnalysisLimit}
+                      onChange={(e) => updateDraft(plan.code, { dailyAnalysisLimit: e.target.value })}
+                      disabled={savingCode === plan.code}
+                    />
+                    <Input
+                      id={`plan-${plan.code}-agent`}
+                      type="number"
+                      label="每日 Agent"
+                      value={draft.dailyAgentLimit}
+                      onChange={(e) => updateDraft(plan.code, { dailyAgentLimit: e.target.value })}
+                      disabled={savingCode === plan.code}
+                    />
+                    <Input
+                      id={`plan-${plan.code}-stocks`}
+                      type="number"
+                      label="自选股"
+                      value={draft.maxStocks}
+                      onChange={(e) => updateDraft(plan.code, { maxStocks: e.target.value })}
+                      disabled={savingCode === plan.code}
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input
+                      id={`plan-${plan.code}-price`}
+                      type="number"
+                      label="价格（分）"
+                      value={draft.priceCents}
+                      onChange={(e) => updateDraft(plan.code, { priceCents: e.target.value })}
+                      disabled={isFree || savingCode === plan.code}
+                    />
+                    <Input
+                      id={`plan-${plan.code}-currency`}
+                      label="币种"
+                      value={draft.currency}
+                      onChange={(e) => updateDraft(plan.code, { currency: e.target.value })}
+                      disabled={isFree || savingCode === plan.code}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 text-sm text-secondary-text">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={draft.canWebhook}
+                        onChange={(e) => updateDraft(plan.code, { canWebhook: e.target.checked })}
+                        disabled={isFree || savingCode === plan.code}
+                        className="accent-primary"
+                      />
+                      Webhook
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={draft.isActive}
+                        onChange={(e) => updateDraft(plan.code, { isActive: e.target.checked })}
+                        disabled={isFree || savingCode === plan.code}
+                        className="accent-primary"
+                      />
+                      上架
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void handleSave(plan)}
+                    isLoading={savingCode === plan.code}
+                  >
+                    保存配置
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const PLATFORM_CATEGORY_LABELS: Record<string, string> = {
+  registration: '注册与账号',
+  risk_control: '注册风控',
+  payment: '支付与订单',
+  compliance: '合规协议',
+};
+
+type PlatformSettingDraft = string | number | boolean;
+
+const settingToDraft = (setting: AdminPlatformSetting): PlatformSettingDraft => setting.value;
+
+const PlatformSettingsTab: React.FC = () => {
+  const [settings, setSettings] = useState<AdminPlatformSetting[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, PlatformSettingDraft>>({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const [error, setError] = useState<ParsedApiError | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await adminApi.listPlatformSettings();
+      setSettings(res.settings);
+      setDrafts(Object.fromEntries(res.settings.map((item) => [item.key, settingToDraft(item)])));
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const updateDraft = (key: string, value: PlatformSettingDraft) => {
+    setDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setInfo(null);
+    setError(null);
+    try {
+      const payload = settings.map((item) => ({
+        key: item.key,
+        value: drafts[item.key] ?? settingToDraft(item),
+      }));
+      const res = await adminApi.updatePlatformSettings({ settings: payload });
+      setSettings(res.settings);
+      setDrafts(Object.fromEntries(res.settings.map((item) => [item.key, settingToDraft(item)])));
+      setInfo('注册、风控与合规配置已保存。');
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const grouped = useMemo(() => {
+    const result: Record<string, AdminPlatformSetting[]> = {};
+    for (const item of settings) {
+      if (!result[item.category]) result[item.category] = [];
+      result[item.category].push(item);
+    }
+    return result;
+  }, [settings]);
+
+  const renderControl = (setting: AdminPlatformSetting) => {
+    const value = drafts[setting.key] ?? settingToDraft(setting);
+    if (setting.valueType === 'boolean') {
+      const checked = value === true;
+      return (
+        <label className="inline-flex items-center gap-2 text-sm text-foreground">
+          <input
+            id={`platform-setting-${setting.key}`}
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => updateDraft(setting.key, e.target.checked)}
+            disabled={saving}
+            className="accent-primary"
+          />
+          {checked ? '已开启' : '已关闭'}
+        </label>
+      );
+    }
+    if (setting.multiline) {
+      return (
+        <textarea
+          id={`platform-setting-${setting.key}`}
+          value={String(value ?? '')}
+          onChange={(e) => updateDraft(setting.key, e.target.value)}
+          rows={3}
+          maxLength={setting.maxLength ?? undefined}
+          disabled={saving}
+          className="w-full rounded-xl border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground placeholder:text-secondary-text/50 focus:outline-none focus:ring-1 focus:ring-cyan/50 disabled:cursor-not-allowed disabled:opacity-60"
+        />
+      );
+    }
+    return (
+      <Input
+        id={`platform-setting-${setting.key}`}
+        type={setting.valueType === 'integer' ? 'number' : 'text'}
+        value={String(value ?? '')}
+        min={setting.minimum ?? undefined}
+        max={setting.maximum ?? undefined}
+        maxLength={setting.maxLength ?? undefined}
+        onChange={(e) => updateDraft(setting.key, e.target.value)}
+        disabled={saving}
+      />
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card title="注册、支付与合规配置" subtitle={`PLATFORM SETTINGS (${settings.length})`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-secondary-text">
+            这些配置保存在数据库，适合运营后台动态调整；支付密钥、证书路径与模型密钥仍保留在部署环境配置中。
+          </p>
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant="secondary" onClick={refresh} isLoading={loading}>
+              刷新
+            </Button>
+            <Button type="button" size="sm" variant="primary" onClick={handleSave} isLoading={saving}>
+              保存全部
+            </Button>
+          </div>
+        </div>
+        {error ? <SettingsAlert title="操作失败" message={error.message} variant="error" className="mb-4" /> : null}
+        {info ? <SettingsAlert title="保存成功" message={info} variant="success" className="mb-4" /> : null}
+        {loading && settings.length === 0 ? <Loading /> : null}
+        <div className="grid gap-4 lg:grid-cols-3">
+          {Object.entries(grouped).map(([category, items]) => (
+            <div key={category} className="rounded-xl border border-border/60 bg-card/40 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-foreground">
+                {PLATFORM_CATEGORY_LABELS[category] ?? category}
+              </h3>
+              <div className="space-y-4">
+                {items.map((setting) => (
+                  <div key={setting.key} className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <label htmlFor={`platform-setting-${setting.key}`} className="text-sm font-medium text-foreground">
+                          {setting.title}
+                        </label>
+                        <p className="text-xs text-secondary-text">{setting.description}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-secondary-text/10 px-2 py-0.5 text-xs text-secondary-text">
+                        {setting.source}
+                      </span>
+                    </div>
+                    {renderControl(setting)}
+                    <p className="font-mono text-[11px] text-secondary-text/70">{setting.key}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
 // ============================================================
 // Grant plan tab
 // ============================================================
@@ -591,9 +984,26 @@ const GrantPlanTab: React.FC = () => {
   const [planCode, setPlanCode] = useState('pro');
   const [grantDays, setGrantDays] = useState('30');
   const [note, setNote] = useState('');
+  const [plans, setPlans] = useState<AdminPlan[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<ParsedApiError | null>(null);
+
+  useEffect(() => {
+    const loadPlans = async () => {
+      try {
+        const res = await adminApi.listPlans();
+        const options = res.plans.filter((plan) => plan.code !== 'free' && plan.isActive);
+        setPlans(options);
+        setPlanCode((current) => (
+          options.length > 0 && !options.some((plan) => plan.code === current) ? options[0].code : current
+        ));
+      } catch (err) {
+        setError(getParsedApiError(err));
+      }
+    };
+    void loadPlans();
+  }, []);
 
   const handleSubmit = async () => {
     setError(null);
@@ -646,15 +1056,25 @@ const GrantPlanTab: React.FC = () => {
           onChange={(e) => setUserId(e.target.value)}
           disabled={submitting}
         />
-        <Input
-          id="grant-plan-code"
-          type="text"
-          label="套餐代码"
-          placeholder="pro / pro_yearly"
-          value={planCode}
-          onChange={(e) => setPlanCode(e.target.value)}
-          disabled={submitting}
-        />
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="grant-plan-code" className="text-sm font-medium text-foreground">
+            套餐代码
+          </label>
+          <select
+            id="grant-plan-code"
+            value={planCode}
+            onChange={(e) => setPlanCode(e.target.value)}
+            disabled={submitting}
+            className="rounded-md border border-border/60 bg-card px-3 py-2 text-sm text-foreground"
+          >
+            {plans.length === 0 ? <option value={planCode}>{planCode}</option> : null}
+            {plans.map((plan) => (
+              <option key={plan.code} value={plan.code}>
+                {plan.name} ({plan.code})
+              </option>
+            ))}
+          </select>
+        </div>
         <Input
           id="grant-days"
           type="number"
@@ -695,6 +1115,8 @@ const ACTION_OPTIONS = [
   'order.create', 'order.cancel',
   'refund.create', 'refund.approve', 'refund.reject',
   'invoice.issue', 'invoice.reject',
+  'admin.plan.upsert',
+  'admin.platform_setting.update',
   'admin.grant_plan', 'admin.approve_refund', 'admin.reject_refund',
   'admin.issue_invoice', 'admin.reject_invoice',
 ];
@@ -1017,6 +1439,8 @@ const AdminPage: React.FC = () => {
         {tab === 'refunds' && <RefundsTab />}
         {tab === 'invoices' && <InvoicesTab />}
         {tab === 'users' && <UsersTab />}
+        {tab === 'plans' && <PlanConfigTab />}
+        {tab === 'platform' && <PlatformSettingsTab />}
         {tab === 'grant' && <GrantPlanTab />}
         {tab === 'audit' && <AuditLogsTab />}
         {tab === 'notices' && <NoticesAdminTab />}
