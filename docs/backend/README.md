@@ -9,8 +9,9 @@
 | 1 | [后端架构总览](overview.md) | 后端有哪些模块、各自职责是什么、从哪里启动 |
 | 2 | [API 层详细说明](api.md) | FastAPI 路由、认证、依赖注入和主要接口如何组织 |
 | 3 | [数据管道与分析流程](data-pipeline.md) | 股票分析从输入到报告生成经历哪些步骤 |
-| 4 | [存储层与数据模型](storage.md) | 数据库表、ORM 模型、Repository 和 migration 如何设计 |
-| 5 | [To C 用户体系与计费](user-system.md) | 注册登录、Session、套餐、配额、支付、管理员能力如何工作 |
+| 4 | [首页股票输入到分析任务流程](home-stock-analysis-flow.md) | 首页输入股票代码或名称后，前端、API、任务队列和 pipeline 如何串联 |
+| 5 | [存储层与数据模型](storage.md) | 数据库表、ORM 模型、Repository 和 migration 如何设计 |
+| 6 | [To C 用户体系与计费](user-system.md) | 注册登录、Session、套餐、配额、支付、管理员能力如何工作 |
 
 ## 核心心智模型
 

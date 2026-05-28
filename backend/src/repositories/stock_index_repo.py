@@ -4,7 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
+from threading import RLock
+from time import monotonic
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import func, or_, select
@@ -15,6 +18,29 @@ from src.storage import DatabaseManager, StockIndexEntry, StockIndexMeta
 logger = logging.getLogger(__name__)
 
 STOCK_INDEX_META_KEY = "default"
+_SEARCH_CACHE_TTL_SECONDS = 300.0
+_SEARCH_RESULT_CACHE_MAX_SIZE = 512
+
+
+@dataclass(frozen=True)
+class _CachedStockIndexEntry:
+    canonical_code: str
+    display_code: str
+    name_zh: str
+    pinyin_full: str
+    pinyin_abbr: str
+    aliases: tuple[str, ...]
+    aliases_text: str
+    market: str
+    active: bool
+    popularity: int
+    canonical_norm: str
+    display_norm: str
+    name_norm: str
+    pinyin_full_norm: str
+    pinyin_abbr_norm: str
+    aliases_norm: tuple[str, ...]
+    aliases_text_norm: str
 
 
 def normalize_stock_query(value: str) -> str:
@@ -33,14 +59,23 @@ def _safe_aliases(raw: str | None) -> list[str]:
     return [str(item) for item in value if str(item or "").strip()]
 
 
-def _match_score(query: str, entry: StockIndexEntry) -> tuple[int, str]:
+def _entry_normalized_value(entry: Any, attr: str, normalized_attr: str) -> str:
+    value = getattr(entry, normalized_attr, None)
+    if value is not None:
+        return str(value)
+    return normalize_stock_query(getattr(entry, attr, "") or "")
+
+
+def _match_score(query: str, entry: Any) -> tuple[int, str]:
     q = normalize_stock_query(query)
-    canonical = normalize_stock_query(entry.canonical_code)
-    display = normalize_stock_query(entry.display_code)
-    name = normalize_stock_query(entry.name_zh)
-    pinyin_full = normalize_stock_query(entry.pinyin_full or "")
-    pinyin_abbr = normalize_stock_query(entry.pinyin_abbr or "")
-    aliases = [normalize_stock_query(alias) for alias in _safe_aliases(entry.aliases)]
+    canonical = _entry_normalized_value(entry, "canonical_code", "canonical_norm")
+    display = _entry_normalized_value(entry, "display_code", "display_norm")
+    name = _entry_normalized_value(entry, "name_zh", "name_norm")
+    pinyin_full = _entry_normalized_value(entry, "pinyin_full", "pinyin_full_norm")
+    pinyin_abbr = _entry_normalized_value(entry, "pinyin_abbr", "pinyin_abbr_norm")
+    aliases = getattr(entry, "aliases_norm", None)
+    if aliases is None:
+        aliases = [normalize_stock_query(alias) for alias in _safe_aliases(entry.aliases)]
 
     if q == canonical:
         return 100, "code"
@@ -83,8 +118,95 @@ def _match_type(score: int) -> str:
 
 
 class StockIndexRepository:
+    _search_cache_lock = RLock()
+    _search_cache_db_url: str | None = None
+    _search_cache_loaded_at = 0.0
+    _search_cache_entries: tuple[_CachedStockIndexEntry, ...] | None = None
+    _search_result_cache: dict[tuple[str, int, bool], list[dict[str, Any]]] = {}
+
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+
+    @classmethod
+    def clear_search_cache(cls) -> None:
+        with cls._search_cache_lock:
+            cls._search_cache_db_url = None
+            cls._search_cache_loaded_at = 0.0
+            cls._search_cache_entries = None
+            cls._search_result_cache = {}
+
+    def _search_cache_namespace(self) -> str:
+        return str(getattr(self.db, "_db_url", ""))
+
+    def _load_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
+        stmt = select(
+            StockIndexEntry.canonical_code,
+            StockIndexEntry.display_code,
+            StockIndexEntry.name_zh,
+            StockIndexEntry.pinyin_full,
+            StockIndexEntry.pinyin_abbr,
+            StockIndexEntry.aliases,
+            StockIndexEntry.aliases_text,
+            StockIndexEntry.market,
+            StockIndexEntry.active,
+            StockIndexEntry.popularity,
+        )
+        with self.db.get_session() as session:
+            rows = session.execute(stmt).all()
+
+        entries: list[_CachedStockIndexEntry] = []
+        for row in rows:
+            canonical_code = str(row.canonical_code or "")
+            display_code = str(row.display_code or "")
+            name_zh = str(row.name_zh or "")
+            pinyin_full = str(row.pinyin_full or "")
+            pinyin_abbr = str(row.pinyin_abbr or "")
+            aliases = tuple(_safe_aliases(row.aliases))
+            aliases_text = str(row.aliases_text or "")
+            aliases_norm = tuple(normalize_stock_query(alias) for alias in aliases)
+            entries.append(
+                _CachedStockIndexEntry(
+                    canonical_code=canonical_code,
+                    display_code=display_code,
+                    name_zh=name_zh,
+                    pinyin_full=pinyin_full,
+                    pinyin_abbr=pinyin_abbr,
+                    aliases=aliases,
+                    aliases_text=aliases_text,
+                    market=str(row.market or "CN"),
+                    active=bool(row.active),
+                    popularity=int(row.popularity or 0),
+                    canonical_norm=normalize_stock_query(canonical_code),
+                    display_norm=normalize_stock_query(display_code),
+                    name_norm=normalize_stock_query(name_zh),
+                    pinyin_full_norm=normalize_stock_query(pinyin_full),
+                    pinyin_abbr_norm=normalize_stock_query(pinyin_abbr),
+                    aliases_norm=aliases_norm,
+                    aliases_text_norm=normalize_stock_query(aliases_text),
+                )
+            )
+        return tuple(entries)
+
+    def _get_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
+        namespace = self._search_cache_namespace()
+        now = monotonic()
+        cls = type(self)
+        with cls._search_cache_lock:
+            if (
+                cls._search_cache_entries is not None
+                and cls._search_cache_db_url == namespace
+                and now - cls._search_cache_loaded_at < _SEARCH_CACHE_TTL_SECONDS
+            ):
+                return cls._search_cache_entries
+            entries = self._load_search_entries()
+            cls._search_cache_db_url = namespace
+            cls._search_cache_loaded_at = now
+            cls._search_cache_entries = entries
+            cls._search_result_cache = {}
+            return entries
+
+    def preload_search_cache(self) -> int:
+        return len(self._get_search_entries())
 
     def count(self) -> int:
         with self.db.get_session() as session:
@@ -145,39 +267,33 @@ class StockIndexRepository:
             meta.updated_at = now
             return len(incoming_codes)
 
-        return int(self.db._run_write_transaction("stock_index_sync", write))
+        count = int(self.db._run_write_transaction("stock_index_sync", write))
+        self.clear_search_cache()
+        return count
 
     def search(self, query: str, *, limit: int = 20, active_only: bool = True) -> list[dict[str, Any]]:
         normalized = normalize_stock_query(query)
         if not normalized:
             return []
         limit = max(1, min(int(limit or 20), 50))
-        like_prefix = f"{normalized}%"
-        like_contains = f"%{normalized}%"
+        entries = self._get_search_entries()
+        cache_key = (normalized, limit, bool(active_only))
+        cls = type(self)
+        with cls._search_cache_lock:
+            cached = cls._search_result_cache.get(cache_key)
+            if cached is not None:
+                return [dict(item) for item in cached]
 
-        with self.db.get_session() as session:
-            conditions = [
-                func.lower(StockIndexEntry.canonical_code).like(like_prefix),
-                func.lower(StockIndexEntry.display_code).like(like_prefix),
-                func.lower(StockIndexEntry.name_zh).like(like_contains),
-                func.lower(StockIndexEntry.pinyin_full).like(like_contains),
-                func.lower(StockIndexEntry.pinyin_abbr).like(like_prefix),
-                func.lower(StockIndexEntry.aliases_text).like(like_contains),
-            ]
-            stmt = select(StockIndexEntry).where(or_(*conditions))
-            if active_only:
-                stmt = stmt.where(StockIndexEntry.active.is_(True))
-            stmt = stmt.limit(limit * 4)
-            rows = list(session.execute(stmt).scalars().all())
-
-        ranked: list[tuple[int, int, StockIndexEntry, str]] = []
-        for row in rows:
+        ranked: list[tuple[int, int, _CachedStockIndexEntry, str]] = []
+        for row in entries:
+            if active_only and not row.active:
+                continue
             score, field = _match_score(normalized, row)
             if score > 0:
                 ranked.append((score, int(row.popularity or 0), row, field))
         ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
-        return [
+        result = [
             {
                 "canonicalCode": row.canonical_code,
                 "displayCode": row.display_code,
@@ -189,6 +305,11 @@ class StockIndexRepository:
             }
             for score, _, row, field in ranked[:limit]
         ]
+        with cls._search_cache_lock:
+            if len(cls._search_result_cache) >= _SEARCH_RESULT_CACHE_MAX_SIZE:
+                cls._search_result_cache = {}
+            cls._search_result_cache[cache_key] = [dict(item) for item in result]
+        return result
 
     def get_name_by_code(self, stock_code: str) -> str | None:
         query = normalize_stock_query(stock_code)

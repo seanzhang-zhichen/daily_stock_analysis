@@ -75,6 +75,7 @@
 | [后端架构总览](backend/overview.md) | 后端目录、启动入口、FastAPI、分析管道、Agent、数据源、存储和通知总览 |
 | [后端 API 层](backend/api.md) | 认证、依赖注入、接口分组、错误响应和主要 API 行为 |
 | [后端数据管道](backend/data-pipeline.md) | 股票代码规范化、数据源 fallback、LLM/Agent 分析、异步任务和通知链路 |
+| [首页股票输入到分析任务流程](backend/home-stock-analysis-flow.md) | 首页输入股票代码或名称后，前端补全、分析 API、异步任务队列、SSE 和 pipeline 如何串联 |
 | [后端存储层](backend/storage.md) | SQLAlchemy 模型、Repository、Alembic migration 与用户数据隔离边界 |
 | [后端用户体系与计费](backend/user-system.md) | 注册登录、Session、套餐、配额、订单支付、退款发票和管理员能力 |
 | [API 规格](architecture/api_spec.json) | FastAPI OpenAPI 规格产物 |

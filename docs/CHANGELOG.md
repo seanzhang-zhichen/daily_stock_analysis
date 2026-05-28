@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [文档] 新增 `docs/backend/` 后端理解指南，系统梳理后端架构总览、API 层、数据管道、存储模型以及 To C 用户体系与计费流程，并在中英文文档索引补充入口。
+- [文档] 新增 `docs/backend/home-stock-analysis-flow.md`，梳理 Web 首页输入股票代码或名称后的补全搜索、分析提交、异步任务队列、SSE 状态回传和核心 pipeline 执行链路。
+- [改进] 优化 `/api/v1/stocks/search` 股票自动补全性能：请求路径改为进程内匹配与结果缓存，`stock_index` 轻量搜索缓存改为启动后后台预热，并避免程序内 Alembic 迁移覆盖应用日志配置。
+- [修复] 修复 Web 股票输入框中文补全不稳定的问题：IME 确认最终文本后会触发搜索，临时请求错误或上一次请求取消不再导致后续输入无法弹出 `茅台` 等候选股票。
 - [新功能] 集成 Langfuse LLM 可观测：配置 LANGFUSE_SECRET_KEY / LANGFUSE_PUBLIC_KEY 后，所有 LLM 调用（分析、Agent、大盘复盘）自动上报完整 Trace（prompt / response / token / 耗时）；未配置时无副作用。
 - [修复] Langfuse 可观测兼容新版 `LANGFUSE_BASE_URL` 配置并保留 `LANGFUSE_HOST` 映射，CLI 退出前会尝试 flush，减少短任务 Trace 未上报的问题。
 - [修复] 回测页面结果与指标按当前登录用户隔离，不再混入其他用户的历史分析记录。

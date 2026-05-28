@@ -25,8 +25,8 @@ from src.config import get_config
 # Alembic Config 对象，提供对 .ini 文件的访问
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

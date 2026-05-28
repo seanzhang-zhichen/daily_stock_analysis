@@ -187,6 +187,7 @@ class _DatabaseManagerBase:
 
             alembic_cfg = AlembicConfig(str(alembic_ini))
             alembic_cfg.set_main_option("sqlalchemy.url", self._db_url)
+            alembic_cfg.attributes["configure_logger"] = False
             alembic_command.upgrade(alembic_cfg, "head")
             logger.info("Alembic 迁移完成（upgrade to head）")
         except Exception as exc:  # noqa: BLE001

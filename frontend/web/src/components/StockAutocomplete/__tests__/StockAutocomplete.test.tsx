@@ -5,16 +5,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { StockAutocomplete } from '../StockAutocomplete';
-import type { StockIndexItem } from '../../../types/stockIndex';
-
-let stockIndexHookImpl: () => {
-  index: StockIndexItem[];
-  loading: boolean;
-  fallback: boolean;
-  error: Error | null;
-  loaded: boolean;
-};
-
 let autocompleteHookImpl: () => {
   query: string;
   setQuery: ReturnType<typeof vi.fn>;
@@ -32,30 +22,11 @@ let autocompleteHookImpl: () => {
   runtimeFallback: boolean;
   error: Error | null;
 };
-
-// Mock the hooks
-vi.mock('../../../hooks/useStockIndex', () => ({
-  useStockIndex: () => stockIndexHookImpl(),
-}));
+let mockAutocompleteSetQuery: ReturnType<typeof vi.fn>;
 
 vi.mock('../../../hooks/useAutocomplete', () => ({
   useAutocomplete: () => autocompleteHookImpl(),
 }));
-
-const mockIndex: StockIndexItem[] = [
-  {
-    canonicalCode: "600519.SH",
-    displayCode: "600519",
-    nameZh: "贵州茅台",
-    pinyinFull: "guizhoumaotai",
-    pinyinAbbr: "gzmt",
-    aliases: ["茅台"],
-    market: "CN",
-    assetType: "stock",
-    active: true,
-    popularity: 100,
-  },
-];
 
 const mockSuggestions = [
   {
@@ -95,16 +66,10 @@ describe('StockAutocomplete', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    stockIndexHookImpl = () => ({
-      index: mockIndex,
-      loading: false,
-      fallback: false,
-      error: null,
-      loaded: true,
-    });
+    mockAutocompleteSetQuery = vi.fn();
     autocompleteHookImpl = () => ({
       query: '',
-      setQuery: vi.fn(),
+      setQuery: mockAutocompleteSetQuery,
       suggestions: mockSuggestions,
       isOpen: false,
       highlightedIndex: -1,
@@ -190,6 +155,46 @@ describe('StockAutocomplete', () => {
     expect(mockOnChange).toHaveBeenCalledWith('600519');
   });
 
+  it('updates the autocomplete query immediately when the input changes', () => {
+    render(
+      <StockAutocomplete
+        value=""
+        onChange={mockOnChange}
+        onSubmit={mockOnSubmit}
+      />
+    );
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: '茅台' } });
+
+    expect(mockOnChange).toHaveBeenCalledWith('茅台');
+    expect(mockAutocompleteSetQuery).toHaveBeenCalledWith('茅台');
+  });
+
+  it('keeps autocomplete query updates working across controlled value changes', () => {
+    const { rerender } = render(
+      <StockAutocomplete
+        value=""
+        onChange={mockOnChange}
+        onSubmit={mockOnSubmit}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '茅台' } });
+    expect(mockAutocompleteSetQuery).toHaveBeenLastCalledWith('茅台');
+
+    rerender(
+      <StockAutocomplete
+        value="茅台"
+        onChange={mockOnChange}
+        onSubmit={mockOnSubmit}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '腾讯' } });
+    expect(mockAutocompleteSetQuery).toHaveBeenLastCalledWith('腾讯');
+  });
+
   it('applies a custom class name', () => {
     const { container } = render(
       <StockAutocomplete
@@ -219,27 +224,6 @@ describe('StockAutocomplete', () => {
   });
 
   describe('fallback mode', () => {
-    it('renders a plain input when index loading fallback is active', () => {
-      stockIndexHookImpl = () => ({
-        index: [],
-        loading: false,
-        fallback: true,
-        error: new Error('Index load failed'),
-        loaded: false,
-      });
-
-      render(
-        <StockAutocomplete
-          value=""
-          onChange={mockOnChange}
-          onSubmit={mockOnSubmit}
-        />
-      );
-
-      const input = screen.getByPlaceholderText(/输入股票代码或名称/);
-      expect(input).toHaveAttribute('data-autocomplete-mode', 'fallback');
-    });
-
     it('renders a plain input when autocomplete runtime fallback is active', () => {
       autocompleteHookImpl = () => ({
         query: '',
@@ -306,10 +290,10 @@ describe('StockAutocomplete', () => {
   });
 
   describe('IME support', () => {
-    it('handles composition start and end events', () => {
+    it('searches with the finalized value when IME composition ends', () => {
       render(
         <StockAutocomplete
-          value=""
+          value="茅台"
           onChange={mockOnChange}
           onSubmit={mockOnSubmit}
         />
@@ -320,8 +304,7 @@ describe('StockAutocomplete', () => {
       fireEvent.compositionStart(input);
       fireEvent.compositionEnd(input);
 
-      // The events should be handled without throwing.
-      expect(input).toBeInTheDocument();
+      expect(mockAutocompleteSetQuery).toHaveBeenCalledWith('茅台');
     });
   });
 

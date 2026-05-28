@@ -6,7 +6,7 @@
  */
 
 import { Component, useRef, useEffect, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { CompositionEvent, KeyboardEvent } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAutocomplete } from '../../hooks/useAutocomplete';
@@ -210,8 +210,14 @@ function StockAutocompleteInner({
     setIsComposing(true);
   };
 
-  const handleCompositionEnd = () => {
+  const handleCompositionEnd = (e: CompositionEvent<HTMLInputElement>) => {
     setIsComposing(false);
+    handleInputChange(e.currentTarget.value);
+  };
+
+  const handleInputChange = (nextValue: string) => {
+    onChange(nextValue);
+    setQuery(nextValue);
   };
 
   // Delay closing on blur (avoid immediate close when clicking suggestion items)
@@ -239,7 +245,7 @@ function StockAutocompleteInner({
         ref={inputRef}
         type="text"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => handleInputChange(e.target.value)}
         onKeyDown={handleKeyDown}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}

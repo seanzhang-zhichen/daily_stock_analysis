@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import os
 import re
+from threading import Thread
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +46,16 @@ _FRONTEND_INDEX_NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+
+def _preload_stock_search_cache() -> None:
+    try:
+        from src.repositories.stock_index_repo import StockIndexRepository
+
+        count = StockIndexRepository().preload_search_cache()
+        logger.info("股票搜索缓存预热完成: %d 条", count)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("股票搜索缓存预热失败（非致命）: %s", exc)
 
 
 def _frontend_index_response(static_dir: Path) -> FileResponse:
@@ -177,7 +188,10 @@ async def app_lifespan(app: FastAPI):
     app.state.system_config_service = SystemConfigService()
     from src.data.stock_index_sync import ensure_stock_index_seeded
 
+    logger.info("股票索引数据库初始化检查开始")
     ensure_stock_index_seeded()
+    logger.info("股票索引数据库初始化检查完成")
+    Thread(target=_preload_stock_search_cache, name="stock-search-cache-preload", daemon=True).start()
     try:
         yield
     finally:
