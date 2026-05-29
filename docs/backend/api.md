@@ -245,6 +245,23 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | DELETE | `/{id}` | 需登录 | 删除历史分析记录 |
 | GET | `/compare` | 需登录 | 横向对比多条分析结果 |
 
+历史详情响应的 `details.price_history` 返回最近已保存的日线行情，包含 `date`、`open`、`high`、`low`、`close`、`volume`、`amount`、`pct_chg`、`ma5`、`ma10`、`ma20`、`volume_ratio` 和 `data_source`，供前端在分析报告中展示历史股价走势。
+
+当 Deep Research 能力可用时，个股分析会在正式报告生成前阻塞生成 `details.stock_profile`，并把该结果作为报告中股票基本情况的权威来源注入 LLM / Agent 上下文。正式报告完成后，后端会继续以 Deep Research 结果回写 `raw_result.stock_profile`，避免被报告模型自行生成的 `stock_profile` 覆盖。Deep Research 会由模型在 `AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS` 上限内规划子问题，覆盖充分时可提前收敛；每个子问题的工具循环上限由 `AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS` 控制，并继续受 token budget 和 timeout 约束。直接调用 `/api/v1/agent/research` 仍按 Agent 配额单独计费。
+
+```json
+{
+  "stock_profile": {
+    "research_report": "Markdown 格式的股票基本情况概览",
+    "research_method": "deep_research",
+    "research_sources": ["研究子问题 1", "研究子问题 2"],
+    "research_token_usage": 1234
+  }
+}
+```
+
+该字段存放在历史记录的 `raw_result` 中，不引入数据库 schema 变更；旧历史记录没有该字段时前端隐藏对应内容块。
+
 ---
 
 ### Stocks — 股票数据

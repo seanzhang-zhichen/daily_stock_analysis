@@ -55,6 +55,9 @@ SearchService     StockTrendAnalyzer
         │             │
         └──────┬──────┘
                ▼
+Deep Research 生成 stock_profile
+               │
+               ▼
 GeminiAnalyzer / AgentOrchestrator
                │
                ▼
@@ -267,11 +270,12 @@ StockAnalysisPipeline
 4. 拉取实时行情
 5. 拉取基本面与筹码分布
 6. 搜索新闻/风险/行业情报
-7. 构造 LLM Prompt / Agent Context
-8. 调用 LLM 或 Agent 生成结论
-9. 标准化报告语言和决策字段
-10. 保存 AnalysisHistory
-11. 返回 AnalysisResult
+7. 阻塞执行 Deep Research 生成权威 stock_profile
+8. 构造 LLM Prompt / Agent Context 并注入 stock_profile
+9. 调用 LLM 或 Agent 生成结论
+10. 标准化报告语言和决策字段，并以 Deep Research 结果回写 AnalysisResult.stock_profile
+11. 保存 AnalysisHistory
+12. 返回 AnalysisResult
 ```
 
 ### 批量分析
@@ -523,6 +527,9 @@ GET /api/v1/analysis/tasks/stream
 | `LLM_MODEL` | 默认 LLM 模型 |
 | `AGENT_ARCH` | Agent 架构选择 |
 | `AGENT_MAX_STEPS` | ReAct Agent 最大步数 |
+| `AGENT_DEEP_RESEARCH_TIMEOUT` | Deep Research 总超时秒数，默认 600 秒 |
+| `AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS` | Deep Research 模型规划子问题上限 |
+| `AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS` | Deep Research 单个子问题最大 ReAct/tool 步数 |
 | `TUSHARE_TOKEN` | Tushare 数据源 Token |
 | `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` | 长桥 OpenAPI |
 | `SEARCH_PROVIDER` | 搜索服务提供商 |

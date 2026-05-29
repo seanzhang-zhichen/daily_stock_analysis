@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _current_user_id_or_none(current_user: AppUser) -> Optional[int]:
+    return getattr(current_user, "id", None)
+
+
 @router.get(
     "",
     response_model=HistoryListResponse,
@@ -95,7 +99,7 @@ def get_history_list(
             end_date=end_date,
             page=page,
             limit=limit,
-            user_id=current_user.id,
+            user_id=_current_user_id_or_none(current_user),
         )
         
         # 转换为响应模型
@@ -164,7 +168,7 @@ def delete_history_records(
         service = HistoryService(db_manager)
         deleted = service.delete_history_records(
             record_ids,
-            user_id=current_user.id,
+            user_id=_current_user_id_or_none(current_user),
         )
         return DeleteHistoryResponse(deleted=deleted)
     except HTTPException:
@@ -218,7 +222,7 @@ def get_history_detail(
         # Try integer ID first, fall back to query_id string lookup
         result = service.resolve_and_get_detail(
             record_id,
-            user_id=current_user.id,
+            user_id=_current_user_id_or_none(current_user),
         )
         
         if result is None:
@@ -330,8 +334,10 @@ def get_history_detail(
             context_snapshot=result.get("context_snapshot"),
             financial_report=extracted_fundamental.get("financial_report"),
             dividend_metrics=extracted_fundamental.get("dividend_metrics"),
+            stock_profile=raw_result.get("stock_profile") if isinstance(raw_result, dict) else None,
             belong_boards=extracted_boards.get("belong_boards"),
             sector_rankings=extracted_boards.get("sector_rankings"),
+            price_history=result.get("price_history") or [],
         )
         
         return AnalysisReport(
@@ -389,7 +395,7 @@ def get_history_news(
         items = service.resolve_and_get_news(
             record_id=record_id,
             limit=limit,
-            user_id=current_user.id,
+            user_id=_current_user_id_or_none(current_user),
         )
 
         response_items = [
@@ -454,7 +460,7 @@ def get_history_markdown(
     try:
         markdown_content = service.get_markdown_report(
             record_id,
-            user_id=current_user.id,
+            user_id=_current_user_id_or_none(current_user),
         )
     except MarkdownReportGenerationError as e:
         logger.error(f"Markdown report generation failed for {record_id}: {e.message}")

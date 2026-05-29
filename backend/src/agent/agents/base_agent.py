@@ -193,8 +193,9 @@ class BaseAgent(ABC):
                 except (TypeError, ValueError):
                     serialised = str(value)
                 # Cap per-field size to avoid overwhelming the context window
-                if len(serialised) > 8000:
-                    serialised = serialised[:8000] + "...(truncated)"
+                max_chars = 30000 if key == "stock_profile" else 8000
+                if len(serialised) > max_chars:
+                    serialised = serialised[:max_chars] + "...(truncated)"
                 parts.append(f"[Pre-fetched: {key}]\n{serialised}")
         memory_context = self._build_memory_context(ctx)
         if memory_context:

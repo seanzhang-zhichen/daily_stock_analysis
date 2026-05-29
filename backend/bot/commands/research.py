@@ -95,14 +95,18 @@ class ResearchCommand(BotCommand):
             registry = get_tool_registry()
             llm_adapter = LLMToolAdapter(config)
             budget = getattr(config, "agent_deep_research_budget", 30000)
+            max_sub_questions = getattr(config, "agent_deep_research_max_sub_questions", 8)
+            sub_question_steps = getattr(config, "agent_deep_research_sub_question_steps", 6)
 
             agent = ResearchAgent(
                 tool_registry=registry,
                 llm_adapter=llm_adapter,
                 token_budget=budget,
+                max_sub_questions=max_sub_questions,
+                sub_question_max_steps=sub_question_steps,
             )
 
-            research_timeout = getattr(config, "agent_deep_research_timeout", 180)
+            research_timeout = getattr(config, "agent_deep_research_timeout", 600)
             logger.info("[ResearchCommand] Starting deep research (timeout=%ds): %s", research_timeout, question[:100])
             t0 = time.time()
             result = agent.research(

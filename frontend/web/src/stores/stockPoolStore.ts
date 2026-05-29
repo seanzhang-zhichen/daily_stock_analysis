@@ -197,7 +197,7 @@ async function fetchHistory(
       selectedHistoryIds: get().selectedHistoryIds.filter((id) => visibleIds.has(id)),
     });
 
-    if (autoSelectFirst && response.items.length > 0 && !get().selectedReport) {
+    if ((autoSelectFirst || (silent && reset)) && response.items.length > 0 && !get().selectedReport) {
       await get().selectHistoryItem(response.items[0].id);
     }
 

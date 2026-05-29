@@ -229,100 +229,104 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
   onKeyDown,
 }) => (
   <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
-    <div className="flex max-w-5xl flex-wrap items-center gap-2">
-      <div className="relative min-w-0 flex-[1_1_220px]">
-        <input
-          type="text"
-          value={codeFilter}
-          onChange={(e) => onCodeFilterChange(e.target.value.toUpperCase())}
-          onKeyDown={onKeyDown}
-          placeholder="输入股票代码，可留空查看全部"
-          disabled={isRunning}
-          className={BACKTEST_INPUT_CLASS}
-        />
-      </div>
-      <Button
-        variant="outline"
-        onClick={onFilter}
-        disabled={isLoadingResults}
-        className="whitespace-nowrap"
-      >
-        筛选
-      </Button>
-      <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
-        <Tooltip content="AI 给出结论后，往后看几个交易日来评估对错。填 1 = 只看下一个交易日" focusable>
-          <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
-            验证周期
-            <HelpCircle className="h-3 w-3" />
-          </span>
-        </Tooltip>
-        <input
-          type="number"
-          min={1}
-          max={120}
-          value={evalDays}
-          onChange={(e) => onEvalDaysChange(e.target.value)}
-          placeholder="10"
-          disabled={isRunning}
-          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-24 text-center tabular-nums`}
-        />
-      </div>
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        <Tooltip content="只统计这段时间内 AI 做出的历史分析" focusable>
-          <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
-            开始日期
-            <HelpCircle className="h-3 w-3" />
-          </span>
-        </Tooltip>
-        <input
-          type="date"
-          aria-label="分析开始日期"
-          value={analysisDateFrom}
-          onChange={(e) => onAnalysisDateFromChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={isRunning}
-          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
-        />
-      </div>
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        <span className="text-xs text-muted-text">结束日期</span>
-        <input
-          type="date"
-          aria-label="分析结束日期"
-          value={analysisDateTo}
-          onChange={(e) => onAnalysisDateToChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={isRunning}
-          className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
-        />
-      </div>
-      <Tooltip content="开启后会重新计算已有的回测记录，否则会跳过已完成的条目" focusable>
-        <label className={cn(
-          'flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-sm transition-colors',
-          isRunning && 'cursor-not-allowed opacity-60',
-          forceRerun
-            ? 'border-primary/40 bg-primary/10 text-primary'
-            : 'border-border/60 bg-surface text-secondary-text hover:border-border hover:text-foreground',
-        )}>
+    <div className="flex max-w-7xl flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-[1_1_220px]">
           <input
-            type="checkbox"
-            checked={forceRerun}
-            onChange={onForceRerunToggle}
+            type="text"
+            value={codeFilter}
+            onChange={(e) => onCodeFilterChange(e.target.value.toUpperCase())}
+            onKeyDown={onKeyDown}
+            placeholder="输入股票代码，可留空查看全部"
             disabled={isRunning}
-            className="h-3.5 w-3.5 cursor-pointer accent-primary disabled:cursor-not-allowed"
+            className={BACKTEST_INPUT_CLASS}
           />
-          强制重算
-        </label>
-      </Tooltip>
-      <Button
-        variant="primary"
-        onClick={onRun}
-        disabled={isRunning}
-        isLoading={isRunning}
-        className="whitespace-nowrap"
-      >
-        开始验证
-      </Button>
+        </div>
+        <Button
+          variant="outline"
+          onClick={onFilter}
+          disabled={isLoadingResults}
+          className="whitespace-nowrap"
+        >
+          筛选
+        </Button>
+        <div className="flex items-center gap-2 whitespace-nowrap lg:w-40 lg:justify-between">
+          <Tooltip content="AI 给出结论后，往后看几个交易日来评估对错。填 1 = 只看下一个交易日" focusable>
+            <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
+              验证周期
+              <HelpCircle className="h-3 w-3" />
+            </span>
+          </Tooltip>
+          <input
+            type="number"
+            min={1}
+            max={120}
+            value={evalDays}
+            onChange={(e) => onEvalDaysChange(e.target.value)}
+            placeholder="10"
+            disabled={isRunning}
+            className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-24 text-center tabular-nums`}
+          />
+        </div>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <Tooltip content="只统计这段时间内 AI 做出的历史分析" focusable>
+            <span className="flex cursor-help items-center gap-1 text-xs text-muted-text">
+              开始日期
+              <HelpCircle className="h-3 w-3" />
+            </span>
+          </Tooltip>
+          <input
+            type="date"
+            aria-label="分析开始日期"
+            value={analysisDateFrom}
+            onChange={(e) => onAnalysisDateFromChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={isRunning}
+            className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
+          />
+        </div>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <span className="text-xs text-muted-text">结束日期</span>
+          <input
+            type="date"
+            aria-label="分析结束日期"
+            value={analysisDateTo}
+            onChange={(e) => onAnalysisDateToChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={isRunning}
+            className={`${BACKTEST_COMPACT_INPUT_CLASS} !w-40 text-center tabular-nums`}
+          />
+        </div>
+      </div>
+      <div className="flex flex-shrink-0 items-center gap-2 sm:ml-auto">
+        <Tooltip content="开启后会重新计算已有的回测记录，否则会跳过已完成的条目" focusable>
+          <label className={cn(
+            'flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-sm transition-colors',
+            isRunning && 'cursor-not-allowed opacity-60',
+            forceRerun
+              ? 'border-primary/40 bg-primary/10 text-primary'
+              : 'border-border/60 bg-surface text-secondary-text hover:border-border hover:text-foreground',
+          )}>
+            <input
+              type="checkbox"
+              checked={forceRerun}
+              onChange={onForceRerunToggle}
+              disabled={isRunning}
+              className="h-3.5 w-3.5 cursor-pointer accent-primary disabled:cursor-not-allowed"
+            />
+            强制重算
+          </label>
+        </Tooltip>
+        <Button
+          variant="primary"
+          onClick={onRun}
+          disabled={isRunning}
+          isLoading={isRunning}
+          className="whitespace-nowrap"
+        >
+          开始验证
+        </Button>
+      </div>
     </div>
     {runResult && (
       <div className="mt-2 max-w-4xl">
@@ -550,7 +554,7 @@ const BacktestPage: React.FC = () => {
   const [analysisDateFrom, setAnalysisDateFrom] = useState(defaultDates.from);
   const [analysisDateTo, setAnalysisDateTo] = useState(defaultDates.to);
   const [evalDays, setEvalDays] = useState(DEFAULT_EVAL_DAYS);
-  const [forceRerun, setForceRerun] = useState(false);
+  const [forceRerun, setForceRerun] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<BacktestRunResponse | null>(null);
   const [runError, setRunError] = useState<ParsedApiError | null>(null);

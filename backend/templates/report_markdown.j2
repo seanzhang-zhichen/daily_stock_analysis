@@ -21,6 +21,17 @@
 
 ## {{ e.signal_emoji }} {{ e.stock_name }} ({{ result.code }})
 
+{% if result.stock_profile and result.stock_profile.get('research_report') %}
+### 🧭 {{ labels.stock_profile_heading }}
+
+{{ result.stock_profile.get('research_report') }}
+
+{% if result.stock_profile.get('research_method') %}
+*{{ labels.stock_profile_method_label }}：{{ result.stock_profile.get('research_method') }}*
+{% endif %}
+
+{% endif %}
+
 {% if intel %}
 ### 📰 {{ labels.info_heading }}
 

@@ -1296,6 +1296,10 @@
               "context_snapshot": {
                 "type": "object",
                 "description": "分析时上下文快照（JSON）"
+              },
+              "stock_profile": {
+                "type": "object",
+                "description": "Deep Research 生成的股票基本情况"
               }
             }
           }

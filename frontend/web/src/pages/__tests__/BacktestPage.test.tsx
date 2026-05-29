@@ -94,6 +94,7 @@ describe('BacktestPage', () => {
 
     expect(filterInput).toHaveClass('ui-input');
     expect(windowInput).toHaveClass('ui-input');
+    expect(screen.getByLabelText('强制重算')).toBeChecked();
 
     expect(await screen.findByText('命中')).toBeInTheDocument();
     expect(screen.getByText('已完成')).toBeInTheDocument();
@@ -142,6 +143,8 @@ describe('BacktestPage', () => {
 
     const filterInput = await screen.findByPlaceholderText('输入股票代码，可留空查看全部');
     const windowInput = screen.getByPlaceholderText('10');
+    const fromInput = screen.getByLabelText('分析开始日期') as HTMLInputElement;
+    const toInput = screen.getByLabelText('分析结束日期') as HTMLInputElement;
 
     fireEvent.change(filterInput, { target: { value: 'tsla' } });
     fireEvent.change(windowInput, { target: { value: '15' } });
@@ -150,8 +153,8 @@ describe('BacktestPage', () => {
     await waitFor(() => {
       expect(mockRun).toHaveBeenCalledWith({
         code: 'TSLA',
-        force: undefined,
-        minAgeDays: undefined,
+        force: true,
+        minAgeDays: 0,
         evalWindowDays: 15,
       });
     });
@@ -160,15 +163,15 @@ describe('BacktestPage', () => {
       expect(mockGetResults).toHaveBeenLastCalledWith({
         code: 'TSLA',
         evalWindowDays: 15,
-        analysisDateFrom: undefined,
-        analysisDateTo: undefined,
+        analysisDateFrom: fromInput.value,
+        analysisDateTo: toInput.value,
         page: 1,
         limit: 20,
       });
       expect(mockGetStockPerformance).toHaveBeenLastCalledWith('TSLA', {
         evalWindowDays: 15,
-        analysisDateFrom: undefined,
-        analysisDateTo: undefined,
+        analysisDateFrom: fromInput.value,
+        analysisDateTo: toInput.value,
       });
     });
 
@@ -176,25 +179,30 @@ describe('BacktestPage', () => {
     expect(screen.getByText('已保存：')).toBeInTheDocument();
   });
 
-  it('switches to next-day validation with the 1D shortcut', async () => {
+  it('switches to next-day validation when the eval window is 1', async () => {
     render(<BacktestPage />);
 
     await screen.findByPlaceholderText('输入股票代码，可留空查看全部');
-    fireEvent.click(screen.getByRole('button', { name: '次日验证' }));
+    const windowInput = screen.getByPlaceholderText('10');
+    const fromInput = screen.getByLabelText('分析开始日期') as HTMLInputElement;
+    const toInput = screen.getByLabelText('分析结束日期') as HTMLInputElement;
+
+    fireEvent.change(windowInput, { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: '筛选' }));
 
     await waitFor(() => {
       expect(mockGetResults).toHaveBeenLastCalledWith({
         code: undefined,
         evalWindowDays: 1,
-        analysisDateFrom: undefined,
-        analysisDateTo: undefined,
+        analysisDateFrom: fromInput.value,
+        analysisDateTo: toInput.value,
         page: 1,
         limit: 20,
       });
       expect(mockGetOverallPerformance).toHaveBeenLastCalledWith({
         evalWindowDays: 1,
-        analysisDateFrom: undefined,
-        analysisDateTo: undefined,
+        analysisDateFrom: fromInput.value,
+        analysisDateTo: toInput.value,
       });
     });
 

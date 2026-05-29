@@ -533,7 +533,7 @@ def _handle_sync_analysis(
 
         # 构建报告结构
         report_data = result.get("report", {})
-        context_snapshot, fundamental_snapshot = _load_sync_fundamental_sources(
+        context_snapshot, fundamental_snapshot, price_history = _load_sync_fundamental_sources(
             query_id=query_id,
             stock_code=result.get("stock_code", stock_code),
         )
@@ -544,6 +544,7 @@ def _handle_sync_analysis(
             result.get("stock_name"),
             context_snapshot=context_snapshot,
             fallback_fundamental_payload=fundamental_snapshot,
+            price_history=price_history,
         )
 
         return AnalysisResultResponse(
@@ -950,6 +951,12 @@ def get_analysis_status(
                     stop_loss=_stringify_report_strategy_value(getattr(record, 'stop_loss', None)),
                     take_profit=_stringify_report_strategy_value(getattr(record, 'take_profit', None)),
                 ),
+                details=ReportDetails(
+                    news_content=getattr(record, "news_content", None),
+                    raw_result=raw_result,
+                    context_snapshot=context_snapshot,
+                    stock_profile=raw_result.get("stock_profile") if isinstance(raw_result, dict) else None,
+                ),
             ).model_dump()
             return TaskStatus(
                 task_id=task_id,
@@ -993,7 +1000,7 @@ def get_analysis_status(
 def _load_sync_fundamental_sources(
     query_id: str,
     stock_code: str,
-) -> tuple[Optional[Any], Optional[Dict[str, Any]]]:
+) -> tuple[Optional[Any], Optional[Dict[str, Any]], list[Dict[str, Any]]]:
     """
     Load context_snapshot and fallback fundamental snapshot for sync analyze response.
     """
@@ -1010,7 +1017,15 @@ def _load_sync_fundamental_sources(
             query_id=query_id,
             code=stock_code,
         )
-        return context_snapshot, fallback_fundamental
+        price_history = []
+        for row in reversed(db.get_latest_data(stock_code, days=60)):
+            item = row.to_dict()
+            row_date = item.get("date")
+            if hasattr(row_date, "isoformat"):
+                item["date"] = row_date.isoformat()
+            price_history.append(item)
+
+        return context_snapshot, fallback_fundamental, price_history
     except Exception as e:
         logger.debug(
             "load sync fundamental sources failed (fail-open): query_id=%s stock_code=%s err=%s",
@@ -1018,7 +1033,7 @@ def _load_sync_fundamental_sources(
             stock_code,
             e,
         )
-        return None, None
+        return None, None, []
 
 
 def _stringify_report_strategy_value(value: Any) -> Optional[str]:
@@ -1036,6 +1051,7 @@ def _build_analysis_report(
         stock_name: Optional[str] = None,
         context_snapshot: Optional[Any] = None,
         fallback_fundamental_payload: Optional[Dict[str, Any]] = None,
+        price_history: Optional[list[Dict[str, Any]]] = None,
 ) -> AnalysisReport:
     """
     构建符合 API 规范的分析报告
@@ -1105,15 +1121,24 @@ def _build_analysis_report(
     )
     details = None
     has_board_details = bool(extracted_boards.get("belong_boards")) or extracted_boards.get("sector_rankings") is not None
-    if details_data or any(extracted_fundamental.values()) or has_board_details or context_snapshot is not None:
+    if (
+        details_data
+        or any(extracted_fundamental.values())
+        or has_board_details
+        or context_snapshot is not None
+        or price_history
+        or details_data.get("stock_profile")
+    ):
         details = ReportDetails(
             news_content=details_data.get("news_summary") or details_data.get("news_content"),
             raw_result=details_data,
             context_snapshot=context_snapshot,
             financial_report=extracted_fundamental.get("financial_report"),
             dividend_metrics=extracted_fundamental.get("dividend_metrics"),
+            stock_profile=details_data.get("stock_profile"),
             belong_boards=extracted_boards.get("belong_boards"),
             sector_rankings=extracted_boards.get("sector_rankings"),
+            price_history=price_history or [],
         )
 
     return AnalysisReport(

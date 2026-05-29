@@ -302,7 +302,7 @@ class AgentSkillsEndpointTestCase(unittest.TestCase):
         config = SimpleNamespace(
             is_agent_available=lambda: True,
             agent_deep_research_budget=30000,
-            agent_deep_research_timeout=180,
+            agent_deep_research_timeout=600,
         )
         request = agent.ResearchRequest(question="why")
         user = SimpleNamespace(id=7)

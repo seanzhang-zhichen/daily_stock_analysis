@@ -240,6 +240,199 @@
   color: hsl(var(--color-subtle-foreground));
 }
 
+.stock-profile-card {
+  background:
+    radial-gradient(circle at 0 0, hsl(var(--color-primary) / 0.07), transparent 18rem),
+    hsl(var(--color-surface) / 0.96);
+}
+
+.stock-profile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  counter-reset: stock-profile-section;
+  border: 1px solid hsl(var(--color-border) / 0.72);
+  border-radius: calc(var(--radius-lg) + 0.25rem);
+  background:
+    linear-gradient(180deg, hsl(var(--color-surface) / 0.92), hsl(var(--color-surface-muted) / 0.34)),
+    hsl(var(--color-surface) / 0.92);
+  padding: clamp(1rem, 2vw, 1.5rem);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.68);
+}
+
+.stock-profile-section {
+  position: relative;
+  counter-increment: stock-profile-section;
+  border: 1px solid hsl(var(--color-border) / 0.62);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, hsl(var(--color-surface) / 0.94), hsl(var(--color-surface) / 0.82)),
+    hsl(var(--color-surface) / 0.9);
+  padding: clamp(0.875rem, 1.6vw, 1.25rem);
+}
+
+.stock-profile-section::before {
+  position: absolute;
+  top: 0.875rem;
+  right: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid hsl(var(--color-primary) / 0.22);
+  border-radius: 999px;
+  background: hsl(var(--color-primary) / 0.08);
+  color: hsl(var(--color-primary));
+  content: counter(stock-profile-section, decimal-leading-zero);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.stock-profile-section:first-child {
+  border-color: hsl(var(--color-primary) / 0.2);
+  background:
+    linear-gradient(135deg, hsl(var(--color-primary) / 0.07), transparent 16rem),
+    hsl(var(--color-surface) / 0.94);
+}
+
+.stock-profile-prose {
+  color: hsl(var(--color-foreground) / 0.9);
+  font-size: 0.9375rem;
+  line-height: 1.85;
+}
+
+.stock-profile-prose :where(h1, h2) {
+  position: relative;
+  margin-top: 1.75rem;
+  margin-bottom: 0.875rem;
+  padding-right: 2.25rem;
+  padding-left: 0.875rem;
+  letter-spacing: -0.01em;
+}
+
+.stock-profile-prose :where(h1, h2):first-child {
+  margin-top: 0;
+}
+
+.stock-profile-prose :where(h1, h2)::before {
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--color-primary)),
+    hsl(var(--color-primary) / 0.35)
+  );
+  content: "";
+}
+
+.stock-profile-prose :where(h1) {
+  border-bottom: 1px solid hsl(var(--color-border) / 0.68);
+  padding-bottom: 0.625rem;
+  color: hsl(var(--color-primary));
+}
+
+.stock-profile-prose :where(h2) {
+  color: hsl(var(--color-foreground));
+}
+
+.stock-profile-prose :where(h2 + p, h2 + ul, h2 + ol) {
+  margin-top: 0;
+}
+
+.stock-profile-prose :where(h3) {
+  margin-top: 1.25rem;
+  margin-bottom: 0.625rem;
+  color: hsl(var(--color-foreground));
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.stock-profile-prose :where(p) {
+  max-width: 74ch;
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+}
+
+.stock-profile-section:first-child :where(p:first-of-type) {
+  color: hsl(var(--color-foreground));
+  font-size: 1rem;
+  line-height: 1.9;
+}
+
+.stock-profile-prose :where(p + p) {
+  margin-top: 0.5rem;
+}
+
+.stock-profile-prose :where(ul, ol) {
+  max-width: 74ch;
+  margin-top: 0.625rem;
+  margin-bottom: 1rem;
+  padding-left: 1.35rem;
+}
+
+.stock-profile-prose :where(li) {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+  padding-left: 0.125rem;
+}
+
+.stock-profile-prose :where(strong) {
+  color: hsl(var(--color-foreground));
+  font-weight: 700;
+}
+
+.stock-profile-prose :where(hr) {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.stock-profile-prose :where(blockquote) {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-left-width: 3px;
+  padding: 0.75rem 1rem;
+}
+
+.stock-profile-prose :where(table) {
+  display: block;
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+}
+
+.stock-profile-prose :where(th, td) {
+  padding: 0.5rem 0.625rem;
+}
+
+@media (width <= 640px) {
+  .stock-profile-body {
+    padding: 0.875rem;
+  }
+
+  .stock-profile-section {
+    padding: 0.875rem;
+  }
+
+  .stock-profile-section::before {
+    top: 0.75rem;
+    right: 0.75rem;
+  }
+
+  .stock-profile-prose {
+    font-size: 0.875rem;
+    line-height: 1.75;
+  }
+
+  .stock-profile-prose :where(h1, h2) {
+    margin-top: 1.35rem;
+  }
+}
+
 .ui-eyebrow {
   display: inline-flex;
   align-items: center;

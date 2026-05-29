@@ -1790,12 +1790,88 @@ class TestResearchAgentFilteredRegistry(unittest.TestCase):
             content='{"questions":["Q1","Q2"]}',
             usage={"total_tokens": 42},
         )
-        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=llm_adapter)
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=llm_adapter, max_sub_questions=7)
 
         result = agent._decompose_query("分析 600519", {"stock_code": "600519"})
 
         self.assertEqual(result["questions"], ["Q1", "Q2"])
         llm_adapter.call_text.assert_called_once()
+        system_prompt = llm_adapter.call_text.call_args.args[0][0]["content"]
+        self.assertIn("up to 7", system_prompt)
+        self.assertIn("Stop early", system_prompt)
+
+    def test_decompose_query_llm_timeout_falls_back_when_budget_remains(self):
+        from src.agent.research import ResearchAgent
+
+        llm_adapter = MagicMock()
+        llm_adapter.call_text.side_effect = RuntimeError("litellm.Timeout: Request timed out")
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=llm_adapter)
+
+        result = agent._decompose_query("分析 600519", {"stock_code": "600519"}, timeout_seconds=600)
+
+        self.assertEqual(result["questions"], ["分析 600519"])
+        self.assertFalse(result.get("timed_out", False))
+        self.assertIn("litellm.Timeout", result["error"])
+        self.assertEqual(llm_adapter.call_text.call_args.kwargs["timeout"], 600)
+
+    def test_research_continues_when_decompose_llm_timeout_has_budget_remaining(self):
+        from src.agent.research import ResearchAgent
+
+        llm_adapter = MagicMock()
+        llm_adapter.call_text.side_effect = RuntimeError("litellm.Timeout: Request timed out")
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=llm_adapter)
+
+        with patch.object(
+            agent,
+            "_research_sub_question",
+            return_value={"question": "分析 600519", "content": "done", "tokens": 7, "success": True},
+        ) as research_sub_question, patch.object(
+            agent,
+            "_synthesise_report",
+            return_value={"content": "report", "tokens": 5},
+        ):
+            result = agent.research("分析 600519", timeout_seconds=600)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.sub_questions, ["分析 600519"])
+        self.assertEqual(research_sub_question.call_count, 1)
+
+    def test_research_clamps_planned_questions_to_configured_limit(self):
+        from src.agent.research import ResearchAgent
+
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=MagicMock(), max_sub_questions=2)
+        with patch.object(
+            agent,
+            "_decompose_query",
+            return_value={"questions": ["Q1", "Q2", "Q3"], "tokens": 3},
+        ), patch.object(
+            agent,
+            "_research_sub_question",
+            return_value={"question": "Q", "content": "done", "tokens": 7, "success": True},
+        ) as research_sub_question, patch.object(
+            agent,
+            "_synthesise_report",
+            return_value={"content": "report", "tokens": 5},
+        ):
+            result = agent.research("分析 600519")
+
+        self.assertEqual(result.sub_questions, ["Q1", "Q2"])
+        self.assertEqual(research_sub_question.call_count, 2)
+
+    def test_research_sub_question_uses_configured_step_limit(self):
+        from src.agent.research import ResearchAgent
+
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=MagicMock(), sub_question_max_steps=9)
+        with patch("src.agent.research.run_agent_loop", return_value=SimpleNamespace(
+            success=True,
+            content="done",
+            total_tokens=7,
+            error=None,
+        )) as run_loop:
+            result = agent._research_sub_question("Q1", {}, 0, timeout_seconds=10)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(run_loop.call_args.kwargs["max_steps"], 9)
 
     def test_synthesise_report_uses_shared_adapter(self):
         from src.agent.research import ResearchAgent
@@ -1878,6 +1954,8 @@ class TestAgentResearchEndpoint(unittest.IsolatedAsyncioTestCase):
             litellm_model="gemini/test-model",
             agent_deep_research_budget=30000,
             agent_deep_research_timeout=1,
+            agent_deep_research_max_sub_questions=9,
+            agent_deep_research_sub_question_steps=7,
             is_agent_available=lambda: True,
         )
 
@@ -1897,11 +1975,14 @@ class TestAgentResearchEndpoint(unittest.IsolatedAsyncioTestCase):
             patch("api.v1.endpoints.agent._run_research_in_background", new=research_result),
             patch("src.agent.factory.get_tool_registry", return_value=MagicMock()),
             patch("src.agent.llm_adapter.LLMToolAdapter", return_value=MagicMock()),
+            patch("src.agent.research.ResearchAgent") as research_agent,
         ):
             response = await agent_research(ResearchRequest(question="600519 风险"))
 
         self.assertFalse(response.success)
         self.assertIn("timed out", response.error)
+        self.assertEqual(research_agent.call_args.kwargs["max_sub_questions"], 9)
+        self.assertEqual(research_agent.call_args.kwargs["sub_question_max_steps"], 7)
 
 
 if __name__ == '__main__':

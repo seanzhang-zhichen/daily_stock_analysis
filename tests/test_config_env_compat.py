@@ -431,6 +431,33 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_deep_research_iteration_config_defaults_and_bounds(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.agent_deep_research_max_sub_questions, 8)
+        self.assertEqual(config.agent_deep_research_sub_question_steps, 6)
+        self.assertEqual(config.agent_deep_research_timeout, 600)
+
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS": "30",
+                "AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS": "0",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.agent_deep_research_max_sub_questions, 20)
+        self.assertEqual(config.agent_deep_research_sub_question_steps, 1)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_stock_email_groups_support_case_insensitive_env_names(
         self,
         _mock_parse_yaml,

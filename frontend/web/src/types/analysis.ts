@@ -96,6 +96,30 @@ export interface SectorRankings {
   bottom?: SectorRankingItem[];
 }
 
+export interface PriceHistoryItem {
+  code: string;
+  date: string;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  volume?: number | null;
+  amount?: number | null;
+  pctChg?: number | null;
+  ma5?: number | null;
+  ma10?: number | null;
+  ma20?: number | null;
+  volumeRatio?: number | null;
+  dataSource?: string | null;
+}
+
+export interface StockProfile {
+  researchReport?: string;
+  researchMethod?: string;
+  researchSources?: string[];
+  researchTokenUsage?: number;
+}
+
 /** Details section */
 export interface ReportDetails {
   newsContent?: string;
@@ -103,8 +127,10 @@ export interface ReportDetails {
   contextSnapshot?: Record<string, unknown>;
   financialReport?: Record<string, unknown>;
   dividendMetrics?: Record<string, unknown>;
+  stockProfile?: StockProfile;
   belongBoards?: RelatedBoard[];
   sectorRankings?: SectorRankings;
+  priceHistory?: PriceHistoryItem[];
 }
 
 /** Full analysis report */

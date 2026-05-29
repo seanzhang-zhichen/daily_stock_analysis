@@ -707,8 +707,15 @@ class AgentOrchestrator:
             ctx.meta["report_language"] = normalize_report_language(context.get("report_language", "zh"))
 
             # Pre-populate data fields that the caller already has
-            for data_key in ("realtime_quote", "daily_history", "chip_distribution",
-                             "trend_result", "news_context"):
+            for data_key in (
+                "realtime_quote",
+                "daily_history",
+                "chip_distribution",
+                "trend_result",
+                "news_context",
+                "fundamental_context",
+                "stock_profile",
+            ):
                 if context.get(data_key):
                     ctx.set_data(data_key, context[data_key])
 

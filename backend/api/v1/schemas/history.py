@@ -154,8 +154,10 @@ class ReportDetails(BaseModel):
     context_snapshot: Optional[Any] = Field(None, description="分析时上下文快照（JSON）")
     financial_report: Optional[Any] = Field(None, description="结构化财报摘要（来自 fundamental_context）")
     dividend_metrics: Optional[Any] = Field(None, description="结构化分红指标（含 TTM 口径）")
+    stock_profile: Optional[Any] = Field(None, description="Deep Research 生成的股票基本情况")
     belong_boards: Optional[Any] = Field(None, description="关联板块列表")
     sector_rankings: Optional[Any] = Field(None, description="板块涨跌榜（结构 {top, bottom}）")
+    price_history: List[Any] = Field(default_factory=list, description="历史股价（日线 OHLCV 与均线）")
 
 
 class AnalysisReport(BaseModel):

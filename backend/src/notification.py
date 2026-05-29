@@ -987,6 +987,20 @@ class NotificationService(
                     f"## {signal_emoji} {stock_name} ({result.code})",
                     "",
                 ])
+
+                stock_profile = getattr(result, "stock_profile", None)
+                if isinstance(stock_profile, dict) and stock_profile.get("research_report"):
+                    report_lines.extend([
+                        f"### 🧭 {labels['stock_profile_heading']}",
+                        "",
+                        str(stock_profile.get("research_report", "")).strip(),
+                        "",
+                    ])
+                    if stock_profile.get("research_method"):
+                        report_lines.extend([
+                            f"*{labels['stock_profile_method_label']}：{stock_profile.get('research_method')}*",
+                            "",
+                        ])
                 
                 # ========== 舆情与基本面概览（放在最前面）==========
                 intel = dashboard.get('intelligence', {}) if dashboard else {}

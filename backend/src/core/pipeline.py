@@ -12,6 +12,7 @@ A股自选股智能分析系统 - 核心分析流水线
 """
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -74,6 +75,10 @@ class StockAnalysisPipeline:
     2. 协调数据获取、存储、搜索、分析、通知等模块
     3. 实现并发控制和异常处理
     """
+    _STOCK_PROFILE_META_LINE_PATTERN = re.compile(
+        r"^\s*(?:如果你愿意|如需我|我可以|我还能|下一步我可以|下一步可以|是否需要我|Would you like|I can|If you want|Next[, ]+I can)",
+        re.IGNORECASE,
+    )
     
     def __init__(
         self,
@@ -478,6 +483,23 @@ class StockAnalysisPipeline:
                 stock_name,  # 传入股票名称
                 fundamental_context,
             )
+            deep_research_profile = self._build_deep_research_stock_profile(
+                code,
+                stock_name,
+                {
+                    "stock_code": code,
+                    "stock_name": stock_name,
+                    "report_language": normalize_report_language(getattr(self.config, "report_language", "zh")),
+                    "fundamental_context": fundamental_context,
+                    "news_context": news_context,
+                    "realtime_quote": self._safe_to_dict(realtime_quote) if realtime_quote else None,
+                    "chip_distribution": self._safe_to_dict(chip_data) if chip_data else None,
+                    "trend_result": self._safe_to_dict(trend_result) if trend_result else None,
+                    "analysis_context": enhanced_context,
+                },
+            )
+            if deep_research_profile:
+                enhanced_context["stock_profile"] = deep_research_profile
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
             llm_progress_state = {"last_progress": 64}
@@ -516,6 +538,7 @@ class StockAnalysisPipeline:
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
+                result.stock_profile = deep_research_profile
 
             # Step 8: 保存分析历史记录
             if result and result.success:
@@ -845,6 +868,13 @@ class StockAnalysisPipeline:
 
             # Issue #1066: ensure deep history is in DB before agent tools run
             self._ensure_agent_history(code)
+            deep_research_profile = self._build_deep_research_stock_profile(
+                code,
+                stock_name,
+                initial_context,
+            )
+            if deep_research_profile:
+                initial_context["stock_profile"] = deep_research_profile
 
             # 运行 Agent
             if report_language == "en":
@@ -887,6 +917,7 @@ class StockAnalysisPipeline:
                     result.current_price = realtime_data.get("price")
                     result.change_pct = realtime_data.get("change_pct")
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
+                result.stock_profile = deep_research_profile
 
             resolved_stock_name = result.name if result and result.name else stock_name
 
@@ -935,6 +966,111 @@ class StockAnalysisPipeline:
             logger.error(f"[{code}] Agent 分析失败: {e}")
             logger.exception(f"[{code}] Agent 详细错误信息:")
             return None
+
+    def _is_deep_research_profile_requested(self) -> bool:
+        is_available = getattr(self.config, "is_agent_available", None)
+        if callable(is_available):
+            return bool(is_available())
+        return bool(getattr(self.config, "agent_mode", False))
+
+    def _build_deep_research_stock_profile(
+        self,
+        code: str,
+        stock_name: str,
+        context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not self._is_deep_research_profile_requested():
+            return None
+
+        try:
+            is_available = getattr(self.config, "is_agent_available", None)
+            if callable(is_available) and not is_available():
+                raise RuntimeError("Agent/LLM capability is unavailable")
+
+            from src.agent.factory import get_tool_registry
+            from src.agent.llm_adapter import LLMToolAdapter
+            from src.agent.research import ResearchAgent
+
+            report_language = normalize_report_language(
+                context.get("report_language")
+                or getattr(self.config, "report_language", "zh")
+            )
+            if report_language == "en":
+                query = (
+                    f"Create a comprehensive and detailed Deep Research stock profile for {stock_name} ({code}). "
+                    "Cover company overview, business lines, revenue/profit drivers, business model, products, customers, supply chain, "
+                    "competitive moat, industry structure, market position, shareholder/management context, financial quality, valuation context, "
+                    "recent catalysts, key risks, source clues, unresolved unknowns, and implications for the final investment report. "
+                    "Use only verifiable tool/context information and mark unknowns explicitly. "
+                    "Output only the final stock profile body that can be displayed directly in a report. "
+                    "Do not include follow-up offers, task lists, template suggestions, process explanations, or meta statements such as "
+                    "'I can next', 'if you want', 'would you like', or 'here is a template'."
+                )
+            else:
+                query = (
+                    f"为 {stock_name}（{code}）生成一份尽可能详尽的 Deep Research 股票基本情况。"
+                    "覆盖公司概况、主营业务、收入与利润驱动、商业模式、核心产品、客户与供应链、竞争壁垒、行业格局、市场地位、"
+                    "股东与管理层背景、财务质量、估值背景、近期催化、关键风险、来源线索、尚未确认的未知项，以及对最终投资报告的影响。"
+                    "只使用工具或上下文中可验证的信息，缺失内容请明确说明未知。"
+                    "只输出可直接展示在最终报告里的股票基本情况正文。"
+                    "禁止输出“如果你愿意”“我可以下一步”“我可以帮你整理成模板”“包括如下内容”等对话式收尾、模板说明、待办清单、过程解释或元话术。"
+                )
+
+            try:
+                budget = int(getattr(self.config, "agent_deep_research_budget", 30000) or 30000)
+            except (TypeError, ValueError):
+                budget = 30000
+            try:
+                timeout = int(getattr(self.config, "agent_deep_research_timeout", 600) or 600)
+            except (TypeError, ValueError):
+                timeout = 600
+            try:
+                max_sub_questions = int(getattr(self.config, "agent_deep_research_max_sub_questions", 8) or 8)
+            except (TypeError, ValueError):
+                max_sub_questions = 8
+            try:
+                sub_question_steps = int(getattr(self.config, "agent_deep_research_sub_question_steps", 6) or 6)
+            except (TypeError, ValueError):
+                sub_question_steps = 6
+            budget = max(budget, 5000)
+            timeout = max(timeout, 30)
+            max_sub_questions = max(max_sub_questions, 1)
+            sub_question_steps = max(sub_question_steps, 1)
+            self._emit_progress(60, f"{stock_name}：正在执行 Deep Research 生成股票基本情况")
+            agent = ResearchAgent(
+                tool_registry=get_tool_registry(),
+                llm_adapter=LLMToolAdapter(self.config, user_id=getattr(self, "user_id", None)),
+                token_budget=budget,
+                max_sub_questions=max_sub_questions,
+                sub_question_max_steps=sub_question_steps,
+            )
+            research = agent.research(query, context=context, timeout_seconds=timeout)
+            if not research.success or not research.report.strip():
+                raise RuntimeError(research.error or "Deep Research returned empty stock profile")
+
+            return {
+                "research_report": self._clean_stock_profile_report(research.report),
+                "research_method": "deep_research",
+                "research_sources": [str(item) for item in research.sub_questions if item],
+                "research_token_usage": research.total_tokens,
+            }
+        except Exception as e:
+            logger.error("[%s] Deep Research stock profile generation failed before report: %s", code, e)
+            raise
+
+    @classmethod
+    def _clean_stock_profile_report(cls, report: str) -> str:
+        text = str(report or "").strip()
+        if not text:
+            return ""
+        lines = text.splitlines()
+        kept_lines: List[str] = []
+        for line in lines:
+            if cls._STOCK_PROFILE_META_LINE_PATTERN.search(line.strip()):
+                break
+            kept_lines.append(line)
+        cleaned = "\n".join(kept_lines).strip()
+        return cleaned
 
     def _agent_result_to_analysis_result(
         self,
@@ -1079,6 +1215,14 @@ class StockAnalysisPipeline:
                 or result.confidence_level,
                 report_language,
             )
+            raw_stock_profile = self._agent_dashboard_value(
+                dash,
+                nested_dashboard,
+                "stock_profile",
+                allow_dict=True,
+            )
+            if isinstance(raw_stock_profile, dict):
+                result.stock_profile = raw_stock_profile
             raw_summary = self._agent_dashboard_value(
                 dash,
                 nested_dashboard,

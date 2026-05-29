@@ -278,6 +278,22 @@ describe('stockPoolStore', () => {
     expect(state.currentPage).toBe(1);
   });
 
+  it('auto-selects the newest report after silent refresh when no report is selected', async () => {
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 1,
+      page: 1,
+      limit: 20,
+      items: [historyItem],
+    });
+    vi.mocked(historyApi.getDetail).mockResolvedValue(historyReport);
+
+    await useStockPoolStore.getState().refreshHistory(true);
+
+    const state = useStockPoolStore.getState();
+    expect(state.selectedReport?.meta.stockCode).toBe('600519');
+    expect(historyApi.getDetail).toHaveBeenCalledWith(1);
+  });
+
   it('ignores late history responses after dashboard reset', async () => {
     const deferred = createDeferred<{
       total: number;

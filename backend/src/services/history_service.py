@@ -327,7 +327,27 @@ class HistoryService:
             "news_content": market_review_content or record.news_content,
             "raw_result": raw_result,
             "context_snapshot": context_snapshot,
+            "price_history": self._get_price_history(record.code),
         }
+
+    def _get_price_history(self, stock_code: Optional[str], days: int = 60) -> List[Dict[str, Any]]:
+        if not stock_code or stock_code == "market_review":
+            return []
+
+        try:
+            rows = list(reversed(self.db.get_latest_data(stock_code, days=days)))
+        except Exception as e:
+            logger.debug("get_price_history failed for %s: %s", stock_code, e, exc_info=True)
+            return []
+
+        price_history: List[Dict[str, Any]] = []
+        for row in rows:
+            item = row.to_dict()
+            row_date = item.get("date")
+            if hasattr(row_date, "isoformat"):
+                item["date"] = row_date.isoformat()
+            price_history.append(item)
+        return price_history
 
     def delete_history_records(
         self,
@@ -597,6 +617,7 @@ class HistoryService:
                 fundamental_analysis=raw_result.get("fundamental_analysis", ""),
                 sector_position=raw_result.get("sector_position", ""),
                 company_highlights=raw_result.get("company_highlights", ""),
+                stock_profile=raw_result.get("stock_profile") if isinstance(raw_result.get("stock_profile"), dict) else None,
                 news_summary=raw_result.get("news_summary", record.news_content or ""),
                 market_sentiment=raw_result.get("market_sentiment", ""),
                 hot_topics=raw_result.get("hot_topics", ""),
@@ -665,6 +686,20 @@ class HistoryService:
             "---",
             "",
         ]
+
+        stock_profile = getattr(result, "stock_profile", None)
+        if isinstance(stock_profile, dict) and stock_profile.get("research_report"):
+            report_lines.extend([
+                f"### 🧭 {labels['stock_profile_heading']}",
+                "",
+                str(stock_profile.get("research_report", "")).strip(),
+                "",
+            ])
+            if stock_profile.get("research_method"):
+                report_lines.extend([
+                    f"*{labels['stock_profile_method_label']}：{stock_profile.get('research_method')}*",
+                    "",
+                ])
 
         # ========== 舆情与基本面概览（放在最前面）==========
         intel = dashboard.get('intelligence', {}) if dashboard else {}

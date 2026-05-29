@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 新增 `docs/backend/home-stock-analysis-flow.md`，梳理 Web 首页输入股票代码或名称后的补全搜索、分析提交、异步任务队列、SSE 状态回传和核心 pipeline 执行链路。
 - [改进] 优化 `/api/v1/stocks/search` 股票自动补全性能：请求路径改为进程内匹配与结果缓存，`stock_index` 轻量搜索缓存改为启动后后台预热，并避免程序内 Alembic 迁移覆盖应用日志配置。
 - [修复] 修复 Web 股票输入框中文补全不稳定的问题：IME 确认最终文本后会触发搜索，临时请求错误或上一次请求取消不再导致后续输入无法弹出 `茅台` 等候选股票。
+- [新功能] Web 股票分析报告新增历史股价展示，历史详情响应返回最近已保存的日线行情并在报告中展示走势与近期数据表。
 - [新功能] 集成 Langfuse LLM 可观测：配置 LANGFUSE_SECRET_KEY / LANGFUSE_PUBLIC_KEY 后，所有 LLM 调用（分析、Agent、大盘复盘）自动上报完整 Trace（prompt / response / token / 耗时）；未配置时无副作用。
 - [修复] Langfuse 可观测兼容新版 `LANGFUSE_BASE_URL` 配置并保留 `LANGFUSE_HOST` 映射，CLI 退出前会尝试 flush，减少短任务 Trace 未上报的问题。
 - [修复] 回测页面结果与指标按当前登录用户隔离，不再混入其他用户的历史分析记录。
@@ -38,12 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 股票自动补全索引与前端静态目录完全解耦：源文件迁至 `backend/src/data/resources/stocks.index.json`，通过 Alembic 新增 `stock_index`/`stock_index_meta` 表和同步脚本写入数据库，前端改为调用公开限流的 `/api/v1/stocks/search`，后端运行时不再读取 `frontend/web/public` 或 `static` 下的股票索引。
 - [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非 Pro 用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
 - [新功能] 运营后台新增「套餐与用量」配置：平台管理员可在 `/admin` 配置免费档和会员套餐的每日分析次数、Agent 次数、自选股上限、价格与上架状态，并继续支持为指定用户手动开通会员；套餐权益以 `app_plans` 记录为运行期来源。
+- [新功能] 个股分析报告新增 Deep Research「股票基本情况」内容块，Deep Research 在正式报告生成前阻塞执行并注入 LLM / Agent 上下文，最终以其结果作为权威 `stock_profile` 写入 `raw_result.stock_profile`，并在同步结果、异步任务状态、历史详情、Markdown 报告和 Web 报告页展示。
+- [改进] Deep Research 规划改为模型在上限内自适应收敛，新增 `AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS` 和 `AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS` 控制子问题数量与单问题 ReAct/tool 步数上限。
+- [改进] Deep Research 默认总超时时间从 180 秒调整为 600 秒，并放宽运营配置上限，降低慢模型生成股票基本情况时过早超时的概率。
+- [修复] Deep Research 规划阶段的单次 LLM 请求超时不再误判为总超时；单步 LLM 请求超时与 600 秒总预算对齐，仍有总预算时会回退到原始问题继续研究。
+- [修复] 优化 Deep Research 股票基本情况生成提示词，并清理模型输出中的对话式收尾，避免“如果你愿意、我可以下一步”等无关模板说明进入最终报告。
+- [改进] 优化 Web 报告页 Deep Research 股票基本情况排版，按章节拆分阅读卡片并增强标题、段落、列表、表格和移动端间距。
 - [改进] 免费档配额不再通过环境变量配置，套餐权益统一由 `app_plans` 数据库记录维护。
 - [chore] 完整移除 BYOK（Bring Your Own Key）功能：删除 `src/users/byok.py`、`AppUserByokCredential` ORM 模型、`app_user_byok_credentials` 表（通过 Alembic migration `20260522_add_user_preferred_model` 完成 DROP TABLE）及 `can_byok` 计划字段；移除 `/api/v1/account/api-keys` 端点和前端 `ApiKeysPage`；`AccountPage` 改为展示用户模型偏好选择卡（`/api/v1/account/model-preference`）；`QuotaExceededDialog` 和 `QuotaIndicator` 移除 BYOK 相关引导；移除 `DATA_ENCRYPTION_KEY` / `USER_BYOK_FALLBACK_KEY` 环境变量；退订 token 签名密钥回退链由 `UNSUBSCRIBE_SIGNING_KEY → DATA_ENCRYPTION_KEY → ADMIN_API_SECRET` 简化为 `UNSUBSCRIBE_SIGNING_KEY → ADMIN_API_SECRET`；`src/storage/__init__.py`、`src/storage/models/__init__.py`、`src/users/__init__.py` 清除 BYOK 相关导出；所有文档（`to-c-mode.md`、`to-c-product-plan.md`、`to-c-user-stories.md`、`to-c-product-wireframes.md`、`web-frontend-redesign-plan.md`、`INDEX.md`、`INDEX_EN.md`）同步更新。
 - [文档] 新增 `docs/to-c-user-stories.md`，基于当前 To C 多用户、配额、通知、支付、合规与运营后台实现整理核心用户故事、验收口径和实现映射，并在中英文文档索引与产品规划中补充入口。
 - [文档] 基于当前 To C 多用户、支付、通知和前端页面实现更新 `docs/to-c-mode.md`、`docs/to-c-product-wireframes.md` 与 `docs/to-c-product-plan.md`，修正页面状态、API 列表、数据表、已落地能力与剩余缺口说明。
 - [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要 Pro 套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
 - [改进] Web 报告资讯卡片标题统一为「相关资讯」，移除右上角刷新入口，并移除资讯条目右侧「跳转」按钮内的箭头图标。
+- [改进] Web 报告相关资讯外链入口文案由「跳转」调整为「查看原文」。
 - [改进] 将「邮件通知」和「每日推送」改为 Pro 专属权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到 Pro 套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。
 - [修复] 修复 Web 问股页面的三横线历史对话按钮在桌面布局（md 及以上宽度）下被 ui-icon-button 自定义样式覆盖而无法隐藏的问题，通过将按钮包裹在 md:hidden 响应式容器中实现正确隐藏。
 - [修复] 修复首页股票分析提交后依赖 SSE 才显示任务队列的问题，提交成功返回任务 ID 后立即在前端队列中展示等待中的分析任务，并将按钮加载文案改为“提交中”。
@@ -57,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] To C 模式下普通用户不再显示或访问系统设置页，系统配置 API 收紧为平台管理员权限，避免将部署级配置暴露给 C 端用户。
 - [改进] To C 模式下普通用户首页报告不再展示数据追溯、原始分析结果、分析快照和分析模型等内部诊断信息，管理员与未启用用户模式的内部部署仍保留排障视图。
 - [改进] Web 回测页面文案中文化，将筛选、验证周期、次日验证、强制重算、结果表格、指标卡和空状态改为面向 C 端用户更易理解的历史验证表达。
+- [改进] Web 回测页面默认开启强制重算，并将强制重算与开始验证操作区固定到顶部筛选栏右侧。
 - [改进] Web 前端主题入口收敛到右上角 `ThemeToggle`，移除侧边栏底部主题切换入口，并将默认主题从深色改为跟随系统。
 - [文档] 新增并更新 `docs/web-frontend-redesign-plan.md`，明确 Web 前端本次按删除式完整重构推进：旧页面结构、旧组件视觉语义、旧样式体系和旧布局方式均视为废弃对象，补充重构后全局、标准内容页、工作台、首页、问股、持仓、回测、响应式、阅读与数据排版方案，并新增信息架构、交互状态、数据可视化、可访问性、性能与删除式重构完成定义；`docs/INDEX.md` 同步增加入口。
 - [改进] Web 前端重构 Phase 1 继续推进：`SidebarNav`、`QuotaIndicator`、`Drawer`、`ConfirmDialog`、`Tooltip`、`RenewalBanner`、`ThemeToggle` 迁移到新 `ui-*` 全局视觉类，减少全局组件对旧 `nav-*`、`cyan`、`elevated` 等旧视觉细节的直接依赖；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。

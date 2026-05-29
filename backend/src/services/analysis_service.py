@@ -176,6 +176,7 @@ class AnalysisService:
                 "technical_analysis": result.technical_analysis,
                 "fundamental_analysis": result.fundamental_analysis,
                 "risk_warning": result.risk_warning,
+                "stock_profile": getattr(result, "stock_profile", None),
             }
         }
         

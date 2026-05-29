@@ -19,7 +19,7 @@ stock_index 表                         线程池 + 防重复 + SSE
                                                ↓
                                       StockAnalysisPipeline
                                                ↓
-                         数据源 / 技术分析 / 新闻搜索 / LLM 或 Agent / 通知 / 历史报告
+                         数据源 / 技术分析 / 新闻搜索 / Deep Research / LLM 或 Agent / 通知 / 历史报告
 ```
 
 ## 代码入口速查
@@ -226,7 +226,9 @@ POST /api/v1/analysis/analyze
    - 获取筹码分布，失败不阻断主流程；
    - 聚合基本面和技术面数据；
    - 可选检索新闻、舆情和风险信息；
+   - 阻塞执行 Deep Research，生成权威 `stock_profile` 并注入正式报告上下文；
    - 根据配置选择传统 LLM 分析或 Agent 分析；
+   - 用 Deep Research 结果回写最终 `AnalysisResult.stock_profile`；
    - 保存分析历史和上下文快照；
    - 单股通知开启时发送通知。
 4. 返回分析结果给 `AnalysisService`。

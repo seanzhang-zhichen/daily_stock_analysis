@@ -620,7 +620,9 @@ class Config:
     agent_orchestrator_timeout_s: int = 600  # Cooperative timeout budget for the whole multi-agent pipeline
     agent_risk_override: bool = True  # Allow risk agent to veto buy signals
     agent_deep_research_budget: int = 30000  # Max token budget for deep research
-    agent_deep_research_timeout: int = 180  # Max seconds for /research command before returning timeout
+    agent_deep_research_timeout: int = 600  # Max seconds for /research command before returning timeout
+    agent_deep_research_max_sub_questions: int = 8
+    agent_deep_research_sub_question_steps: int = 6
     agent_memory_enabled: bool = False  # Enable memory & calibration system
     agent_skill_autoweight: bool = True  # Auto-weight skills by backtest performance
     agent_skill_routing: str = "auto"  # Skill routing: 'auto' (regime-based) or 'manual'
@@ -1249,9 +1251,23 @@ class Config:
             ),
             agent_deep_research_timeout=parse_env_int(
                 os.getenv('AGENT_DEEP_RESEARCH_TIMEOUT'),
-                180,
+                600,
                 field_name='AGENT_DEEP_RESEARCH_TIMEOUT',
                 minimum=30,
+            ),
+            agent_deep_research_max_sub_questions=parse_env_int(
+                os.getenv('AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS'),
+                8,
+                field_name='AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS',
+                minimum=1,
+                maximum=20,
+            ),
+            agent_deep_research_sub_question_steps=parse_env_int(
+                os.getenv('AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS'),
+                6,
+                field_name='AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS',
+                minimum=1,
+                maximum=20,
             ),
             agent_memory_enabled=os.getenv('AGENT_MEMORY_ENABLED', 'false').lower() == 'true',
             agent_skill_autoweight=os.getenv('AGENT_SKILL_AUTOWEIGHT', 'true').lower() == 'true',

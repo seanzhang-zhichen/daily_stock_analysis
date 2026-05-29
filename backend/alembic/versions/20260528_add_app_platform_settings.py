@@ -1,6 +1,6 @@
 """add app platform settings
 
-Revision ID: 20260528_add_app_platform_settings
+Revision ID: 20260528_platform_settings
 Revises: 20260528_seed_free_plan
 Create Date: 2026-05-28 12:20:00.000000+08:00
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "20260528_add_app_platform_settings"
+revision: str = "20260528_platform_settings"
 down_revision: Union[str, None] = "20260528_seed_free_plan"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

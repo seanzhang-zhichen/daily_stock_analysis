@@ -750,6 +750,30 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertEqual(report.details.financial_report["report_date"], "2025-12-31")
         self.assertEqual(report.details.dividend_metrics["ttm_dividend_yield_pct"], 2.5)
 
+    def test_build_analysis_report_includes_stock_profile(self) -> None:
+        if _build_analysis_report is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        stock_profile = {
+            "research_report": "## 公司概况\n\n主营高端白酒。",
+            "research_method": "deep_research",
+        }
+        report = _build_analysis_report(
+            report_data={
+                "meta": {},
+                "summary": {},
+                "strategy": {},
+                "details": {"stock_profile": stock_profile},
+            },
+            query_id="q1",
+            stock_code="600519",
+            stock_name="贵州茅台",
+            context_snapshot=None,
+            fallback_fundamental_payload=None,
+        )
+
+        self.assertEqual(report.details.stock_profile, stock_profile)
+
     def test_build_analysis_report_stringifies_strategy_price_fields(self) -> None:
         if _build_analysis_report is None:
             self.skipTest("analysis endpoint helpers unavailable in this environment")
@@ -928,15 +952,17 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             }
         }
         mock_db.get_latest_fundamental_snapshot.return_value = fallback_payload
+        mock_db.get_latest_data.return_value = []
 
         with patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
-            context_snapshot, fundamental_snapshot = _load_sync_fundamental_sources(
+            context_snapshot, fundamental_snapshot, price_history = _load_sync_fundamental_sources(
                 query_id="q_sync_001",
                 stock_code="600519",
             )
 
         self.assertIsNone(context_snapshot)
         self.assertEqual(fundamental_snapshot, fallback_payload)
+        self.assertEqual(price_history, [])
         mock_db.get_analysis_history.assert_called_once_with(
             query_id="q_sync_001",
             code="600519",
@@ -946,6 +972,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             query_id="q_sync_001",
             code="600519",
         )
+        mock_db.get_latest_data.assert_called_once_with("600519", days=60)
 
     def test_get_analysis_status_reads_price_fields_from_context_snapshot_preserving_zero_change_pct(self) -> None:
         if get_analysis_status is None:

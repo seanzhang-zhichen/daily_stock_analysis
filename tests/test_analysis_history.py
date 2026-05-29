@@ -11,9 +11,12 @@ A股自选股智能分析系统 - 分析历史存储单元测试
 
 import json
 import os
+import pandas as pd
 import sys
 import tempfile
 import unittest
+import uuid
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +25,13 @@ try:
     import litellm  # noqa: F401
 except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
+
+try:
+    import json_repair  # noqa: F401
+except ModuleNotFoundError:
+    json_repair_stub = MagicMock()
+    json_repair_stub.repair_json = lambda value, *args, **kwargs: value
+    sys.modules["json_repair"] = json_repair_stub
 
 try:
     from fastapi.testclient import TestClient
@@ -227,7 +237,11 @@ class AnalysisHistoryTestCase(unittest.TestCase):
                 self.fail("未找到保存的历史记录")
             record_id = row.id
 
-        report = get_history_detail(str(record_id), db_manager=self.db)
+        report = get_history_detail(
+            str(record_id),
+            db_manager=self.db,
+            current_user=SimpleNamespace(id=None),
+        )
         self.assertEqual(report.meta.current_price, 100.0)
         self.assertEqual(report.meta.change_pct, 0.0)
 
@@ -264,9 +278,83 @@ class AnalysisHistoryTestCase(unittest.TestCase):
                 self.fail("未找到保存的历史记录")
             record_id = row.id
 
-        report = get_history_detail(str(record_id), db_manager=self.db)
+        report = get_history_detail(
+            str(record_id),
+            db_manager=self.db,
+            current_user=SimpleNamespace(id=None),
+        )
         self.assertEqual(report.meta.current_price, 200.0)
         self.assertEqual(report.meta.change_pct, 1.23)
+
+    def test_history_detail_includes_recent_price_history(self) -> None:
+        if get_history_detail is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        query_id = f"query_price_history_{uuid.uuid4().hex}"
+        stock_code = f"T{uuid.uuid4().hex[:9].upper()}"
+        result = self._build_result()
+        result.code = stock_code
+        result.name = "测试股票"
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id=query_id,
+            report_type="simple",
+            news_content="新闻摘要",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertEqual(saved, 1)
+        self.db.save_daily_data(
+            pd.DataFrame([
+                {
+                    "date": "2026-03-18",
+                    "open": 100.0,
+                    "high": 106.0,
+                    "low": 99.0,
+                    "close": 105.0,
+                    "volume": 1200000,
+                    "amount": 126000000,
+                    "pct_chg": 2.34,
+                    "ma5": 101.0,
+                    "ma10": 100.0,
+                    "ma20": 98.0,
+                    "volume_ratio": 1.2,
+                },
+                {
+                    "date": "2026-03-19",
+                    "open": 105.0,
+                    "high": 108.0,
+                    "low": 104.0,
+                    "close": 107.0,
+                    "volume": 1300000,
+                    "amount": 139100000,
+                    "pct_chg": 1.9,
+                    "ma5": 102.0,
+                    "ma10": 100.5,
+                    "ma20": 98.5,
+                    "volume_ratio": 1.1,
+                },
+            ]),
+            stock_code,
+            "TestFetcher",
+        )
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(AnalysisHistory.query_id == query_id).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        report = get_history_detail(
+            str(record_id),
+            db_manager=self.db,
+            current_user=SimpleNamespace(id=None),
+        )
+        self.assertIsNotNone(report.details)
+        self.assertEqual(len(report.details.price_history), 2)
+        self.assertEqual(report.details.price_history[0]["date"], "2026-03-18")
+        self.assertEqual(report.details.price_history[0]["close"], 105.0)
+        self.assertEqual(report.details.price_history[1]["date"], "2026-03-19")
 
     @patch("src.auth.is_auth_enabled", return_value=False)
     def test_history_detail_ignores_non_dict_realtime_quote_raw(self, mock_auth) -> None:
@@ -777,6 +865,73 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertIsNotNone(markdown)
         self.assertIn("✅Safe", markdown)
         self.assertNotIn("🚨Safe", markdown)
+
+    def test_history_detail_returns_stock_profile_from_raw_result(self) -> None:
+        if get_history_detail is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        result = self._build_result()
+        result.stock_profile = {
+            "research_report": "## 公司概况\n\n主营高端白酒，品牌优势突出。",
+            "research_method": "deep_research",
+            "research_sources": ["主营业务是什么", "行业地位如何"],
+        }
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_stock_profile_detail_001",
+            report_type="full",
+            news_content="新闻摘要",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(
+                AnalysisHistory.query_id == "query_stock_profile_detail_001"
+            ).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        report = get_history_detail(str(record_id), db_manager=self.db)
+
+        self.assertIsNotNone(report.details)
+        self.assertEqual(report.details.stock_profile["research_method"], "deep_research")
+        self.assertIn("主营高端白酒", report.details.stock_profile["research_report"])
+
+    def test_history_markdown_includes_stock_profile(self) -> None:
+        result = self._build_result()
+        result.stock_profile = {
+            "research_report": "## 公司概况\n\n主营高端白酒，品牌优势突出。",
+            "research_method": "deep_research",
+        }
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_stock_profile_markdown_001",
+            report_type="full",
+            news_content="新闻摘要",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(
+                AnalysisHistory.query_id == "query_stock_profile_markdown_001"
+            ).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        markdown = HistoryService(self.db).get_markdown_report(str(record_id))
+
+        self.assertIsNotNone(markdown)
+        self.assertIn("股票基本情况", markdown)
+        self.assertIn("主营高端白酒", markdown)
+        self.assertIn("deep_research", markdown)
 
     def test_delete_analysis_history_records_also_cleans_backtests(self) -> None:
         """删除历史记录时应一并清理关联回测结果。"""

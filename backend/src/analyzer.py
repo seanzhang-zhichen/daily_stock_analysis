@@ -1327,6 +1327,7 @@ class AnalysisResult:
     fundamental_analysis: str = ""  # 基本面综合分析
     sector_position: str = ""  # 板块地位和行业趋势
     company_highlights: str = ""  # 公司亮点/风险点
+    stock_profile: Optional[Dict[str, Any]] = None
 
     # ========== 情绪面/消息面分析 ==========
     news_summary: str = ""  # 近期重要新闻/公告摘要
@@ -1379,6 +1380,7 @@ class AnalysisResult:
             'fundamental_analysis': self.fundamental_analysis,
             'sector_position': self.sector_position,
             'company_highlights': self.company_highlights,
+            'stock_profile': self.stock_profile,
             'news_summary': self.news_summary,
             'market_sentiment': self.market_sentiment,
             'hot_topics': self.hot_topics,
@@ -2946,6 +2948,33 @@ class GeminiAnalyzer:
 未搜索到该股票近期的相关新闻。请主要依据技术面数据进行分析。
 """
 
+        stock_profile = context.get("stock_profile") if isinstance(context, dict) else None
+        if isinstance(stock_profile, dict):
+            research_report = str(stock_profile.get("research_report") or "").strip()
+            if research_report:
+                research_method = stock_profile.get("research_method", "deep_research")
+                research_sources = stock_profile.get("research_sources") or []
+                try:
+                    sources_text = json.dumps(research_sources, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    sources_text = str(research_sources)
+                prompt += f"""
+---
+
+## 🔬 Deep Research 股票基本情况
+
+以下内容是报告生成前已阻塞完成的 Deep Research 结果，是 `stock_profile` 的权威来源。请基于它撰写基本面、行业地位、公司亮点、风险与综合摘要，不要编造 Deep Research 未确认的信息。
+
+| 字段 | 值 |
+|------|------|
+| research_method | {research_method} |
+| research_sources | {sources_text} |
+
+```markdown
+{research_report}
+```
+"""
+
         # 注入缺失数据警告
         if context.get('data_missing'):
             prompt += """
@@ -3273,6 +3302,7 @@ class GeminiAnalyzer:
                     fundamental_analysis=data.get('fundamental_analysis', ''),
                     sector_position=data.get('sector_position', ''),
                     company_highlights=data.get('company_highlights', ''),
+                    stock_profile=data.get('stock_profile') if isinstance(data.get('stock_profile'), dict) else None,
                     # 情绪面/消息面
                     news_summary=data.get('news_summary', ''),
                     market_sentiment=data.get('market_sentiment', ''),

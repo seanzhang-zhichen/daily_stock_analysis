@@ -4,6 +4,8 @@ import { ReportOverview } from './ReportOverview';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
+import { ReportPriceHistory } from './ReportPriceHistory';
+import { ReportStockProfile } from './ReportStockProfile';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 
 interface ReportSummaryProps {
@@ -46,6 +48,10 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
       {/* 策略点位区 */}
       <ReportStrategy strategy={strategy} language={reportLanguage} />
+
+      <ReportPriceHistory data={details?.priceHistory} language={reportLanguage} />
+
+      <ReportStockProfile profile={details?.stockProfile} language={reportLanguage} />
 
       {/* 资讯区 */}
       <ReportNews recordId={recordId} limit={8} language={reportLanguage} />

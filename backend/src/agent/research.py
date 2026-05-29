@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 # Default token budget for deep research
 _DEFAULT_TOKEN_BUDGET = 30000
+_DEFAULT_MAX_SUB_QUESTIONS = 8
+_DEFAULT_SUB_QUESTION_MAX_STEPS = 6
+_DEFAULT_STEP_LLM_TIMEOUT_SECONDS = 600
 
 
 class ResearchAgent:
@@ -60,12 +63,14 @@ class ResearchAgent:
         tool_registry: ToolRegistry,
         llm_adapter: LLMToolAdapter,
         token_budget: int = _DEFAULT_TOKEN_BUDGET,
-        max_sub_questions: int = 5,
+        max_sub_questions: int = _DEFAULT_MAX_SUB_QUESTIONS,
+        sub_question_max_steps: int = _DEFAULT_SUB_QUESTION_MAX_STEPS,
     ):
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.token_budget = token_budget
-        self.max_sub_questions = max_sub_questions
+        self.max_sub_questions = max(1, int(max_sub_questions))
+        self.sub_question_max_steps = max(1, int(sub_question_max_steps))
 
     def research(
         self,
@@ -296,16 +301,19 @@ class ResearchAgent:
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Use LLM to decompose a research query into sub-questions."""
+        started_at = time.monotonic()
         stock_hint = ""
         if context and context.get("stock_code"):
             stock_hint = f"\nStock context: {context['stock_code']} ({context.get('stock_name', '')})"
 
-        system = """\
+        system = f"""\
 You are a research planning assistant. Given a research query, decompose it \
-into 3-5 specific, searchable sub-questions.
+into as many specific, searchable sub-questions as needed, up to \
+{self.max_sub_questions}. Stop early when the coverage is sufficient; do not \
+add filler questions.
 
 Return a JSON object:
-{"questions": ["question 1", "question 2", ...]}
+{{"questions": ["question 1", "question 2", ...]}}
 """
         messages = [
             {"role": "system", "content": system},
@@ -313,7 +321,7 @@ Return a JSON object:
         ]
 
         try:
-            step_timeout = self._resolve_step_timeout(15, timeout_seconds)
+            step_timeout = self._resolve_step_timeout(_DEFAULT_STEP_LLM_TIMEOUT_SECONDS, timeout_seconds)
             if step_timeout is None:
                 return {"questions": [query], "tokens": 0, "timed_out": True}
             completion = self._call_text_completion(
@@ -330,11 +338,20 @@ Return a JSON object:
                 raw = re.sub(r'^```(?:json)?\s*', '', raw)
                 raw = re.sub(r'\s*```$', '', raw)
             parsed = json.loads(raw)
-            return {"questions": parsed.get("questions", [query]), "tokens": tokens}
+            raw_questions = parsed.get("questions", [query])
+            questions = [
+                str(item).strip()
+                for item in raw_questions
+                if str(item).strip()
+            ]
+            return {"questions": questions or [query], "tokens": tokens}
         except Exception as exc:
             logger.warning("[ResearchAgent] decompose failed: %s", exc)
             if timeout_seconds is not None and self._looks_like_timeout_error(exc):
-                return {"questions": [query], "tokens": 0, "timed_out": True, "error": str(exc)}
+                elapsed = time.monotonic() - started_at
+                if elapsed >= float(timeout_seconds):
+                    return {"questions": [query], "tokens": 0, "timed_out": True, "error": str(exc)}
+                return {"questions": [query], "tokens": 0, "error": str(exc)}
             return {"questions": [query], "tokens": 0}
 
     def _research_sub_question(
@@ -345,6 +362,7 @@ Return a JSON object:
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Research a single sub-question using the agent loop."""
+        started_at = time.monotonic()
         if timeout_seconds is not None and timeout_seconds <= 0:
             return {
                 "question": question,
@@ -377,19 +395,28 @@ Token budget remaining: ~{remaining_budget}
                 messages=messages,
                 tool_registry=registry,
                 llm_adapter=self.llm_adapter,
-                max_steps=4,
+                max_steps=self.sub_question_max_steps,
                 max_wall_clock_seconds=timeout_seconds,
                 tool_call_timeout_seconds=timeout_seconds,
             )
             if not result.success and self._looks_like_timeout_error(result.error):
-                return {
-                    "question": question,
-                    "content": "",
-                    "tokens": result.total_tokens,
-                    "success": False,
-                    "timed_out": True,
-                    "error": result.error,
-                }
+                error_text = str(result.error or "").lower()
+                elapsed = time.monotonic() - started_at
+                is_overall_timeout = timeout_seconds is not None and elapsed >= float(timeout_seconds)
+                is_loop_budget_timeout = (
+                    "agent timed out" in error_text
+                    or "insufficient budget" in error_text
+                    or "budget too low" in error_text
+                )
+                if is_overall_timeout or is_loop_budget_timeout:
+                    return {
+                        "question": question,
+                        "content": "",
+                        "tokens": result.total_tokens,
+                        "success": False,
+                        "timed_out": True,
+                        "error": result.error,
+                    }
             return {
                 "question": question,
                 "content": result.content,
@@ -399,14 +426,16 @@ Token budget remaining: ~{remaining_budget}
         except Exception as exc:
             logger.warning("[ResearchAgent] sub-question failed: %s", exc)
             if timeout_seconds is not None and self._looks_like_timeout_error(exc):
-                return {
-                    "question": question,
-                    "content": "",
-                    "tokens": 0,
-                    "success": False,
-                    "timed_out": True,
-                    "error": str(exc),
-                }
+                elapsed = time.monotonic() - started_at
+                if elapsed >= float(timeout_seconds):
+                    return {
+                        "question": question,
+                        "content": "",
+                        "tokens": 0,
+                        "success": False,
+                        "timed_out": True,
+                        "error": str(exc),
+                    }
             return {"question": question, "content": "", "tokens": 0, "success": False, "error": str(exc)}
 
     def _synthesise_report(
@@ -417,6 +446,7 @@ Token budget remaining: ~{remaining_budget}
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Synthesise all findings into a coherent research report."""
+        started_at = time.monotonic()
         findings_text = "\n\n".join(
             f"### Sub-question: {f['question']}\n{f.get('content', 'No data')}"
             for f in findings if f.get("content")
@@ -434,6 +464,10 @@ findings into a comprehensive, well-structured report.
 5. **Conclusion & Recommendations**
 
 Use Markdown formatting.  Be concise but thorough.
+Output only the final report body. Do not include follow-up offers, task lists,
+template suggestions, process explanations, or meta statements such as
+"I can next", "if you want", "would you like", "here is a template",
+"如果你愿意", "我可以下一步", or "我可以帮你整理成模板".
 """
         messages = [
             {"role": "system", "content": system},
@@ -441,7 +475,7 @@ Use Markdown formatting.  Be concise but thorough.
         ]
 
         try:
-            step_timeout = self._resolve_step_timeout(30, timeout_seconds)
+            step_timeout = self._resolve_step_timeout(_DEFAULT_STEP_LLM_TIMEOUT_SECONDS, timeout_seconds)
             if step_timeout is None:
                 return {"content": "", "tokens": 0, "timed_out": True}
             completion = self._call_text_completion(
@@ -456,7 +490,9 @@ Use Markdown formatting.  Be concise but thorough.
         except Exception as exc:
             logger.warning("[ResearchAgent] synthesis failed: %s", exc)
             if timeout_seconds is not None and self._looks_like_timeout_error(exc):
-                return {"content": "", "tokens": 0, "timed_out": True, "error": str(exc)}
+                elapsed = time.monotonic() - started_at
+                if elapsed >= float(timeout_seconds):
+                    return {"content": "", "tokens": 0, "timed_out": True, "error": str(exc)}
             return {"content": findings_text, "tokens": 0, "error": str(exc)}
 
     def _filtered_registry(self) -> ToolRegistry:
