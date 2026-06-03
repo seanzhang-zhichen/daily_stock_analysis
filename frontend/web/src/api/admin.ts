@@ -6,6 +6,8 @@ export type AdminUser = {
   email: string;
   plan: string;
   planExpiresAt: string | null;
+  creditBalance?: number;
+  referralCode?: string | null;
   isAdmin: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -17,6 +19,7 @@ export type AdminStats = {
   users: { total: number; paid: number };
   orders: { total: number; paid: number; revenueCents: number };
   pending: { refunds: number; invoices: number };
+  credits?: { balanceTotal: number; referrals: number };
 };
 
 export type AdminGrantSubscription = {
@@ -210,6 +213,21 @@ export const adminApi = {
         userEmail: input.userEmail,
         planCode: input.planCode,
         grantDays: input.grantDays,
+        note: input.note,
+      }
+    );
+    return data;
+  },
+
+  async adjustUserCredits(input: {
+    userId: number;
+    delta: number;
+    note?: string;
+  }): Promise<{ user: AdminUser }> {
+    const { data } = await apiClient.post<{ user: AdminUser }>(
+      `/api/v1/admin/users/${input.userId}/credits/adjust`,
+      {
+        delta: input.delta,
         note: input.note,
       }
     );

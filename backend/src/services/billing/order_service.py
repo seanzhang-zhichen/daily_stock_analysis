@@ -39,6 +39,7 @@ from src.storage import (
     AppSubscription,
     AppUser,
 )
+from src.users.credits import grant_subscription_credit_rewards
 from src.users.plans import resolve_user_plan, grant_plan
 from src.services.billing.gateways import CallbackResult, get_gateway
 
@@ -296,6 +297,7 @@ class OrderService:
                 source="paid",
                 note=f"order:{order.order_no}",
             )
+            grant_subscription_credit_rewards(db, order=order, user=user)
 
         db.commit()
         db.refresh(order)

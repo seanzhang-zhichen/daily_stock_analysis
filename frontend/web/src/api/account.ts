@@ -5,6 +5,8 @@ export type AccountUser = {
   email: string;
   plan: string;
   planExpiresAt: string | null;
+  creditBalance?: number;
+  referralCode?: string | null;
   preferredModel: string | null;
   emailVerified: boolean;
   createdAt: string | null;
@@ -43,6 +45,24 @@ export type AccountRenewal = {
   thresholdDays: number;
 };
 
+export type AccountCredits = {
+  enabled: boolean;
+  balance: number;
+  referralCode: string | null;
+  referredUsers: number;
+  costs: {
+    analysis: number;
+    agent: number;
+  };
+  rewards: {
+    registration: number;
+    referralSignup: number;
+    monthlySubscription: number;
+    yearlySubscription: number;
+    referralPaid: number;
+  };
+};
+
 export type AccountStatusResponse = {
   userModeEnabled: boolean;
   registrationEnabled: boolean;
@@ -52,6 +72,7 @@ export type AccountStatusResponse = {
   user: AccountUser | null;
   plan: AccountPlan | null;
   quota: AccountQuota | null;
+  credits: AccountCredits | null;
   renewal: AccountRenewal | null;
   termsVersion?: string;
 };

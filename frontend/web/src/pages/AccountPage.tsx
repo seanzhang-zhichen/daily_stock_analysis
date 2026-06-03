@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Bell,
   CheckCircle2,
+  Copy,
   CreditCard,
   CircleHelp,
   Loader2,
@@ -50,6 +51,7 @@ const AccountPage: React.FC = () => {
 
   const user = userMode?.user ?? null;
   const plan = userMode?.plan ?? null;
+  const credits = userMode?.credits ?? null;
 
   // 改密码 form
   const [currentPassword, setCurrentPassword] = useState('');
@@ -71,6 +73,7 @@ const AccountPage: React.FC = () => {
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [expandedWebhookType, setExpandedWebhookType] = useState<string | null>(null);
+  const [copyInviteInfo, setCopyInviteInfo] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = '账户设置 - DSA';
@@ -179,6 +182,11 @@ const AccountPage: React.FC = () => {
     () => plan?.expiresAt ?? user?.planExpiresAt ?? null,
     [plan, user]
   );
+  const inviteLink = useMemo(() => {
+    const code = credits?.referralCode ?? user?.referralCode;
+    if (!code) return '';
+    return `${window.location.origin}/register?ref=${encodeURIComponent(code)}`;
+  }, [credits?.referralCode, user?.referralCode]);
   const canEmailNotifications = Boolean(plan?.isPro);
   const dailyPushEnabled = canEmailNotifications && (prefs?.dailyPushEnabled ?? false);
   const emailEnabled = canEmailNotifications && (prefs?.emailEnabled ?? true);
@@ -321,6 +329,10 @@ const AccountPage: React.FC = () => {
             <dt className="text-xs uppercase tracking-wider text-secondary-text">上次登录</dt>
             <dd className="text-foreground">{formatDate(user.lastLoginAt)}</dd>
           </div>
+          <div className="space-y-1">
+            <dt className="text-xs uppercase tracking-wider text-secondary-text">积分余额</dt>
+            <dd className="text-foreground">{credits?.balance ?? user.creditBalance ?? 0}</dd>
+          </div>
         </dl>
 
         <div className="mt-5 flex flex-wrap gap-3">
@@ -330,6 +342,59 @@ const AccountPage: React.FC = () => {
               {plan?.isPro ? '管理订阅' : '升级到 Pro'}
             </Button>
           </Link>
+        </div>
+      </Card>
+
+      <Card title="积分与邀请" subtitle="CREDITS">
+        <div className="grid gap-4 text-sm md:grid-cols-3">
+          <div className="rounded-xl border border-border/60 bg-card/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-wider text-secondary-text">当前积分</p>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{credits?.balance ?? 0}</p>
+            <p className="mt-1 text-xs text-secondary-text">
+              {credits?.enabled ? '积分扣费已启用' : '当前仅展示积分，暂不扣费'}
+            </p>
+          </div>
+          <div className="rounded-xl border border-border/60 bg-card/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-wider text-secondary-text">消耗规则</p>
+            <p className="mt-2 text-foreground">股票分析 {credits?.costs.analysis ?? 0} / 次</p>
+            <p className="mt-1 text-foreground">问股 {credits?.costs.agent ?? 0} / 次</p>
+          </div>
+          <div className="rounded-xl border border-border/60 bg-card/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-wider text-secondary-text">邀请人数</p>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{credits?.referredUsers ?? 0}</p>
+            <p className="mt-1 text-xs text-secondary-text">
+              好友注册和付费后可获得积分奖励。
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-4">
+          <p className="text-sm font-medium text-foreground">邀请链接</p>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input
+              readOnly
+              value={inviteLink || '暂无邀请码'}
+              className="ui-input min-w-0 flex-1 font-mono text-xs"
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!inviteLink}
+              onClick={() => {
+                void navigator.clipboard.writeText(inviteLink).then(() => {
+                  setCopyInviteInfo('邀请链接已复制。');
+                  window.setTimeout(() => setCopyInviteInfo(null), 1800);
+                });
+              }}
+            >
+              <Copy className="h-4 w-4" /> 复制
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-secondary-text">
+            奖励规则由管理员后台配置：注册奖励、包月/包年订阅奖励、邀请注册奖励和邀请用户付费奖励。
+          </p>
+          {copyInviteInfo ? (
+            <SettingsAlert title="复制成功" message={copyInviteInfo} variant="success" className="mt-3" />
+          ) : null}
         </div>
       </Card>
 

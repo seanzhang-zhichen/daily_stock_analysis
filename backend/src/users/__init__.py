@@ -32,6 +32,21 @@ from src.users.quota_guard import (  # noqa: F401
     quota_exceeded_payload,
     refund_quota,
 )
+from src.users.credits import (  # noqa: F401
+    CreditOutcome,
+    CreditSettings,
+    add_credits,
+    consume_credits,
+    credit_exceeded_payload,
+    enforce_credits,
+    ensure_referral_code,
+    grant_registration_bonus,
+    grant_subscription_credit_rewards,
+    refund_consumed_credits,
+    refund_credits,
+    register_referral,
+    serialize_credit_snapshot,
+)
 from src.users.plans import (  # noqa: F401
     ResolvedPlan,
     grant_plan,

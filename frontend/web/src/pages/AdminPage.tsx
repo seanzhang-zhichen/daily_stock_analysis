@@ -34,7 +34,7 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   { key: 'invoices', label: '发票审核', icon: FileText },
   { key: 'users', label: '用户', icon: Users },
   { key: 'plans', label: '套餐与用量', icon: ClipboardList },
-  { key: 'platform', label: '注册/支付/合规', icon: Settings },
+  { key: 'platform', label: '注册/支付/积分/合规', icon: Settings },
   { key: 'grant', label: '手动开通', icon: CheckCircle2 },
   { key: 'audit', label: '审计日志', icon: ClipboardList },
   { key: 'notices', label: '公告管理', icon: Bell },
@@ -123,6 +123,10 @@ const OverviewTab: React.FC = () => {
         <p className="text-xs text-secondary-text">
           退款待审核 {stats.pending.refunds} · 发票待开具 {stats.pending.invoices}
         </p>
+      </Card>
+      <Card title="积分" subtitle="CREDITS">
+        <p className="text-3xl font-semibold text-foreground">{stats.credits?.balanceTotal ?? 0}</p>
+        <p className="text-xs text-secondary-text">邀请关系: {stats.credits?.referrals ?? 0}</p>
       </Card>
     </div>
   );
@@ -504,6 +508,7 @@ const UsersTab: React.FC = () => {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [emailLike, setEmailLike] = useState('');
   const [loading, setLoading] = useState(false);
+  const [actingUserId, setActingUserId] = useState<number | null>(null);
   const [error, setError] = useState<ParsedApiError | null>(null);
 
   const refresh = useCallback(async (q?: string) => {
@@ -522,6 +527,31 @@ const UsersTab: React.FC = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const handleAdjustCredits = async (user: AdminUser) => {
+    const rawDelta = window.prompt(`为 ${user.email} 调整积分，正数增加、负数扣减：`, '100');
+    if (rawDelta == null) return;
+    const delta = Number.parseInt(rawDelta, 10);
+    if (!Number.isFinite(delta) || delta === 0) {
+      setError(getParsedApiError(new Error('请输入非 0 整数积分。')));
+      return;
+    }
+    const note = window.prompt('备注（可选）：') ?? undefined;
+    setActingUserId(user.id);
+    setError(null);
+    try {
+      const res = await adminApi.adjustUserCredits({
+        userId: user.id,
+        delta,
+        note: note?.trim() || undefined,
+      });
+      setUsers((prev) => prev.map((item) => (item.id === user.id ? res.user : item)));
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setActingUserId(null);
+    }
+  };
 
   return (
     <Card title="用户" subtitle={`USERS (${users.length})`}>
@@ -551,9 +581,12 @@ const UsersTab: React.FC = () => {
               <th className="pb-2 pr-3">邮箱</th>
               <th className="pb-2 pr-3">套餐</th>
               <th className="pb-2 pr-3">到期</th>
+              <th className="pb-2 pr-3">积分</th>
+              <th className="pb-2 pr-3">邀请码</th>
               <th className="pb-2 pr-3">协议版本</th>
               <th className="pb-2 pr-3">Admin</th>
-              <th className="pb-2">最近登录</th>
+              <th className="pb-2 pr-3">最近登录</th>
+              <th className="pb-2">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
@@ -565,6 +598,8 @@ const UsersTab: React.FC = () => {
                   <StatusBadge status={u.plan} />
                 </td>
                 <td className="py-2 pr-3 text-xs">{formatDate(u.planExpiresAt)}</td>
+                <td className="py-2 pr-3 tabular-nums">{u.creditBalance ?? 0}</td>
+                <td className="py-2 pr-3 font-mono text-xs">{u.referralCode ?? '—'}</td>
                 <td className="py-2 pr-3 text-xs">{u.termsVersion ?? '—'}</td>
                 <td className="py-2 pr-3">
                   {u.isAdmin ? (
@@ -575,7 +610,18 @@ const UsersTab: React.FC = () => {
                     <span className="text-xs text-secondary-text">—</span>
                   )}
                 </td>
-                <td className="py-2 text-xs">{formatDate(u.lastLoginAt)}</td>
+                <td className="py-2 pr-3 text-xs">{formatDate(u.lastLoginAt)}</td>
+                <td className="py-2">
+                  <Button
+                    type="button"
+                    size="xsm"
+                    variant="secondary"
+                    isLoading={actingUserId === u.id}
+                    onClick={() => void handleAdjustCredits(u)}
+                  >
+                    调积分
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -812,6 +858,7 @@ const PLATFORM_CATEGORY_LABELS: Record<string, string> = {
   registration: '注册与账号',
   risk_control: '注册风控',
   payment: '支付与订单',
+  credit: '积分与邀请',
   compliance: '合规协议',
 };
 

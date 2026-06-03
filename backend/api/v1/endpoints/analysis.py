@@ -37,6 +37,12 @@ from src.users import (
     quota_exceeded_payload,
     refund_quota,
 )
+from src.users.credits import (
+    CreditOutcome,
+    credit_exceeded_payload,
+    enforce_credits,
+    refund_consumed_credits,
+)
 from api.v1.schemas.analysis import (
     AnalyzeRequest,
     AnalysisResultResponse,
@@ -96,7 +102,21 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
-    return int(user_id)
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _db_user(db: Session, current_user: AppUser) -> AppUser:
+    user_id = _current_user_id_or_none(current_user)
+    if user_id is None or not hasattr(db, "query"):
+        return current_user
+    try:
+        row = db.query(AppUser).filter(AppUser.id == user_id).first()
+    except Exception:  # noqa: BLE001
+        return current_user
+    return row if isinstance(row, AppUser) else current_user
 
 
 def _market_review_lock_path(config: Config) -> Path:
@@ -256,6 +276,9 @@ def trigger_analysis(
         HTTPException: 500 - 分析失败
     """
     current_user_id = _current_user_id_or_none(current_user)
+    if current_user_id is not None:
+        current_user = _db_user(db, current_user)
+        current_user_id = _current_user_id_or_none(current_user)
     stock_codes = []
     if request.stock_code:
         stock_codes.append(request.stock_code)
@@ -318,12 +341,25 @@ def trigger_analysis(
                 }
             )
         outcome = None
+        credit_outcome: Optional[CreditOutcome] = None
         if current_user_id is not None:
             outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
             if outcome.exceeded:
                 db.commit()
                 return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-            if outcome.consumed:
+            credit_outcome = enforce_credits(
+                db,
+                user=current_user,
+                kind=KIND_ANALYSIS,
+                related_type="analysis",
+                related_id=stock_codes[0],
+            )
+            if credit_outcome.exceeded:
+                if outcome.consumed:
+                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+                db.commit()
+                return JSONResponse(status_code=402, content=credit_exceeded_payload(credit_outcome))
+            if outcome.consumed or (credit_outcome and credit_outcome.consumed):
                 db.commit()
         try:
             return _handle_sync_analysis(
@@ -332,27 +368,71 @@ def trigger_analysis(
                 user_id=current_user_id,
             )
         except Exception:
+            if credit_outcome and credit_outcome.consumed:
+                refund_consumed_credits(
+                    db,
+                    user=current_user,
+                    outcome=credit_outcome,
+                    related_type="analysis",
+                    related_id=stock_codes[0],
+                )
             if outcome and outcome.consumed:
                 refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+            if (outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed):
                 db.commit()
             raise
 
     # 异步批量: 按提交的股票数扣减 N 次, 任一未通过即整批拒绝
     consumed_count = 0
     consumed_on_date = None
+    consumed_credit_outcomes: list[CreditOutcome] = []
     if current_user_id is not None and len(stock_codes) > 0:
-        for _ in stock_codes:
+        for stock_code in stock_codes:
             outcome = enforce_quota(db, user=current_user, kind=KIND_ANALYSIS)
             if outcome.exceeded:
                 # 退还本批次已扣的配额, 保持原子性
                 for _i in range(consumed_count):
                     refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
+                for credit_outcome in consumed_credit_outcomes:
+                    refund_consumed_credits(
+                        db,
+                        user=current_user,
+                        outcome=credit_outcome,
+                        related_type="analysis",
+                        related_id=stock_code,
+                    )
                 db.commit()
                 return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+            credit_outcome = enforce_credits(
+                db,
+                user=current_user,
+                kind=KIND_ANALYSIS,
+                related_type="analysis",
+                related_id=stock_code,
+            )
+            if credit_outcome.exceeded:
+                if outcome.consumed:
+                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
+                for _i in range(consumed_count):
+                    refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
+                for refunded in consumed_credit_outcomes:
+                    refund_consumed_credits(
+                        db,
+                        user=current_user,
+                        outcome=refunded,
+                        related_type="analysis",
+                        related_id=stock_code,
+                    )
+                db.commit()
+                return JSONResponse(status_code=402, content=credit_exceeded_payload(credit_outcome))
             if outcome.consumed:
                 consumed_count += 1
                 consumed_on_date = consumed_on_date or outcome.on_date
+            if credit_outcome.consumed:
+                consumed_credit_outcomes.append(credit_outcome)
         if consumed_count > 0:
+            db.commit()
+        elif consumed_credit_outcomes:
             db.commit()
 
     # Async mode submits one task per stock.
@@ -363,17 +443,27 @@ def trigger_analysis(
             user_id=current_user_id,
             refund_analysis_quota=consumed_count > 0,
             quota_refund_date=consumed_on_date,
+            refund_analysis_credits=bool(consumed_credit_outcomes),
+            analysis_credit_cost=consumed_credit_outcomes[0].cost if consumed_credit_outcomes else 0,
         )
     except Exception:
         # 提交队列前异常时, 退还所有已扣配额
         if consumed_count > 0:
             for _i in range(consumed_count):
                 refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
+        for credit_outcome in consumed_credit_outcomes:
+            refund_consumed_credits(
+                db,
+                user=current_user,
+                outcome=credit_outcome,
+                related_type="analysis",
+            )
+        if consumed_count > 0 or consumed_credit_outcomes:
             db.commit()
         raise
 
     # 队列内重复任务: 没有真正进入分析, 退还对应配额
-    if consumed_count > 0:
+    if consumed_count > 0 or consumed_credit_outcomes:
         try:
             payload = json.loads(response.body) if hasattr(response, "body") else None
         except Exception:
@@ -387,6 +477,13 @@ def trigger_analysis(
                 duplicate_count = 1
         for _i in range(min(duplicate_count, consumed_count)):
             refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=consumed_on_date)
+        for credit_outcome in consumed_credit_outcomes[:duplicate_count]:
+            refund_consumed_credits(
+                db,
+                user=current_user,
+                outcome=credit_outcome,
+                related_type="analysis",
+            )
         if duplicate_count > 0:
             db.commit()
     return response
@@ -398,6 +495,8 @@ def _handle_async_analysis_batch(
     user_id: Optional[int] = None,
     refund_analysis_quota: bool = False,
     quota_refund_date: Optional[date] = None,
+    refund_analysis_credits: bool = False,
+    analysis_credit_cost: int = 0,
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
@@ -432,6 +531,9 @@ def _handle_async_analysis_batch(
     if refund_analysis_quota:
         submit_kwargs["refund_analysis_quota"] = True
         submit_kwargs["quota_refund_date"] = quota_refund_date
+    if refund_analysis_credits:
+        submit_kwargs["refund_analysis_credits"] = True
+        submit_kwargs["analysis_credit_cost"] = int(analysis_credit_cost or 0)
     if skills is not None:
         submit_kwargs["skills"] = skills
 

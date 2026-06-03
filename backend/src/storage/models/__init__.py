@@ -13,6 +13,7 @@ from src.storage.models.alert import (
 )
 from src.storage.models.app import (
     AppAuditLog,
+    AppCreditLedger,
     AppGrowthEvent,
     AppInvoice,
     AppNotice,
@@ -24,6 +25,7 @@ from src.storage.models.app import (
     AppReconciliationDiff,
     AppReconciliationReport,
     AppRedeemCode,
+    AppUserReferral,
     AppRefund,
     AppSubscription,
     AppUser,
@@ -87,6 +89,8 @@ __all__ = [
     "AppUserSession",
     "AppUserEmailVerification",
     "AppUserUsageCounter",
+    "AppUserReferral",
+    "AppCreditLedger",
     "AppPlan",
     "AppPlatformSetting",
     "AppSubscription",

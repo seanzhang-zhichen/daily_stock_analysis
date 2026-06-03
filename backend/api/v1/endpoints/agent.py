@@ -24,6 +24,13 @@ from src.users import (
     quota_exceeded_payload,
     refund_quota,
 )
+from src.users.credits import (
+    CreditOutcome,
+    credit_exceeded_payload,
+    enforce_credits,
+    refund_consumed_credits,
+    refund_credits,
+)
 
 # Tool name -> Chinese display name mapping
 TOOL_DISPLAY_NAMES: Dict[str, str] = {
@@ -54,7 +61,21 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
-    return int(user_id)
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _db_user(db: Session, current_user: AppUser) -> AppUser:
+    user_id = _current_user_id_or_none(current_user)
+    if user_id is None or not hasattr(db, "query"):
+        return current_user
+    try:
+        row = db.query(AppUser).filter(AppUser.id == user_id).first()
+    except Exception:  # noqa: BLE001
+        return current_user
+    return row if isinstance(row, AppUser) else current_user
 
 
 # To C 多用户隔离: 登录用户的 session_id 被加上 ``u{user_id}:`` 前缀,
@@ -192,14 +213,24 @@ async def agent_chat(
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
     current_user_id = _current_user_id_or_none(current_user)
+    if current_user_id is not None:
+        current_user = _db_user(db, current_user)
+        current_user_id = _current_user_id_or_none(current_user)
     effective_user = current_user if current_user_id is not None else None
     outcome = None
+    credit_outcome: Optional[CreditOutcome] = None
     if current_user_id is not None:
         outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
         if outcome.exceeded:
             db.commit()
             return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-        if outcome.consumed:
+        credit_outcome = enforce_credits(db, user=current_user, kind=KIND_AGENT, related_type="agent")
+        if credit_outcome.exceeded:
+            if outcome.consumed:
+                refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            db.commit()
+            return JSONResponse(status_code=402, content=credit_exceeded_payload(credit_outcome))
+        if outcome.consumed or credit_outcome.consumed:
             db.commit()
 
     session_id = _scope_session_id(request.session_id, effective_user)
@@ -229,6 +260,9 @@ async def agent_chat(
         result_success = bool(getattr(result, "success", False))
         if outcome and outcome.consumed and not result_success:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+        if credit_outcome and credit_outcome.consumed and not result_success:
+            refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="agent")
+        if ((outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed)) and not result_success:
             db.commit()
 
         return ChatResponse(
@@ -239,8 +273,11 @@ async def agent_chat(
         )
             
     except Exception as e:
+        if credit_outcome and credit_outcome.consumed:
+            refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="agent")
         if outcome and outcome.consumed:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+        if (outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed):
             db.commit()
         logger.error(f"Agent chat API failed: {e}")
         logger.exception("Agent chat error details:")
@@ -404,13 +441,23 @@ async def agent_research(
 
     # Phase 2: deep research 也走 agent 配额池
     current_user_id = _current_user_id_or_none(current_user)
+    if current_user_id is not None:
+        current_user = _db_user(db, current_user)
+        current_user_id = _current_user_id_or_none(current_user)
     outcome = None
+    credit_outcome: Optional[CreditOutcome] = None
     if current_user_id is not None:
         outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
         if outcome.exceeded:
             db.commit()
             return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-        if outcome.consumed:
+        credit_outcome = enforce_credits(db, user=current_user, kind=KIND_AGENT, related_type="research")
+        if credit_outcome.exceeded:
+            if outcome.consumed:
+                refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            db.commit()
+            return JSONResponse(status_code=402, content=credit_exceeded_payload(credit_outcome))
+        if outcome.consumed or credit_outcome.consumed:
             db.commit()
 
     question = request.question
@@ -448,8 +495,11 @@ async def agent_research(
         )
         if getattr(result, "timed_out", False):
             logger.warning("Agent research API timed out after %ss", research_timeout)
+            if credit_outcome and credit_outcome.consumed:
+                refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="research")
             if outcome and outcome.consumed:
                 refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            if (outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed):
                 db.commit()
             return ResearchResponse(
                 success=False,
@@ -460,8 +510,11 @@ async def agent_research(
             )
 
         result_success = bool(getattr(result, "success", False))
+        if credit_outcome and credit_outcome.consumed and not result_success:
+            refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="research")
         if outcome and outcome.consumed and not result_success:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+        if ((outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed)) and not result_success:
             db.commit()
 
         return ResearchResponse(
@@ -472,8 +525,11 @@ async def agent_research(
             error=result.error if not result_success else None,
         )
     except Exception as e:
+        if credit_outcome and credit_outcome.consumed:
+            refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="research")
         if outcome and outcome.consumed:
             refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+        if (outcome and outcome.consumed) or (credit_outcome and credit_outcome.consumed):
             db.commit()
         logger.error("Agent research API failed: %s", e)
         logger.exception("Agent research error details:")
@@ -502,12 +558,27 @@ async def agent_chat_stream(
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
     # Phase 2: 流式问股仍按 1 次配额扣减; SSE 链路上失败时由 outer scope refund
-    outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
-    if outcome.exceeded:
-        db.commit()
-        return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
-    if outcome.consumed:
-        db.commit()
+    current_user_id = _current_user_id_or_none(current_user)
+    if current_user_id is not None:
+        current_user = _db_user(db, current_user)
+        current_user_id = _current_user_id_or_none(current_user)
+    else:
+        current_user = None
+    outcome = None
+    credit_outcome: Optional[CreditOutcome] = None
+    if current_user_id is not None:
+        outcome = enforce_quota(db, user=current_user, kind=KIND_AGENT)
+        if outcome.exceeded:
+            db.commit()
+            return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
+        credit_outcome = enforce_credits(db, user=current_user, kind=KIND_AGENT, related_type="agent_stream")
+        if credit_outcome.exceeded:
+            if outcome.consumed:
+                refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
+            db.commit()
+            return JSONResponse(status_code=402, content=credit_exceeded_payload(credit_outcome))
+        if outcome.consumed or credit_outcome.consumed:
+            db.commit()
 
     session_id = _scope_session_id(request.session_id, current_user)
     loop = asyncio.get_running_loop()
@@ -530,7 +601,7 @@ async def agent_chat_stream(
             event["display_name"] = TOOL_DISPLAY_NAMES.get(tool, tool)
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
 
-    _stream_user_id = current_user.id if current_user else None
+    _stream_user_id = current_user_id
 
     def run_sync():
         try:
@@ -590,8 +661,8 @@ async def agent_chat_stream(
                 logger.warning("agent executor cleanup error (ignored): %s", exc, exc_info=True)
             # SSE 链路结束: 失败时退回配额 (避免连续失败榨干用户额度)。
             # 注意: 外层 get_db 注入的 session 在 endpoint 返回后已关闭, 这里用单独的 session。
-            if stream_result["failed"] and outcome.consumed:
-                refund_user_id = current_user.id
+            if stream_result["failed"] and outcome and outcome.consumed and current_user_id is not None:
+                refund_user_id = current_user_id
                 refund_kind = KIND_AGENT
                 refund_date = outcome.on_date
                 try:
@@ -612,6 +683,32 @@ async def agent_chat_stream(
                 except Exception as refund_exc:
                     logger.warning(
                         "agent stream quota refund failed (ignored): %s",
+                        refund_exc,
+                        exc_info=True,
+                    )
+            if stream_result["failed"] and credit_outcome and credit_outcome.consumed and current_user_id is not None:
+                try:
+                    from src.storage import DatabaseManager
+
+                    credit_session = DatabaseManager.get_instance().get_session()
+                    try:
+                        user = credit_session.query(AppUser).filter(AppUser.id == current_user_id).first()
+                        if user is not None:
+                            refund_credits(
+                                credit_session,
+                                user=user,
+                                amount=credit_outcome.cost,
+                                kind=KIND_AGENT,
+                                related_type="agent_stream",
+                                related_id=session_id,
+                                idempotency_key=f"agent-stream-credit-refund:{credit_outcome.ledger_id}",
+                            )
+                            credit_session.commit()
+                    finally:
+                        credit_session.close()
+                except Exception as refund_exc:
+                    logger.warning(
+                        "agent stream credit refund failed (ignored): %s",
                         refund_exc,
                         exc_info=True,
                     )

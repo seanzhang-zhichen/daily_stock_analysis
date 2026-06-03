@@ -27,6 +27,7 @@ from src.users.config import (
 )
 from src.users.consents import CURRENT_TERMS_VERSION, needs_reaccept
 from src.config import get_config
+from src.users.credits import serialize_credit_snapshot
 from src.users.model_router import get_available_models_for_user
 from src.users.errors import UserError, UserErrorCode
 from src.users.notification_prefs import (
@@ -214,6 +215,8 @@ def _serialize_user(user, *, terms_version: str | None = None) -> dict:
         "email": user.email,
         "plan": user.plan_code,
         "planExpiresAt": user.plan_expires_at.isoformat() if user.plan_expires_at else None,
+        "creditBalance": int(getattr(user, "credit_balance", 0) or 0),
+        "referralCode": getattr(user, "referral_code", None),
         "preferredModel": getattr(user, "preferred_model", None),
         "emailVerified": user.email_verified_at is not None,
         "createdAt": user.created_at.isoformat() if user.created_at else None,
@@ -268,6 +271,7 @@ def _status_payload(
     user = resolve_session(db, cookie_value) if cookie_value else None
 
     quota_payload = None
+    credit_payload = None
     plan_payload = None
     renewal_payload = None
     if user is not None:
@@ -296,6 +300,11 @@ def _status_payload(
             "agentLimit": snapshot.agent_limit,
             "agentRemaining": snapshot.agent_remaining,
         }
+        credit_payload = serialize_credit_snapshot(db, user)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
         renewal_payload = _build_renewal_payload(user)
 
     return {
@@ -307,6 +316,7 @@ def _status_payload(
         "user": _serialize_user(user, terms_version=settings.terms_version) if user is not None else None,
         "plan": plan_payload,
         "quota": quota_payload,
+        "credits": credit_payload,
         "renewal": renewal_payload,
         "termsVersion": settings.terms_version,
     }

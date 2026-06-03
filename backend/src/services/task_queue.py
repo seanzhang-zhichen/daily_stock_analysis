@@ -81,6 +81,8 @@ class TaskInfo:
     user_id: Optional[int] = None
     refund_analysis_quota: bool = False
     quota_refund_date: Optional[date] = None
+    refund_analysis_credits: bool = False
+    analysis_credit_cost: int = 0
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
@@ -122,6 +124,8 @@ class TaskInfo:
             user_id=self.user_id,
             refund_analysis_quota=self.refund_analysis_quota,
             quota_refund_date=self.quota_refund_date,
+            refund_analysis_credits=self.refund_analysis_credits,
+            analysis_credit_cost=self.analysis_credit_cost,
         )
 
 
@@ -366,6 +370,8 @@ class AnalysisTaskQueue:
         user_id: Optional[int] = None,
         refund_analysis_quota: bool = False,
         quota_refund_date: Optional[date] = None,
+        refund_analysis_credits: bool = False,
+        analysis_credit_cost: int = 0,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -408,6 +414,8 @@ class AnalysisTaskQueue:
                     user_id=user_id,
                     refund_analysis_quota=bool(refund_analysis_quota),
                     quota_refund_date=quota_refund_date,
+                    refund_analysis_credits=bool(refund_analysis_credits),
+                    analysis_credit_cost=max(0, int(analysis_credit_cost or 0)),
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -424,6 +432,8 @@ class AnalysisTaskQueue:
                         user_id=user_id,
                         refund_analysis_quota=bool(refund_analysis_quota),
                         quota_refund_date=quota_refund_date,
+                        refund_analysis_credits=bool(refund_analysis_credits),
+                        analysis_credit_cost=max(0, int(analysis_credit_cost or 0)),
                     )
                 except Exception:
                     # Roll back the current batch to avoid partial submission.
@@ -622,6 +632,8 @@ class AnalysisTaskQueue:
         user_id: Optional[int] = None,
         refund_analysis_quota: bool = False,
         quota_refund_date: Optional[date] = None,
+        refund_analysis_credits: bool = False,
+        analysis_credit_cost: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -718,6 +730,8 @@ class AnalysisTaskQueue:
                 self._broadcast_event("task_failed", task.to_dict(), user_id=task.user_id)
                 if task.refund_analysis_quota:
                     self._refund_analysis_quota(task.user_id, task.quota_refund_date)
+                if task.refund_analysis_credits:
+                    self._refund_analysis_credits(task.user_id, task.task_id, task.analysis_credit_cost)
             
             # 清理过期任务
             self._cleanup_old_tasks()
@@ -843,6 +857,46 @@ class AnalysisTaskQueue:
             logger.warning(
                 "[TaskQueue] 任务失败后的分析配额返还失败: user_id=%s",
                 user_id,
+                exc_info=True,
+            )
+
+    def _refund_analysis_credits(
+        self,
+        user_id: Optional[int],
+        task_id: Optional[str],
+        analysis_credit_cost: int,
+    ) -> None:
+        if user_id is None:
+            return
+        try:
+            from src.storage import AppUser, DatabaseManager
+            from src.users.credits import KIND_ANALYSIS, refund_credits
+
+            session = DatabaseManager.get_instance().get_session()
+            try:
+                amount = int(analysis_credit_cost or 0)
+                if amount <= 0:
+                    return
+                user = session.query(AppUser).filter(AppUser.id == int(user_id)).first()
+                if user is None:
+                    return
+                refund_credits(
+                    session,
+                    user=user,
+                    amount=amount,
+                    kind=KIND_ANALYSIS,
+                    related_type="analysis",
+                    related_id=task_id,
+                    idempotency_key=f"analysis-failed-credit-refund:{task_id}",
+                )
+                session.commit()
+            finally:
+                session.close()
+        except Exception:
+            logger.warning(
+                "[TaskQueue] 任务失败后的分析积分返还失败: user_id=%s task_id=%s",
+                user_id,
+                task_id,
                 exc_info=True,
             )
 

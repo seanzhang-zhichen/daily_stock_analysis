@@ -102,7 +102,7 @@ POST /api/v1/account/login
 | POST | `/register` | 无 | 注册新用户，需同意协议（`termsAgreed=true`） |
 | POST | `/login` | 无 | 密码登录，成功后 Set-Cookie |
 | POST | `/logout` | 无 | 清除 Cookie，吊销 Session |
-| GET | `/status` | 无 | 检查当前登录状态 + 配额快照 |
+| GET | `/status` | 无 | 检查当前登录状态 + 配额与积分快照 |
 | POST | `/verify-email` | 无 | 消费邮箱验证 Token，激活邮箱 |
 | POST | `/request-password-reset` | 无 | 发送密码重置邮件 |
 | POST | `/reset-password` | 无 | 消费重置 Token，设置新密码 |
@@ -134,6 +134,8 @@ POST /api/v1/account/login
 }
 ```
 
+`inviteCode` 既支持平台后台配置的注册邀请码，也支持用户自己的邀请代码。用户邀请码可通过 `/account/status` 返回的 `credits.referralCode` 获取，前端注册链接形如 `/register?ref=CODE`。
+
 **登录成功响应示例：**
 ```json
 {
@@ -142,6 +144,8 @@ POST /api/v1/account/login
     "id": 1,
     "email": "user@example.com",
     "plan_code": "free",
+    "creditBalance": 0,
+    "referralCode": "UABC123456",
     "is_admin": false
   }
 }
@@ -363,6 +367,8 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 
 **注意：** `PAYMENT_ENABLED=false`（默认）时，`/orders/{order_no}/pay` 返回 `503` 并提示联系人工充值。
 
+支付成功后，如果运营后台启用了积分规则，系统会按订单周期给用户发放订阅奖励积分；若该用户来自邀请注册，还会给邀请人发放首单付费奖励积分。支付回调重试通过积分流水的幂等键避免重复发放。
+
 ---
 
 ### Admin — 平台管理员
@@ -375,6 +381,7 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 |------|------|------|
 | GET | `/users` | 用户列表（分页、搜索） |
 | GET | `/users/{id}` | 用户详情 |
+| POST | `/users/{id}/credits/adjust` | 手动增减用户积分，写入积分流水与审计日志 |
 | POST | `/grant-plan` | 手动开通/续期套餐，优先通过 `userEmail` 精确匹配用户，兼容旧版 `userId` 调用 |
 | POST | `/users/{id}/disable` | 禁用账号 |
 | POST | `/users/{id}/enable` | 启用账号 |
@@ -404,6 +411,8 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 ```
 
 `userEmail` 会先去除首尾空格并转为小写后按邮箱精确查找用户；未提供 `userEmail` 时仍可传 `userId` 兼容旧调用。找不到目标用户返回 `404`，两个字段都未提供时返回 `422`。
+
+**积分规则配置：** 运营后台 `/admin` 的“注册/支付/积分/合规”页支持配置积分系统开关、新用户注册奖励、邀请注册奖励、包月/包年订阅奖励、邀请用户首单付费奖励，以及股票分析/问股消耗积分。默认 `CREDIT_SYSTEM_ENABLED=false`，不会拦截现有分析和问股调用。
 
 ---
 
@@ -493,6 +502,7 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | `unauthorized` | 未登录或 Session 失效 |
 | `forbidden` | 无操作权限 |
 | `quota_exceeded` | 每日使用次数超出套餐上限 |
+| `credit_exceeded` | 积分余额不足 |
 | `duplicate_task` | 相同股票已有进行中的任务 |
 | `validation_error` | 输入参数校验失败 |
 | `invite_code_required` | 注册需要邀请码但未提供 |

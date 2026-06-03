@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] To C 用户体系新增积分与邀请能力：支持邀请注册、订阅奖励、邀请用户付费奖励、分析/问股积分消耗、管理员后台配置与手动积分调整。
 - [修复] 修复图片股票代码识别未复用 LLM_CHANNELS 渠道密钥的问题，Vision 模型可通过渠道配置调用 OpenAI 兼容服务。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->

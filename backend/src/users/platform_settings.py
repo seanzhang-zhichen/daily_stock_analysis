@@ -163,6 +163,84 @@ _PLATFORM_SETTING_DEFINITIONS: tuple[PlatformSettingDefinition, ...] = (
         maximum=1440,
     ),
     PlatformSettingDefinition(
+        key="CREDIT_SYSTEM_ENABLED",
+        title="启用积分扣费",
+        description="开启后股票分析和 Agent 问股会按下方成本消耗积分；关闭时仅记录余额和奖励，不拦截使用。",
+        category="credit",
+        value_type="boolean",
+        default_value="false",
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_REGISTRATION_BONUS",
+        title="新用户注册奖励积分",
+        description="用户注册成功后赠送给新用户的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_REFERRAL_SIGNUP_BONUS",
+        title="邀请注册奖励积分",
+        description="被邀请用户注册成功后赠送给邀请人的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_MONTHLY_SUBSCRIPTION_BONUS",
+        title="包月订阅奖励积分",
+        description="用户完成月度订阅支付后赠送给本人的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_YEARLY_SUBSCRIPTION_BONUS",
+        title="包年订阅奖励积分",
+        description="用户完成包年订阅支付后赠送给本人的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_REFERRAL_PAID_BONUS",
+        title="邀请用户首单付费奖励积分",
+        description="被邀请用户首次完成付费订阅后赠送给邀请人的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_ANALYSIS_COST",
+        title="股票分析消耗积分",
+        description="每提交一只股票分析消耗的积分；批量分析按股票数量逐只扣除。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
+        key="CREDIT_AGENT_COST",
+        title="问股消耗积分",
+        description="每次 Agent 问股或 Deep Research 消耗的积分。",
+        category="credit",
+        value_type="integer",
+        default_value="0",
+        minimum=0,
+        maximum=1000000,
+    ),
+    PlatformSettingDefinition(
         key="USER_TERMS_VERSION",
         title="用户协议版本",
         description="变更后未接受该版本的用户会被标记为需要重新确认。",
@@ -174,7 +252,7 @@ _PLATFORM_SETTING_DEFINITIONS: tuple[PlatformSettingDefinition, ...] = (
 )
 
 _DEFINITIONS_BY_KEY = {item.key: item for item in _PLATFORM_SETTING_DEFINITIONS}
-_CATEGORY_ORDER = {"registration": 10, "risk_control": 20, "payment": 30, "compliance": 40}
+_CATEGORY_ORDER = {"registration": 10, "risk_control": 20, "payment": 30, "credit": 40, "compliance": 50}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -195,7 +273,10 @@ def _get_row(db: Optional[Session], key: str) -> Optional[AppPlatformSetting]:
     if db is None:
         return None
     try:
-        return db.query(AppPlatformSetting).filter(AppPlatformSetting.key == key).first()
+        row = db.query(AppPlatformSetting).filter(AppPlatformSetting.key == key).first()
+        if isinstance(row, AppPlatformSetting):
+            return row
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("读取平台配置失败 key=%s: %s", key, exc)
         try:

@@ -42,6 +42,8 @@ class AppUser(Base):
     status = Column(String(16), nullable=False, default='active', index=True)  # active/disabled
     plan_code = Column(String(32), nullable=False, default='free', index=True)
     plan_expires_at = Column(DateTime, nullable=True)
+    credit_balance = Column(Integer, nullable=False, default=0)
+    referral_code = Column(String(32), nullable=True, unique=True, index=True)
     preferred_model = Column(String(128), nullable=True)
     email_verified_at = Column(DateTime, nullable=True)
     last_login_at = Column(DateTime, nullable=True)
@@ -60,6 +62,8 @@ class AppUser(Base):
             'status': self.status,
             'plan_code': self.plan_code,
             'plan_expires_at': self.plan_expires_at.isoformat() if self.plan_expires_at else None,
+            'credit_balance': int(self.credit_balance or 0),
+            'referral_code': self.referral_code,
             'preferred_model': self.preferred_model,
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
@@ -112,6 +116,48 @@ class AppUserUsageCounter(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'counter_date', 'kind', name='uix_app_user_usage_user_date_kind'),
     )
+
+
+class AppUserReferral(Base):
+    """User invitation relationship.
+
+    One invitee can have at most one inviter. Rewards are recorded through
+    ``AppCreditLedger`` so operators can audit why a balance changed.
+    """
+
+    __tablename__ = 'app_user_referrals'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    inviter_user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    invitee_user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, unique=True, index=True)
+    invite_code = Column(String(64), nullable=True, index=True)
+    registered_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    signup_reward_credited_at = Column(DateTime, nullable=True)
+    first_paid_order_no = Column(String(32), nullable=True, index=True)
+    first_paid_at = Column(DateTime, nullable=True, index=True)
+    paid_reward_credited_at = Column(DateTime, nullable=True)
+
+
+class AppCreditLedger(Base):
+    """Credit balance ledger.
+
+    Positive ``delta`` values grant/refund credits; negative values consume
+    credits. ``idempotency_key`` prevents duplicate rewards from callback
+    retries or repeated admin operations.
+    """
+
+    __tablename__ = 'app_credit_ledger'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    delta = Column(Integer, nullable=False)
+    balance_after = Column(Integer, nullable=False)
+    reason = Column(String(32), nullable=False, index=True)
+    related_type = Column(String(32), nullable=True, index=True)
+    related_id = Column(String(128), nullable=True, index=True)
+    idempotency_key = Column(String(128), nullable=True, unique=True, index=True)
+    note = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
 
 class AppPlan(Base):
@@ -517,6 +563,8 @@ __all__ = [
     "AppUserSession",
     "AppUserEmailVerification",
     "AppUserUsageCounter",
+    "AppUserReferral",
+    "AppCreditLedger",
     "AppPlan",
     "AppPlatformSetting",
     "AppSubscription",

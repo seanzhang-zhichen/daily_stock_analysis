@@ -19,11 +19,12 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   const rawRedirect = searchParams.get('redirect') ?? '';
   const redirect =
     rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
+  const initialInviteCode = searchParams.get('ref') ?? searchParams.get('inviteCode') ?? '';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
+  const [inviteCode, setInviteCode] = useState(initialInviteCode);
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ParsedApiError | string | null>(null);
@@ -84,7 +85,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
           email: email.trim(),
           password,
           passwordConfirm,
-          inviteCode: inviteRequired ? inviteCode.trim() : undefined,
+          inviteCode: inviteCode.trim() || undefined,
           termsAgreed,
           termsVersion,
         });
@@ -259,7 +260,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                     autoComplete="new-password"
                   />
                 )}
-                {inviteRequired && (
+                {mode === 'register' && (inviteRequired || inviteCode.trim()) && (
                   <Input
                     id="inviteCode"
                     type="text"

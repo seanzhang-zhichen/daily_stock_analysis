@@ -43,8 +43,10 @@ from src.storage import (
     AppRefund,
     AppSubscription,
     AppUser,
+    AppUserReferral,
 )
 from src.users.audit import serialize_audit_log, write_audit_log
+from src.users.credits import REASON_ADMIN_ADJUST, add_credits, consume_credits
 from src.users.email import EmailMessageDTO, get_email_backend
 from src.services.billing import OrderService
 from src.services.billing.order_service import (
@@ -114,6 +116,11 @@ class PlatformSettingsUpdateRequest(BaseModel):
     settings: list[PlatformSettingUpdate] = Field(default_factory=list)
 
 
+class AdjustCreditsRequest(BaseModel):
+    delta: int
+    note: Optional[str] = Field(default=None, max_length=255)
+
+
 # --- Helpers ---------------------------------------------------------------
 
 
@@ -157,6 +164,8 @@ def _serialize_admin_user(user: AppUser) -> dict:
         "email": user.email,
         "plan": user.plan_code,
         "planExpiresAt": user.plan_expires_at.isoformat() if user.plan_expires_at else None,
+        "creditBalance": int(getattr(user, "credit_balance", 0) or 0),
+        "referralCode": getattr(user, "referral_code", None),
         "isAdmin": bool(getattr(user, "is_admin", False)),
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
@@ -203,6 +212,60 @@ async def admin_list_users(
         q = q.filter(AppUser.is_admin.is_(bool(is_admin)))
     rows = q.order_by(AppUser.created_at.desc()).limit(limit).all()
     return {"users": [_serialize_admin_user(u) for u in rows], "count": len(rows)}
+
+
+@router.post("/users/{user_id}/credits/adjust", summary="(admin) 手动调整用户积分")
+async def admin_adjust_user_credits(
+    user_id: int,
+    body: AdjustCreditsRequest,
+    db: Session = Depends(get_db),
+    current_admin: AppUser = Depends(get_admin_user),
+):
+    user = db.query(AppUser).filter(AppUser.id == int(user_id)).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    delta = int(body.delta)
+    if delta == 0:
+        raise HTTPException(status_code=422, detail="调整积分不能为 0")
+    try:
+        if delta > 0:
+            add_credits(
+                db,
+                user=user,
+                amount=delta,
+                reason=REASON_ADMIN_ADJUST,
+                related_type="admin",
+                related_id=str(current_admin.id),
+                note=body.note or f"adjusted by {current_admin.email}",
+            )
+        else:
+            consume_credits(
+                db,
+                user=user,
+                amount=abs(delta),
+                kind="admin",
+                reason=REASON_ADMIN_ADJUST,
+                related_type="admin",
+                related_id=str(current_admin.id),
+                note=body.note or f"adjusted by {current_admin.email}",
+            )
+        db.commit()
+        db.refresh(user)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="用户积分余额不足，无法扣减") from exc
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    write_audit_log(
+        db,
+        "admin.credits.adjust",
+        admin_id=int(current_admin.id),
+        target_user_id=int(user.id),
+        detail={"delta": delta, "note": body.note},
+    )
+    return {"user": _serialize_admin_user(user)}
 
 
 # --- /admin/orders ---------------------------------------------------------
@@ -593,6 +656,10 @@ async def admin_stats(
         .scalar()
         or 0
     )
+    credit_balance_total = (
+        db.query(func.coalesce(func.sum(AppUser.credit_balance), 0)).scalar() or 0
+    )
+    referral_count = db.query(func.count(AppUserReferral.id)).scalar() or 0
     return {
         "users": {"total": int(total_users), "paid": int(paid_users)},
         "orders": {
@@ -603,5 +670,9 @@ async def admin_stats(
         "pending": {
             "refunds": int(pending_refunds),
             "invoices": int(pending_invoices),
+        },
+        "credits": {
+            "balanceTotal": int(credit_balance_total),
+            "referrals": int(referral_count),
         },
     }

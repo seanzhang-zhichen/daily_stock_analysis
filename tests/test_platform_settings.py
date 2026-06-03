@@ -96,6 +96,7 @@ class TestPlatformSettings(unittest.TestCase):
         self.assertIn("registration", categories)
         self.assertIn("risk_control", categories)
         self.assertIn("payment", categories)
+        self.assertIn("credit", categories)
         self.assertIn("compliance", categories)
 
 
