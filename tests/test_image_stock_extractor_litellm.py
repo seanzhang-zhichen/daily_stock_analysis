@@ -196,6 +196,30 @@ class TestCallLitellmVision:
             with pytest.raises(ValueError, match="未配置 Vision API"):
                 _call_litellm_vision("b64", "image/jpeg")
 
+    def test_openai_model_uses_llm_channel_deployment(self):
+        cfg = _cfg(
+            vision_model="openai/gpt-5.5",
+            openai_api_keys=[],
+            openai_base_url=None,
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-5.5",
+                    "litellm_params": {
+                        "model": "openai/gpt-5.5",
+                        "api_key": _OPENAI_KEY,
+                        "api_base": "https://api.gpt.ge/v1",
+                    },
+                }
+            ],
+        )
+        with patch("src.services.image_stock_extractor.get_config", return_value=cfg), \
+             patch("src.services.image_stock_extractor.litellm.completion",
+                   return_value=self._good_response()) as mock_comp:
+            _call_litellm_vision("b64", "image/jpeg")
+            kwargs = mock_comp.call_args[1]
+            assert kwargs["api_key"] == _OPENAI_KEY
+            assert kwargs["api_base"] == "https://api.gpt.ge/v1"
+
     def test_raises_when_no_key_for_model(self):
         cfg = _cfg(openai_vision_model="openai/gpt-4o-mini", openai_api_keys=[])
         with patch("src.services.image_stock_extractor.get_config", return_value=cfg):

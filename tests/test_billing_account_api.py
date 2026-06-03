@@ -275,6 +275,33 @@ class TestAdminPlanConfig(_BaseApi):
         self.assertEqual(free["dailyAgentLimit"], 6)
         self.assertEqual(free["maxStocks"], 4)
 
+    def test_admin_can_grant_plan_by_user_email(self):
+        self._seed_pro_plan()
+        admin = self._create_user(email="admin@example.com", is_admin=True)
+        target = self._create_user(email="target@example.com")
+        self._login(admin)
+
+        res = self.client.post("/api/v1/admin/grant-plan", json={
+            "userEmail": " TARGET@example.com ",
+            "planCode": "pro",
+            "grantDays": 30,
+            "note": "manual payment received",
+        })
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["user"]["email"], "target@example.com")
+        self.assertEqual(body["user"]["plan"], "pro")
+        self.assertEqual(body["subscription"]["planCode"], "pro")
+
+        session = self.db_manager.get_session()
+        try:
+            refreshed = session.query(AppUser).filter(AppUser.id == target.id).first()
+            self.assertIsNotNone(refreshed)
+            self.assertEqual(refreshed.plan_code, "pro")
+            self.assertIsNotNone(refreshed.plan_expires_at)
+        finally:
+            session.close()
+
 
 class TestRedeem(_BaseApi):
     def test_redeem_requires_login(self):
@@ -328,6 +355,51 @@ class TestModelPreferenceEndpoint(_BaseApi):
         res = self.client.get("/api/v1/account/model-preference")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["models"], ["openai/gpt-4o-mini", "openai/gpt-4o"])
+
+    def test_user_can_select_from_multiple_channel_models(self):
+        self._seed_free_plan()
+        user = self._create_user()
+        self._login(user)
+        saved_channel_env = {
+            key: os.environ.get(key)
+            for key in [
+                "LLM_CHANNELS",
+                "LLM_PRIMARY_PROTOCOL",
+                "LLM_PRIMARY_API_KEY",
+                "LLM_PRIMARY_MODELS",
+                "LITELLM_MODEL",
+                "LITELLM_FALLBACK_MODELS",
+                "AGENT_LITELLM_MODEL",
+            ]
+        }
+        try:
+            os.environ["LLM_CHANNELS"] = "primary"
+            os.environ["LLM_PRIMARY_PROTOCOL"] = "openai"
+            os.environ["LLM_PRIMARY_API_KEY"] = "sk-test-channel"
+            os.environ["LLM_PRIMARY_MODELS"] = "gpt-4o-mini,gpt-4o"
+            os.environ["LITELLM_MODEL"] = ""
+            os.environ["LITELLM_FALLBACK_MODELS"] = ""
+            os.environ["AGENT_LITELLM_MODEL"] = ""
+            Config._instance = None
+
+            res = self.client.get("/api/v1/account/model-preference")
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertEqual(res.json()["models"], ["openai/gpt-4o-mini", "openai/gpt-4o"])
+
+            update = self.client.patch(
+                "/api/v1/account/model-preference",
+                json={"preferredModel": "openai/gpt-4o"},
+            )
+            self.assertEqual(update.status_code, 200, update.text)
+            self.assertEqual(update.json()["preferredModel"], "openai/gpt-4o")
+            self.assertEqual(update.json()["effectiveModel"], "openai/gpt-4o")
+        finally:
+            for key, value in saved_channel_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            Config._instance = None
 
     def test_user_can_update_allowed_model_preference(self):
         self._seed_pro_plan()

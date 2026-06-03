@@ -560,6 +560,28 @@ class TestVisionKeyValidation:
         # Should NOT warn: primary model (openai) has a valid key
         assert not any(i.field == "VISION_MODEL" and i.severity == "warning" for i in issues)
 
+    def test_llm_channel_key_sufficient_for_vision_model(self):
+        cfg = _make_config(
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-5.5",
+                    "litellm_params": {
+                        "model": "openai/gpt-5.5",
+                        "api_key": "sk-channel-validkey-xyz",
+                        "api_base": "https://api.gpt.ge/v1",
+                    },
+                },
+            ],
+            litellm_model="openai/gpt-5.5",
+            vision_model="openai/gpt-5.5",
+            openai_api_keys=[],
+            gemini_api_keys=[],
+            anthropic_api_keys=[],
+            deepseek_api_keys=[],
+        )
+        issues = cfg.validate_structured()
+        assert not any(i.field == "VISION_MODEL" and i.severity == "warning" for i in issues)
+
     def test_no_vision_model_no_warning(self):
         """When VISION_MODEL is not set, no Vision key warning is raised."""
         cfg = _make_config(vision_model="", gemini_api_keys=[])

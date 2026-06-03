@@ -273,7 +273,7 @@
 **验收标准**：
 
 - 只有 `is_admin=True` 的登录用户能正常使用 `/admin` 和 `/api/v1/admin/*`。
-- 管理员可筛选用户、配置免费档和会员套餐每日用量、查看订单、审核退款、处理发票、手动开通套餐和查看审计 / 统计数据。
+- 管理员可筛选用户、配置免费档和会员套餐每日用量、查看订单、审核退款、处理发票、按用户注册邮箱手动开通套餐和查看审计 / 统计数据。
 - 管理员可创建、发布、下架和删除公告。
 - 管理员操作写入 `app_audit_logs`。
 - 普通 C 端用户看不到 `/settings` 与 `/admin` 入口，直接访问 `/settings` 会回到 `/account`，访问管理员 API 返回 403；直接访问 `/admin` 会因管理员 API 权限失败而不可用。
@@ -281,7 +281,7 @@
 **当前实现依据**：
 
 - 前端：`AdminPage`、`SidebarNav` 权限控制。
-- API：`/api/v1/admin/me|users|plans|orders|refunds|invoices|grant-plan|audit-logs|stats`，系统配置 API 也依赖管理员权限。
+- API：`/api/v1/admin/me|users|plans|orders|refunds|invoices|grant-plan|audit-logs|stats`，其中 `grant-plan` 优先使用 `userEmail` 精确匹配目标用户并兼容旧版 `userId`；系统配置 API 也依赖管理员权限。
 - 权限：`api.deps.get_admin_user`、`app_users.is_admin`、`api/v1/endpoints/system_config.py` 的 router 级管理员依赖。
 
 ## 4. 关键验收边界

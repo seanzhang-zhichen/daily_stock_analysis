@@ -235,6 +235,27 @@ def _get_api_keys_for_model(model: str, cfg: Config) -> List[str]:
     return [k for k in cfg.openai_api_keys if k and len(k) >= 8]
 
 
+def _get_litellm_deployments_for_model(model: str, cfg: Config) -> List[dict]:
+    """Return matching LiteLLM channel/YAML deployments for a model."""
+    deployments: List[dict] = []
+    for entry in cfg.llm_model_list or []:
+        if not isinstance(entry, dict):
+            continue
+        params = entry.get("litellm_params") or {}
+        if not isinstance(params, dict):
+            continue
+        candidates = {
+            str(entry.get("model_name") or "").strip(),
+            str(params.get("model") or "").strip(),
+        }
+        if model not in candidates:
+            continue
+        deployment = dict(params)
+        if deployment.get("model"):
+            deployments.append(deployment)
+    return deployments
+
+
 def _call_litellm_vision(image_b64: str, mime_type: str, api_key: Optional[str] = None) -> str:
     """Extract stock codes from an image using litellm (all providers via OpenAI vision format)."""
     global litellm
@@ -243,13 +264,20 @@ def _call_litellm_vision(image_b64: str, mime_type: str, api_key: Optional[str] 
     if not model:
         raise ValueError("未配置 Vision API。请设置 LITELLM_MODEL 或相关 API Key。")
 
+    deployments = _get_litellm_deployments_for_model(model, cfg)
+    if deployments and api_key:
+        keyed_deployments = [d for d in deployments if d.get("api_key") == api_key]
+        if keyed_deployments:
+            deployments = keyed_deployments
+
     keys = _get_api_keys_for_model(model, cfg)
-    if not keys:
+    if not deployments and not keys:
         raise ValueError(f"No API key found for vision model {model}")
-    key = api_key if api_key and api_key in keys else random.choice(keys)
+    key = api_key if api_key and api_key in keys else (random.choice(keys) if keys else None)
 
     data_url = f"data:{mime_type};base64,{image_b64}"
-    call_kwargs: dict = {
+    call_kwargs: dict = dict(random.choice(deployments)) if deployments else {"model": model}
+    call_kwargs.update({
         "model": model,
         "messages": [
             {
@@ -261,11 +289,12 @@ def _call_litellm_vision(image_b64: str, mime_type: str, api_key: Optional[str] 
             }
         ],
         "max_tokens": 1024,
-        "api_key": key,
         "timeout": VISION_API_TIMEOUT,
-    }
+    })
+    if key:
+        call_kwargs["api_key"] = key
     # Add api_base and custom headers for OpenAI-compatible providers
-    if not model.startswith("gemini/") and not model.startswith("anthropic/") and not model.startswith("vertex_ai/"):
+    if not deployments and not model.startswith("gemini/") and not model.startswith("anthropic/") and not model.startswith("vertex_ai/"):
         if cfg.openai_base_url:
             call_kwargs["api_base"] = cfg.openai_base_url
         if cfg.openai_base_url and "aihubmix.com" in cfg.openai_base_url:

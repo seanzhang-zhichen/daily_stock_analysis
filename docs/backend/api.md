@@ -375,7 +375,7 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 |------|------|------|
 | GET | `/users` | 用户列表（分页、搜索） |
 | GET | `/users/{id}` | 用户详情 |
-| POST | `/users/{id}/grant-plan` | 手动开通/续期套餐 |
+| POST | `/grant-plan` | 手动开通/续期套餐，优先通过 `userEmail` 精确匹配用户，兼容旧版 `userId` 调用 |
 | POST | `/users/{id}/disable` | 禁用账号 |
 | POST | `/users/{id}/enable` | 启用账号 |
 | GET | `/refunds` | 退款申请列表 |
@@ -392,6 +392,18 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | GET | `/redeem-codes` | 兑换码列表 |
 | POST | `/redeem-codes` | 批量生成兑换码 |
 | GET | `/reconciliation` | 对账报告 |
+
+**手动开通套餐请求体示例：**
+```json
+{
+  "userEmail": "user@example.com",
+  "planCode": "pro",
+  "grantDays": 30,
+  "note": "manual payment received"
+}
+```
+
+`userEmail` 会先去除首尾空格并转为小写后按邮箱精确查找用户；未提供 `userEmail` 时仍可传 `userId` 兼容旧调用。找不到目标用户返回 `404`，两个字段都未提供时返回 `422`。
 
 ---
 

@@ -60,17 +60,17 @@ def _select_preferred_model(user: AppUser, models: List[str]) -> Optional[str]:
     return None
 
 
-def resolve_model_route(
-    db: Session,
-    *,
-    user: Optional[AppUser],
+def _platform_model_candidates(
     config,
+    *,
     platform_primary_model: Optional[str] = None,
     platform_models: Optional[List[str]] = None,
-) -> ModelRoute:
-    """解析当前请求应使用的平台模型。"""
-
-    resolved_platform_models = list(platform_models) if platform_models is not None else get_effective_agent_models_to_try(config)
+) -> tuple[List[str], str, List[str]]:
+    resolved_platform_models = (
+        list(platform_models)
+        if platform_models is not None
+        else get_effective_agent_models_to_try(config)
+    )
     platform_primary = (
         (platform_primary_model or "").strip()
         or get_effective_agent_primary_model(config)
@@ -81,13 +81,52 @@ def resolve_model_route(
         resolved_platform_models
         + get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
+    return resolved_platform_models, platform_primary, candidate_platform_models
+
+
+def get_available_models_for_user(
+    db: Session,
+    *,
+    user: AppUser,
+    config,
+    platform_primary_model: Optional[str] = None,
+    platform_models: Optional[List[str]] = None,
+) -> List[str]:
+    """Return platform-configured models this user's plan may select."""
+
+    _, _, candidate_platform_models = _platform_model_candidates(
+        config,
+        platform_primary_model=platform_primary_model,
+        platform_models=platform_models,
+    )
+    plan = resolve_user_plan(db, user)
+    return _filter_allowed_models(candidate_platform_models, plan.allowed_models)
+
+
+def resolve_model_route(
+    db: Session,
+    *,
+    user: Optional[AppUser],
+    config,
+    platform_primary_model: Optional[str] = None,
+    platform_models: Optional[List[str]] = None,
+) -> ModelRoute:
+    """解析当前请求应使用的平台模型。"""
+
+    resolved_platform_models, platform_primary, candidate_platform_models = _platform_model_candidates(
+        config,
+        platform_primary_model=platform_primary_model,
+        platform_models=platform_models,
+    )
 
     if user is None:
+        models_to_try = candidate_platform_models or resolved_platform_models
+        primary = platform_primary or (models_to_try[0] if models_to_try else "")
         return ModelRoute(
             source="platform",
-            primary_model=platform_primary,
-            models_to_try=resolved_platform_models,
-            provider=_provider_from_model(platform_primary),
+            primary_model=primary,
+            models_to_try=models_to_try,
+            provider=_provider_from_model(primary),
         )
 
     plan = resolve_user_plan(db, user)

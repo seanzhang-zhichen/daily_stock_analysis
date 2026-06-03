@@ -58,7 +58,7 @@
 | POST | `/change-password` | 登录态下修改密码，并吊销当前 session。 |
 | GET  | `/me` | 当前登录用户信息。 |
 | POST | `/redeem` | 使用兑换码升级套餐。 |
-| GET  | `/model-preference` | 列出管理员配置且当前套餐允许的模型，并返回当前用户首选模型。 |
+| GET  | `/model-preference` | 列出管理员配置且当前套餐允许的模型，并返回当前用户首选模型；`LLM_CHANNELS` 中同一渠道配置多个模型时会逐一列为可选项。 |
 | PATCH | `/model-preference` | 更新当前用户首选模型；只能选择管理员配置且当前套餐允许的模型。 |
 | GET | `/watchlist` | 查询当前用户自选股列表，含 `maxStocks` 上限。 |
 | POST | `/watchlist` | 添加一只自选股；超出 `plan.max_stocks` 返回 422。 |

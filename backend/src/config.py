@@ -2387,6 +2387,24 @@ class Config:
                 if p in _VISION_KEY_MAP
             )
             if not _has_any_key:
+                for entry in self.llm_model_list or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    params = entry.get("litellm_params") or {}
+                    if not isinstance(params, dict):
+                        continue
+                    candidates = {
+                        str(entry.get("model_name") or "").strip(),
+                        str(params.get("model") or "").strip(),
+                    }
+                    if self.vision_model not in candidates:
+                        continue
+                    api_key = str(params.get("api_key") or "").strip()
+                    api_base = str(params.get("api_base") or params.get("base_url") or "").strip()
+                    if len(api_key) >= 8 or channel_allows_empty_api_key(_primary_prefix, api_base):
+                        _has_any_key = True
+                        break
+            if not _has_any_key:
                 _checked = sorted(_all_providers & _VISION_KEY_MAP.keys())
                 issues.append(ConfigIssue(
                     severity="warning",

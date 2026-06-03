@@ -11,6 +11,7 @@ ensure_litellm_stub()
 
 from src.users.model_router import (
     _filter_allowed_models,
+    get_available_models_for_user,
     resolve_model_route,
 )
 
@@ -52,8 +53,7 @@ class TestResolveModelRoute(unittest.TestCase):
         explicit = ["openai/gpt-4o", "anthropic/claude-3-5-sonnet"]
         with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=["default"]), \
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="default"), \
-             patch("src.users.model_router.resolve_user_plan") as mock_plan, \
-             patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
+             patch("src.users.model_router.resolve_user_plan") as mock_plan:
             mock_plan.return_value = MagicMock(allowed_models=[])
             user = MagicMock()
             route = resolve_model_route(db, user=user, config=cfg, platform_models=explicit)
@@ -66,8 +66,7 @@ class TestResolveModelRoute(unittest.TestCase):
         allowed = ["gpt-4o-mini"]
         with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=platform), \
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="gpt-4o"), \
-             patch("src.users.model_router.resolve_user_plan") as mock_plan, \
-             patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
+             patch("src.users.model_router.resolve_user_plan") as mock_plan:
             mock_plan.return_value = MagicMock(allowed_models=allowed)
             user = MagicMock()
             route = resolve_model_route(db, user=user, config=cfg, platform_models=platform)
@@ -80,8 +79,7 @@ class TestResolveModelRoute(unittest.TestCase):
         platform = ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"]
         with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=platform), \
              patch("src.users.model_router.get_effective_agent_primary_model", return_value="gpt-4o"), \
-             patch("src.users.model_router.resolve_user_plan") as mock_plan, \
-             patch("src.users.model_router.load_user_mode_settings", return_value=MagicMock()):
+             patch("src.users.model_router.resolve_user_plan") as mock_plan:
             mock_plan.return_value = MagicMock(allowed_models=["gpt-4o", "gpt-4o-mini"])
             user = MagicMock()
             user.preferred_model = "gpt-4o-mini"
@@ -89,6 +87,22 @@ class TestResolveModelRoute(unittest.TestCase):
         self.assertEqual(route.source, "platform")
         self.assertEqual(route.primary_model, "gpt-4o-mini")
         self.assertEqual(route.models_to_try, ["gpt-4o-mini", "gpt-4o"])
+
+    def test_available_models_include_all_channel_models(self):
+        db = self._make_db()
+        cfg = self._make_config(primary="", fallbacks=[])
+        cfg.llm_model_list = [
+            {"model_name": "openai/gpt-4o-mini", "litellm_params": {"model": "openai/gpt-4o-mini"}},
+            {"model_name": "openai/gpt-4o", "litellm_params": {"model": "openai/gpt-4o"}},
+        ]
+        with patch("src.users.model_router.get_effective_agent_models_to_try", return_value=[]), \
+             patch("src.users.model_router.get_effective_agent_primary_model", return_value=""), \
+             patch("src.users.model_router.resolve_user_plan") as mock_plan:
+            mock_plan.return_value = MagicMock(allowed_models=[])
+            user = MagicMock()
+            models = get_available_models_for_user(db, user=user, config=cfg)
+
+        self.assertEqual(models, ["openai/gpt-4o-mini", "openai/gpt-4o"])
 
 
 class TestLLMToolAdapterRouting(unittest.TestCase):

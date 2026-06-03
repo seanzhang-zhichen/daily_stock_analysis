@@ -199,7 +199,7 @@ export const adminApi = {
   },
 
   async grantPlan(input: {
-    userId: number;
+    userEmail: string;
     planCode: string;
     grantDays: number;
     note?: string;
@@ -207,7 +207,7 @@ export const adminApi = {
     const { data } = await apiClient.post<{ user: AdminUser; subscription: AdminGrantSubscription }>(
       '/api/v1/admin/grant-plan',
       {
-        userId: input.userId,
+        userEmail: input.userEmail,
         planCode: input.planCode,
         grantDays: input.grantDays,
         note: input.note,

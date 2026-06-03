@@ -8,9 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 修复图片股票代码识别未复用 LLM_CHANNELS 渠道密钥的问题，Vision 模型可通过渠道配置调用 OpenAI 兼容服务。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 美化 Web 帮助中心的机器人通知配置说明，将飞书、企业微信、钉钉、Discord、Telegram 与自定义 Webhook 拆分为独立配置卡片。
 - [文档] 新增 `docs/backend/` 后端理解指南，系统梳理后端架构总览、API 层、数据管道、存储模型以及 To C 用户体系与计费流程，并在中英文文档索引补充入口。
 - [文档] 新增 `docs/backend/home-stock-analysis-flow.md`，梳理 Web 首页输入股票代码或名称后的补全搜索、分析提交、异步任务队列、SSE 状态回传和核心 pipeline 执行链路。
 - [改进] 优化 `/api/v1/stocks/search` 股票自动补全性能：请求路径改为进程内匹配与结果缓存，`stock_index` 轻量搜索缓存改为启动后后台预热，并避免程序内 Alembic 迁移覆盖应用日志配置。
@@ -36,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] `python backend/main.py --serve-only` 与 `backend.server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
 - [新功能] 运营后台新增「注册与合规」配置页，支持通过数据库管理公开注册、邀请码、注册风控、协议版本、支付开关与订单超时时间等 To C 运营配置，支付密钥/证书仍保留在部署环境变量中。
 - [测试] 新增平台运营配置单元测试，覆盖 `.env` 兜底、数据库覆盖、支付配置序列化与非法值校验。
+- [修复] 运营后台手动开通套餐改为按用户邮箱录入并提交，后端 `/api/v1/admin/grant-plan` 支持 `userEmail` 精确查找用户，同时保留 `userId` 兼容旧调用。
+- [修复] 账户设置模型偏好改为复用运行时模型路由候选列表，`LLM_CHANNELS` 中同一渠道配置多个模型时用户可在账户页选择其中任一可用模型。
 - [改进] 股票自动补全索引与前端静态目录完全解耦：源文件迁至 `backend/src/data/resources/stocks.index.json`，通过 Alembic 新增 `stock_index`/`stock_index_meta` 表和同步脚本写入数据库，前端改为调用公开限流的 `/api/v1/stocks/search`，后端运行时不再读取 `frontend/web/public` 或 `static` 下的股票索引。
 - [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非 Pro 用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
 - [新功能] 运营后台新增「套餐与用量」配置：平台管理员可在 `/admin` 配置免费档和会员套餐的每日分析次数、Agent 次数、自选股上限、价格与上架状态，并继续支持为指定用户手动开通会员；套餐权益以 `app_plans` 记录为运行期来源。

@@ -345,7 +345,7 @@ resolve_user_plan(db, user)
 
 ### allowed_models 语义
 
-`allowed_models=[]` 表示 **不额外限制模型**。如果非空，则用户可用模型需要落在该列表内。
+`allowed_models=[]` 表示 **不额外限制模型**。如果非空，则用户可用模型需要落在该列表内。账户页 `/account` 的模型偏好列表复用运行时模型路由候选列表；例如 `LLM_CHANNELS=primary` 且 `LLM_PRIMARY_MODELS=gpt-4o-mini,gpt-4o` 时，两个模型都会作为用户可选项返回。
 
 ---
 

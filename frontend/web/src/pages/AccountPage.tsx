@@ -5,6 +5,7 @@ import {
   Bell,
   CheckCircle2,
   CreditCard,
+  CircleHelp,
   Loader2,
   Lock,
   LogOut,
@@ -35,12 +36,12 @@ const formatDate = (value?: string | null): string => {
 };
 
 const WEBHOOK_PLATFORM_ITEMS = [
-  { type: 'feishu', label: '飞书通知', desc: '通过飞书自定义机器人接收 AI 分析报告推送。', placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...' },
-  { type: 'wecom', label: '企业微信通知', desc: '通过企业微信群机器人接收 AI 分析报告推送。', placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...' },
-  { type: 'dingtalk', label: '钉钉通知', desc: '通过钉钉自定义机器人接收 AI 分析报告推送。', placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=...' },
-  { type: 'discord', label: 'Discord 通知', desc: '通过 Discord Webhook 接收 AI 分析报告推送。', placeholder: 'https://discord.com/api/webhooks/...' },
-  { type: 'telegram', label: 'Telegram 通知', desc: '通过 Telegram Bot 接收 AI 分析报告推送。', placeholder: 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=...' },
-  { type: 'custom', label: '自定义 Webhook', desc: '向自定义 URL 推送 JSON 格式分析报告，可对接任意支持 Webhook 的系统。', placeholder: 'https://your-service.example.com/webhook' },
+  { type: 'feishu', label: '飞书通知', desc: '通过飞书自定义机器人接收 AI 分析报告推送。', placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...', helpHash: '#webhook-feishu' },
+  { type: 'wecom', label: '企业微信通知', desc: '通过企业微信群机器人接收 AI 分析报告推送。', placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...', helpHash: '#webhook-wecom' },
+  { type: 'dingtalk', label: '钉钉通知', desc: '通过钉钉自定义机器人接收 AI 分析报告推送。', placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=...', helpHash: '#webhook-dingtalk' },
+  { type: 'discord', label: 'Discord 通知', desc: '通过 Discord Webhook 接收 AI 分析报告推送。', placeholder: 'https://discord.com/api/webhooks/...', helpHash: '#webhook-discord' },
+  { type: 'telegram', label: 'Telegram 通知', desc: '通过 Telegram Bot 接收 AI 分析报告推送。', placeholder: 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=...', helpHash: '#webhook-telegram' },
+  { type: 'custom', label: '自定义 Webhook', desc: '向自定义 URL 推送 JSON 格式分析报告，可对接任意支持 Webhook 的系统。', placeholder: 'https://your-service.example.com/webhook', helpHash: '#webhook-custom' },
 ] as const;
 
 const AccountPage: React.FC = () => {
@@ -303,11 +304,6 @@ const AccountPage: React.FC = () => {
             </dt>
             <dd className="flex flex-wrap items-center gap-2 text-foreground">
               <span>{planName}</span>
-              {plan?.isPro ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-purple-400/40 bg-purple-500/10 px-2 py-0.5 text-xs text-purple-300">
-                  Pro
-                </span>
-              ) : null}
               {planExpiresAt ? (
                 <span className="text-xs text-secondary-text">
                   到期: {formatDate(planExpiresAt)}
@@ -449,7 +445,7 @@ const AccountPage: React.FC = () => {
             </div>
 
             {/* Webhook 推送 - 每平台独立行 */}
-            {WEBHOOK_PLATFORM_ITEMS.map(({ type, label, desc, placeholder }) => {
+            {WEBHOOK_PLATFORM_ITEMS.map(({ type, label, desc, placeholder, helpHash }) => {
               const isActive = prefs?.webhookType === type && !!prefs?.webhookUrl;
               const isExpanded = expandedWebhookType === type;
               return (
@@ -465,6 +461,12 @@ const AccountPage: React.FC = () => {
                         <Webhook className="h-4 w-4 text-purple-400" /> {label}
                       </p>
                       <p className="text-xs text-secondary-text">{desc}</p>
+                      <Link
+                        to={`/help${helpHash}`}
+                        className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80"
+                      >
+                        <CircleHelp className="h-3.5 w-3.5" /> 配置帮助
+                      </Link>
                       {plan?.canWebhook && isActive && !isExpanded && (
                         <button
                           type="button"

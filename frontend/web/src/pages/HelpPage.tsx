@@ -4,17 +4,98 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   Bell,
+  Bot,
   BookOpenCheck,
+  Building2,
+  CheckCircle2,
   CreditCard,
   LifeBuoy,
+  MessageCircle,
   MessageSquareQuote,
+  Send,
   Settings2,
   ShieldAlert,
   Sparkles,
   UserCircle2,
+  Webhook,
+  type LucideIcon,
 } from 'lucide-react';
 import { Card, StandardPageLayout } from '../components/common';
 import { useAuth } from '../hooks';
+
+interface WebhookAppGuide {
+  id: string;
+  title: string;
+  label: string;
+  icon: LucideIcon;
+  accentClassName: string;
+  setup: string;
+  endpoint: string;
+  note: string;
+}
+
+const webhookAppGuides: WebhookAppGuide[] = [
+  {
+    id: 'webhook-feishu',
+    title: '飞书通知',
+    label: 'Feishu',
+    icon: MessageCircle,
+    accentClassName: 'border-sky-500/20 bg-sky-500/10 text-sky-500',
+    setup: '在飞书群聊中添加「自定义机器人」，复制机器人 Webhook 地址，回到账户页的「飞书通知」中粘贴并保存。',
+    endpoint: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+    note: '如果机器人开启了签名校验，需要在飞书侧关闭签名或由平台维护者接入签名参数；当前账户页只保存 Webhook URL。',
+  },
+  {
+    id: 'webhook-wecom',
+    title: '企业微信通知',
+    label: 'WeCom',
+    icon: Building2,
+    accentClassName: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500',
+    setup: '在企业微信群右上角进入「群机器人」，添加机器人后复制地址，填入「企业微信通知」。',
+    endpoint: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...',
+    note: '请确认机器人所在群成员能接收分析报告，key 泄露后应在企业微信中重建机器人。',
+  },
+  {
+    id: 'webhook-dingtalk',
+    title: '钉钉通知',
+    label: 'DingTalk',
+    icon: Bot,
+    accentClassName: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
+    setup: '在钉钉群设置中添加「自定义机器人」，复制机器人地址，填入「钉钉通知」。',
+    endpoint: 'https://oapi.dingtalk.com/robot/send?access_token=...',
+    note: '如果开启安全设置，建议使用关键词方式，并把关键词设为 `DSA` 或 `AI 分析`。',
+  },
+  {
+    id: 'webhook-discord',
+    title: 'Discord 通知',
+    label: 'Discord',
+    icon: MessageSquareQuote,
+    accentClassName: 'border-indigo-500/20 bg-indigo-500/10 text-indigo-500',
+    setup: '在 Discord 频道设置中打开 Integrations / Webhooks，创建 Webhook 后复制 URL，填入「Discord 通知」。',
+    endpoint: 'https://discord.com/api/webhooks/...',
+    note: 'Webhook 会把报告发送到创建它的频道；如需换频道，请在 Discord 中为目标频道重新创建 Webhook。',
+  },
+  {
+    id: 'webhook-telegram',
+    title: 'Telegram 通知',
+    label: 'Telegram',
+    icon: Send,
+    accentClassName: 'border-cyan-500/20 bg-cyan-500/10 text-cyan-500',
+    setup: '先通过 BotFather 创建 Bot 并获取 token，再确认目标 chat_id，按下方格式填入「Telegram 通知」。',
+    endpoint: 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>',
+    note: '私聊需要先给 Bot 发一条消息；群聊需要把 Bot 加入群，并确认它有发送消息权限。',
+  },
+  {
+    id: 'webhook-custom',
+    title: '自定义 Webhook',
+    label: 'Custom',
+    icon: Webhook,
+    accentClassName: 'border-amber-500/20 bg-amber-500/10 text-amber-500',
+    setup: '准备一个可接收 HTTP POST 的 URL，账户页会向该地址推送 JSON 格式分析报告。',
+    endpoint: 'https://your-service.example.com/webhook',
+    note: '建议服务端自行校验来源、限制访问频率，并避免把包含密钥的 URL 公开分享。',
+  },
+];
 
 const HelpPage: React.FC = () => {
   const { userMode } = useAuth();
@@ -167,6 +248,58 @@ const HelpPage: React.FC = () => {
             </div>
           </Card>
         </div>
+      </div>
+
+      <div id="webhook-setup" className="scroll-mt-24">
+        <Card title="机器人通知配置" subtitle="WEBHOOKS" padding="lg">
+          <div className="mb-5 flex flex-col gap-3 border-b border-border/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
+            <p className="max-w-3xl text-sm leading-6 text-secondary-text">
+              每个通知 App 使用独立 Webhook 地址。先在对应 App 里创建机器人，再把复制到的 URL 填到账户页对应通知渠道中。
+            </p>
+            <Link to="/account" className="ui-button ui-button-size-sm ui-button-outline w-full shrink-0 sm:w-auto">
+              <Bell className="h-4 w-4" /> 打开账户通知
+            </Link>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {webhookAppGuides.map(({ id, title, label, icon: Icon, accentClassName, setup, endpoint, note }) => (
+              <section
+                key={id}
+                id={id}
+                className="scroll-mt-24 rounded-xl border border-border/80 bg-card/80 p-4 shadow-card transition hover:-translate-y-0.5 hover:border-primary/25 hover:bg-card"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${accentClassName}`}>
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-text">{label}</p>
+                    </div>
+                  </div>
+                  <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-primary/70" />
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-lg border border-border/70 bg-muted/35 p-3">
+                    <p className="text-xs font-semibold text-foreground">配置位置</p>
+                    <p className="mt-1 text-sm leading-6 text-secondary-text">{setup}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+                    <p className="text-xs font-semibold text-foreground">URL 示例</p>
+                    <code className="mt-2 block break-all rounded-md bg-muted px-2.5 py-2 text-xs leading-5 text-secondary-text">
+                      {endpoint}
+                    </code>
+                  </div>
+
+                  <p className="text-xs leading-5 text-muted-text">{note}</p>
+                </div>
+              </section>
+            ))}
+          </div>
+        </Card>
       </div>
     </StandardPageLayout>
   );

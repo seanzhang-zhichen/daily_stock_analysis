@@ -86,7 +86,8 @@ class IssueInvoiceRequest(BaseModel):
 
 class GrantPlanRequest(BaseModel):
     model_config = {"populate_by_name": True}
-    user_id: int = Field(..., alias="userId")
+    user_email: Optional[str] = Field(default=None, alias="userEmail")
+    user_id: Optional[int] = Field(default=None, alias="userId")
     plan_code: str = Field(..., alias="planCode")
     grant_days: int = Field(..., alias="grantDays")
     note: Optional[str] = Field(default=None)
@@ -376,7 +377,14 @@ async def admin_grant_plan(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    user = db.query(AppUser).filter(AppUser.id == int(body.user_id)).first()
+    user: Optional[AppUser] = None
+    user_email = (body.user_email or "").strip().lower()
+    if user_email:
+        user = db.query(AppUser).filter(AppUser.email == user_email).first()
+    elif body.user_id is not None:
+        user = db.query(AppUser).filter(AppUser.id == int(body.user_id)).first()
+    else:
+        raise HTTPException(status_code=422, detail="请输入目标用户邮箱")
     if user is None:
         raise HTTPException(status_code=404, detail="目标用户不存在")
     try:
@@ -397,6 +405,7 @@ async def admin_grant_plan(
         admin_id=int(current_admin.id),
         target_user_id=int(user.id),
         detail={
+            "userEmail": user.email,
             "planCode": body.plan_code,
             "grantDays": body.grant_days,
             "note": body.note,

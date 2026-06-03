@@ -26,7 +26,8 @@ from src.users.config import (
     load_user_mode_settings,
 )
 from src.users.consents import CURRENT_TERMS_VERSION, needs_reaccept
-from src.config import get_config, get_configured_llm_models, get_effective_agent_models_to_try
+from src.config import get_config
+from src.users.model_router import get_available_models_for_user
 from src.users.errors import UserError, UserErrorCode
 from src.users.notification_prefs import (
     update_prefs as svc_update_prefs,
@@ -594,15 +595,9 @@ async def account_redeem(
 
 
 def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
-    plan = svc_resolve_user_plan(db, user)
     config = get_config()
-    models = get_effective_agent_models_to_try(config) + get_configured_llm_models(
-        getattr(config, "llm_model_list", []) or []
-    )
-    if plan.allowed_models:
-        allowed = set(plan.allowed_models)
-        models = [model for model in models if model in allowed]
     seen = set()
+    models = get_available_models_for_user(db, user=user, config=config)
     return [model for model in models if model and not (model in seen or seen.add(model))]
 
 

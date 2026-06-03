@@ -980,7 +980,7 @@ const PlatformSettingsTab: React.FC = () => {
 // ============================================================
 
 const GrantPlanTab: React.FC = () => {
-  const [userId, setUserId] = useState('');
+  const [userEmail, setUserEmail] = useState('');
   const [planCode, setPlanCode] = useState('pro');
   const [grantDays, setGrantDays] = useState('30');
   const [note, setNote] = useState('');
@@ -1008,10 +1008,10 @@ const GrantPlanTab: React.FC = () => {
   const handleSubmit = async () => {
     setError(null);
     setInfo(null);
-    const uid = parseInt(userId, 10);
+    const email = userEmail.trim().toLowerCase();
     const days = parseInt(grantDays, 10);
-    if (!Number.isFinite(uid) || uid <= 0) {
-      setError(getParsedApiError(new Error('请输入合法的 userId')));
+    if (!email || !email.includes('@')) {
+      setError(getParsedApiError(new Error('请输入用户注册邮箱')));
       return;
     }
     if (!planCode.trim()) {
@@ -1025,7 +1025,7 @@ const GrantPlanTab: React.FC = () => {
     setSubmitting(true);
     try {
       const res = await adminApi.grantPlan({
-        userId: uid,
+        userEmail: email,
         planCode: planCode.trim(),
         grantDays: days,
         note: note.trim() || undefined,
@@ -1048,12 +1048,12 @@ const GrantPlanTab: React.FC = () => {
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <Input
-          id="grant-user-id"
-          type="number"
-          label="目标 user ID"
-          placeholder="例: 12"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
+          id="grant-user-email"
+          type="email"
+          label="目标用户邮箱"
+          placeholder="例: user@example.com"
+          value={userEmail}
+          onChange={(e) => setUserEmail(e.target.value)}
           disabled={submitting}
         />
         <div className="flex flex-col gap-1.5">
