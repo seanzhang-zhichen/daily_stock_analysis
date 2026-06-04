@@ -21,6 +21,7 @@ KIND_AGENT = "agent"
 REASON_REGISTER_BONUS = "register_bonus"
 REASON_REFERRAL_SIGNUP = "referral_signup"
 REASON_SUBSCRIPTION_BONUS = "subscription_bonus"
+REASON_CREDIT_PURCHASE = "credit_purchase"
 REASON_REFERRAL_PAID = "referral_paid"
 REASON_CONSUME = "consume"
 REASON_REFUND = "refund"
@@ -347,6 +348,26 @@ def grant_subscription_credit_rewards(
         db.flush()
 
 
+def grant_credit_purchase(
+    db: Session,
+    *,
+    user: AppUser,
+    amount: int,
+    order_no: str,
+    package_code: Optional[str] = None,
+) -> Optional[AppCreditLedger]:
+    return add_credits(
+        db,
+        user=user,
+        amount=int(amount or 0),
+        reason=REASON_CREDIT_PURCHASE,
+        related_type="credit_order",
+        related_id=order_no,
+        idempotency_key=f"credit-order:{order_no}",
+        note=f"package:{package_code}" if package_code else None,
+    )
+
+
 def enforce_credits(
     db: Session,
     *,
@@ -463,6 +484,7 @@ __all__ = [
     "KIND_ANALYSIS",
     "REASON_ADMIN_ADJUST",
     "REASON_CONSUME",
+    "REASON_CREDIT_PURCHASE",
     "REASON_REFERRAL_PAID",
     "REASON_REFERRAL_SIGNUP",
     "REASON_REFUND",
@@ -474,6 +496,7 @@ __all__ = [
     "enforce_credits",
     "ensure_referral_code",
     "get_user_by_referral_code",
+    "grant_credit_purchase",
     "grant_registration_bonus",
     "grant_subscription_credit_rewards",
     "load_credit_settings",

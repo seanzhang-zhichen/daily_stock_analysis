@@ -4,6 +4,7 @@ import { CheckCircle2, Loader2, RefreshCw, X, AlertTriangle, FlaskConical } from
 import { Button } from '../common';
 import { SettingsAlert } from '../settings';
 import { billingApi, type BillingOrder, type BillingPlan } from '../../api/billing';
+import { creditsApi, type CreditOrder, type CreditPackage } from '../../api/credits';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../../api/error';
 
 type Provider = 'wechat' | 'alipay';
@@ -11,7 +12,8 @@ type Phase = 'select_provider' | 'creating_order' | 'pending_pay' | 'paid' | 'ca
 
 interface PaymentDialogProps {
   open: boolean;
-  plan: BillingPlan;
+  plan?: BillingPlan;
+  creditPackage?: CreditPackage;
   onClose: () => void;
   onPaid: () => void;
 }
@@ -38,10 +40,10 @@ const formatPrice = (cents: number, currency: string): string => {
  * 在 ``PAYMENT_MOCK_ENABLED=true`` 时, ``/pay`` 返回 mock code_url; 用户可点
  * "模拟支付成功" 走通整条 UX, 无需真实通道接入。
  */
-const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPaid }) => {
+const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, creditPackage, onClose, onPaid }) => {
   const [phase, setPhase] = useState<Phase>('select_provider');
   const [provider, setProvider] = useState<Provider>('wechat');
-  const [order, setOrder] = useState<BillingOrder | null>(null);
+  const [order, setOrder] = useState<BillingOrder | CreditOrder | null>(null);
   const [codeUrl, setCodeUrl] = useState<string | null>(null);
   const [isMock, setIsMock] = useState(false);
   const [error, setError] = useState<ParsedApiError | string | null>(null);
@@ -51,6 +53,12 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
   const pollTimer = useRef<number | null>(null);
   const tickTimer = useRef<number | null>(null);
   const pollStartedAt = useRef<number | null>(null);
+  const isCreditPurchase = Boolean(creditPackage);
+  const itemName = creditPackage?.name ?? plan?.name ?? '';
+  const itemLabel = isCreditPurchase ? '积分包' : '套餐';
+  const paymentTitle = isCreditPurchase ? `购买 ${itemName}` : `升级到 ${itemName}`;
+  const amountCents = creditPackage?.priceCents ?? plan?.priceCents ?? 0;
+  const currency = creditPackage?.currency ?? plan?.currency ?? 'CNY';
 
   useEffect(() => {
     if (!open) {
@@ -84,18 +92,26 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
   }
 
   const handleStartPay = async () => {
+    if (!plan && !creditPackage) return;
     setError(null);
     setIsSubmitting(true);
     setPhase('creating_order');
     try {
-      const { order: createdOrder } = await billingApi.createOrder({
-        planCode: plan.code,
-        provider,
-      });
+      const { order: createdOrder } = isCreditPurchase && creditPackage
+        ? await creditsApi.createOrder({
+          packageCode: creditPackage.code,
+          provider,
+        })
+        : await billingApi.createOrder({
+          planCode: plan!.code,
+          provider,
+        });
       setOrder(createdOrder);
 
       try {
-        const payRes = await billingApi.payOrder(createdOrder.orderNo);
+        const payRes = isCreditPurchase
+          ? await creditsApi.payOrder(createdOrder.orderNo)
+          : await billingApi.payOrder(createdOrder.orderNo);
         setCodeUrl(payRes.codeUrl);
         setIsMock(Boolean(payRes.mock));
         setPhase('pending_pay');
@@ -132,7 +148,9 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
         return;
       }
       try {
-        const { order: latest } = await billingApi.getOrder(orderNo);
+        const { order: latest } = isCreditPurchase
+          ? await creditsApi.getOrder(orderNo)
+          : await billingApi.getOrder(orderNo);
         setOrder(latest);
         if (latest.status === 'paid') {
           stopPolling();
@@ -160,9 +178,15 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
     setIsSubmitting(true);
     try {
       const orderNo = order.orderNo;
-      await billingApi.mockPayOrder(orderNo);
+      if (isCreditPurchase) {
+        await creditsApi.mockPayOrder(orderNo);
+      } else {
+        await billingApi.mockPayOrder(orderNo);
+      }
       // Polling 会自动捕获状态变化; 这里也立即拉一次。
-      const { order: latest } = await billingApi.getOrder(orderNo);
+      const { order: latest } = isCreditPurchase
+        ? await creditsApi.getOrder(orderNo)
+        : await billingApi.getOrder(orderNo);
       setOrder(latest);
       if (latest.status === 'paid') {
         stopPolling();
@@ -184,7 +208,11 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
     setIsSubmitting(true);
     try {
       const orderNo = order.orderNo;
-      await billingApi.cancelOrder(orderNo);
+      if (isCreditPurchase) {
+        await creditsApi.cancelOrder(orderNo);
+      } else {
+        await billingApi.cancelOrder(orderNo);
+      }
     } catch {
       // 即使取消失败也允许关闭弹窗, 后端会通过 15min 超时关单
     } finally {
@@ -211,7 +239,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
     >
       <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
-          <h3 className="text-base font-semibold text-foreground">升级到 {plan.name}</h3>
+          <h3 className="text-base font-semibold text-foreground">{paymentTitle}</h3>
           <button
             type="button"
             onClick={handleCancelOrder}
@@ -226,13 +254,16 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
         <div className="space-y-4 px-5 py-5">
           <div className="flex items-baseline justify-between rounded-xl border border-border/60 bg-base/50 px-4 py-3">
             <div>
-              <p className="text-xs uppercase tracking-wider text-secondary-text">套餐</p>
-              <p className="mt-0.5 text-sm font-semibold text-foreground">{plan.name}</p>
+              <p className="text-xs uppercase tracking-wider text-secondary-text">{itemLabel}</p>
+              <p className="mt-0.5 text-sm font-semibold text-foreground">{itemName}</p>
+              {creditPackage ? (
+                <p className="mt-0.5 text-xs text-secondary-text">{creditPackage.creditAmount} 积分</p>
+              ) : null}
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-wider text-secondary-text">应付金额</p>
               <p className="mt-0.5 text-lg font-semibold text-foreground">
-                {formatPrice(plan.priceCents, plan.currency)}
+                {formatPrice(amountCents, currency)}
               </p>
             </div>
           </div>
@@ -350,7 +381,11 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, onClose, onPa
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <CheckCircle2 className="h-10 w-10 text-emerald-400" />
               <p className="text-base font-medium text-foreground">支付成功 🎉</p>
-              <p className="text-sm text-secondary-text">已为你开通 {plan.name}, 即将刷新订阅状态。</p>
+              <p className="text-sm text-secondary-text">
+                {isCreditPurchase
+                  ? `已为你充值 ${creditPackage?.creditAmount ?? 0} 积分, 即将刷新账户状态。`
+                  : `已为你开通 ${itemName}, 即将刷新订阅状态。`}
+              </p>
               <Button type="button" variant="primary" onClick={onClose} className="mt-2">
                 完成
               </Button>

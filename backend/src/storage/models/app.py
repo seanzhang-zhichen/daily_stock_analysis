@@ -160,6 +160,82 @@ class AppCreditLedger(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
 
+class AppCreditPackage(Base):
+    """Purchasable credit package.
+
+    Credit packages are intentionally separate from subscription plans: buying
+    credits changes the user's balance only, while buying a plan changes
+    subscription entitlement.
+    """
+
+    __tablename__ = 'app_credit_packages'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(32), nullable=False, unique=True, index=True)
+    name = Column(String(64), nullable=False)
+    credit_amount = Column(Integer, nullable=False, default=0)
+    price_cents = Column(Integer, nullable=False, default=0)
+    currency = Column(String(8), nullable=False, default='CNY')
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=100)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+
+class AppCreditOrder(Base):
+    """Credit purchase order.
+
+    This mirrors the payment state machine used by subscription orders but is a
+    separate table so revenue, refunds, and fulfillment semantics do not mix.
+    """
+
+    __tablename__ = 'app_credit_orders'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_no = Column(String(32), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    package_code = Column(String(32), nullable=False, index=True)
+    credit_amount = Column(Integer, nullable=False, default=0)
+    amount_cents = Column(Integer, nullable=False, default=0)
+    original_amount_cents = Column(Integer, nullable=False, default=0)
+    discount_cents = Column(Integer, nullable=False, default=0)
+    coupon_code = Column(String(64))
+    currency = Column(String(8), nullable=False, default='CNY')
+    provider = Column(String(16), nullable=False, default='manual')
+    provider_trade_no = Column(String(64), unique=True)
+    status = Column(String(24), nullable=False, default='created', index=True)
+    client_ip = Column(String(64))
+    user_agent = Column(String(512))
+    quote_snapshot = Column(Text)
+    paid_at = Column(DateTime)
+    expires_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_app_credit_orders_user_created', 'user_id', 'created_at'),
+        Index('ix_app_credit_orders_provider_status', 'provider', 'status'),
+    )
+
+
+class AppCreditPaymentEvent(Base):
+    """Payment callback ledger for credit orders."""
+
+    __tablename__ = 'app_credit_payment_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_no = Column(String(32), nullable=False, index=True)
+    provider = Column(String(16), nullable=False, index=True)
+    event_type = Column(String(32), nullable=False)
+    provider_event_id = Column(String(128), nullable=False, unique=True)
+    raw_payload = Column(Text)
+    signature = Column(String(512))
+    signature_valid = Column(Boolean, nullable=False, default=False)
+    processed = Column(Boolean, nullable=False, default=False)
+    processed_at = Column(DateTime)
+    received_at = Column(DateTime, default=datetime.now, nullable=False)
+
+
 class AppPlan(Base):
     """套餐定义表 (Phase 2)。
 
@@ -565,6 +641,9 @@ __all__ = [
     "AppUserUsageCounter",
     "AppUserReferral",
     "AppCreditLedger",
+    "AppCreditPackage",
+    "AppCreditOrder",
+    "AppCreditPaymentEvent",
     "AppPlan",
     "AppPlatformSetting",
     "AppSubscription",

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.storage import AppOrder, AppPlatformSetting, AppPlan, AppUser, Base
+from src.storage import AppCreditPackage, AppOrder, AppPlatformSetting, AppPlan, AppUser, Base
 from src.users.credits import (
     credit_exceeded_payload,
     enforce_credits,
@@ -20,6 +20,7 @@ from src.users.credits import (
     register_referral,
     serialize_credit_snapshot,
 )
+from src.services.billing import CreditOrderService
 
 
 def _user(email: str, *, balance: int = 0, referral_code: str | None = None) -> AppUser:
@@ -120,6 +121,38 @@ class TestUserCredits(unittest.TestCase):
         self.db.refresh(invitee)
         self.assertEqual(invitee.credit_balance, 30)
         self.assertEqual(inviter.credit_balance, 90)  # 10 signup + 80 paid
+
+    def test_paid_credit_pack_grants_credits_without_subscription(self):
+        self.db.add(
+            AppCreditPackage(
+                code="credits_100",
+                name="100 Credits",
+                price_cents=990,
+                currency="CNY",
+                credit_amount=100,
+                is_active=True,
+            )
+        )
+        user = _user("buyer@example.com", balance=7, referral_code="BUYER001")
+        self.db.add(user)
+        self.db.commit()
+
+        svc = CreditOrderService()
+        order = svc.create_order(
+            self.db,
+            user=user,
+            package_code="credits_100",
+            provider="manual",
+        )
+        self.assertEqual(order.credit_amount, 100)
+
+        svc.mark_pending(self.db, order)
+        svc.fulfill_order(self.db, order, provider_trade_no="MANUAL-CREDITS")
+
+        self.db.refresh(user)
+        self.assertEqual(user.credit_balance, 107)
+        self.assertEqual(user.plan_code, "free")
+        self.assertIsNone(user.plan_expires_at)
 
     def test_enforce_credits_consumes_and_reports_insufficient_balance(self):
         self._settings(CREDIT_ANALYSIS_COST=5)

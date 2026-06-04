@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.config import get_config
 from src.storage.base import Base
-from src.storage.models.app import AppPlan
+from src.storage.models.app import AppCreditPackage, AppPlan
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -129,6 +129,7 @@ class _DatabaseManagerBase:
             self._run_alembic_upgrade()
 
         self._seed_builtin_app_plans()
+        self._seed_builtin_credit_packages()
 
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
@@ -220,6 +221,58 @@ class _DatabaseManagerBase:
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             logger.warning("初始化基础 free 套餐配置失败（非致命）: %s", exc)
+        finally:
+            session.close()
+
+    def _seed_builtin_credit_packages(self) -> None:
+        defaults = [
+            {
+                "code": "credits_200",
+                "name": "200 积分包",
+                "credit_amount": 200,
+                "price_cents": 1990,
+                "currency": "CNY",
+                "is_active": True,
+                "sort_order": 10,
+            },
+            {
+                "code": "credits_1200",
+                "name": "1200 积分包",
+                "credit_amount": 1200,
+                "price_cents": 9990,
+                "currency": "CNY",
+                "is_active": True,
+                "sort_order": 20,
+            },
+            {
+                "code": "credits_4000",
+                "name": "4000 积分包",
+                "credit_amount": 4000,
+                "price_cents": 29900,
+                "currency": "CNY",
+                "is_active": True,
+                "sort_order": 30,
+            },
+        ]
+        session = self._SessionLocal()
+        try:
+            inserted = 0
+            for package in defaults:
+                exists = (
+                    session.query(AppCreditPackage.id)
+                    .filter(AppCreditPackage.code == package["code"])
+                    .first()
+                )
+                if exists is not None:
+                    continue
+                session.add(AppCreditPackage(**package))
+                inserted += 1
+            if inserted:
+                session.commit()
+                logger.info("已初始化基础积分包配置: %d 个", inserted)
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            logger.warning("初始化基础积分包配置失败（非致命）: %s", exc)
         finally:
             session.close()
 

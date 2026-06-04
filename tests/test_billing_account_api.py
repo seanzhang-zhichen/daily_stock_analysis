@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient
 
 from src.config import Config
 from src.storage import (
+    AppCreditPackage,
     AppPlan,
     AppRedeemCode,
     AppUser,
@@ -241,6 +242,83 @@ class TestBillingSubscription(_BaseApi):
         self.assertEqual(body["plan"]["code"], "free")
         self.assertFalse(body["plan"]["isActivePaid"])
         self.assertEqual(body["subscriptions"], [])
+
+
+class TestCreditPurchases(_BaseApi):
+    def _seed_credit_package(self) -> None:
+        session = self.db_manager.get_session()
+        try:
+            session.add(AppCreditPackage(
+                code="credits_100",
+                name="100 Credits",
+                credit_amount=100,
+                price_cents=990,
+                currency="CNY",
+                is_active=True,
+                sort_order=10,
+            ))
+            session.commit()
+        finally:
+            session.close()
+
+    def test_packages_list_uses_credit_package_table(self):
+        self._seed_credit_package()
+
+        res = self.client.get("/api/v1/credits/packages")
+
+        self.assertEqual(res.status_code, 200)
+        packages = res.json()["packages"]
+        package = next(p for p in packages if p["code"] == "credits_100")
+        self.assertEqual(package["code"], "credits_100")
+        self.assertEqual(package["creditAmount"], 100)
+        self.assertEqual(package["priceCents"], 990)
+
+    def test_packages_list_includes_default_credit_packages(self):
+        res = self.client.get("/api/v1/credits/packages")
+
+        self.assertEqual(res.status_code, 200)
+        packages = res.json()["packages"]
+        by_code = {p["code"]: p for p in packages}
+        self.assertEqual(by_code["credits_200"]["creditAmount"], 200)
+        self.assertEqual(by_code["credits_200"]["priceCents"], 1990)
+        self.assertEqual(by_code["credits_1200"]["creditAmount"], 1200)
+        self.assertEqual(by_code["credits_1200"]["priceCents"], 9990)
+        self.assertEqual(by_code["credits_4000"]["creditAmount"], 4000)
+        self.assertEqual(by_code["credits_4000"]["priceCents"], 29900)
+
+    def test_mock_pay_credit_order_grants_balance_without_subscription(self):
+        os.environ["PAYMENT_MOCK_ENABLED"] = "true"
+        self._seed_free_plan()
+        self._seed_credit_package()
+        user = self._create_user()
+        self._login(user)
+
+        create_res = self.client.post("/api/v1/credits/orders", json={
+            "packageCode": "credits_100",
+            "provider": "wechat",
+        })
+        self.assertEqual(create_res.status_code, 200, create_res.text)
+        order = create_res.json()["order"]
+        self.assertEqual(order["creditAmount"], 100)
+        self.assertEqual(order["packageCode"], "credits_100")
+
+        pay_res = self.client.post(f"/api/v1/credits/orders/{order['orderNo']}/pay")
+        self.assertEqual(pay_res.status_code, 200, pay_res.text)
+        self.assertTrue(pay_res.json()["mock"])
+
+        mock_res = self.client.post(f"/api/v1/credits/orders/{order['orderNo']}/mock-pay")
+        self.assertEqual(mock_res.status_code, 200, mock_res.text)
+        self.assertEqual(mock_res.json()["order"]["status"], "paid")
+
+        session = self.db_manager.get_session()
+        try:
+            refreshed = session.query(AppUser).filter(AppUser.id == user.id).first()
+            self.assertIsNotNone(refreshed)
+            self.assertEqual(refreshed.credit_balance, 100)
+            self.assertEqual(refreshed.plan_code, "free")
+            self.assertIsNone(refreshed.plan_expires_at)
+        finally:
+            session.close()
 
 
 class TestAdminPlanConfig(_BaseApi):

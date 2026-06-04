@@ -342,6 +342,12 @@ const AccountPage: React.FC = () => {
               {plan?.isPro ? '管理订阅' : '升级到 Pro'}
             </Button>
           </Link>
+          <Link to="/billing?from=credit">
+            <Button variant="secondary">
+              <CreditCard className="h-4 w-4" />
+              购买积分
+            </Button>
+          </Link>
         </div>
       </Card>
 
@@ -368,6 +374,13 @@ const AccountPage: React.FC = () => {
           </div>
         </div>
         <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-4">
+          <div className="mb-4">
+            <Link to="/billing?from=credit">
+              <Button variant="primary" size="sm">
+                <CreditCard className="h-4 w-4" /> 购买积分
+              </Button>
+            </Link>
+          </div>
           <p className="text-sm font-medium text-foreground">邀请链接</p>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <input

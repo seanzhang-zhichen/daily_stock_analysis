@@ -30,6 +30,7 @@ EXEMPT_PATHS = frozenset({
     "/api/v1/account/notification-prefs/unsubscribe",
     # Phase 2: 套餐目录在落地页 / 注册流引导可见, 不需要登录
     "/api/v1/billing/plans",
+    "/api/v1/credits/packages",
     "/api/v1/billing/callbacks/wechat",
     "/api/v1/billing/callbacks/alipay",
     # Phase 6: 增长埋点可匿名上报

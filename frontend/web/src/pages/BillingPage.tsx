@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowUpRight,
   CheckCircle2,
+  Coins,
   CreditCard,
   FileText,
   Gift,
@@ -22,6 +23,7 @@ import {
   type BillingPlansResponse,
   type BillingSubscriptionResponse,
 } from '../api/billing';
+import { creditsApi, type CreditPackage } from '../api/credits';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
 import { cn } from '../utils/cn';
@@ -38,7 +40,7 @@ const formatPrice = (priceCents: number, currency: string): string => {
   if (priceCents <= 0) {
     return '联系客服';
   }
-  const amount = (priceCents / 100).toFixed(0);
+  const amount = (priceCents / 100).toFixed(2).replace(/\.00$/, '');
   return currency.toUpperCase() === 'CNY' ? `¥${amount}` : `${currency} ${amount}`;
 };
 
@@ -51,6 +53,44 @@ const formatDate = (value?: string | null): string => {
   } catch {
     return value;
   }
+};
+
+const CreditPackageCard: React.FC<{
+  pkg: CreditPackage;
+  onBuy?: (pkg: CreditPackage) => void;
+}> = ({ pkg, onBuy }) => {
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-card/60 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wider text-secondary-text">
+            {pkg.code.toUpperCase()}
+          </p>
+          <h3 className="mt-1 text-lg font-semibold text-foreground">{pkg.name}</h3>
+        </div>
+        <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary">
+          <Coins className="h-3 w-3" /> {pkg.creditAmount} 积分
+        </span>
+      </div>
+      <div className="text-2xl font-semibold text-foreground">
+        {formatPrice(pkg.priceCents, pkg.currency)}
+      </div>
+      <p className="text-sm text-secondary-text">
+        充值后仅增加积分余额，不改变当前订阅套餐。
+      </p>
+      {onBuy ? (
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          className="mt-2 w-full"
+          onClick={() => onBuy(pkg)}
+        >
+          <CreditCard className="h-4 w-4" /> 购买积分
+        </Button>
+      ) : null}
+    </div>
+  );
 };
 
 const PlanCard: React.FC<{
@@ -156,6 +196,7 @@ const BillingPage: React.FC = () => {
 
   const [plansResponse, setPlansResponse] = useState<BillingPlansResponse | null>(null);
   const [subscription, setSubscription] = useState<BillingSubscriptionResponse | null>(null);
+  const [creditPackages, setCreditPackages] = useState<CreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ParsedApiError | null>(null);
 
@@ -165,6 +206,7 @@ const BillingPage: React.FC = () => {
   const [redeemInfo, setRedeemInfo] = useState<string | null>(null);
 
   const [activePlanForPayment, setActivePlanForPayment] = useState<BillingPlan | null>(null);
+  const [activeCreditPackageForPayment, setActiveCreditPackageForPayment] = useState<CreditPackage | null>(null);
 
   useEffect(() => {
     document.title = '会员中心 - DSA';
@@ -179,9 +221,13 @@ const BillingPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const plans = await billingApi.listPlans();
+        const [plans, packagesRes] = await Promise.all([
+          billingApi.listPlans(),
+          creditsApi.listPackages(),
+        ]);
         if (cancelled) return;
         setPlansResponse(plans);
+        setCreditPackages(packagesRes.packages);
 
         if (loggedIn) {
           const sub = await billingApi.getSubscription();
@@ -265,6 +311,7 @@ const BillingPage: React.FC = () => {
 
   const plans = plansResponse?.plans ?? [];
   const recommendedCode = plans.find((p) => p.code === 'pro')?.code ?? plans[0]?.code;
+  const creditBalance = userMode?.credits?.balance ?? userMode?.user?.creditBalance ?? 0;
 
   return (
     <StandardPageLayout>
@@ -311,6 +358,36 @@ const BillingPage: React.FC = () => {
           </div>
         </Card>
       ) : null}
+
+      <Card title="购买积分" subtitle="CREDITS">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-secondary-text">当前积分余额</p>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{creditBalance}</p>
+          </div>
+          <p className="max-w-xl text-sm text-secondary-text">
+            积分用于股票分析和 Agent 问股；订阅、邀请奖励和积分包充值都可以增加余额。
+          </p>
+        </div>
+        {creditPackages.length === 0 ? (
+          <p className="text-sm text-secondary-text">暂未配置可购买积分包, 请联系站点管理员。</p>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {creditPackages.map((pkg) => (
+              <CreditPackageCard
+                key={pkg.code}
+                pkg={pkg}
+                onBuy={loggedIn ? setActiveCreditPackageForPayment : undefined}
+              />
+            ))}
+          </div>
+        )}
+        {!loggedIn && (
+          <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300/80">
+            购买积分需要登录, 请先 <Link to="/login" className="text-primary underline">登录</Link>。
+          </div>
+        )}
+      </Card>
 
       <Card title="套餐对比" subtitle="PLANS">
         {plans.length === 0 ? (
@@ -453,6 +530,16 @@ const BillingPage: React.FC = () => {
                 console.warn('refresh after paid failed', err);
               }
             })();
+          }}
+        />
+      )}
+      {activeCreditPackageForPayment && (
+        <PaymentDialog
+          open={Boolean(activeCreditPackageForPayment)}
+          creditPackage={activeCreditPackageForPayment}
+          onClose={() => setActiveCreditPackageForPayment(null)}
+          onPaid={() => {
+            void refreshStatus();
           }}
         />
       )}

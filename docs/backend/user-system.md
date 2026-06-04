@@ -467,6 +467,8 @@ Pro 用户可开启每日推送和自定义 Webhook，免费用户通常只能�
 
 **文件：** `backend/src/services/billing/order_service.py`
 
+积分包购买使用独立服务 `backend/src/services/billing/credit_order_service.py`，默认内置 19.9 元 / 200 积分、99.9 元 / 1200 积分、299 元 / 4000 积分三档；Alembic migration 与 `DatabaseManager` 启动兜底都会按 code 幂等补齐缺失默认包。
+
 入口：
 
 ```text
@@ -476,6 +478,12 @@ POST /api/v1/billing/orders
 GET  /api/v1/billing/orders/{order_no}
 POST /api/v1/billing/orders/{order_no}/pay
 POST /api/v1/billing/orders/{order_no}/cancel
+GET  /api/v1/credits/packages
+POST /api/v1/credits/orders
+GET  /api/v1/credits/orders/{order_no}
+POST /api/v1/credits/orders/{order_no}/pay
+POST /api/v1/credits/orders/{order_no}/mock-pay
+POST /api/v1/credits/orders/{order_no}/cancel
 ```
 
 ### 订单状态机

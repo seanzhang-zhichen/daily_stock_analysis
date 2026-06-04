@@ -38,6 +38,7 @@ from src.users.config import SESSION_COOKIE_NAME
 from src.users.plans import list_plan_catalog, resolve_user_plan
 from src.users.sessions import resolve_session
 from src.services.billing import OrderService
+from src.services.billing import CreditOrderService
 from src.services.billing.gateways import get_gateway
 from src.services.billing.security import check_callback_ip, record_sig_failure
 from src.users.audit import write_audit_log
@@ -133,6 +134,7 @@ async def billing_subscription(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _svc = OrderService()
+_credit_svc = CreditOrderService()
 
 
 def _flag(name: str) -> bool:
@@ -420,16 +422,22 @@ async def wechat_callback(request: Request, db: Session = Depends(get_db)):
 
     result = gateway.verify_callback(dict(request.headers), body_bytes)
     outcome = _svc.process_callback(db, result, signature_raw=signature_hdr)
+    credit_outcome = None
+    if outcome.reason == "order_not_found":
+        credit_outcome = _credit_svc.process_callback(db, result, signature_raw=signature_hdr)
 
     if not result.signature_valid:
         record_sig_failure("wechat")
 
     if outcome.fulfilled:
         logger.info("wechat callback fulfilled order=%s", result.out_trade_no)
+    elif credit_outcome and credit_outcome.fulfilled:
+        logger.info("wechat callback fulfilled credit order=%s", result.out_trade_no)
     elif outcome.reason:
         logger.info(
             "wechat callback not fulfilled order=%s reason=%s",
-            result.out_trade_no, outcome.reason,
+            result.out_trade_no,
+            credit_outcome.reason if credit_outcome and credit_outcome.reason else outcome.reason,
         )
 
     # 微信文档: 处理失败时返回非 200, 微信会重试。当前所有路径都已幂等落库,
@@ -469,16 +477,22 @@ async def alipay_callback(request: Request, db: Session = Depends(get_db)):
 
     result = gateway.verify_callback(dict(request.headers), body_bytes)
     outcome = _svc.process_callback(db, result)
+    credit_outcome = None
+    if outcome.reason == "order_not_found":
+        credit_outcome = _credit_svc.process_callback(db, result)
 
     if not result.signature_valid:
         record_sig_failure("alipay")
 
     if outcome.fulfilled:
         logger.info("alipay callback fulfilled order=%s", result.out_trade_no)
+    elif credit_outcome and credit_outcome.fulfilled:
+        logger.info("alipay callback fulfilled credit order=%s", result.out_trade_no)
     elif outcome.reason:
         logger.info(
             "alipay callback not fulfilled order=%s reason=%s",
-            result.out_trade_no, outcome.reason,
+            result.out_trade_no,
+            credit_outcome.reason if credit_outcome and credit_outcome.reason else outcome.reason,
         )
 
     # 支付宝要求成功处理返回纯文本 "success", 失败返回 "failure"。

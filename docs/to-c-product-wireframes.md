@@ -176,6 +176,7 @@
   - `GET /api/v1/billing/orders/{order_no}`：支付弹窗每 2s 轮询订单状态。
   - `POST /api/v1/billing/orders/{order_no}/mock-pay`：仅 mock 支付模式下模拟支付成功。
 - **MVP 路径**：免费 → 兑换码升 Pro，或通过 `PaymentDialog` 选择微信 / 支付宝扫码升级；`PAYMENT_MOCK_ENABLED=true` 时可不接真实通道完成联调。
+- **积分包路径**：积分包通过独立 `/api/v1/credits/packages`、`/api/v1/credits/orders` 与支付接口购买；支付成功后刷新账户状态并显示最新积分余额，会员套餐不变。默认展示 19.9 元 / 200 积分、99.9 元 / 1200 积分、299 元 / 4000 积分三档。
 - **降级**：Pro 到期未续费自动回 free，所有过限的自选股保留只读但不参与调度。
 - **文案规则**：所有「分析次数」措辞统一为「次/天」，避免次/月混用。
 

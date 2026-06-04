@@ -20,6 +20,7 @@ from api.v1.endpoints import (
     auth,
     backtest,
     billing,
+    credits,
     history,
     notices,
     portfolio,
@@ -101,6 +102,12 @@ router.include_router(
     billing.router,
     prefix="/billing",
     tags=["Billing"]
+)
+
+router.include_router(
+    credits.router,
+    prefix="/credits",
+    tags=["Credits"]
 )
 
 router.include_router(

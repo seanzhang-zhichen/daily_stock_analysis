@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] To C 积分包新增默认 19.9 元、99.9 元、299 元三档配置，新库和空配置实例可直接展示购买入口。
+- [改进] Web 会员中心新增积分包购买入口，账户页和积分不足引导可直接进入积分充值流程。
+- [新功能] To C adds independent credit-package purchase tables and `/api/v1/credits/*` APIs; paid credit orders top up user credits without changing subscription plans.
 - [新功能] To C 用户体系新增积分与邀请能力：支持邀请注册、订阅奖励、邀请用户付费奖励、分析/问股积分消耗、管理员后台配置与手动积分调整。
 - [修复] 修复图片股票代码识别未复用 LLM_CHANNELS 渠道密钥的问题，Vision 模型可通过渠道配置调用 OpenAI 兼容服务。
 
