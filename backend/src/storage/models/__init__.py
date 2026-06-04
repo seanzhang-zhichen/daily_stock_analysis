@@ -38,6 +38,10 @@ from src.storage.models.app import (
     AppUserSession,
     AppUserUsageCounter,
     AppUserWatchlist,
+    AppResearchReport,
+    AppResearchReportComment,
+    AppResearchReportPurchase,
+    AppResearchReportReaction,
 )
 from src.storage.models.backtest import BacktestResult, BacktestSummary
 from src.storage.models.conversation import ConversationMessage, LLMUsage
@@ -114,4 +118,8 @@ __all__ = [
     "AppAuditLog",
     "AppGrowthEvent",
     "AppNotice",
+    "AppResearchReport",
+    "AppResearchReportPurchase",
+    "AppResearchReportReaction",
+    "AppResearchReportComment",
 ]

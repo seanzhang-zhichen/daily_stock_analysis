@@ -167,6 +167,7 @@ def _serialize_admin_user(user: AppUser) -> dict:
         "creditBalance": int(getattr(user, "credit_balance", 0) or 0),
         "referralCode": getattr(user, "referral_code", None),
         "isAdmin": bool(getattr(user, "is_admin", False)),
+        "isResearchOperator": bool(getattr(user, "is_research_operator", False)),
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
         "termsVersion": getattr(user, "terms_version", None),

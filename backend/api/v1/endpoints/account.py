@@ -222,6 +222,7 @@ def _serialize_user(user, *, terms_version: str | None = None) -> dict:
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
         "isAdmin": bool(getattr(user, "is_admin", False)),
+        "isResearchOperator": bool(getattr(user, "is_research_operator", False)),
         "termsVersion": getattr(user, "terms_version", None),
         "needsReacceptTerms": needs_reaccept(user, current_terms_version),
     }

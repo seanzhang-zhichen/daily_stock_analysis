@@ -585,6 +585,7 @@ const UsersTab: React.FC = () => {
               <th className="pb-2 pr-3">邀请码</th>
               <th className="pb-2 pr-3">协议版本</th>
               <th className="pb-2 pr-3">Admin</th>
+              <th className="pb-2 pr-3">研报</th>
               <th className="pb-2 pr-3">最近登录</th>
               <th className="pb-2">操作</th>
             </tr>
@@ -606,6 +607,13 @@ const UsersTab: React.FC = () => {
                     <span className="inline-flex items-center gap-1 text-xs text-primary">
                       <ShieldCheck className="h-3 w-3" /> admin
                     </span>
+                  ) : (
+                    <span className="text-xs text-secondary-text">—</span>
+                  )}
+                </td>
+                <td className="py-2 pr-3">
+                  {u.isResearchOperator ? (
+                    <span className="text-xs text-primary">operator</span>
                   ) : (
                     <span className="text-xs text-secondary-text">—</span>
                   )}

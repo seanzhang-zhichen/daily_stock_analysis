@@ -249,7 +249,27 @@
 - API：`GET /api/v1/notices`、`GET /api/v1/notices/unread-count`。
 - 管理端：公告 CRUD 与发布 / 下架接口。
 
-### US-013：用户处理数据导出与账号注销
+### US-013：用户试读、购买和互动研报
+
+**作为** 注册或潜在付费用户，**我希望** 可以先阅读运营发布研报的摘要和试读内容，认可后再用积分解锁全文，**以便** 低门槛判断内容价值。
+
+**验收标准**：
+
+- 未登录用户可访问 `/research-reports` 查看已发布研报列表、摘要和试读内容，但不能查看付费全文。
+- 登录用户可使用账户积分购买单篇研报；购买成功后永久解锁该篇完整内容，扣减记录写入积分流水。
+- 登录用户可对研报点赞、点踩和评论；同一用户对同一研报只能保留一个赞 / 踩态。
+- 被授予 `is_research_operator=True` 的注册用户可在 `/research-reports/studio` 创建自己的研报草稿、发布、下架和删除无互动记录的研报。
+- 研报运营身份不等同于平台管理员身份，不能访问 `/admin` 和部署级系统配置。
+- 未发布研报不出现在用户侧列表和详情中。
+
+**当前实现依据**：
+
+- 前端：`ResearchReportsPage`、`ResearchReportsStudioPage`、侧边栏 `/research-reports` 入口。
+- API：`GET/POST/PATCH/DELETE /api/v1/research-reports*`、`GET /mine/list`、`POST /purchase`、`POST /reaction`、`GET/POST /comments`。
+- 数据：`app_research_reports`、`app_research_report_purchases`、`app_research_report_reactions`、`app_research_report_comments`，积分扣减复用 `app_credit_ledger`。
+- 授权：服务器侧可用 `python scripts/grant_research_operator.py --email <用户邮箱>` 授予研报运营身份。
+
+### US-014：用户处理数据导出与账号注销
 
 **作为** 注册用户，**我希望** 可以申请导出个人数据或注销账号，**以便** 满足个人信息保护与账户退出诉求。
 
@@ -267,7 +287,7 @@
 - 服务：`src/users/data_export.py`、`src/users/deletion.py`。
 - 前端：`src/api/account.ts` 已封装 `requestDataExport`、`requestDeletion`、`cancelDeletion`、`getDeletionStatus`，普通账户页暂不展示数据导出和注销区块。
 
-### US-014：管理员处理运营后台事务
+### US-015：管理员处理运营后台事务
 
 **作为** 平台管理员，**我希望** 在后台查看用户、订单、退款、发票、公告和审计日志，**以便** 支撑 To C 商业化运营。
 
@@ -275,7 +295,7 @@
 
 - 只有 `is_admin=True` 的登录用户能正常使用 `/admin` 和 `/api/v1/admin/*`。
 - 管理员可筛选用户、配置免费档和会员套餐每日用量、查看订单、审核退款、处理发票、按用户注册邮箱手动开通套餐和查看审计 / 统计数据。
-- 管理员可创建、发布、下架和删除公告。
+- 管理员可创建、发布、下架和删除公告；研报由带 `is_research_operator=True` 身份的注册用户在用户侧工作台管理。
 - 管理员操作写入 `app_audit_logs`。
 - 普通 C 端用户看不到 `/settings` 与 `/admin` 入口，直接访问 `/settings` 会回到 `/account`，访问管理员 API 返回 403；直接访问 `/admin` 会因管理员 API 权限失败而不可用。
 

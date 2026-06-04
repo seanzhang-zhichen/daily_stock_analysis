@@ -49,6 +49,7 @@ class AppUser(Base):
     last_login_at = Column(DateTime, nullable=True)
     # Phase 5/6 追加: 平台运营管理员标记 + 协议同意版本
     is_admin = Column(Boolean, nullable=False, default=False, index=True)
+    is_research_operator = Column(Boolean, nullable=False, default=False, index=True)
     terms_version = Column(String(32), nullable=True)  # 用户最近一次接受的协议版本号
     # Phase 6: 账号注销冷静期字段（PIPL 合规）
     deletion_requested_at = Column(DateTime, nullable=True, index=True)  # 注销申请时间；非 NULL 表示进入冷静期
@@ -68,6 +69,7 @@ class AppUser(Base):
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
             'is_admin': bool(self.is_admin),
+            'is_research_operator': bool(getattr(self, "is_research_operator", False)),
             'terms_version': self.terms_version,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
@@ -634,6 +636,83 @@ class AppNotice(Base):
     )
 
 
+class AppResearchReport(Base):
+    """Operator-authored paid research report."""
+
+    __tablename__ = 'app_research_reports'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(255), nullable=False)
+    summary = Column(Text, nullable=False)
+    preview_content = Column(Text, nullable=False)
+    full_content = Column(Text, nullable=False)
+    category = Column(String(64), nullable=True, index=True)
+    tags = Column(Text, nullable=True)  # JSON list[str]
+    cover_image_url = Column(String(1024), nullable=True)
+    price_credits = Column(Integer, nullable=False, default=0)
+    is_published = Column(Boolean, nullable=False, default=False, index=True)
+    author_id = Column(Integer, ForeignKey('app_users.id'), nullable=True, index=True)
+    published_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_app_research_reports_published_time', 'is_published', 'published_at'),
+    )
+
+
+class AppResearchReportPurchase(Base):
+    """Per-user unlock ledger for research reports."""
+
+    __tablename__ = 'app_research_report_purchases'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, ForeignKey('app_research_reports.id'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    price_credits = Column(Integer, nullable=False, default=0)
+    ledger_id = Column(Integer, ForeignKey('app_credit_ledger.id'), nullable=True)
+    purchased_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('report_id', 'user_id', name='uix_app_research_purchase_report_user'),
+    )
+
+
+class AppResearchReportReaction(Base):
+    """One like/dislike reaction per user per research report."""
+
+    __tablename__ = 'app_research_report_reactions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, ForeignKey('app_research_reports.id'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    reaction = Column(String(8), nullable=False, index=True)  # like / dislike
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('report_id', 'user_id', name='uix_app_research_reaction_report_user'),
+    )
+
+
+class AppResearchReportComment(Base):
+    """User comments for research reports."""
+
+    __tablename__ = 'app_research_report_comments'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, ForeignKey('app_research_reports.id'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    status = Column(String(16), nullable=False, default='visible', index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_app_research_comments_report_created', 'report_id', 'created_at'),
+    )
+
+
 __all__ = [
     "AppUser",
     "AppUserSession",
@@ -661,4 +740,8 @@ __all__ = [
     "AppAuditLog",
     "AppGrowthEvent",
     "AppNotice",
+    "AppResearchReport",
+    "AppResearchReportPurchase",
+    "AppResearchReportReaction",
+    "AppResearchReportComment",
 ]

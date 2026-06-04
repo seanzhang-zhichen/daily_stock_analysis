@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] Web 新增研报板块，支持研报运营账号在用户侧工作台发布付费研报、用户试读、积分解锁全文、点赞点踩与评论互动。
 - [改进] To C 积分包新增默认 19.9 元、99.9 元、299 元三档配置，新库和空配置实例可直接展示购买入口。
 - [改进] Web 会员中心新增积分包购买入口，账户页和积分不足引导可直接进入积分充值流程。
 - [新功能] To C adds independent credit-package purchase tables and `/api/v1/credits/*` APIs; paid credit orders top up user credits without changing subscription plans.

@@ -9,6 +9,7 @@ export type AdminUser = {
   creditBalance?: number;
   referralCode?: string | null;
   isAdmin: boolean;
+  isResearchOperator?: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
   termsVersion: string | null;

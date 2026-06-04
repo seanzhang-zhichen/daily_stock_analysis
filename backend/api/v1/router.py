@@ -24,6 +24,7 @@ from api.v1.endpoints import (
     history,
     notices,
     portfolio,
+    research_reports,
     stocks,
     system_config,
     usage,
@@ -120,4 +121,10 @@ router.include_router(
     notices.router,
     prefix="/notices",
     tags=["Notices"]
+)
+
+router.include_router(
+    research_reports.router,
+    prefix="/research-reports",
+    tags=["ResearchReports"]
 )

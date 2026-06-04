@@ -12,6 +12,7 @@ export type AccountUser = {
   createdAt: string | null;
   lastLoginAt: string | null;
   isAdmin?: boolean;
+  isResearchOperator?: boolean;
   termsVersion?: string | null;
   needsReacceptTerms?: boolean;
 };

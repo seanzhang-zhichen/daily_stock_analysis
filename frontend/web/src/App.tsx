@@ -19,6 +19,8 @@ import OrdersPage from './pages/OrdersPage';
 import InvoicesPage from './pages/InvoicesPage';
 import AdminPage from './pages/AdminPage';
 import NoticesPage from './pages/NoticesPage';
+import ResearchReportsPage from './pages/ResearchReportsPage';
+import ResearchReportsStudioPage from './pages/ResearchReportsStudioPage';
 import HelpPage from './pages/HelpPage';
 import TermsPage from './pages/legal/TermsPage';
 import PrivacyPage from './pages/legal/PrivacyPage';
@@ -71,9 +73,10 @@ const AppContent: React.FC = () => {
   const publicPaths = new Set(['/login', '/register', '/forgot-password', '/verify-email']);
   const isPublicPath = publicPaths.has(location.pathname);
   const isNoticesPath = location.pathname.startsWith('/notices');
+  const isPublicResearchReportsPath = location.pathname === '/research-reports';
   const isLegalPath = location.pathname.startsWith('/legal/');
 
-  if (!effectiveLoggedIn && !isPublicPath && !isLegalPath && !isNoticesPath) {
+  if (!effectiveLoggedIn && !isPublicPath && !isLegalPath && !isNoticesPath && !isPublicResearchReportsPath) {
     const redirect = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?redirect=${redirect}`} replace />;
   }
@@ -139,6 +142,8 @@ const AppContent: React.FC = () => {
             }
           />
           <Route path="/notices" element={<NoticesPage />} />
+          <Route path="/research-reports" element={<ResearchReportsPage />} />
+          <Route path="/research-reports/studio" element={<ResearchReportsStudioPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

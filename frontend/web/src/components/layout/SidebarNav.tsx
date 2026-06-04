@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import {
   BarChart3,
   Bell,
+  FileText,
   HelpCircle,
   Home,
   LogOut,
@@ -38,6 +39,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'home', label: '首页', to: '/', icon: Home, exact: true },
   { key: 'chat', label: '问股', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
   { key: 'backtest', label: '回测', to: '/backtest', icon: BarChart3 },
+  { key: 'research', label: '研报', to: '/research-reports', icon: FileText },
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
   { key: 'notices', label: '公告', to: '/notices', icon: Bell },
 ];
