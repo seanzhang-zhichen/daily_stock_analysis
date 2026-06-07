@@ -118,6 +118,24 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(items["REPORT_SHOW_LLM_MODEL"]["value"], "")
         self.assertTrue(items["REPORT_SHOW_LLM_MODEL"]["raw_value_exists"])
 
+    def test_get_runtime_llm_models_reads_saved_channel_models(self) -> None:
+        self._rewrite_env(
+            "STOCK_LIST=600519,000001",
+            "LLM_CHANNELS=primary",
+            "LLM_PRIMARY_PROTOCOL=openai",
+            "LLM_PRIMARY_BASE_URL=https://api.example.test/v1",
+            "LLM_PRIMARY_API_KEY=sk-test",
+            "LLM_PRIMARY_MODELS=gpt-4o-mini,gpt-4o",
+            "LITELLM_MODEL=openai/gpt-4o",
+            "LITELLM_FALLBACK_MODELS=openai/gpt-4o-mini",
+            "AGENT_LITELLM_MODEL=",
+        )
+
+        self.assertEqual(
+            self.service.get_runtime_llm_models(),
+            ["openai/gpt-4o", "openai/gpt-4o-mini"],
+        )
+
     def test_get_setup_status_reports_required_gaps_for_empty_config(self) -> None:
         self._rewrite_env("")
 

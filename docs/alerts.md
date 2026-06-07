@@ -171,12 +171,22 @@ P2 不做：
 - 不实现 `alert_cooldown`、`cooldown_policy` 或 `notification_policy` 执行语义。
 - 不实现 MACD、KDJ、CCI、RSI、持仓风险或 Market Light 告警规则。
 
+## P3 Web 告警中心 MVP
+
+P3 在 Web 用户侧新增 `/alerts` 页面和侧边栏「提醒」入口，复用 P1 Alert API。
+
+- 支持创建 `price_cross`、`price_change_percent`、`volume_spike` 三类规则。
+- 支持启用、暂停、删除和 dry-run 测试规则。
+- 展示最近触发历史与通知投递记录，分页读取 `/api/v1/alerts/triggers` 和 `/api/v1/alerts/notifications`。
+- 表单使用股票自动补全，创建时仍以单标的 `single_symbol` 规则为边界。
+- 触发调度、冷却策略、自定义通知策略和技术指标规则仍由后续阶段扩展。
+
 ## Phase 边界
 
 - P0：本文档、契约、存储评估和兼容测试。
 - P1：Alert API MVP，首版只覆盖现有三类 runtime 规则。
 - P2：告警评估 worker 与 runtime 统一，让持久化 active rules 与 legacy JSON 共存。
-- P3：Web 告警中心 MVP。
+- P3：Web 告警中心 MVP，用户可在 `/alerts` 管理提醒规则并查看触发/通知记录。
 - P4：触发历史、通知结果与冷却状态。
 - P5：技术指标规则。
 - P6：持仓与自选股联动。

@@ -2,17 +2,28 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   Bell,
+  CalendarClock,
+  Camera,
   CheckCircle2,
   Copy,
   CreditCard,
   CircleHelp,
+  FileDown,
+  FileText,
   Loader2,
   Lock,
   LogOut,
   Mail,
+  MessageSquare,
+  ReceiptText,
+  RotateCcw,
+  Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
+  UserRound,
   Webhook,
 } from 'lucide-react';
 import { Button, Input, Card } from '../components/common';
@@ -24,6 +35,11 @@ import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api
 import { useAuth } from '../hooks';
 
 type FormError = ParsedApiError | string | null;
+type DeletionStatus = {
+  hasPendingDeletion: boolean;
+  deletionRequestedAt: string | null;
+  coolingOffDays: number;
+};
 
 const formatDate = (value?: string | null): string => {
   if (!value) {
@@ -36,6 +52,40 @@ const formatDate = (value?: string | null): string => {
   }
 };
 
+const formatQuotaRemaining = (remaining: number | null, limit: number): string => {
+  if (limit <= 0 || remaining == null) {
+    return '不限';
+  }
+  return `${Math.max(0, remaining)} 次`;
+};
+
+const formatQuotaHint = (used: number, remaining: number | null, limit: number): string => {
+  if (limit <= 0 || remaining == null) {
+    return `今日已使用 ${used} 次，不设固定上限`;
+  }
+  return `今日已使用 ${used}/${limit} 次，剩余 ${Math.max(0, remaining)} 次`;
+};
+
+const getQuotaPercent = (used: number, limit: number): number => {
+  if (limit <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, (used / limit) * 100));
+};
+
+const getQuotaToneClass = (remaining: number | null, limit: number): string => {
+  if (limit <= 0 || remaining == null) {
+    return 'bg-primary';
+  }
+  if (remaining <= 0) {
+    return 'bg-red-400';
+  }
+  if (remaining <= Math.max(1, Math.ceil(limit * 0.2))) {
+    return 'bg-amber-300';
+  }
+  return 'bg-primary';
+};
+
 const WEBHOOK_PLATFORM_ITEMS = [
   { type: 'feishu', label: '飞书通知', desc: '通过飞书自定义机器人接收 AI 分析报告推送。', placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...', helpHash: '#webhook-feishu' },
   { type: 'wecom', label: '企业微信通知', desc: '通过企业微信群机器人接收 AI 分析报告推送。', placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...', helpHash: '#webhook-wecom' },
@@ -45,6 +95,30 @@ const WEBHOOK_PLATFORM_ITEMS = [
   { type: 'custom', label: '自定义 Webhook', desc: '向自定义 URL 推送 JSON 格式分析报告，可对接任意支持 Webhook 的系统。', placeholder: 'https://your-service.example.com/webhook', helpHash: '#webhook-custom' },
 ] as const;
 
+const BILLING_ENTRY_ITEMS = [
+  {
+    title: '我的订单',
+    desc: '查看订单状态，取消未支付订单，或为已支付订单申请退款。',
+    to: '/account/orders',
+    cta: '查看订单',
+    icon: ReceiptText,
+  },
+  {
+    title: '发票申请',
+    desc: '为已支付订单提交电子普通发票申请，并查看审核状态。',
+    to: '/account/invoices',
+    cta: '申请发票',
+    icon: FileText,
+  },
+  {
+    title: '会员与积分',
+    desc: '升级或续费套餐，购买积分包，查看当前订阅权益。',
+    to: '/billing',
+    cta: '管理会员',
+    icon: CreditCard,
+  },
+] as const;
+
 const AccountPage: React.FC = () => {
   const { userMode, changePassword, logout, refreshStatus } = useAuth();
   const navigate = useNavigate();
@@ -52,6 +126,8 @@ const AccountPage: React.FC = () => {
   const user = userMode?.user ?? null;
   const plan = userMode?.plan ?? null;
   const credits = userMode?.credits ?? null;
+  const renewal = userMode?.renewal ?? null;
+  const quota = userMode?.quota ?? null;
 
   // 改密码 form
   const [currentPassword, setCurrentPassword] = useState('');
@@ -74,10 +150,27 @@ const AccountPage: React.FC = () => {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [expandedWebhookType, setExpandedWebhookType] = useState<string | null>(null);
   const [copyInviteInfo, setCopyInviteInfo] = useState<string | null>(null);
+  const [profileDisplayName, setProfileDisplayName] = useState('');
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [avatarPreviewFailed, setAvatarPreviewFailed] = useState(false);
+  const [deletionStatus, setDeletionStatus] = useState<DeletionStatus | null>(null);
+  const [deletionLoading, setDeletionLoading] = useState(false);
+  const [complianceActionLoading, setComplianceActionLoading] = useState<'export' | 'request-delete' | 'cancel-delete' | null>(null);
+  const [complianceError, setComplianceError] = useState<string | null>(null);
+  const [complianceSuccess, setComplianceSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = '账户设置 - DSA';
   }, []);
+
+  useEffect(() => {
+    setProfileDisplayName(user?.displayName ?? '');
+    setProfileAvatarUrl(user?.avatarUrl ?? '');
+    setAvatarPreviewFailed(false);
+  }, [user?.displayName, user?.avatarUrl]);
 
   const loadPrefs = useCallback(async () => {
     setPrefsLoading(true);
@@ -106,12 +199,26 @@ const AccountPage: React.FC = () => {
     }
   }, []);
 
+  const loadDeletionStatus = useCallback(async () => {
+    setDeletionLoading(true);
+    setComplianceError(null);
+    try {
+      const status = await accountApi.getDeletionStatus();
+      setDeletionStatus(status);
+    } catch (err) {
+      setComplianceError(getParsedApiError(err).message);
+    } finally {
+      setDeletionLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (userMode?.loggedIn) {
       void loadPrefs();
       void loadModelPreference();
+      void loadDeletionStatus();
     }
-  }, [userMode?.loggedIn, loadPrefs, loadModelPreference]);
+  }, [userMode?.loggedIn, loadPrefs, loadModelPreference, loadDeletionStatus]);
 
   const handleModelPreferenceChange = useCallback(async (value: string) => {
     setModelPreferenceSaving(true);
@@ -126,6 +233,37 @@ const AccountPage: React.FC = () => {
       setModelPreferenceSaving(false);
     }
   }, [refreshStatus]);
+
+  const handleSaveProfile = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    const displayName = profileDisplayName.trim();
+    const avatarUrl = profileAvatarUrl.trim();
+    setProfileError(null);
+    setProfileSuccess(null);
+
+    if (displayName.length > 32) {
+      setProfileError('昵称最多 32 个字符');
+      return;
+    }
+    if (avatarUrl && !/^https?:\/\//i.test(avatarUrl)) {
+      setProfileError('头像地址必须以 http:// 或 https:// 开头');
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      await accountApi.updateProfile({
+        displayName: displayName || null,
+        avatarUrl: avatarUrl || null,
+      });
+      setProfileSuccess('个人资料已保存');
+      await refreshStatus();
+    } catch (err) {
+      setProfileError(getParsedApiError(err).message);
+    } finally {
+      setProfileSaving(false);
+    }
+  }, [profileAvatarUrl, profileDisplayName, refreshStatus]);
 
   const handleTogglePref = useCallback(
     async (field: 'dailyPushEnabled' | 'emailEnabled', value: boolean) => {
@@ -177,6 +315,58 @@ const AccountPage: React.FC = () => {
     }
   }, []);
 
+  const handleRequestDataExport = useCallback(async () => {
+    setComplianceActionLoading('export');
+    setComplianceError(null);
+    setComplianceSuccess(null);
+    try {
+      const res = await accountApi.requestDataExport();
+      setComplianceSuccess(res.message || '个人数据导出申请已提交，导出结果将发送到注册邮箱。');
+    } catch (err) {
+      setComplianceError(getParsedApiError(err).message);
+    } finally {
+      setComplianceActionLoading(null);
+    }
+  }, []);
+
+  const handleRequestDeletion = useCallback(async () => {
+    const confirmed = window.confirm(
+      '确认申请注销账号？账号将进入冷静期，当前登录会话会立即失效。冷静期内重新登录后可取消注销申请。'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setComplianceActionLoading('request-delete');
+    setComplianceError(null);
+    setComplianceSuccess(null);
+    try {
+      await accountApi.requestDeletion();
+      setComplianceSuccess('账号注销申请已提交，当前会话将失效。');
+      await refreshStatus();
+      setTimeout(() => navigate('/login', { replace: true }), 1200);
+    } catch (err) {
+      setComplianceError(getParsedApiError(err).message);
+    } finally {
+      setComplianceActionLoading(null);
+    }
+  }, [navigate, refreshStatus]);
+
+  const handleCancelDeletion = useCallback(async () => {
+    setComplianceActionLoading('cancel-delete');
+    setComplianceError(null);
+    setComplianceSuccess(null);
+    try {
+      const res = await accountApi.cancelDeletion();
+      setComplianceSuccess(res.message || '账号注销申请已取消。');
+      await loadDeletionStatus();
+    } catch (err) {
+      setComplianceError(getParsedApiError(err).message);
+    } finally {
+      setComplianceActionLoading(null);
+    }
+  }, [loadDeletionStatus]);
+
   const planName = useMemo(() => plan?.name ?? user?.plan ?? '免费会员', [plan, user]);
   const planExpiresAt = useMemo(
     () => plan?.expiresAt ?? user?.planExpiresAt ?? null,
@@ -190,6 +380,45 @@ const AccountPage: React.FC = () => {
   const canEmailNotifications = Boolean(plan?.isPro);
   const dailyPushEnabled = canEmailNotifications && (prefs?.dailyPushEnabled ?? false);
   const emailEnabled = canEmailNotifications && (prefs?.emailEnabled ?? true);
+  const profileName = user?.displayName?.trim() || user?.email.split('@')[0] || 'DSA 用户';
+  const avatarInitial = profileName.slice(0, 1).toUpperCase();
+  const avatarPreviewUrl = profileAvatarUrl.trim();
+  const renewalStatusText = renewal?.expired
+    ? '已到期'
+    : renewal?.daysRemaining === 0
+      ? '今日到期'
+      : renewal
+        ? `${renewal.daysRemaining} 天后到期`
+        : '';
+  const renewalToneClass = renewal?.expired
+    ? 'border-red-500/30 bg-red-500/5 text-red-200'
+    : renewal?.willExpireSoon
+      ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+      : 'border-border/60 bg-card/60 text-secondary-text';
+  const quotaItems = quota
+    ? [
+        {
+          key: 'analysis',
+          label: '股票分析',
+          icon: <Activity className="h-4 w-4" />,
+          used: quota.analysisUsed,
+          limit: quota.analysisLimit,
+          remaining: quota.analysisRemaining,
+          actionLabel: '去分析',
+          actionTo: '/',
+        },
+        {
+          key: 'agent',
+          label: 'AI 问股',
+          icon: <MessageSquare className="h-4 w-4" />,
+          used: quota.agentUsed,
+          limit: quota.agentLimit,
+          remaining: quota.agentRemaining,
+          actionLabel: '去问股',
+          actionTo: '/chat',
+        },
+      ]
+    : [];
 
   if (userMode == null || !userMode.userModeEnabled) {
     return (
@@ -286,6 +515,92 @@ const AccountPage: React.FC = () => {
         </div>
       </div>
 
+      <Card title="个人资料" subtitle="PROFILE">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+          <form onSubmit={handleSaveProfile} className="space-y-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-border/80 bg-card/70">
+                {avatarPreviewUrl && !avatarPreviewFailed ? (
+                  <img
+                    src={avatarPreviewUrl}
+                    alt="头像预览"
+                    className="h-full w-full object-cover"
+                    onError={() => setAvatarPreviewFailed(true)}
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-primary/10 text-2xl font-semibold text-primary">
+                    {avatarInitial || <UserRound className="h-8 w-8" />}
+                  </div>
+                )}
+                <div className="absolute bottom-0 right-0 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-secondary-text">
+                  <Camera className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-lg font-semibold text-foreground">{profileName}</p>
+                <p className="mt-1 break-all text-sm text-secondary-text">{user.email}</p>
+                <p className="mt-2 text-xs leading-5 text-secondary-text">
+                  昵称会用于个人中心和导航展示。头像当前支持图片 URL，后续可再接入本地上传或对象存储。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input
+                id="account-profile-display-name"
+                label="昵称"
+                placeholder="例如：长期价值观察者"
+                value={profileDisplayName}
+                maxLength={32}
+                onChange={(event) => setProfileDisplayName(event.target.value)}
+                disabled={profileSaving}
+                hint={`${profileDisplayName.trim().length}/32`}
+              />
+              <Input
+                id="account-profile-avatar-url"
+                type="url"
+                label="头像 URL"
+                placeholder="https://example.com/avatar.png"
+                value={profileAvatarUrl}
+                onChange={(event) => {
+                  setProfileAvatarUrl(event.target.value);
+                  setAvatarPreviewFailed(false);
+                }}
+                disabled={profileSaving}
+              />
+            </div>
+
+            {profileError ? (
+              <SettingsAlert title="保存失败" message={profileError} variant="error" />
+            ) : null}
+            {profileSuccess ? (
+              <SettingsAlert title="保存成功" message={profileSuccess} variant="success" />
+            ) : null}
+
+            <div className="flex flex-wrap gap-3">
+              <Button type="submit" variant="primary" isLoading={profileSaving}>
+                <Save className="h-4 w-4" /> 保存资料
+              </Button>
+            </div>
+          </form>
+
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="rounded-lg border border-border/60 bg-card/60 px-4 py-3">
+              <p className="text-xs uppercase tracking-wider text-secondary-text">会员</p>
+              <p className="mt-1 truncate text-sm font-medium text-foreground">{planName}</p>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-card/60 px-4 py-3">
+              <p className="text-xs uppercase tracking-wider text-secondary-text">积分</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{credits?.balance ?? user.creditBalance ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-card/60 px-4 py-3">
+              <p className="text-xs uppercase tracking-wider text-secondary-text">注册时间</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{formatDate(user.createdAt)}</p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* 账户信息 */}
       <Card title="账户信息" subtitle="PROFILE">
         <dl className="grid gap-4 text-sm md:grid-cols-2">
@@ -350,6 +665,120 @@ const AccountPage: React.FC = () => {
           </Link>
         </div>
       </Card>
+
+      {quota ? (
+        <Card title="今日配额" subtitle="QUOTA">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {quotaItems.map((item) => {
+              const percent = getQuotaPercent(item.used, item.limit);
+              const exhausted = item.limit > 0 && item.remaining != null && item.remaining <= 0;
+              return (
+                <div key={item.key} className="rounded-xl border border-border/60 bg-card/60 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                        <span className="text-primary">{item.icon}</span>
+                        {item.label}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-secondary-text">
+                        {formatQuotaHint(item.used, item.remaining, item.limit)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-xs uppercase tracking-wider text-secondary-text">剩余</p>
+                      <p className={`mt-1 text-lg font-semibold ${exhausted ? 'text-red-300' : 'text-foreground'}`}>
+                        {formatQuotaRemaining(item.remaining, item.limit)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-border/70">
+                    <div
+                      className={`h-full rounded-full ${getQuotaToneClass(item.remaining, item.limit)}`}
+                      style={{ width: `${item.limit <= 0 ? 100 : percent}%` }}
+                    />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link to={item.actionTo}>
+                      <Button variant="secondary" size="sm">
+                        {item.actionLabel}
+                      </Button>
+                    </Link>
+                    {exhausted ? (
+                      <Link to={`/billing?from=quota&kind=${item.key}`}>
+                        <Button variant="primary" size="sm">
+                          升级配额
+                        </Button>
+                      </Link>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-secondary-text">
+            配额按自然日统计；任务提交失败、重复提交或生成失败时，后端会按规则返还已扣次数。
+          </p>
+        </Card>
+      ) : null}
+
+      <Card title="账务中心" subtitle="BILLING">
+        <div className="grid gap-4 lg:grid-cols-3">
+          {BILLING_ENTRY_ITEMS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.to} className="rounded-xl border border-border/60 bg-card/60 p-4">
+                <div className="flex h-full flex-col gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">{item.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-secondary-text">{item.desc}</p>
+                    </div>
+                  </div>
+                  <div className="mt-auto">
+                    <Link to={item.to}>
+                      <Button variant="outline" size="sm">
+                        {item.cta}
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {renewal ? (
+        <Card title="续费提醒" subtitle="RENEWAL">
+          <div className={`rounded-xl border px-4 py-4 ${renewalToneClass}`}>
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-current/20 bg-background/30">
+                  <CalendarClock className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">
+                    {renewal.expired ? `${planName} 已到期` : `${planName} ${renewalStatusText}`}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-secondary-text">
+                    {renewal.expired
+                      ? '账号会按 Free 档权益继续使用；续费后可恢复付费套餐配额、模型权限和推送能力。'
+                      : `到期时间：${formatDate(renewal.expiresAt)}。到期后将自动降级为 Free 档，建议提前续费。`}
+                  </p>
+                </div>
+              </div>
+              <Link to="/billing" className="shrink-0">
+                <Button variant={renewal.expired || renewal.willExpireSoon ? 'primary' : 'secondary'}>
+                  <CreditCard className="h-4 w-4" /> 立即续费
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       <Card title="积分与邀请" subtitle="CREDITS">
         <div className="grid gap-4 text-sm md:grid-cols-3">
@@ -431,7 +860,7 @@ const AccountPage: React.FC = () => {
                 ...((modelPreference?.models ?? []).map((model) => ({ value: model, label: model }))),
               ]}
               onChange={(value) => void handleModelPreferenceChange(value)}
-              disabled={modelPreferenceSaving || (modelPreference?.models.length ?? 0) === 0}
+              disabled={modelPreferenceSaving}
             />
             <p className="text-xs leading-6 text-secondary-text">
               可选模型由平台管理员在后台配置，并受当前套餐的模型权限限制；所有调用均使用平台后台配置的 Key。
@@ -628,6 +1057,102 @@ const AccountPage: React.FC = () => {
             })}
           </div>
         )}
+      </Card>
+
+      <Card title="数据与注销" subtitle="COMPLIANCE">
+        <div className="space-y-4">
+          {deletionLoading ? (
+            <div className="flex items-center gap-2 text-sm text-secondary-text">
+              <Loader2 className="h-4 w-4 animate-spin" /> 加载账号状态…
+            </div>
+          ) : null}
+          {complianceError ? (
+            <SettingsAlert title="操作失败" message={complianceError} variant="error" />
+          ) : null}
+          {complianceSuccess ? (
+            <SettingsAlert title="操作成功" message={complianceSuccess} variant="success" />
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-border/60 bg-card/60 p-4">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary">
+                  <FileDown className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">个人数据导出</p>
+                  <p className="mt-1 text-xs leading-5 text-secondary-text">
+                    申请导出注册信息、自选股、通知偏好、订阅和订单等个人数据，结果将发送到注册邮箱。
+                  </p>
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      isLoading={complianceActionLoading === 'export'}
+                      disabled={complianceActionLoading != null}
+                      onClick={() => void handleRequestDataExport()}
+                    >
+                      <FileDown className="h-4 w-4" /> 申请导出
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-red-500/25 bg-red-500/5 p-4">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-400/30 bg-red-500/10 text-red-300">
+                  {deletionStatus?.hasPendingDeletion ? (
+                    <RotateCcw className="h-4 w-4" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {deletionStatus?.hasPendingDeletion ? '注销申请处理中' : '账号注销'}
+                  </p>
+                  {deletionStatus?.hasPendingDeletion ? (
+                    <p className="mt-1 text-xs leading-5 text-secondary-text">
+                      已于 {formatDate(deletionStatus.deletionRequestedAt)} 申请注销，冷静期为 {deletionStatus.coolingOffDays} 天。
+                      冷静期内取消后可继续使用当前账号。
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs leading-5 text-secondary-text">
+                      申请后账号进入 {deletionStatus?.coolingOffDays ?? 7} 天冷静期，当前会话会立即失效；到期后系统按规则清理个人数据。
+                    </p>
+                  )}
+                  <div className="mt-3">
+                    {deletionStatus?.hasPendingDeletion ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        isLoading={complianceActionLoading === 'cancel-delete'}
+                        disabled={complianceActionLoading != null}
+                        onClick={() => void handleCancelDeletion()}
+                      >
+                        <RotateCcw className="h-4 w-4" /> 取消注销申请
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="danger-subtle"
+                        size="sm"
+                        isLoading={complianceActionLoading === 'request-delete'}
+                        disabled={complianceActionLoading != null}
+                        onClick={() => void handleRequestDeletion()}
+                      >
+                        <Trash2 className="h-4 w-4" /> 申请注销账号
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </Card>
 
       {/* 修改密码 */}

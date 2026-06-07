@@ -12,6 +12,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -29,6 +30,7 @@ from src.users.consents import CURRENT_TERMS_VERSION, needs_reaccept
 from src.config import get_config
 from src.users.credits import serialize_credit_snapshot
 from src.users.model_router import get_available_models_for_user
+from src.services.system_config_service import SystemConfigService
 from src.users.errors import UserError, UserErrorCode
 from src.users.notification_prefs import (
     update_prefs as svc_update_prefs,
@@ -126,6 +128,13 @@ class ModelPreferenceUpdateRequest(BaseModel):
     preferred_model: str | None = Field(default=None, alias="preferredModel")
 
 
+class ProfileUpdateRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    display_name: str | None = Field(default=None, alias="displayName")
+    avatar_url: str | None = Field(default=None, alias="avatarUrl")
+
+
 class WatchlistAddRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
@@ -218,6 +227,8 @@ def _serialize_user(user, *, terms_version: str | None = None) -> dict:
         "creditBalance": int(getattr(user, "credit_balance", 0) or 0),
         "referralCode": getattr(user, "referral_code", None),
         "preferredModel": getattr(user, "preferred_model", None),
+        "displayName": getattr(user, "display_name", None),
+        "avatarUrl": getattr(user, "avatar_url", None),
         "emailVerified": user.email_verified_at is not None,
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
@@ -510,6 +521,60 @@ async def account_me(request: Request, db: Session = Depends(get_db)):
     return {"user": _serialize_user(user, terms_version=settings.terms_version)}
 
 
+def _normalize_display_name(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    if len(normalized) > 32:
+        raise UserError(UserErrorCode.VALIDATION_ERROR, "昵称最多 32 个字符")
+    return normalized
+
+
+def _normalize_avatar_url(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    if len(normalized) > 1024:
+        raise UserError(UserErrorCode.VALIDATION_ERROR, "头像 URL 过长")
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise UserError(UserErrorCode.VALIDATION_ERROR, "头像 URL 必须以 http:// 或 https:// 开头")
+    return normalized
+
+
+@router.patch("/profile", summary="更新当前登录用户个人资料")
+async def account_update_profile(
+    request: Request,
+    body: ProfileUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        settings, user = _require_current_user(request, db)
+        user.display_name = _normalize_display_name(body.display_name)
+        user.avatar_url = _normalize_avatar_url(body.avatar_url)
+        db.add(user)
+        _commit_or_rollback(db)
+    except UserError as exc:
+        db.rollback()
+        return _user_error_response(exc)
+    except Exception:
+        db.rollback()
+        logger.exception("profile update failed")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": "保存个人资料失败，请稍后重试"},
+        )
+
+    write_audit_log(
+        db,
+        "account.profile.update",
+        user_id=int(user.id),
+        ip=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"user": _serialize_user(user, terms_version=settings.terms_version)}
+
+
 @router.post("/change-password", summary="登录态下修改密码")
 async def account_change_password(
     request: Request,
@@ -606,9 +671,15 @@ async def account_redeem(
 
 
 def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
-    config = get_config()
+    service = SystemConfigService()
+    platform_models = service.get_runtime_llm_models()
     seen = set()
-    models = get_available_models_for_user(db, user=user, config=config)
+    models = get_available_models_for_user(
+        db,
+        user=user,
+        config=get_config(),
+        platform_models=platform_models,
+    )
     return [model for model in models if model and not (model in seen or seen.add(model))]
 
 

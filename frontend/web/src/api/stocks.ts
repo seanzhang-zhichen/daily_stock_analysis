@@ -1,4 +1,5 @@
 import apiClient from './index';
+import { toCamelCase } from './utils';
 import type { StockSuggestion } from '../types/stockIndex';
 
 export type ExtractItem = {
@@ -14,6 +15,39 @@ export type ExtractFromImageResponse = {
 
 export type StockSearchResponse = {
   items: StockSuggestion[];
+};
+
+export type StockQuote = {
+  stockCode: string;
+  stockName?: string | null;
+  currentPrice: number;
+  change?: number | null;
+  changePercent?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  prevClose?: number | null;
+  volume?: number | null;
+  amount?: number | null;
+  updateTime?: string | null;
+};
+
+export type KLineData = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number | null;
+  amount?: number | null;
+  changePercent?: number | null;
+};
+
+export type StockHistoryResponse = {
+  stockCode: string;
+  stockName?: string | null;
+  period: 'daily' | 'weekly' | 'monthly' | string;
+  data: KLineData[];
 };
 
 export const stocksApi = {
@@ -61,5 +95,28 @@ export const stocksApi = {
       signal,
     });
     return response.data.items ?? [];
+  },
+
+  async getQuote(stockCode: string): Promise<StockQuote> {
+    const response = await apiClient.get<Record<string, unknown>>(
+      `/api/v1/stocks/${encodeURIComponent(stockCode)}/quote`,
+    );
+    return toCamelCase<StockQuote>(response.data);
+  },
+
+  async getHistory(stockCode: string, params: {
+    period?: 'daily' | 'weekly' | 'monthly';
+    days?: number;
+  } = {}): Promise<StockHistoryResponse> {
+    const response = await apiClient.get<Record<string, unknown>>(
+      `/api/v1/stocks/${encodeURIComponent(stockCode)}/history`,
+      {
+        params: {
+          period: params.period ?? 'daily',
+          days: params.days ?? 90,
+        },
+      },
+    );
+    return toCamelCase<StockHistoryResponse>(response.data);
   },
 };

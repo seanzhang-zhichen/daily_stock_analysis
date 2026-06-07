@@ -2169,6 +2169,34 @@ class SystemConfigService:
 
         return self._build_display_config_map(effective_map)
 
+    def get_runtime_llm_models(self) -> List[str]:
+        """Return LLM models declared by the effective platform configuration."""
+        effective_map = self._build_setup_effective_config_map()
+        declared_models = (
+            self._collect_yaml_models_from_map(effective_map)
+            or self._collect_llm_channel_models_from_map(effective_map)
+        )
+        configured_models = set(declared_models)
+        candidates = [
+            (effective_map.get("LITELLM_MODEL") or "").strip(),
+            *declared_models,
+            *self._split_csv(effective_map.get("LITELLM_FALLBACK_MODELS") or ""),
+            normalize_agent_litellm_model(
+                (effective_map.get("AGENT_LITELLM_MODEL") or "").strip(),
+                configured_models=configured_models,
+            ),
+        ]
+
+        models: List[str] = []
+        seen: Set[str] = set()
+        for model in candidates:
+            normalized_model = (model or "").strip()
+            if not normalized_model or normalized_model in seen:
+                continue
+            seen.add(normalized_model)
+            models.append(normalized_model)
+        return models
+
     @staticmethod
     def _has_any_config_value(effective_map: Dict[str, str], keys: Sequence[str]) -> bool:
         return any((effective_map.get(key) or "").strip() for key in keys)

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Lock,
   MessageSquare,
@@ -8,7 +8,7 @@ import {
   ThumbsUp,
   Unlock,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { researchReportsApi, type ResearchComment, type ResearchReport } from '../api/researchReports';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { Button, Card, Loading } from '../components/common';
@@ -35,6 +35,7 @@ const ReportBody: React.FC<{ text: string }> = ({ text }) => (
 const ResearchReportsPage: React.FC = () => {
   const { effectiveLoggedIn, userMode, refreshStatus } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [reports, setReports] = useState<ResearchReport[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selected, setSelected] = useState<ResearchReport | null>(null);
@@ -44,9 +45,19 @@ const ResearchReportsPage: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<ParsedApiError | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const detailRequestSeq = useRef(0);
 
   const creditBalance = userMode?.user?.creditBalance ?? 0;
   const isResearchOperator = Boolean(userMode?.user?.isResearchOperator);
+  const selectedIdFromQuery = useMemo(() => {
+    const rawId = Number(searchParams.get('id'));
+    return Number.isInteger(rawId) && rawId > 0 ? rawId : null;
+  }, [searchParams]);
+
+  useEffect(() => {
+    document.title = '研报 - DSA';
+  }, []);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -54,9 +65,6 @@ const ResearchReportsPage: React.FC = () => {
     try {
       const data = await researchReportsApi.list();
       setReports(data.reports);
-      if (data.reports.length > 0) {
-        setSelectedId((current) => current ?? data.reports[0].id);
-      }
     } catch (err) {
       setError(getParsedApiError(err));
     } finally {
@@ -65,6 +73,8 @@ const ResearchReportsPage: React.FC = () => {
   }, []);
 
   const loadDetail = useCallback(async (id: number) => {
+    const requestSeq = detailRequestSeq.current + 1;
+    detailRequestSeq.current = requestSeq;
     setDetailLoading(true);
     setError(null);
     try {
@@ -72,16 +82,45 @@ const ResearchReportsPage: React.FC = () => {
         researchReportsApi.get(id),
         researchReportsApi.comments(id),
       ]);
+      if (detailRequestSeq.current !== requestSeq) return;
       setSelected(report);
       setComments(commentData.comments);
     } catch (err) {
+      if (detailRequestSeq.current !== requestSeq) return;
       setError(getParsedApiError(err));
     } finally {
-      setDetailLoading(false);
+      if (detailRequestSeq.current === requestSeq) {
+        setDetailLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => { void loadList(); }, [loadList]);
+
+  useEffect(() => {
+    if (reports.length === 0) {
+      setSelectedId(null);
+      setSelected(null);
+      setComments([]);
+      return;
+    }
+    setSelectedId((current) => {
+      if (selectedIdFromQuery && reports.some((report) => report.id === selectedIdFromQuery)) {
+        return selectedIdFromQuery;
+      }
+      if (current && reports.some((report) => report.id === current)) {
+        return current;
+      }
+      return reports[0].id;
+    });
+  }, [reports, selectedIdFromQuery]);
+
+  useEffect(() => {
+    if (selected && selected.id !== selectedId) {
+      setSelected(null);
+      setComments([]);
+    }
+  }, [selected, selectedId]);
 
   useEffect(() => {
     if (selectedId !== null) void loadDetail(selectedId);
@@ -94,8 +133,24 @@ const ResearchReportsPage: React.FC = () => {
 
   const visibleSelected = selected ?? selectedInList;
 
+  const handleSelectReport = useCallback((id: number) => {
+    setSelectedId(id);
+    setSelected(null);
+    setSearchParams({ id: String(id) });
+
+    if (window.innerWidth < 1024) {
+      window.setTimeout(() => {
+        detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 0);
+    }
+  }, [setSearchParams]);
+
   const handlePurchase = async () => {
     if (!visibleSelected) return;
+    if (!effectiveLoggedIn) {
+      navigate(`/login?redirect=${encodeURIComponent(`/research-reports?id=${visibleSelected.id}`)}`);
+      return;
+    }
     setActing(true);
     setError(null);
     try {
@@ -173,7 +228,9 @@ const ResearchReportsPage: React.FC = () => {
               <button
                 key={report.id}
                 type="button"
-                onClick={() => setSelectedId(report.id)}
+                onClick={() => handleSelectReport(report.id)}
+                aria-current={selectedId === report.id ? 'true' : undefined}
+                aria-label={`查看研报：${report.title}`}
                 className={cn(
                   'w-full rounded-lg border bg-card/60 p-4 text-left transition-colors',
                   selectedId === report.id
@@ -201,10 +258,11 @@ const ResearchReportsPage: React.FC = () => {
             ))}
           </div>
 
-          <Card className="p-5">
-            {detailLoading && !visibleSelected ? <Loading /> : null}
-            {visibleSelected ? (
-              <div className="space-y-5">
+          <div ref={detailRef} className="scroll-mt-20">
+            <Card className="p-5">
+              {detailLoading && !visibleSelected ? <Loading /> : null}
+              {visibleSelected ? (
+                <div className="space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -254,7 +312,7 @@ const ResearchReportsPage: React.FC = () => {
                       variant="primary"
                       onClick={() => void handlePurchase()}
                       isLoading={acting}
-                      disabled={!effectiveLoggedIn}
+                      disabled={acting}
                     >
                       <Unlock className="h-4 w-4" />
                       {effectiveLoggedIn ? '积分购买' : '登录后购买'}
@@ -323,9 +381,10 @@ const ResearchReportsPage: React.FC = () => {
                     ))}
                   </div>
                 </section>
-              </div>
-            ) : null}
-          </Card>
+                </div>
+              ) : null}
+            </Card>
+          </div>
         </div>
       )}
     </StandardPageLayout>

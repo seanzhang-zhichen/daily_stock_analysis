@@ -95,7 +95,7 @@ const RefundDialog: React.FC<{
         )}
         <label className="block text-sm text-secondary-text mb-1">退款原因 <span className="text-red-400">*</span></label>
         <textarea
-          className="w-full rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm text-foreground placeholder-secondary-text/50 focus:border-primary/50 focus:outline-none resize-none"
+          className="w-full rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm text-foreground placeholder:text-secondary-text/50 focus:border-primary/50 focus:outline-none resize-none"
           rows={3}
           maxLength={255}
           placeholder="请简要说明退款原因…"

@@ -1,7 +1,7 @@
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Check, SlidersHorizontal } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
 import { agentApi, type SkillInfo } from '../api/agent';
@@ -10,7 +10,6 @@ import { ApiErrorAlert, ConfirmDialog, Button, EmptyState, InlineAlert } from '.
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { HistoryList } from '../components/history';
-import { ReportMarkdown, ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
 import { useAuth, useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { useStockIndex } from '../hooks/useStockIndex';
@@ -18,6 +17,13 @@ import type { SetupStatusResponse } from '../types/systemConfig';
 import { formatDateTime, formatReportType } from '../utils/format';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
 import { searchStocks } from '../utils/searchStocks';
+
+const ReportSummary = lazy(() => import('../components/report/ReportSummary').then((module) => ({
+  default: module.ReportSummary,
+})));
+const ReportMarkdown = lazy(() => import('../components/report/ReportMarkdown').then((module) => ({
+  default: module.ReportMarkdown,
+})));
 
 const EMPTY_QUICK_STOCKS = [
   { code: '600519', name: '贵州茅台', hint: 'A 股龙头' },
@@ -33,6 +39,7 @@ type MarketReviewNotice = {
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { userMode } = useAuth();
   const canReadSetupStatus = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
   const canViewReportDiagnostics = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
@@ -53,6 +60,7 @@ const HomePage: React.FC = () => {
   const strategyButtonRef = useRef<HTMLButtonElement | null>(null);
   const strategyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const strategyInitialFocusIndexRef = useRef<number | null>(null);
+  const appliedPrefillStockRef = useRef('');
 
   const stopMarketReviewPolling = useCallback(() => {
     if (marketReviewPollTimer.current !== null) {
@@ -115,10 +123,18 @@ const HomePage: React.FC = () => {
     selectedIds,
   } = useHomeDashboardState();
   const { index: stockIndex } = useStockIndex();
+  const prefillStock = searchParams.get('stock')?.trim() || '';
 
   useEffect(() => {
     document.title = '每日选股分析 - DSA';
   }, []);
+
+  useEffect(() => {
+    if (prefillStock && appliedPrefillStockRef.current !== prefillStock) {
+      appliedPrefillStockRef.current = prefillStock;
+      setQuery(prefillStock);
+    }
+  }, [prefillStock, setQuery]);
 
   useEffect(() => {
     if (!canReadSetupStatus) {
@@ -605,6 +621,7 @@ const HomePage: React.FC = () => {
           <div className="ui-card ui-card-bordered ui-card-padding-sm !overflow-visible flex min-w-0 flex-1 flex-col gap-2.5 md:flex-row md:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <button
+                type="button"
                 onClick={() => setSidebarOpen(true)}
                 className="md:hidden -ml-1 flex-shrink-0 rounded-lg p-1.5 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
                 aria-label="历史记录"
@@ -891,7 +908,15 @@ const HomePage: React.FC = () => {
                     </Button>
                   </div>
                 </div>
-                <ReportSummary data={selectedReport} isHistory showDiagnostics={canViewReportDiagnostics} />
+                <Suspense
+                  fallback={(
+                    <div className="rounded-xl border border-dashed border-border/60 bg-card/45 p-6">
+                      <DashboardStateBlock title="加载报告视图中..." loading compact />
+                    </div>
+                  )}
+                >
+                  <ReportSummary data={selectedReport} isHistory showDiagnostics={canViewReportDiagnostics} />
+                </Suspense>
               </div>
             ) : (
               <div className="flex h-full items-center justify-center py-8">
@@ -946,13 +971,15 @@ const HomePage: React.FC = () => {
       </div>
 
       {markdownDrawerOpen && selectedReport?.meta.id ? (
-        <ReportMarkdown
-          recordId={selectedReport.meta.id}
-          stockName={selectedReport.meta.stockName || ''}
-          stockCode={selectedReport.meta.stockCode}
-          reportLanguage={reportLanguage}
-          onClose={closeMarkdownDrawer}
-        />
+        <Suspense fallback={null}>
+          <ReportMarkdown
+            recordId={selectedReport.meta.id}
+            stockName={selectedReport.meta.stockName || ''}
+            stockCode={selectedReport.meta.stockCode}
+            reportLanguage={reportLanguage}
+            onClose={closeMarkdownDrawer}
+          />
+        </Suspense>
       ) : null}
 
       <ConfirmDialog

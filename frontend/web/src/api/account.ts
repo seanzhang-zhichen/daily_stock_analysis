@@ -8,6 +8,8 @@ export type AccountUser = {
   creditBalance?: number;
   referralCode?: string | null;
   preferredModel: string | null;
+  displayName?: string | null;
+  avatarUrl?: string | null;
   emailVerified: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -168,6 +170,17 @@ export const accountApi = {
 
   async me(): Promise<{ user: AccountUser }> {
     const { data } = await apiClient.get<{ user: AccountUser }>('/api/v1/account/me');
+    return data;
+  },
+
+  async updateProfile(input: {
+    displayName?: string | null;
+    avatarUrl?: string | null;
+  }): Promise<{ user: AccountUser }> {
+    const { data } = await apiClient.patch<{ user: AccountUser }>('/api/v1/account/profile', {
+      displayName: input.displayName,
+      avatarUrl: input.avatarUrl,
+    });
     return data;
   },
 

@@ -4,12 +4,14 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   Bell,
+  BellRing,
   Bot,
   BookOpenCheck,
   Building2,
   CheckCircle2,
   CreditCard,
   LifeBuoy,
+  ListChecks,
   MessageCircle,
   MessageSquareQuote,
   Send,
@@ -32,6 +34,13 @@ interface WebhookAppGuide {
   setup: string;
   endpoint: string;
   note: string;
+}
+
+interface QuickLinkItem {
+  title: string;
+  desc: string;
+  to: string;
+  icon: LucideIcon;
 }
 
 const webhookAppGuides: WebhookAppGuide[] = [
@@ -94,6 +103,33 @@ const webhookAppGuides: WebhookAppGuide[] = [
     setup: '准备一个可接收 HTTP POST 的 URL，账户页会向该地址推送 JSON 格式分析报告。',
     endpoint: 'https://your-service.example.com/webhook',
     note: '建议服务端自行校验来源、限制访问频率，并避免把包含密钥的 URL 公开分享。',
+  },
+];
+
+const quickLinkItems: QuickLinkItem[] = [
+  {
+    title: '任务中心',
+    desc: '查看异步分析任务状态、进度和失败原因。',
+    to: '/tasks',
+    icon: ListChecks,
+  },
+  {
+    title: '提醒规则',
+    desc: '创建价格、涨跌幅和放量提醒，跟踪触发记录。',
+    to: '/alerts',
+    icon: BellRing,
+  },
+  {
+    title: '账务中心',
+    desc: '从账户页进入订单、发票、会员和积分管理。',
+    to: '/account',
+    icon: CreditCard,
+  },
+  {
+    title: '研报广场',
+    desc: '浏览试读运营研报，用积分解锁完整内容。',
+    to: '/research-reports',
+    icon: BookOpenCheck,
   },
 ];
 
@@ -174,6 +210,28 @@ const HelpPage: React.FC = () => {
           </div>
         </Card>
       </div>
+
+      <Card title="常用入口" subtitle="SHORTCUTS" padding="lg">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {quickLinkItems.map(({ title, desc, to, icon: Icon }) => (
+            <Link
+              key={to}
+              to={to}
+              className="group rounded-xl border border-border/70 bg-card/70 p-4 transition hover:-translate-y-0.5 hover:border-primary/30 hover:bg-card"
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary transition group-hover:border-primary/40">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+                  <p className="mt-1 text-xs leading-5 text-secondary-text">{desc}</p>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </Card>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <Card title="常见问题" subtitle="FAQ" padding="lg">

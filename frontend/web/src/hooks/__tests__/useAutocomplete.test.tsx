@@ -160,6 +160,46 @@ describe('useAutocomplete', () => {
     expect(result.current.suggestions).toHaveLength(1);
   });
 
+  it('syncs controlled values without opening suggestions', async () => {
+    stockSearchMock.mockResolvedValue([
+      {
+        canonicalCode: '600519.SH',
+        displayCode: '600519',
+        nameZh: '贵州茅台',
+        market: 'CN',
+        matchType: 'exact',
+        matchField: 'code',
+        score: 100,
+      },
+    ]);
+
+    const { result } = renderHook(() => useAutocomplete(mockIndex, { debounceMs: 10 }));
+
+    act(() => {
+      result.current.setQuery('600519');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    expect(result.current.isOpen).toBe(true);
+    expect(stockSearchMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.syncQuery('000001');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    expect(result.current.query).toBe('000001');
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.suggestions).toEqual([]);
+    expect(stockSearchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('searches when the query has one character by default', async () => {
     stockSearchMock.mockResolvedValue([]);
 

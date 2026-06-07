@@ -411,6 +411,7 @@ const ChatPage: React.FC = () => {
 
     return (
       <button
+        type="button"
         onClick={() => toggleThinking(msg.id)}
         className="flex items-center gap-2 text-xs text-muted-text hover:text-secondary-text transition-colors mb-2 w-full text-left"
       >
@@ -482,6 +483,7 @@ const ChatPage: React.FC = () => {
           历史对话
         </h2>
         <button
+          type="button"
           onClick={handleStartNewChat}
           className="ui-icon-button h-8 w-8 rounded-lg"
           aria-label="开启新对话"
@@ -623,6 +625,7 @@ const ChatPage: React.FC = () => {
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <span className="md:hidden">
                 <button
+                  type="button"
                   onClick={() => setSidebarOpen(true)}
                   className="-ml-1 ui-icon-button h-9 w-9"
                   aria-label="历史对话"
@@ -799,6 +802,7 @@ const ChatPage: React.FC = () => {
                     <div className="flex max-w-lg flex-wrap justify-center gap-2">
                       {quickQuestions.map((q, i) => (
                         <button
+                          type="button"
                           key={i}
                           onClick={() => handleQuickQuestion(q)}
                           className="ui-chat-quick-question"

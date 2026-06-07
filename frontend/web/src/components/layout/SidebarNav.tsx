@@ -3,20 +3,23 @@ import { motion } from 'motion/react';
 import {
   BarChart3,
   Bell,
+  BellRing,
   FileText,
   HelpCircle,
   Home,
+  ListChecks,
   LogOut,
   MessageSquareQuote,
+  Gauge,
   Settings2,
   Star,
-  UserCircle2,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { noticesApi } from '../../api/notices';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAgentChatStore } from '../../stores/agentChatStore';
 import { cn } from '../../utils/cn';
+import { preloadRouteModule } from '../../utils/routePreload';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
 import { QuotaIndicator } from './QuotaIndicator';
@@ -38,8 +41,10 @@ type NavItem = {
 const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'home', label: '首页', to: '/', icon: Home, exact: true },
   { key: 'chat', label: '问股', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
+  { key: 'tasks', label: '任务', to: '/tasks', icon: ListChecks },
   { key: 'backtest', label: '回测', to: '/backtest', icon: BarChart3 },
   { key: 'research', label: '研报', to: '/research-reports', icon: FileText },
+  { key: 'usage', label: '用量', to: '/usage', icon: Gauge },
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
   { key: 'notices', label: '公告', to: '/notices', icon: Bell },
 ];
@@ -51,18 +56,19 @@ const WATCHLIST_NAV_ITEM: NavItem = {
   icon: Star,
 };
 
-const ACCOUNT_NAV_ITEM: NavItem = {
-  key: 'account',
-  label: '我的',
-  to: '/account',
-  icon: UserCircle2,
+const ALERTS_NAV_ITEM: NavItem = {
+  key: 'alerts',
+  label: '提醒',
+  to: '/alerts',
+  icon: BellRing,
 };
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate }) => {
-  const { authEnabled, userMode, logout } = useAuth();
+  const { authEnabled, loggedIn, userMode, logout } = useAuth();
   const completionBadge = useAgentChatStore((state) => state.completionBadge);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [noticeCount, setNoticeCount] = useState(0);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,34 +87,78 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const userModeEnabled = Boolean(userMode?.userModeEnabled);
   const userLoggedIn = Boolean(userMode?.loggedIn);
   const userIsAdmin = Boolean(userMode?.user?.isAdmin);
-  const mainNavItems = userModeEnabled && userLoggedIn && !userIsAdmin
-    ? BASE_NAV_ITEMS.filter((item) => item.key !== 'settings')
-    : BASE_NAV_ITEMS;
+  const isAccessLocked = (authEnabled && !loggedIn) || (userModeEnabled && !userLoggedIn);
+  const displayName = userMode?.user?.displayName?.trim() || userMode?.user?.email?.split('@')[0] || '我的账户';
+  const avatarUrl = userMode?.user?.avatarUrl?.trim();
+  const mainNavItems = isAccessLocked
+    ? BASE_NAV_ITEMS.filter((item) => item.key === 'research' || item.key === 'notices')
+    : userModeEnabled && userLoggedIn && !userIsAdmin
+      ? BASE_NAV_ITEMS.filter((item) => item.key !== 'settings' && item.key !== 'usage')
+      : BASE_NAV_ITEMS;
   const navItems: NavItem[] = userModeEnabled && userLoggedIn
-    ? [...mainNavItems, WATCHLIST_NAV_ITEM, ACCOUNT_NAV_ITEM]
+    ? [...mainNavItems, WATCHLIST_NAV_ITEM, ALERTS_NAV_ITEM]
     : mainNavItems;
+  const accountAvatar = (
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/70 bg-primary/10 text-sm font-semibold text-primary">
+      {avatarUrl && failedAvatarUrl !== avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setFailedAvatarUrl(avatarUrl)}
+        />
+      ) : (
+        displayName.slice(0, 1).toUpperCase()
+      )}
+    </span>
+  );
 
   return (
     <div className="ui-sidebar">
       {/* Brand / Logo */}
-      <div className={cn(
-        'ui-sidebar-brand',
-        collapsed ? 'justify-center px-0' : ''
-      )}>
-        <div className="group ui-sidebar-brand-mark">
-          <BarChart3 className="h-4.5 w-4.5 transition-transform duration-200 group-hover:rotate-6" />
-        </div>
-        {!collapsed ? (
-          <div className="min-w-0 flex-1">
-            <p className="ui-sidebar-brand-title">
-              DSA
-            </p>
-            <p className="ui-sidebar-brand-subtitle">
-              Stock Analytics
-            </p>
+      {userModeEnabled && userLoggedIn ? (
+        <NavLink
+          to="/account"
+          onClick={onNavigate}
+          onMouseEnter={() => preloadRouteModule('/account')}
+          onFocus={() => preloadRouteModule('/account')}
+          aria-label="个人中心"
+          className={({ isActive }) =>
+            cn(
+              'ui-sidebar-brand ui-sidebar-brand-link',
+              collapsed ? 'justify-center px-0' : '',
+              isActive ? 'ui-sidebar-brand-link-active' : ''
+            )
+          }
+        >
+          {accountAvatar}
+          {!collapsed ? (
+            <div className="min-w-0 flex-1">
+              <p className="ui-sidebar-brand-title">{displayName}</p>
+              <p className="ui-sidebar-brand-subtitle">个人中心</p>
+            </div>
+          ) : null}
+        </NavLink>
+      ) : (
+        <div className={cn(
+          'ui-sidebar-brand',
+          collapsed ? 'justify-center px-0' : ''
+        )}>
+          <div className="group ui-sidebar-brand-mark">
+            <BarChart3 className="h-4.5 w-4.5 transition-transform duration-200 group-hover:rotate-6" />
           </div>
-        ) : null}
-      </div>
+          {!collapsed ? (
+            <div className="min-w-0 flex-1">
+              <p className="ui-sidebar-brand-title">
+                DSA
+              </p>
+              <p className="ui-sidebar-brand-subtitle">
+                Stock Analytics
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Divider */}
       <div className={cn('ui-sidebar-divider mb-1', collapsed ? 'mx-0' : 'mx-1')} />
@@ -121,6 +171,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
             to={to}
             end={exact}
             onClick={onNavigate}
+            onMouseEnter={() => preloadRouteModule(to)}
+            onFocus={() => preloadRouteModule(to)}
             aria-label={label}
             className={({ isActive }) =>
               cn(
@@ -182,6 +234,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         <NavLink
           to="/help"
           onClick={onNavigate}
+          onMouseEnter={() => preloadRouteModule('/help')}
+          onFocus={() => preloadRouteModule('/help')}
           aria-label="帮助"
           className={({ isActive }) =>
             cn(
@@ -197,7 +251,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         </NavLink>
 
         {/* Logout (admin mode only) */}
-        {authEnabled && !(userModeEnabled && userLoggedIn) ? (
+        {authEnabled && loggedIn && !(userModeEnabled && userLoggedIn) ? (
           <button
             type="button"
             onClick={() => setShowLogoutConfirm(true)}
@@ -216,7 +270,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
       <div className={cn('ui-sidebar-divider my-1', collapsed ? 'mx-0' : 'mx-1')} />
 
       {/* Quota Indicator */}
-      <QuotaIndicator collapsed={collapsed} onNavigate={onNavigate} />
+      {!isAccessLocked ? <QuotaIndicator collapsed={collapsed} onNavigate={onNavigate} /> : null}
 
       <ConfirmDialog
         isOpen={showLogoutConfirm}

@@ -346,6 +346,19 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 
 ---
 
+### Usage — LLM 用量
+
+**前缀：** `/api/v1/usage`
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | `/summary` | 需登录 | 全局 LLM 调用次数与 token 用量汇总，支持 `period=today/month/all` |
+| POST | `/events` | 无 | 前端增长事件埋点上报，未知事件名静默忽略 |
+
+`/summary` 返回 `totalCalls`、`totalTokens`、`byCallType` 和 `byModel`，Web `/usage` 用量看板仅对内部部署或 To C 管理员开放。
+
+---
+
 ### Billing — 计费与支付
 
 **前缀：** `/api/v1/billing`

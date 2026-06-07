@@ -1062,6 +1062,28 @@
   padding: 0.25rem 0.5rem 0;
 }
 
+.ui-sidebar-brand-link {
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: hsl(var(--color-foreground));
+  padding: 0.25rem 0.5rem;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.ui-sidebar-brand-link:hover {
+  border-color: hsl(var(--color-primary) / 0.16);
+  background: hsl(var(--color-surface-muted) / 0.72);
+}
+
+.ui-sidebar-brand-link-active {
+  border-color: hsl(var(--color-primary) / 0.2);
+  background: hsl(var(--color-primary-muted) / 0.1);
+  box-shadow: inset 0 0 0 1px hsl(var(--color-primary) / 0.08);
+}
+
 .ui-sidebar-brand-mark {
   position: relative;
   display: flex;

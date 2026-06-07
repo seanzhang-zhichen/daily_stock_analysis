@@ -131,7 +131,12 @@ const WatchlistPage: React.FC = () => {
                     className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-card/60 px-3 py-1.5 text-sm"
                   >
                     <Star className="h-3.5 w-3.5 text-amber-400" />
-                    <span className="font-medium text-foreground">{item.stockCode}</span>
+                    <Link
+                      to={`/stocks/${encodeURIComponent(item.stockCode)}`}
+                      className="font-medium text-foreground transition-colors hover:text-primary"
+                    >
+                      {item.stockCode}
+                    </Link>
                     {item.stockName && (
                       <span className="text-secondary-text">{item.stockName}</span>
                     )}

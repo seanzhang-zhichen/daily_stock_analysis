@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { PenLine } from 'lucide-react';
 import { StandardPageLayout } from '../components/common/PageLayouts';
@@ -11,6 +12,10 @@ const ResearchReportsStudioPage: React.FC = () => {
   const userModeEnabled = Boolean(userMode?.userModeEnabled);
   const loggedIn = Boolean(userMode?.loggedIn);
   const isResearchOperator = Boolean(userMode?.user?.isResearchOperator);
+
+  useEffect(() => {
+    document.title = '研报工作台 - DSA';
+  }, []);
 
   if (!userModeEnabled) {
     return <Navigate to="/settings" replace />;

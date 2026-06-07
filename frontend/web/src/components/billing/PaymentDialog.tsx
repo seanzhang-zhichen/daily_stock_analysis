@@ -252,7 +252,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, creditPackage
         </div>
 
         <div className="space-y-4 px-5 py-5">
-          <div className="flex items-baseline justify-between rounded-xl border border-border/60 bg-base/50 px-4 py-3">
+          <div className="flex items-baseline justify-between rounded-xl border border-border/60 bg-background/50 px-4 py-3">
             <div>
               <p className="text-xs uppercase tracking-wider text-secondary-text">{itemLabel}</p>
               <p className="mt-0.5 text-sm font-semibold text-foreground">{itemName}</p>
@@ -283,7 +283,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, creditPackage
                         'rounded-xl border px-3 py-3 text-sm transition-colors ' +
                         (active
                           ? 'border-primary/40 bg-primary/10 text-primary'
-                          : 'border-border/60 bg-base/40 text-foreground/80 hover:border-primary/30')
+                          : 'border-border/60 bg-background/40 text-foreground/80 hover:border-primary/30')
                       }
                     >
                       {PROVIDER_LABEL[p]}
@@ -337,7 +337,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, creditPackage
                     className="h-56 w-56 rounded-xl border border-border/60 bg-white p-2 shadow-inner"
                   />
                 ) : (
-                  <div className="flex h-56 w-56 items-center justify-center rounded-xl border border-border/60 bg-base/30 text-xs text-secondary-text">
+                  <div className="flex h-56 w-56 items-center justify-center rounded-xl border border-border/60 bg-background/30 text-xs text-secondary-text">
                     二维码加载失败
                   </div>
                 )}
@@ -348,7 +348,7 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({ open, plan, creditPackage
                   已等待 {secondsElapsed} 秒 · 系统每 {POLL_INTERVAL_MS / 1000} 秒自动检查支付状态
                 </p>
                 {codeUrl && (
-                  <p className="break-all rounded-lg border border-border/60 bg-base/40 px-3 py-2 text-[10px] text-secondary-text">
+                  <p className="break-all rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-[10px] text-secondary-text">
                     {codeUrl}
                   </p>
                 )}

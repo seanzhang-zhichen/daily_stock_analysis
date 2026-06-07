@@ -101,6 +101,7 @@ function StockAutocompleteInner({
   const {
     // query,
     setQuery,
+    syncQuery = setQuery,
     suggestions,
     isOpen,
     highlightedIndex,
@@ -141,10 +142,10 @@ function StockAutocompleteInner({
   // Sync external value with internal query (only when value truly changes)
   useEffect(() => {
     if (prevValueRef.current !== value) {
-      setQuery(value);
+      syncQuery(value);
       prevValueRef.current = value;
     }
-  }, [value, setQuery]);
+  }, [value, syncQuery]);
 
   // Calculate suggestion box position (using fixed positioning)
   useEffect(() => {

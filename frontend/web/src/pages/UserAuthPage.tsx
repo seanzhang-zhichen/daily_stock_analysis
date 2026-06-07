@@ -115,11 +115,10 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
     <div className="flex min-h-screen bg-[var(--login-bg-main)]">
       {/* Left: Branding Panel */}
       <div className="relative hidden lg:flex lg:w-[52%] xl:w-[55%] flex-col justify-between overflow-hidden p-10">
-        {/* Background gradients */}
+        {/* Background texture */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-          <div className="absolute -left-[20%] -top-[20%] h-[70%] w-[70%] rounded-full opacity-20" style={{ background: 'radial-gradient(circle, hsl(var(--primary)) 0%, transparent 70%)' }} />
-          <div className="absolute -bottom-[10%] -right-[10%] h-[50%] w-[50%] rounded-full opacity-10" style={{ background: 'radial-gradient(circle, hsl(247 84% 66%) 0%, transparent 70%)' }} />
-          <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(hsl(0 0% 100% / 0.08) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100% / 0.08) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          <div className="absolute inset-0 border-r border-[var(--login-border-card)] bg-[var(--login-bg-card)]/35" />
+          <div className="absolute inset-0 opacity-[0.035]" style={{ backgroundImage: 'linear-gradient(hsl(0 0% 100% / 0.1) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100% / 0.1) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         </div>
 
         {/* Top: Logo */}
@@ -147,7 +146,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                 专属分析师
               </span>
             </h1>
-            <p className="max-w-md text-base leading-relaxed text-[var(--login-text-secondary)]">
+            <p className="max-w-md text-[1rem] leading-relaxed text-[var(--login-text-secondary)]">
               覆盖 A 股、港股、美股全市场，AI 深度分析、策略回测、风险监控，一站式投资决策支持。
             </p>
           </div>
@@ -285,15 +284,15 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                     />
                     <span>
                       已阅读并同意{' '}
-                      <Link to="/legal/terms" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                      <Link to="/legal/terms" target="_blank" rel="noreferrer" className="text-primary/90 hover:text-primary underline underline-offset-2">
                         《服务协议》
                       </Link>
                       {' '}
-                      <Link to="/legal/privacy" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                      <Link to="/legal/privacy" target="_blank" rel="noreferrer" className="text-primary/90 hover:text-primary underline underline-offset-2">
                         《隐私政策》
                       </Link>
                       {' '}
-                      <Link to="/legal/risk-disclosure" target="_blank" className="text-primary/90 hover:text-primary underline underline-offset-2">
+                      <Link to="/legal/risk-disclosure" target="_blank" rel="noreferrer" className="text-primary/90 hover:text-primary underline underline-offset-2">
                         《风险揭示书》
                       </Link>
                       ，AI 分析不构成投资建议。

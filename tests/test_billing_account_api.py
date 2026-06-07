@@ -524,6 +524,38 @@ class TestModelPreferenceEndpoint(_BaseApi):
 
 
 class TestAccountStatusPlan(_BaseApi):
+    def test_update_profile_persists_display_name_and_avatar(self):
+        self._seed_free_plan()
+        user = self._create_user()
+        self._login(user)
+
+        res = self.client.patch(
+            "/api/v1/account/profile",
+            json={
+                "displayName": "价值观察者",
+                "avatarUrl": "https://example.com/avatar.png",
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()["user"]
+        self.assertEqual(body["displayName"], "价值观察者")
+        self.assertEqual(body["avatarUrl"], "https://example.com/avatar.png")
+
+        status = self.client.get("/api/v1/account/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["user"]["displayName"], "价值观察者")
+
+    def test_update_profile_rejects_non_http_avatar_url(self):
+        self._seed_free_plan()
+        user = self._create_user()
+        self._login(user)
+
+        res = self.client.patch(
+            "/api/v1/account/profile",
+            json={"displayName": "User", "avatarUrl": "javascript:alert(1)"},
+        )
+        self.assertEqual(res.status_code, 400)
+
     def test_status_includes_plan_block_when_logged_in(self):
         self._seed_free_plan()
         user = self._create_user()

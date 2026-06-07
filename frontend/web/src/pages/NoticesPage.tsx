@@ -110,6 +110,10 @@ const NoticesPage: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const PAGE_SIZE = 20;
 
+  useEffect(() => {
+    document.title = '公告中心 - DSA';
+  }, []);
+
   const loadNotices = useCallback(async (targetPage: number, replace = false) => {
     setIsLoading(true);
     setError(null);
@@ -143,7 +147,7 @@ const NoticesPage: React.FC = () => {
   const normalNotices = notices.filter((n) => !n.isPinned);
 
   return (
-    <StandardPageLayout>
+    <StandardPageLayout className="!max-w-3xl">
       {/* 标题区 */}
       <div className="mb-6 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">

@@ -45,6 +45,8 @@ class AppUser(Base):
     credit_balance = Column(Integer, nullable=False, default=0)
     referral_code = Column(String(32), nullable=True, unique=True, index=True)
     preferred_model = Column(String(128), nullable=True)
+    display_name = Column(String(64), nullable=True)
+    avatar_url = Column(String(1024), nullable=True)
     email_verified_at = Column(DateTime, nullable=True)
     last_login_at = Column(DateTime, nullable=True)
     # Phase 5/6 追加: 平台运营管理员标记 + 协议同意版本
@@ -66,6 +68,8 @@ class AppUser(Base):
             'credit_balance': int(self.credit_balance or 0),
             'referral_code': self.referral_code,
             'preferred_model': self.preferred_model,
+            'display_name': self.display_name,
+            'avatar_url': self.avatar_url,
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
             'is_admin': bool(self.is_admin),

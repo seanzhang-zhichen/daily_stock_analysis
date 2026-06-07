@@ -23,6 +23,8 @@ export interface UseAutocompleteResult {
   query: string;
   /** Set query string */
   setQuery: (value: string) => void;
+  /** Sync query from controlled external value without starting a search */
+  syncQuery: (value: string) => void;
   /** Search suggestions list */
   suggestions: StockSuggestion[];
   /** Whether to show suggestions list */
@@ -151,6 +153,20 @@ export function useAutocomplete(
     }, debounceMs);
   }, [search, debounceMs]);
 
+  const syncQuery = useCallback((value: string) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    abortControllerRef.current?.abort();
+    setQuery(value);
+    latestQueryRef.current = value;
+    setError(null);
+    setSuggestions([]);
+    setIsOpen(false);
+    setHighlightedIndex(-1);
+  }, []);
+
   // Select suggestion item
   const handleSelect = useCallback((suggestion: StockSuggestion) => {
     setQuery(suggestion.displayCode);
@@ -202,6 +218,7 @@ export function useAutocomplete(
   return {
     query,
     setQuery: handleInputChange,
+    syncQuery,
     suggestions,
     isOpen,
     highlightedIndex,

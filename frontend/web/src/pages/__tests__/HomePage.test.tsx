@@ -7,6 +7,7 @@ import { historyApi } from '../../api/history';
 import { systemConfigApi } from '../../api/systemConfig';
 import { useStockPoolStore } from '../../stores';
 import type { StockIndexItem } from '../../types/stockIndex';
+import type { AnalysisReport } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import HomePage from '../HomePage';
 
@@ -20,6 +21,7 @@ const authState = {
     user: { isAdmin?: boolean } | null;
   },
 };
+type ReportSummaryMockData = AnalysisReport | { report: AnalysisReport };
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -79,6 +81,27 @@ vi.mock('../../hooks/useStockIndex', () => ({
     fallback: false,
     loaded: true,
   }),
+}));
+
+vi.mock('../../components/report/ReportSummary', () => ({
+  ReportSummary: ({ data }: { data: ReportSummaryMockData }) => {
+    const report = 'report' in data ? data.report : data;
+    return (
+      <div data-testid="report-summary">
+        <p>{report.summary?.analysisSummary}</p>
+      </div>
+    );
+  },
+}));
+
+vi.mock('../../components/report/ReportMarkdown', () => ({
+  ReportMarkdown: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="report-markdown">
+      <button type="button" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
 }));
 
 const historyItem = {

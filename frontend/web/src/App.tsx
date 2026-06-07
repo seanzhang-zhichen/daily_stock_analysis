@@ -1,34 +1,75 @@
 import type React from 'react';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import HomePage from './pages/HomePage';
-import BacktestPage from './pages/BacktestPage';
-import SettingsPage from './pages/SettingsPage';
-import LoginPage from './pages/LoginPage';
-import NotFoundPage from './pages/NotFoundPage';
-import ChatPage from './pages/ChatPage';
-import PortfolioPage from './pages/PortfolioPage';
-import UserAuthPage from './pages/UserAuthPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import AccountPage from './pages/AccountPage';
-import WatchlistPage from './pages/WatchlistPage';
-import BillingPage from './pages/BillingPage';
-import VerifyEmailPage from './pages/VerifyEmailPage';
-import OnboardingPage from './pages/OnboardingPage';
-import OrdersPage from './pages/OrdersPage';
-import InvoicesPage from './pages/InvoicesPage';
-import AdminPage from './pages/AdminPage';
-import NoticesPage from './pages/NoticesPage';
-import ResearchReportsPage from './pages/ResearchReportsPage';
-import ResearchReportsStudioPage from './pages/ResearchReportsStudioPage';
-import HelpPage from './pages/HelpPage';
-import TermsPage from './pages/legal/TermsPage';
-import PrivacyPage from './pages/legal/PrivacyPage';
-import RiskDisclosurePage from './pages/legal/RiskDisclosurePage';
-import { ApiErrorAlert, Button, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
+import { ApiErrorAlert, Button, Loading, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAgentChatStore } from './stores/agentChatStore';
+import {
+  loadAccountPage,
+  loadAdminPage,
+  loadAlertsPage,
+  loadBacktestPage,
+  loadBillingPage,
+  loadChatPage,
+  loadForgotPasswordPage,
+  loadHelpPage,
+  loadHomePage,
+  loadInvoicesPage,
+  loadLoginPage,
+  loadNotFoundPage,
+  loadNoticesPage,
+  loadOnboardingPage,
+  loadOrdersPage,
+  loadPortfolioPage,
+  loadPrivacyPage,
+  loadResearchReportsPage,
+  loadResearchReportsStudioPage,
+  loadRiskDisclosurePage,
+  loadSettingsPage,
+  loadStockDetailPage,
+  loadTasksPage,
+  loadTermsPage,
+  loadUsagePage,
+  loadUserAuthPage,
+  loadVerifyEmailPage,
+  loadWatchlistPage,
+} from './utils/routePreload';
 import './App.css';
+
+const HomePage = lazy(loadHomePage);
+const BacktestPage = lazy(loadBacktestPage);
+const SettingsPage = lazy(loadSettingsPage);
+const LoginPage = lazy(loadLoginPage);
+const NotFoundPage = lazy(loadNotFoundPage);
+const ChatPage = lazy(loadChatPage);
+const TasksPage = lazy(loadTasksPage);
+const PortfolioPage = lazy(loadPortfolioPage);
+const UserAuthPage = lazy(loadUserAuthPage);
+const ForgotPasswordPage = lazy(loadForgotPasswordPage);
+const AccountPage = lazy(loadAccountPage);
+const UsagePage = lazy(loadUsagePage);
+const WatchlistPage = lazy(loadWatchlistPage);
+const AlertsPage = lazy(loadAlertsPage);
+const StockDetailPage = lazy(loadStockDetailPage);
+const BillingPage = lazy(loadBillingPage);
+const VerifyEmailPage = lazy(loadVerifyEmailPage);
+const OnboardingPage = lazy(loadOnboardingPage);
+const OrdersPage = lazy(loadOrdersPage);
+const InvoicesPage = lazy(loadInvoicesPage);
+const AdminPage = lazy(loadAdminPage);
+const NoticesPage = lazy(loadNoticesPage);
+const ResearchReportsPage = lazy(loadResearchReportsPage);
+const ResearchReportsStudioPage = lazy(loadResearchReportsStudioPage);
+const HelpPage = lazy(loadHelpPage);
+const TermsPage = lazy(loadTermsPage);
+const PrivacyPage = lazy(loadPrivacyPage);
+const RiskDisclosurePage = lazy(loadRiskDisclosurePage);
+
+const RouteFallback: React.FC = () => (
+  <div className="min-h-[45vh]">
+    <Loading label="正在加载页面" />
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const location = useLocation();
@@ -74,9 +115,10 @@ const AppContent: React.FC = () => {
   const isPublicPath = publicPaths.has(location.pathname);
   const isNoticesPath = location.pathname.startsWith('/notices');
   const isPublicResearchReportsPath = location.pathname === '/research-reports';
+  const isHelpPath = location.pathname === '/help';
   const isLegalPath = location.pathname.startsWith('/legal/');
 
-  if (!effectiveLoggedIn && !isPublicPath && !isLegalPath && !isNoticesPath && !isPublicResearchReportsPath) {
+  if (!effectiveLoggedIn && !isPublicPath && !isLegalPath && !isNoticesPath && !isPublicResearchReportsPath && !isHelpPath) {
     const redirect = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?redirect=${redirect}`} replace />;
   }
@@ -93,88 +135,104 @@ const AppContent: React.FC = () => {
 
   return (
     <>
-      <Routes>
-        <Route element={<Shell />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/portfolio" element={<PortfolioPage />} />
-          <Route path="/backtest" element={<BacktestPage />} />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route element={<Shell />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/portfolio" element={<PortfolioPage />} />
+            <Route path="/backtest" element={<BacktestPage />} />
+            <Route
+              path="/settings"
+              element={
+                canAccessSystemSettings ? <SettingsPage /> : <Navigate to="/account" replace />
+              }
+            />
+            <Route
+              path="/usage"
+              element={
+                canAccessSystemSettings ? <UsagePage /> : <Navigate to="/account" replace />
+              }
+            />
+            <Route
+              path="/account"
+              element={
+                userModeEnabled ? <AccountPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route
+              path="/watchlist"
+              element={
+                userModeEnabled ? <WatchlistPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route
+              path="/alerts"
+              element={
+                userModeEnabled ? <AlertsPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route path="/stocks/:code" element={<StockDetailPage />} />
+            <Route
+              path="/billing"
+              element={
+                userModeEnabled ? <BillingPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route
+              path="/account/orders"
+              element={
+                userModeEnabled ? <OrdersPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route
+              path="/account/invoices"
+              element={
+                userModeEnabled ? <InvoicesPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                userModeEnabled ? <AdminPage /> : <Navigate to="/settings" replace />
+              }
+            />
+            <Route path="/notices" element={<NoticesPage />} />
+            <Route path="/research-reports" element={<ResearchReportsPage />} />
+            <Route path="/research-reports/studio" element={<ResearchReportsStudioPage />} />
+            <Route path="/help" element={<HelpPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+          <Route path="/login" element={loginElement} />
           <Route
-            path="/settings"
+            path="/register"
             element={
-              canAccessSystemSettings ? <SettingsPage /> : <Navigate to="/account" replace />
+              userModeEnabled && !adminAuthBlock ? (
+                <UserAuthPage mode="register" />
+              ) : (
+                <Navigate to="/login" replace />
+              )
             }
           />
           <Route
-            path="/account"
-            element={
-              userModeEnabled ? <AccountPage /> : <Navigate to="/settings" replace />
-            }
+            path="/forgot-password"
+            element={userModeEnabled ? <ForgotPasswordPage /> : <Navigate to="/login" replace />}
           />
           <Route
-            path="/watchlist"
-            element={
-              userModeEnabled ? <WatchlistPage /> : <Navigate to="/settings" replace />
-            }
+            path="/verify-email"
+            element={userModeEnabled ? <VerifyEmailPage /> : <Navigate to="/login" replace />}
           />
           <Route
-            path="/billing"
-            element={
-              userModeEnabled ? <BillingPage /> : <Navigate to="/settings" replace />
-            }
+            path="/onboarding"
+            element={userModeEnabled ? <OnboardingPage /> : <Navigate to="/login" replace />}
           />
-          <Route
-            path="/account/orders"
-            element={
-              userModeEnabled ? <OrdersPage /> : <Navigate to="/settings" replace />
-            }
-          />
-          <Route
-            path="/account/invoices"
-            element={
-              userModeEnabled ? <InvoicesPage /> : <Navigate to="/settings" replace />
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              userModeEnabled ? <AdminPage /> : <Navigate to="/settings" replace />
-            }
-          />
-          <Route path="/notices" element={<NoticesPage />} />
-          <Route path="/research-reports" element={<ResearchReportsPage />} />
-          <Route path="/research-reports/studio" element={<ResearchReportsStudioPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-        <Route path="/login" element={loginElement} />
-        <Route
-          path="/register"
-          element={
-            userModeEnabled && !adminAuthBlock ? (
-              <UserAuthPage mode="register" />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-        <Route
-          path="/forgot-password"
-          element={userModeEnabled ? <ForgotPasswordPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/verify-email"
-          element={userModeEnabled ? <VerifyEmailPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/onboarding"
-          element={userModeEnabled ? <OnboardingPage /> : <Navigate to="/login" replace />}
-        />
-        {/* Phase 6 协议三件套, 公开访问 */}
-        <Route path="/legal/terms" element={<TermsPage />} />
-        <Route path="/legal/privacy" element={<PrivacyPage />} />
-        <Route path="/legal/risk-disclosure" element={<RiskDisclosurePage />} />
-      </Routes>
+          {/* Phase 6 协议三件套, 公开访问 */}
+          <Route path="/legal/terms" element={<TermsPage />} />
+          <Route path="/legal/privacy" element={<PrivacyPage />} />
+          <Route path="/legal/risk-disclosure" element={<RiskDisclosurePage />} />
+        </Routes>
+      </Suspense>
       {/* Plan 到期 / 续费提示, 仅在 renewal.willExpireSoon || renewal.expired 时显示 */}
       <RenewalBanner />
       {/* 全局配额超限对话框, 监听 axios interceptor 派发的 quota_exceeded 事件 */}

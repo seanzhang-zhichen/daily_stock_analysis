@@ -15,7 +15,7 @@
 | 角色 | 说明 | 当前入口 |
 | --- | --- | --- |
 | 游客 | 未登录访问者，可查看公开公告、法律协议，并进入登录 / 注册流程。 | `/login`、`/register`、`/notices`、`/legal/*` |
-| 免费会员 | 已注册并登录的普通用户，可管理少量自选股、执行有限次数分析和 Agent 问股。 | `/`、`/chat`、`/watchlist`、`/account`、`/billing` |
+| 免费会员 | 已注册并登录的普通用户，可管理少量自选股、执行有限次数分析和 Agent 问股。 | `/`、`/chat`、`/tasks`、`/stocks/:code`、`/watchlist`、`/account`、`/billing` |
 | Pro 会员 | 已开通付费套餐的用户，可获得更高配额、更多自选股、按套餐配置解锁的模型选项、Webhook 和报告推送能力。 | `/billing`、`/account`、`/account/orders`、`/account/invoices` |
 | 平台管理员 | 具备 `is_admin=True` 的运营人员，处理用户、套餐用量、订单、退款、发票、公告和手动开通。 | `/admin` |
 
@@ -30,7 +30,7 @@
 | AI 问股 | 围绕股票进行多轮问答。 | Agent chat / stream / research、技能列表、会话隔离、生成请求配额扣减与失败返还。 | ✅ 已落地 |
 | 订阅推送 | 自动收到个人报告。 | 通知偏好、每日调度、邮件、一键退订、Webhook。 | ✅ 主要落地 |
 | 升级付费 | 解锁更高配额和高级能力。 | 套餐页、订单、微信 / 支付宝扫码、兑换码、续费提示、本地 mock / 人工兜底。 | 🟡 待生产小额验证 |
-| 售后与合规 | 申请退款、发票、数据导出或注销。 | 订单页、退款申请、发票申请、管理员审核、导出 / 注销 API。 | 🟡 数据导出 / 注销显式入口待运营确认 |
+| 售后与合规 | 申请退款、发票、数据导出或注销。 | 订单页、退款申请、发票申请、管理员审核、账户页导出 / 注销入口。 | 🟢 主链路已具备 |
 | 运营管理 | 处理用户与商业化后台事务。 | Admin 后台、套餐与每日用量配置、审计日志、公告管理、手动 grant-plan。 | ✅ 主要落地 |
 
 ## 3. 核心用户故事
@@ -146,13 +146,13 @@
 
 **验收标准**：
 
-- 登录后全局导航展示今日分析 / Agent 配额状态。
+- 登录后全局导航和账户页展示今日分析 / Agent 配额状态。
 - 分析、Agent、支付成功、兑换码使用后应刷新用户状态。
 - 配额用完后，引导用户升级 Pro。
 
 **当前实现依据**：
 
-- 前端：`QuotaIndicator`、`QuotaExceededDialog`、`AuthContext.refreshStatus`。
+- 前端：`QuotaIndicator`、`QuotaExceededDialog`、`AccountPage` 今日配额卡片、`AuthContext.refreshStatus`。
 - API：`GET /api/v1/account/status`。
 - 服务：`src/users/quota.py`。
 
@@ -198,7 +198,7 @@
 
 **验收标准**：
 
-- `/billing` 展示套餐、当前订阅、订单和发票入口。
+- `/billing` 展示套餐、当前订阅、订单和发票入口；账户页提供账务中心快捷入口。
 - 用户可使用兑换码升级套餐。
 - 用户选择已配置价格的套餐后创建订单；`PAYMENT_ENABLED=true` 且通道配置完整时拉起微信或支付宝扫码支付。
 - 用户也可以购买积分包直接获得积分；默认可选 19.9 元 / 200 积分、99.9 元 / 1200 积分、299 元 / 4000 积分三档，积分包同样走订单、支付、回调、mock 支付与发票链路，支付成功后只增加 `credit_balance`，不改变会员套餐。
@@ -227,7 +227,7 @@
 
 **当前实现依据**：
 
-- 前端：`OrdersPage`、`InvoicesPage`。
+- 前端：`AccountPage` 账务中心、`OrdersPage`、`InvoicesPage`。
 - API：`GET /api/v1/billing/orders`、`GET /orders/{order_no}`、`POST /orders/{order_no}/cancel`、`POST /refunds`、`GET /refunds/{refund_no}`、`POST/GET /invoices`。
 - 管理端：`/api/v1/admin/refunds/*`、`/api/v1/admin/invoices/*`。
 
@@ -240,12 +240,12 @@
 - 未登录用户可访问 `/notices` 和 `/legal/*`；`/help` 当前需要登录后访问。
 - 登录用户可从侧边栏进入公告中心与帮助中心。
 - 公告铃铛展示近期公告数量。
-- 帮助页提供 FAQ、反馈指引和免责声明；系统设置入口只对管理员或非 To C 内部部署可见。
+- 帮助页提供常用入口、FAQ、反馈指引和免责声明；系统设置入口只对管理员或非 To C 内部部署可见。
 - 产品文案保持“AI 分析助手”定位，不承诺收益，不给出荐股保证。
 
 **当前实现依据**：
 
-- 前端：`NoticesPage`、`HelpPage`、`LegalPageLayout`。
+- 前端：`NoticesPage`、`HelpPage` 常用入口与 FAQ、`LegalPageLayout`。
 - API：`GET /api/v1/notices`、`GET /api/v1/notices/unread-count`。
 - 管理端：公告 CRUD 与发布 / 下架接口。
 
@@ -279,13 +279,13 @@
 - 后端提供登录态 API 申请账号注销，进入 7 天冷静期并撤销当前 session。
 - 冷静期内用户可通过 API 取消注销申请。
 - 到期后系统软删账号，并按规则清理个人数据；订单 / 发票按合规要求保留。
-- 相关操作写入审计日志；当前普通账户页不展示显式入口，后续开放 Web 入口时需补充二次确认与风险提示。
+- 相关操作写入审计日志；普通账户页展示数据导出和账号注销入口，注销申请带二次确认与冷静期提示。
 
 **当前实现依据**：
 
 - API：`POST /api/v1/account/data-export`、`GET/POST/DELETE /api/v1/account/deletion`。
 - 服务：`src/users/data_export.py`、`src/users/deletion.py`。
-- 前端：`src/api/account.ts` 已封装 `requestDataExport`、`requestDeletion`、`cancelDeletion`、`getDeletionStatus`，普通账户页暂不展示数据导出和注销区块。
+- 前端：`src/api/account.ts` 已封装 `requestDataExport`、`requestDeletion`、`cancelDeletion`、`getDeletionStatus`，`AccountPage` 展示数据导出、申请注销和取消注销入口。
 
 ### US-015：管理员处理运营后台事务
 
@@ -328,6 +328,6 @@
 | FUT-004 | 用户收到更精美的日报邮件与续费邮件。 | HTML 邮件模板视觉仍待运营素材定稿后打磨。 |
 | FUT-005 | 用户在生产支付链路中完成小额端到端验证。 | 微信 / 支付宝生产商户准入与证书下发后再验证。 |
 | FUT-006 | 运营从后台查看对账报表和平台 Key 用量。 | 对账脚本已有，Web 视图与用量看板待接入。 |
-| FUT-007 | 用户在账户页自助导出数据或注销账号。 | 后端 API 与前端 API client 已具备，普通账户页显式入口、二次确认和运营策略待确认后开放。 |
+| FUT-007 | 用户在账户页自助导出数据或注销账号。 | 已在普通账户页开放个人数据导出、账号注销申请和冷静期取消入口；后续可继续补充导出进度查询与运营侧处理状态。 |
 | FUT-008 | 用户将问股会话发送到自己的通知渠道。 | 当前 `/api/v1/agent/chat/send` 走全局通知链路，若作为 C 端个人能力开放，需改为按当前用户通知偏好、套餐权益和审计链路投递。 |
 | FUT-009 | 持仓、回测、告警形成完整 To C 用户故事。 | 相关能力已有页面或多用户隔离要求，但本文当前仅覆盖账户、配额、分析、问股、推送、支付与合规主链路。 |

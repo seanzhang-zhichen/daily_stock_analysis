@@ -69,6 +69,7 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({
     <div className={`relative ${className}`}>
       {/* 复制按钮 */}
       <button
+        type="button"
         onClick={handleCopy}
         className="absolute top-2 right-2 px-2 py-1 text-xs rounded
           bg-slate-700 hover:bg-slate-600 text-gray-300
