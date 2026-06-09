@@ -1,7 +1,12 @@
 import type React from 'react';
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { ApiErrorAlert, Button, Loading, QuotaExceededDialog, RenewalBanner, Shell } from './components/common';
+import { ApiErrorAlert } from './components/common/ApiErrorAlert';
+import { Button } from './components/common/Button';
+import { Loading } from './components/common/Loading';
+import { QuotaExceededDialog } from './components/common/QuotaExceededDialog';
+import { RenewalBanner } from './components/common/RenewalBanner';
+import { Shell } from './components/layout/Shell';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAgentChatStore } from './stores/agentChatStore';
 import {

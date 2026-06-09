@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useRef, useCallback, useEffect, useId, useState } from 'react';
+import { useRef, useCallback, useDeferredValue, useEffect, useId, useMemo, useState } from 'react';
 import type { HistoryItem } from '../../types/analysis';
 import { Badge, Button, ScrollArea } from '../common';
 import { DashboardPanelHeader, DashboardStateBlock } from '../dashboard';
@@ -46,22 +46,26 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   const selectAllId = useId();
   const searchId = useId();
   const [searchText, setSearchText] = useState('');
+  const deferredSearchText = useDeferredValue(searchText);
 
-  const filteredItems = searchText.trim()
-    ? items.filter((item) => {
-        const q = searchText.trim().toLowerCase();
-        return (
-          item.stockCode.toLowerCase().includes(q) ||
-          (item.stockName?.toLowerCase().includes(q) ?? false)
-        );
-      })
-    : items;
+  const filteredItems = useMemo(() => {
+    const q = deferredSearchText.trim().toLowerCase();
+    if (!q) return items;
 
-  const selectedCount = filteredItems.filter((item) => selectedIds.has(item.id)).length;
+    return items.filter((item) => (
+      item.stockCode.toLowerCase().includes(q) ||
+      (item.stockName?.toLowerCase().includes(q) ?? false)
+    ));
+  }, [deferredSearchText, items]);
+
+  const selectedCount = useMemo(
+    () => filteredItems.filter((item) => selectedIds.has(item.id)).length,
+    [filteredItems, selectedIds],
+  );
   const allVisibleSelected = filteredItems.length > 0 && selectedCount === filteredItems.length;
   const someVisibleSelected = selectedCount > 0 && !allVisibleSelected;
-  const visibleIds = filteredItems.map((item) => item.id);
-  const visibleCountLabel = searchText.trim()
+  const visibleIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
+  const visibleCountLabel = deferredSearchText.trim()
     ? `${filteredItems.length}/${items.length}`
     : items.length > 99
       ? '99+'

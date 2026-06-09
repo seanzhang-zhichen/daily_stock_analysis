@@ -614,12 +614,12 @@ const HomePage: React.FC = () => {
   return (
     <div
       data-testid="home-dashboard"
-      className="flex h-[calc(100vh-5rem)] w-full flex-col overflow-hidden md:flex-row sm:h-[calc(100vh-5.5rem)] lg:h-[calc(100vh-2rem)]"
+      className="home-dashboard flex h-[calc(100vh-5rem)] w-full flex-col overflow-hidden md:flex-row sm:h-[calc(100vh-5.5rem)] lg:h-[calc(100vh-2rem)]"
     >
-      <div className="workspace-page-layout flex-1 flex flex-col min-h-0 min-w-0 !max-w-7xl !p-0 mx-auto w-full">
-        <header className="relative z-30 flex min-w-0 flex-shrink-0 items-center overflow-visible px-3 py-3 md:px-4 md:py-4">
-          <div className="ui-card ui-card-bordered ui-card-padding-sm !overflow-visible flex min-w-0 flex-1 flex-col gap-2.5 md:flex-row md:items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <div className="home-dashboard-inner workspace-page-layout mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col !max-w-7xl !p-0">
+        <header className="home-dashboard-toolbar relative z-30 flex min-w-0 flex-shrink-0 items-center overflow-visible">
+          <div className="home-dashboard-command ui-card ui-card-bordered ui-card-padding-sm !overflow-visible flex min-w-0 flex-1 flex-col md:flex-row md:items-center">
+            <div className="home-dashboard-search-row flex flex-1 items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => setSidebarOpen(true)}
@@ -695,7 +695,7 @@ const HomePage: React.FC = () => {
                 </div>
               ) : null}
             </div>
-            <div className="flex min-w-0 flex-shrink-0 items-center gap-2.5">
+            <div className="home-dashboard-actions flex flex-shrink-0 items-center gap-2.5">
               <label className="flex h-10 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-subtle bg-surface/60 px-3 text-xs text-secondary-text select-none transition-colors hover:border-subtle-hover hover:text-foreground">
                 <input
                   type="checkbox"
@@ -777,8 +777,8 @@ const HomePage: React.FC = () => {
           </div>
         ) : null}
 
-        <div className="flex-1 flex min-h-0 overflow-hidden">
-          <div className="hidden min-h-0 w-64 shrink-0 flex-col overflow-hidden pl-4 pb-4 md:flex lg:w-72">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="home-history-pane hidden min-h-0 w-64 shrink-0 flex-col overflow-hidden md:flex lg:w-72">
             {sidebarContent}
           </div>
 
@@ -797,7 +797,7 @@ const HomePage: React.FC = () => {
           <section
             ref={dashboardScrollRef}
             data-testid="home-dashboard-scroll"
-            className="flex-1 min-w-0 min-h-0 overflow-x-auto overflow-y-auto px-3 pb-4 md:px-6 touch-pan-y"
+            className="home-dashboard-scroll min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto px-3 pb-4 touch-pan-y md:px-6"
           >
             {marketReviewNotice ? (
               <div className="mb-3">
@@ -856,7 +856,7 @@ const HomePage: React.FC = () => {
                 <DashboardStateBlock title="加载报告中..." loading />
               </div>
             ) : selectedReport ? (
-              <div className="max-w-4xl space-y-4 pb-8">
+              <div className="home-report-stack space-y-4 pb-8">
                 <div
                   data-testid="home-report-toolbar"
                   className="ui-card ui-card-bordered ui-card-padding-sm flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
@@ -923,7 +923,7 @@ const HomePage: React.FC = () => {
                 <EmptyState
                   title="从一只股票开始分析"
                   description="输入股票代码或名称即可生成报告；也可以先选择示例股票，再按顶部「分析」。历史报告会沉淀在左侧辅助栏。"
-                  className="max-w-2xl border-dashed"
+                  className="home-empty-state border-dashed"
                   icon={(
                     <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -938,7 +938,7 @@ const HomePage: React.FC = () => {
                             type="button"
                             disabled={isAnalyzing}
                             onClick={() => handleQuickStockSelect(stock.code)}
-                            className="rounded-xl border border-subtle bg-surface/80 px-3 py-2.5 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="home-quick-stock rounded-xl border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <span className="block text-sm font-semibold text-foreground">{stock.name}</span>
                             <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-text">

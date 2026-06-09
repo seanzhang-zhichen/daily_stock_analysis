@@ -112,9 +112,9 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   ];
 
   return (
-    <div className="flex min-h-screen bg-[var(--login-bg-main)]">
+    <div className="auth-split flex min-h-screen bg-[var(--login-bg-main)]">
       {/* Left: Branding Panel */}
-      <div className="relative hidden lg:flex lg:w-[52%] xl:w-[55%] flex-col justify-between overflow-hidden p-10">
+      <div className="auth-brand-panel relative hidden lg:flex lg:w-[52%] xl:w-[55%] flex-col justify-between overflow-hidden p-10">
         {/* Background texture */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
           <div className="absolute inset-0 border-r border-[var(--login-border-card)] bg-[var(--login-bg-card)]/35" />
@@ -174,7 +174,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
       </div>
 
       {/* Right: Auth Form */}
-      <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 lg:px-10">
+      <div className="auth-form-panel flex flex-1 flex-col items-center justify-center px-6 py-12 lg:px-10">
         {/* Mobile logo */}
         <div className="mb-8 flex items-center gap-2 lg:hidden">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient">

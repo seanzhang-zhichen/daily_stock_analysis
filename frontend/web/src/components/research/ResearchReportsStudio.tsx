@@ -96,10 +96,10 @@ export const ResearchReportsStudio: React.FC = () => {
   const canCreate = title.trim() && summary.trim() && previewContent.trim() && fullContent.trim();
 
   return (
-    <div className="space-y-6">
+    <div className="research-studio space-y-6">
       {error ? <SettingsAlert title="操作失败" message={error.message} variant="error" /> : null}
 
-      <Card className="p-4">
+      <Card className="research-studio-editor" variant="gradient">
         <h3 className="mb-3 text-sm font-semibold text-foreground">创建研报草稿</h3>
         <div className="grid gap-3 lg:grid-cols-2">
           <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="研报标题" />
@@ -123,21 +123,21 @@ export const ResearchReportsStudio: React.FC = () => {
             onChange={(event) => setSummary(event.target.value)}
             rows={3}
             placeholder="摘要"
-            className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground placeholder:text-secondary-text/50 focus:outline-none focus:ring-1 focus:ring-primary/40 lg:col-span-2"
+            className="ui-input px-4 py-3 text-sm lg:col-span-2"
           />
           <textarea
             value={previewContent}
             onChange={(event) => setPreviewContent(event.target.value)}
             rows={5}
             placeholder="免费试读内容"
-            className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground placeholder:text-secondary-text/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+            className="ui-input px-4 py-3 text-sm"
           />
           <textarea
             value={fullContent}
             onChange={(event) => setFullContent(event.target.value)}
             rows={5}
             placeholder="完整研报内容"
-            className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground placeholder:text-secondary-text/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+            className="ui-input px-4 py-3 text-sm"
           />
         </div>
         <div className="mt-3">
@@ -150,7 +150,7 @@ export const ResearchReportsStudio: React.FC = () => {
       {loading ? <Loading /> : null}
       <div className="space-y-3">
         {reports.map((report) => (
-          <Card key={report.id} className="p-4">
+          <Card key={report.id} className="research-studio-report" hoverable>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex flex-wrap items-center gap-2">

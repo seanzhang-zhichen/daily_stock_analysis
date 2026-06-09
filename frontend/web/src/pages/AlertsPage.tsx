@@ -322,13 +322,13 @@ const AlertsPage: React.FC = () => {
 
   return (
     <StandardPageLayout>
-      <div className="space-y-1">
+      <header className="ui-page-header space-y-1">
         <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-text">ALERTS</p>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">提醒规则</h1>
         <p className="text-sm text-secondary-text/80">
           为关注的股票设置价格、涨跌幅或放量提醒，并查看最近触发与通知投递记录。
         </p>
-      </div>
+      </header>
 
       {error ? <SettingsAlert title="操作失败" message={error.message} variant="error" /> : null}
       {successMessage ? <SettingsAlert title="操作成功" message={successMessage} variant="success" /> : null}
@@ -340,7 +340,7 @@ const AlertsPage: React.FC = () => {
         />
       ) : null}
 
-      <Card title="新建提醒" subtitle="NEW RULE">
+      <Card title="新建提醒" subtitle="NEW RULE" className="alerts-rule-editor" variant="gradient">
         <form className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.2fr)_180px_160px_160px_140px_auto]" onSubmit={handleCreate}>
           <div>
             <p className="mb-1.5 text-xs text-secondary-text">股票</p>
@@ -425,8 +425,8 @@ const AlertsPage: React.FC = () => {
           />
         ) : (
           <div className="space-y-4">
-            <div className="overflow-x-auto rounded-xl border border-subtle">
-              <table className="min-w-full divide-y divide-subtle text-sm">
+            <div className="alerts-table-wrapper overflow-x-auto rounded-xl border border-subtle">
+              <table className="alerts-rules-table min-w-full divide-y divide-subtle text-sm">
                 <thead className="bg-surface-muted/60 text-xs text-muted-text">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">规则</th>

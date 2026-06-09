@@ -4,8 +4,9 @@ html {
 
 body {
   background:
-    radial-gradient(circle at top left, hsl(var(--color-primary) / 0.06), transparent 32rem),
-    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.36));
+    radial-gradient(ellipse at 18% 0%, hsl(var(--color-primary) / 0.1), transparent 34rem),
+    radial-gradient(ellipse at 85% 12%, hsl(var(--color-warning) / 0.08), transparent 30rem),
+    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.46));
   color: hsl(var(--color-foreground));
 }
 

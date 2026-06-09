@@ -28,9 +28,9 @@ const LegalPageLayout: React.FC<LegalPageLayoutProps> = ({
 }) => {
   const location = useLocation();
   return (
-    <div className="min-h-screen bg-base text-foreground">
-      <header className="border-b border-border/60 bg-card/40 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
+    <div className="legal-page min-h-screen bg-base text-foreground">
+      <header className="legal-page-header border-b border-border/60 bg-card/55 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <Link
             to="/login"
             className="inline-flex items-center gap-1 text-sm text-secondary-text hover:text-foreground"
@@ -60,9 +60,11 @@ const LegalPageLayout: React.FC<LegalPageLayoutProps> = ({
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 py-10">
+      <main className="mx-auto max-w-5xl px-4 py-10">
+        <div className="legal-document">
         <div className="mb-8 space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="ui-eyebrow">LEGAL DOCUMENT</p>
+          <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">{title}</h1>
           <p className="text-xs text-secondary-text">
             版本 <span className="font-mono">{version}</span> · 生效日期 {effectiveDate}
           </p>
@@ -85,6 +87,7 @@ const LegalPageLayout: React.FC<LegalPageLayoutProps> = ({
             联系客服。
           </p>
         </footer>
+        </div>
       </main>
     </div>
   );

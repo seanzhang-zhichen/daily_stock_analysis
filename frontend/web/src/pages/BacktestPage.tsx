@@ -228,9 +228,9 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
   onRun,
   onKeyDown,
 }) => (
-  <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
-    <div className="flex max-w-7xl flex-wrap items-start justify-between gap-3">
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+  <header className="backtest-config-bar flex-shrink-0">
+    <div className="backtest-config-grid">
+      <div className="backtest-config-fields">
         <div className="relative min-w-0 flex-[1_1_220px]">
           <input
             type="text"
@@ -298,7 +298,7 @@ const BacktestConfigBar: React.FC<BacktestConfigBarProps> = ({
           />
         </div>
       </div>
-      <div className="flex flex-shrink-0 items-center gap-2 sm:ml-auto">
+      <div className="backtest-config-actions">
         <Tooltip content="开启后会重新计算已有的回测记录，否则会跳过已完成的条目" focusable>
           <label className={cn(
             'flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-sm transition-colors',

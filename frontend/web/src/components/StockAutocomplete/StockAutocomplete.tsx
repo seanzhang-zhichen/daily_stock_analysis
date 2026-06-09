@@ -5,7 +5,7 @@
  * Supports keyboard navigation, IME input method, graceful degradation
  */
 
-import { Component, useRef, useEffect, useState } from 'react';
+import { Component, useRef, useCallback, useEffect, useState } from 'react';
 import type { CompositionEvent, KeyboardEvent } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -120,7 +120,7 @@ function StockAutocompleteInner({
   const prevValueRef = useRef(value);
   const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; width: string } | null>(null);
 
-  const updateDropdownPosition = () => {
+  const updateDropdownPosition = useCallback(() => {
     if (!inputRef.current) {
       setDropdownStyle(null);
       return;
@@ -132,12 +132,12 @@ function StockAutocompleteInner({
       left: rect.left,
       width: `${rect.width}px`,
     });
-  };
+  }, []);
 
-  const closeSuggestions = () => {
+  const closeSuggestions = useCallback(() => {
     close();
     setDropdownStyle(null);
-  };
+  }, [close]);
 
   // Sync external value with internal query (only when value truly changes)
   useEffect(() => {
@@ -155,14 +155,14 @@ function StockAutocompleteInner({
 
     const frameId = window.requestAnimationFrame(updateDropdownPosition);
     window.addEventListener('resize', updateDropdownPosition);
-    window.addEventListener('scroll', updateDropdownPosition, true);
+    window.addEventListener('scroll', updateDropdownPosition, { capture: true, passive: true });
 
     return () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener('resize', updateDropdownPosition);
       window.removeEventListener('scroll', updateDropdownPosition, true);
     };
-  }, [isOpen]);
+  }, [isOpen, updateDropdownPosition]);
 
   useEffect(() => {
     if (!autocompleteError) {

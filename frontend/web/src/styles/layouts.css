@@ -1,6 +1,10 @@
 .app-shell {
   min-height: 100vh;
-  background: transparent;
+  background:
+    radial-gradient(ellipse at 24% 0%, hsl(var(--color-primary) / 0.1), transparent 30rem),
+    radial-gradient(ellipse at 100% 10%, hsl(var(--color-warning) / 0.08), transparent 26rem),
+    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.42)),
+    hsl(var(--color-background));
   color: hsl(var(--color-foreground));
 }
 
@@ -10,7 +14,8 @@
   min-height: 100vh;
   width: 100%;
   max-width: 1800px;
-  padding: 0.75rem;
+  padding: 0.875rem;
+  gap: 1rem;
 }
 
 .app-shell-sidebar {
@@ -22,11 +27,15 @@
   flex-shrink: 0;
   align-self: flex-start;
   overflow: visible;
-  border: 1px solid hsl(var(--color-border) / 0.86);
-  border-radius: var(--radius-xl);
-  background: hsl(var(--color-surface) / 0.92);
+  border: 1px solid hsl(var(--color-border) / 0.72);
+  border-radius: calc(var(--radius-xl) + 0.125rem);
+  background:
+    linear-gradient(180deg, hsl(var(--color-surface) / 0.88), hsl(var(--color-surface-muted) / 0.58)),
+    hsl(var(--color-surface) / 0.9);
   padding: 0.625rem;
-  box-shadow: var(--shadow-card);
+  box-shadow: 0 18px 44px hsl(220 20% 24% / 0.1);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 
 .app-shell-main {
@@ -60,7 +69,7 @@
   min-height: 100%;
   width: 100%;
   max-width: 80rem;
-  padding: 1rem var(--space-page-x) 2rem;
+  padding: 1rem var(--space-page-x) 2.5rem;
 }
 
 .standard-page-layout,
@@ -69,7 +78,7 @@
 .auth-layout {
   margin: 0 auto;
   width: 100%;
-  padding: 1rem var(--space-page-x) 2rem;
+  padding: 1rem var(--space-page-x) 2.5rem;
 }
 
 .standard-page-layout {
@@ -109,9 +118,16 @@
   gap: var(--space-section);
 }
 
+@media (max-width: 639px) {
+  .chat-workspace-layout-workspace {
+    height: calc(100dvh - 6.75rem);
+  }
+}
+
 @media (min-width: 640px) {
   .app-shell-frame {
     padding: 1rem;
+    gap: 1rem;
   }
 
   .app-shell-sidebar {
@@ -131,7 +147,7 @@
 
   .app-shell-main {
     padding-top: 0;
-    padding-left: 0.75rem;
+    padding-left: 0;
   }
 
   .chat-workspace-layout-workspace {

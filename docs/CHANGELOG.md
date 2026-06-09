@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 继续优化 Web 回测、提醒与研报工作台页面视觉，统一筛选工具栏、表单输入区和研报草稿列表的卡片层次与移动端布局。
+- [改进] 美化 Web 全局视觉体系，优化公开页、认证页、侧边导航、通用卡片和法律文档页的背景层次、圆角、阴影与移动端观感。
+- [改进] 优化 Web 高频交互渲染性能，缓存问股技能索引与历史记录过滤结果，并将自动补全和 Tooltip 的滚动定位监听改为 passive。
+- [改进] 优化 Web 首页工作台视觉层次与响应式布局，调整 Shell 背景、卡片质感、空状态和移动端顶部操作区。
+- [新功能] Web 自选股页新增单只、全选和已选批量分析入口，提交后可在任务面板查看异步分析进度。
 - [修复] 补齐 Web 注册页协议新窗口链接的 `rel="noreferrer"`，减少新窗口打开时的反向引用风险。
 - [修复] 修复 Web Tailwind 自定义 `base` 颜色与默认 `text-base` 字号工具类冲突的问题，避免标题和正文被渲染成背景色。
 - [修复] 补齐 Web 部分普通按钮的 `type="button"`，避免按钮在表单上下文中被浏览器当作提交按钮处理。

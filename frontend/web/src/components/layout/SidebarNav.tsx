@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
 import {
   BarChart3,
   Bell,
@@ -185,12 +184,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
             {({ isActive }) => (
               <>
                 {isActive && (
-                  <motion.div
-                    layoutId="activeIndicator"
+                  <div
                     className="ui-sidebar-active-indicator"
-                    initial={{ opacity: 0, scaleY: 0.5 }}
-                    animate={{ opacity: 1, scaleY: 1 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
                   />
                 )}
                 <Icon className={cn(

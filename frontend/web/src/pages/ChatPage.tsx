@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -193,14 +193,20 @@ const ChatPage: React.FC = () => {
       });
   }, []);
 
-  const availableSkillIds = new Set(skills.map((skill) => skill.id));
-  const quickQuestions = QUICK_QUESTIONS.filter((question) => availableSkillIds.size === 0 || availableSkillIds.has(question.skill));
-  const selectedSkillIdSet = new Set(selectedSkillIds);
+  const skillById = useMemo(
+    () => new Map(skills.map((skill) => [skill.id, skill])),
+    [skills],
+  );
+  const quickQuestions = useMemo(
+    () => QUICK_QUESTIONS.filter((question) => skillById.size === 0 || skillById.has(question.skill)),
+    [skillById],
+  );
+  const selectedSkillIdSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds]);
   const skillLimitReached = selectedSkillIds.length >= MAX_SELECTED_SKILLS;
 
   const getSkillNames = useCallback(
-    (skillIds: string[]) => skillIds.map((id) => skills.find((s) => s.id === id)?.name || id),
-    [skills],
+    (skillIds: string[]) => skillIds.map((id) => skillById.get(id)?.name || id),
+    [skillById],
   );
 
   const normalizeSelectedSkillIds = useCallback((skillIds: string[]) => {
@@ -970,7 +976,7 @@ const ChatPage: React.FC = () => {
           )}
 
           {/* Input area */}
-          <div className="relative z-20 border-t border-border/70 bg-card/90 p-4 md:p-6">
+          <div className="chat-composer relative z-20 border-t border-border/70 bg-card/90 p-4 md:p-6">
             <div className="space-y-3">
               {chatError ? <ApiErrorAlert error={chatError} /> : null}
               {isFollowUpContextLoading ? (
