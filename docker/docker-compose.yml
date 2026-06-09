@@ -4,7 +4,7 @@
 # 
 # 使用方式:
 #   定时模式: docker-compose -f ./docker/docker-compose.yml up -d
-#   FastAPI模式: docker-compose -f ./docker/docker-compose.yml up -d server
+#   WebUI/API模式: docker-compose -f ./docker/docker-compose.yml up -d server
 #   同时启动: docker-compose -f ./docker/docker-compose.yml up -d analyzer server
 
 name: daily-stock-analysis
@@ -39,7 +39,8 @@ x-common: &common
 
     # Web/API service bind address (must be 0.0.0.0 inside container)
     - WEBUI_HOST=0.0.0.0
-    # API_PORT 从 .env 文件读取，无需在此硬编码
+    # Docker WebUI/API 统一使用 API_PORT；避免 .env 中 WEBUI_PORT 覆盖启动端口
+    - WEBUI_PORT=${API_PORT:-8000}
 
     # 代理设置（如果需要）
     # - http_proxy=http://host.docker.internal:10809
@@ -63,11 +64,11 @@ services:
     <<: *common
     container_name: stock-analyzer
 
-  # FastAPI 模式
+  # WebUI/API 模式
   server:
     <<: *common
     container_name: stock-server
-    command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+    command: ["python", "backend/main.py", "--webui-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
     # 若使用 network_mode: host，则以下 ports 映射无效，端口由 command 中的 --port 指定
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"

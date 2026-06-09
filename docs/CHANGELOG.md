@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 优化 Web 首页工作台视觉层次与响应式布局，调整 Shell 背景、卡片质感、空状态和移动端顶部操作区。
 - [新功能] Web 自选股页新增单只、全选和已选批量分析入口，提交后可在任务面板查看异步分析进度。
 - [修复] 补齐 Web 注册页协议新窗口链接的 `rel="noreferrer"`，减少新窗口打开时的反向引用风险。
+- [修复] 修复 Docker Compose `server` 服务只启动 API 导致根路径不展示 WebUI 的问题，改为使用 `--webui-only` 并让 Docker WebUI 端口跟随 `API_PORT`。
 - [修复] 修复 Web Tailwind 自定义 `base` 颜色与默认 `text-base` 字号工具类冲突的问题，避免标题和正文被渲染成背景色。
 - [修复] 补齐 Web 部分普通按钮的 `type="button"`，避免按钮在表单上下文中被浏览器当作提交按钮处理。
 - [改进] 个股详情页返回首页发起分析时自动携带股票代码，首页输入框可直接预填当前股票。
