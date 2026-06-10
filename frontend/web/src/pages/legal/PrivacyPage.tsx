@@ -7,7 +7,7 @@ const EFFECTIVE_DATE = '2026 年 5 月 18 日';
 
 const PrivacyPage: React.FC = () => {
   useEffect(() => {
-    document.title = '隐私政策 - DSA';
+    document.title = '隐私政策 - AlphaLens';
   }, []);
 
   return (
@@ -17,7 +17,7 @@ const PrivacyPage: React.FC = () => {
       effectiveDate={EFFECTIVE_DATE}
     >
       <p>
-        我们高度重视用户的个人信息保护。本《隐私政策》说明您在使用 DSA 智能分析（以下简称"本服务"）期间，
+        我们高度重视用户的个人信息保护。本《隐私政策》说明您在使用 AlphaLens 智能分析（以下简称"本服务"）期间，
         我们如何收集、使用、共享、保护与处理您的个人信息。本政策遵循《中华人民共和国个人信息保护法》（PIPL）、
         《网络安全法》及国际通行的 GDPR 双口径要求。
       </p>

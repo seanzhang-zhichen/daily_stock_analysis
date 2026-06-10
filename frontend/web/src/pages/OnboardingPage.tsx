@@ -1,8 +1,9 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, BarChart2, Plus, Star, Trash2 } from 'lucide-react';
+import { ArrowRight, Plus, Star, Trash2 } from 'lucide-react';
 import { Button } from '../components/common';
+import { BrandLogo } from '../components/common/BrandLogo';
 import { SettingsAlert } from '../components/settings';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { accountApi, type WatchlistItem } from '../api/account';
@@ -25,7 +26,7 @@ const OnboardingPage: React.FC = () => {
   const maxStocks = Math.min(plan?.maxStocks ?? ONBOARDING_MAX, ONBOARDING_MAX);
 
   useEffect(() => {
-    document.title = '欢迎使用 DSA - 设置自选股';
+    document.title = '欢迎使用 AlphaLens - 设置自选股';
   }, []);
 
   const handleAddStock = async (code: string, name?: string) => {
@@ -82,10 +83,8 @@ const OnboardingPage: React.FC = () => {
       <div className="relative z-10 w-full max-w-[480px]">
         {/* Header */}
         <div className="mb-8 text-center">
-          <div className="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
-            <BarChart2 className="h-7 w-7 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">欢迎使用 DSA</h1>
+          <BrandLogo className="mb-5 justify-center" size="lg" markClassName="rounded-2xl" />
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">欢迎使用 AlphaLens</h1>
           <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
             先选 {maxStocks} 只你关注的股票，AI 将在每个交易日为你自动分析。
           </p>

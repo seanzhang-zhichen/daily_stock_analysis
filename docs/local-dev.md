@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 ### 4. 数据库初始化
 
-**全新部署**：后端启动时会自动建表并运行 Alembic 迁移，无需额外操作。
+**全新部署**：后端启动时会自动执行 `alembic upgrade head`，由 Alembic 创建并更新数据库 schema，无需额外操作。
 
 **从旧版本升级**（首次引入 Alembic 前已有数据库）：在启动服务前运行一次：
 

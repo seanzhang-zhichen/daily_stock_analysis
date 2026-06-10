@@ -1,8 +1,9 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, Loader2, MailCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { Button } from '../components/common';
+import { BrandLogo } from '../components/common/BrandLogo';
 import { SettingsAlert } from '../components/settings';
 import { accountApi } from '../api/account';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api/error';
@@ -17,7 +18,7 @@ const VerifyEmailPage: React.FC = () => {
   const [error, setError] = useState<ParsedApiError | string | null>(null);
 
   useEffect(() => {
-    document.title = '邮箱验证 - DSA';
+    document.title = '邮箱验证 - AlphaLens';
   }, []);
 
   useEffect(() => {
@@ -49,10 +50,7 @@ const VerifyEmailPage: React.FC = () => {
       <div className="relative z-10 w-full max-w-[400px]">
         {/* Logo */}
         <div className="mb-8 flex items-center justify-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
-            <MailCheck className="h-4.5 w-4.5 text-white" />
-          </div>
-          <span className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</span>
+          <BrandLogo showText size="sm" textClassName="text-[var(--login-text-primary)]" />
         </div>
 
         {/* Card */}
@@ -92,7 +90,7 @@ const VerifyEmailPage: React.FC = () => {
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                 <div>
                   <p className="text-sm font-semibold text-emerald-300">邮箱验证成功！</p>
-                  <p className="mt-1 text-xs text-[var(--login-text-muted)]">你的账号已激活，现在可以登录使用 DSA。</p>
+                  <p className="mt-1 text-xs text-[var(--login-text-muted)]">你的账号已激活，现在可以登录使用 AlphaLens。</p>
                 </div>
               </div>
               <Link to="/login?redirect=/onboarding" className="block">

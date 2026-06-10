@@ -72,7 +72,7 @@ const webhookAppGuides: WebhookAppGuide[] = [
     accentClassName: 'border-blue-500/20 bg-blue-500/10 text-blue-500',
     setup: '在钉钉群设置中添加「自定义机器人」，复制机器人地址，填入「钉钉通知」。',
     endpoint: 'https://oapi.dingtalk.com/robot/send?access_token=...',
-    note: '如果开启安全设置，建议使用关键词方式，并把关键词设为 `DSA` 或 `AI 分析`。',
+    note: '如果开启安全设置，建议使用关键词方式，并把关键词设为 `AlphaLens` 或 `AI 分析`。',
   },
   {
     id: 'webhook-discord',
@@ -141,7 +141,7 @@ const HelpPage: React.FC = () => {
   const settingsTarget = canAccessSystemSettings ? '/settings' : '/account';
 
   useEffect(() => {
-    document.title = '帮助中心 - DSA';
+    document.title = '帮助中心 - AlphaLens';
   }, []);
 
   return (
@@ -151,7 +151,7 @@ const HelpPage: React.FC = () => {
           <p className="ui-eyebrow">HELP CENTER</p>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">帮助中心</h1>
           <p className="max-w-3xl text-sm leading-6 text-secondary-text/85">
-            这里汇总常见使用问题、配置入口、反馈方式和投资风险提示。DSA 是股票 AI 分析助手，输出内容仅用于信息整理和辅助决策。
+            这里汇总常见使用问题、配置入口、反馈方式和投资风险提示。AlphaLens 是股票 AI 分析助手，输出内容仅用于信息整理和辅助决策。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -300,7 +300,7 @@ const HelpPage: React.FC = () => {
               <div className="space-y-2">
                 <h2 className="text-sm font-semibold text-foreground">免责声明</h2>
                 <p className="text-sm leading-6 text-secondary-text">
-                  DSA 不保证数据实时、完整或绝对准确，也不承诺收益。任何投资行为均由你自行承担风险。
+                  AlphaLens 不保证数据实时、完整或绝对准确，也不承诺收益。任何投资行为均由你自行承担风险。
                 </p>
               </div>
             </div>

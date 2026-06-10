@@ -44,8 +44,8 @@ test.describe('web smoke', () => {
     await page.waitForLoadState('domcontentloaded');
 
     // Check for branding
-    await expect(page.getByText('DAILY STOCK').first()).toBeVisible();
-    await expect(page.getByText('Analysis Engine')).toBeVisible();
+    await expect(page.getByText('ALPHA LENS').first()).toBeVisible();
+    await expect(page.getByText('Market Intelligence')).toBeVisible();
 
     // Check for password input
     await expect(page.locator('#password')).toBeVisible();

@@ -860,7 +860,7 @@ const PortfolioImportAndLedger: React.FC<PortfolioImportAndLedgerProps> = ({
 const PortfolioPage: React.FC = () => {
   // Set page title
   useEffect(() => {
-    document.title = '持仓分析 - DSA';
+    document.title = '持仓分析 - AlphaLens';
   }, []);
 
   const [accounts, setAccounts] = useState<PortfolioAccountItem[]>([]);

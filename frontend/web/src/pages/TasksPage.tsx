@@ -86,7 +86,7 @@ const TasksPage: React.FC = () => {
   }, [activeFilter.status, limit]);
 
   useEffect(() => {
-    document.title = '任务中心 - DSA';
+    document.title = '任务中心 - AlphaLens';
   }, []);
 
   useEffect(() => {

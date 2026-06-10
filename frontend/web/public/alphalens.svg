@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AlphaLens">
+  <defs>
+    <linearGradient id="mark" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22d3ee"/>
+      <stop offset="0.52" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#07111f"/>
+  <rect x="6" y="6" width="52" height="52" rx="12" fill="url(#mark)"/>
+  <path d="M16 43h32" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".48"/>
+  <path d="M17 39l9-9 7 5 14-17" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="47" cy="18" r="5" fill="#fff"/>
+</svg>

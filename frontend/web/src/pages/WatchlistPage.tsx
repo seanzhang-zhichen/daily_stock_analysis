@@ -109,7 +109,7 @@ const WatchlistPage: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
-    document.title = '我的自选股 - DSA';
+    document.title = '我的自选股 - AlphaLens';
   }, []);
 
   const loadWatchlist = useCallback(async () => {

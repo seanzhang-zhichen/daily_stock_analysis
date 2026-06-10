@@ -1,12 +1,14 @@
 import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Loader2, ShieldCheck, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { ArrowLeft, Loader2, ShieldCheck, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { Button, Input } from '../components/common';
+import { BrandLogo } from '../components/common/BrandLogo';
 import { SettingsAlert } from '../components/settings';
 import { isParsedApiError, type ParsedApiError } from '../api/error';
 import { useAuth } from '../hooks';
 import { accountApi } from '../api/account';
+import { APP_NAME, pageTitle } from '../utils/brand';
 
 type Mode = 'login' | 'register';
 
@@ -31,7 +33,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = mode === 'register' ? '注册 - DSA' : '登录 - DSA';
+    document.title = pageTitle(mode === 'register' ? '注册' : '登录');
   }, [mode]);
 
   const termsVersion = userMode?.termsVersion;
@@ -123,13 +125,11 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
 
         {/* Top: Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.4)]">
-            <BarChart3 className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <p className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</p>
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--login-text-muted)]">Daily Stock Analytics</p>
-          </div>
+          <BrandLogo
+            showText
+            textClassName="text-[var(--login-text-primary)]"
+            taglineClassName="uppercase tracking-[0.12em] text-[var(--login-text-muted)]"
+          />
         </div>
 
         {/* Center: Hero text */}
@@ -169,7 +169,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
 
         {/* Bottom: Disclaimer */}
         <div className="relative z-10">
-          <p className="text-xs text-[var(--login-text-muted)]">© {new Date().getFullYear()} DSA · AI 分析结果仅供参考，不构成投资建议</p>
+          <p className="text-xs text-[var(--login-text-muted)]">© {new Date().getFullYear()} {APP_NAME} · AI 分析结果仅供参考，不构成投资建议</p>
         </div>
       </div>
 
@@ -177,10 +177,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
       <div className="auth-form-panel flex flex-1 flex-col items-center justify-center px-6 py-12 lg:px-10">
         {/* Mobile logo */}
         <div className="mb-8 flex items-center gap-2 lg:hidden">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient">
-            <BarChart3 className="h-4.5 w-4.5 text-white" />
-          </div>
-          <span className="text-lg font-bold text-[var(--login-text-primary)]">DSA</span>
+          <BrandLogo showText size="sm" textClassName="text-[var(--login-text-primary)]" />
         </div>
 
         <div className="w-full max-w-[400px]">
@@ -211,7 +208,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                 </h2>
                 <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
                   {mode === 'login'
-                    ? '登录你的 DSA 账号，继续 AI 股票分析之旅'
+                    ? '登录你的 AlphaLens 账号，继续 AI 股票分析之旅'
                     : '注册免费账号，开启 AI 智能选股体验'}
                 </p>
               </div>

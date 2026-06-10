@@ -8,6 +8,7 @@ import type {
   TestNotificationChannelResponse,
   SystemConfigUpdateItem,
 } from '../../types/systemConfig';
+import { APP_NOTIFICATION_TEST_CONTENT, APP_NOTIFICATION_TEST_TITLE } from '../../utils/brand';
 import { ApiErrorAlert, Badge, Button, InlineAlert, Input, Select } from '../common';
 import { SettingsSectionCard } from './SettingsSectionCard';
 
@@ -45,8 +46,8 @@ export const NotificationTestPanel: React.FC<NotificationTestPanelProps> = ({
   disabled = false,
 }) => {
   const [channel, setChannel] = useState<NotificationTestChannel>('wechat');
-  const [title, setTitle] = useState('DSA 通知测试');
-  const [content, setContent] = useState('这是一条来自 DSA Web 设置页的通知测试消息。');
+  const [title, setTitle] = useState(APP_NOTIFICATION_TEST_TITLE);
+  const [content, setContent] = useState(APP_NOTIFICATION_TEST_CONTENT);
   const [timeoutSeconds, setTimeoutSeconds] = useState('20');
   const [result, setResult] = useState<TestNotificationChannelResponse | null>(null);
   const [error, setError] = useState<ParsedApiError | null>(null);
@@ -66,8 +67,8 @@ export const NotificationTestPanel: React.FC<NotificationTestPanelProps> = ({
         channel,
         items: normalizedItems,
         maskToken,
-        title: title.trim() || 'DSA 通知测试',
-        content: content.trim() || '这是一条来自 DSA Web 设置页的通知测试消息。',
+        title: title.trim() || APP_NOTIFICATION_TEST_TITLE,
+        content: content.trim() || APP_NOTIFICATION_TEST_CONTENT,
         timeoutSeconds: clampTimeout(timeoutSeconds),
       });
       setResult(payload);

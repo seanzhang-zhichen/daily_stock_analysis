@@ -209,7 +209,7 @@ const BillingPage: React.FC = () => {
   const [activeCreditPackageForPayment, setActiveCreditPackageForPayment] = useState<CreditPackage | null>(null);
 
   useEffect(() => {
-    document.title = '会员中心 - DSA';
+    document.title = '会员中心 - AlphaLens';
   }, []);
 
   const loggedIn = Boolean(userMode?.loggedIn);

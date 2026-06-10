@@ -126,7 +126,7 @@ const HomePage: React.FC = () => {
   const prefillStock = searchParams.get('stock')?.trim() || '';
 
   useEffect(() => {
-    document.title = '每日选股分析 - DSA';
+    document.title = '每日选股分析 - AlphaLens';
   }, []);
 
   useEffect(() => {

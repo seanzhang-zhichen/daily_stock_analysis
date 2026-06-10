@@ -101,7 +101,7 @@ const UsagePage: React.FC = () => {
   }, [period]);
 
   useEffect(() => {
-    document.title = '用量看板 - DSA';
+    document.title = '用量看板 - AlphaLens';
   }, []);
 
   useEffect(() => {

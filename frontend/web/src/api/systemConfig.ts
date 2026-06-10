@@ -20,6 +20,7 @@ import type {
   ValidateSystemConfigRequest,
   ValidateSystemConfigResponse,
 } from '../types/systemConfig';
+import { APP_NOTIFICATION_TEST_CONTENT, APP_NOTIFICATION_TEST_TITLE } from '../utils/brand';
 
 export class SystemConfigValidationError extends Error {
   issues: SystemConfigValidationErrorResponse['issues'];
@@ -110,8 +111,8 @@ function toSnakeNotificationTestPayload(payload: TestNotificationChannelRequest)
       value: item.value,
     })),
     mask_token: payload.maskToken ?? '******',
-    title: payload.title ?? 'DSA 通知测试',
-    content: payload.content ?? '这是一条来自 DSA Web 设置页的通知测试消息。',
+    title: payload.title ?? APP_NOTIFICATION_TEST_TITLE,
+    content: payload.content ?? APP_NOTIFICATION_TEST_CONTENT,
     timeout_seconds: payload.timeoutSeconds ?? 20,
   };
 }

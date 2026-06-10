@@ -56,7 +56,7 @@ const ResearchReportsPage: React.FC = () => {
   }, [searchParams]);
 
   useEffect(() => {
-    document.title = '研报 - DSA';
+    document.title = '研报 - AlphaLens';
   }, []);
 
   const loadList = useCallback(async () => {

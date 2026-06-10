@@ -19,6 +19,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useAgentChatStore } from '../../stores/agentChatStore';
 import { cn } from '../../utils/cn';
 import { preloadRouteModule } from '../../utils/routePreload';
+import { BrandLogo } from '../common/BrandLogo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
 import { QuotaIndicator } from './QuotaIndicator';
@@ -143,16 +144,14 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           'ui-sidebar-brand',
           collapsed ? 'justify-center px-0' : ''
         )}>
-          <div className="group ui-sidebar-brand-mark">
-            <BarChart3 className="h-4.5 w-4.5 transition-transform duration-200 group-hover:rotate-6" />
-          </div>
+          <BrandLogo markClassName="ui-sidebar-brand-mark h-9 w-9" />
           {!collapsed ? (
             <div className="min-w-0 flex-1">
               <p className="ui-sidebar-brand-title">
-                DSA
+                AlphaLens
               </p>
               <p className="ui-sidebar-brand-subtitle">
-                Stock Analytics
+                AI Stock Intelligence
               </p>
             </div>
           ) : null}

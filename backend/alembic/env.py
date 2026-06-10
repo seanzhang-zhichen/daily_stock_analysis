@@ -32,6 +32,12 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    configured_url = config.attributes.get("database_url")
+    if configured_url:
+        return str(configured_url)
+    ini_url = config.get_main_option("sqlalchemy.url")
+    if ini_url:
+        return ini_url
     return get_config().get_db_url()
 
 

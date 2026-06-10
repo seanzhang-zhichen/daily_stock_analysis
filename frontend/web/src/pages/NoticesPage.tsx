@@ -111,7 +111,7 @@ const NoticesPage: React.FC = () => {
   const PAGE_SIZE = 20;
 
   useEffect(() => {
-    document.title = '公告中心 - DSA';
+    document.title = '公告中心 - AlphaLens';
   }, []);
 
   const loadNotices = useCallback(async (targetPage: number, replace = false) => {

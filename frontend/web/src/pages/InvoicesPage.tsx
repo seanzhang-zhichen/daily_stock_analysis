@@ -149,7 +149,7 @@ const InvoicesPage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = '我的发票 - DSA';
+    document.title = '我的发票 - AlphaLens';
   }, []);
 
   const loadInvoices = useCallback(async () => {

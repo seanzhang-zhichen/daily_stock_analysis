@@ -9,7 +9,7 @@
 - ``_run_write_transaction`` 写入重试封装
 - 一组共享的静态小工具（日期标准化、JSON 序列化、狙击点位解析等），
   被多个 Mixin 共用，集中放在这里以便复用。
-- SQLite 专用：busy_timeout / WAL pragma、``app_users`` 增量列迁移
+- SQLite 专用：busy_timeout / WAL pragma
 
 业务方法不在这里实现，请到 ``manager/`` 下其他 Mixin 文件查找。
 """
@@ -46,7 +46,7 @@ class _DatabaseManagerBase:
 
     - 单例模式：通过 ``__new__`` + ``_instance`` 保证全局唯一实例。
     - 初始化：从 ``src.config`` 读取 DB URL 与 SQLite 调参；创建引擎、Session 工厂；
-      调用 ``Base.metadata.create_all`` 建表，并对历史库做 ``app_users`` 增量列迁移。
+      非内存数据库通过 Alembic 迁移维护 schema，内存 SQLite 测试库使用 ``create_all``。
     - 会话管理：``get_session`` 返回新 Session；``session_scope`` 提供事务上下文。
     - 写入重试：``_run_write_transaction`` 对 SQLite locked 情况做指数回退重试。
     - 工具方法：日期归一化、SQL 值归一化、JSON 安全序列化、狙击点位解析等。
@@ -120,12 +120,11 @@ class _DatabaseManagerBase:
             autoflush=False,
         )
 
-        # 创建所有表（create_all 幂等，对 :memory: 和文件型 SQLite 均适用）
-        Base.metadata.create_all(self._engine)
-
-        # 对文件型 SQLite 和网络数据库运行 Alembic 增量迁移
-        # :memory: SQLite（测试环境）跳过：Alembic 无法追踪内存库版本
-        if self._sqlite_file_db or not self._is_sqlite_engine:
+        # 生产/部署数据库的 schema 统一由 Alembic 管理，避免 create_all 抢先建表。
+        # :memory: SQLite 用于单元测试，Alembic 难以跨连接追踪版本，保留 create_all。
+        if self._is_memory_sqlite_database():
+            Base.metadata.create_all(self._engine)
+        else:
             self._run_alembic_upgrade()
 
         self._seed_builtin_app_plans()
@@ -178,7 +177,7 @@ class _DatabaseManagerBase:
         """运行 Alembic pending 迁移（upgrade to head）。
 
         仅对文件型 SQLite 和网络数据库调用；:memory: SQLite（测试环境）跳过。
-        alembic.ini 不存在时记录警告并跳过，不影响启动。
+        迁移失败时阻断启动，避免在未知 schema 状态下继续写入业务数据。
         """
         try:
             from alembic.config import Config as AlembicConfig
@@ -186,16 +185,17 @@ class _DatabaseManagerBase:
 
             alembic_ini = Path(__file__).resolve().parents[4] / "alembic.ini"
             if not alembic_ini.exists():
-                logger.warning("alembic.ini 未找到，跳过 Alembic 迁移: %s", alembic_ini)
-                return
+                raise FileNotFoundError(f"alembic.ini 未找到，无法执行数据库迁移: {alembic_ini}")
 
             alembic_cfg = AlembicConfig(str(alembic_ini))
             alembic_cfg.set_main_option("sqlalchemy.url", self._db_url)
+            alembic_cfg.attributes["database_url"] = self._db_url
             alembic_cfg.attributes["configure_logger"] = False
             alembic_command.upgrade(alembic_cfg, "head")
             logger.info("Alembic 迁移完成（upgrade to head）")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Alembic upgrade 失败（非致命）: %s", exc)
+            logger.error("Alembic upgrade 失败，数据库初始化中止: %s", exc)
+            raise
 
     def _seed_builtin_app_plans(self) -> None:
         session = self._SessionLocal()
@@ -296,6 +296,12 @@ class _DatabaseManagerBase:
     def _is_file_sqlite_database(self) -> bool:
         database = (self._engine.url.database or "").strip()
         return bool(database) and database.lower() != ":memory:"
+
+    def _is_memory_sqlite_database(self) -> bool:
+        if not self._is_sqlite_engine:
+            return False
+        database = (self._engine.url.database or "").strip().lower()
+        return not database or database == ":memory:"
 
     # ------------------------------------------------------------------
     # 事务与 Session 管理

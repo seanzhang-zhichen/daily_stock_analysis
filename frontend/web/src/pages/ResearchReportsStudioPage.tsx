@@ -14,7 +14,7 @@ const ResearchReportsStudioPage: React.FC = () => {
   const isResearchOperator = Boolean(userMode?.user?.isResearchOperator);
 
   useEffect(() => {
-    document.title = '研报工作台 - DSA';
+    document.title = '研报工作台 - AlphaLens';
   }, []);
 
   if (!userModeEnabled) {

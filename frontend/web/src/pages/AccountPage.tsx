@@ -163,7 +163,7 @@ const AccountPage: React.FC = () => {
   const [complianceSuccess, setComplianceSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = '账户设置 - DSA';
+    document.title = '账户设置 - AlphaLens';
   }, []);
 
   useEffect(() => {
@@ -380,7 +380,7 @@ const AccountPage: React.FC = () => {
   const canEmailNotifications = Boolean(plan?.isPro);
   const dailyPushEnabled = canEmailNotifications && (prefs?.dailyPushEnabled ?? false);
   const emailEnabled = canEmailNotifications && (prefs?.emailEnabled ?? true);
-  const profileName = user?.displayName?.trim() || user?.email.split('@')[0] || 'DSA 用户';
+  const profileName = user?.displayName?.trim() || user?.email.split('@')[0] || 'AlphaLens 用户';
   const avatarInitial = profileName.slice(0, 1).toUpperCase();
   const avatarPreviewUrl = profileAvatarUrl.trim();
   const renewalStatusText = renewal?.expired

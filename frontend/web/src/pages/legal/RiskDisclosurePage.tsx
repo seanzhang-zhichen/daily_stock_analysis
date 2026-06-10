@@ -7,7 +7,7 @@ const EFFECTIVE_DATE = '2026 年 5 月 18 日';
 
 const RiskDisclosurePage: React.FC = () => {
   useEffect(() => {
-    document.title = '投资风险揭示书 - DSA';
+    document.title = '投资风险揭示书 - AlphaLens';
   }, []);
 
   return (
@@ -17,7 +17,7 @@ const RiskDisclosurePage: React.FC = () => {
       effectiveDate={EFFECTIVE_DATE}
     >
       <p>
-        本揭示书旨在使您充分了解使用 DSA 智能分析（以下简称"本服务"）输出的内容时所面临的投资风险。
+        本揭示书旨在使您充分了解使用 AlphaLens 智能分析（以下简称"本服务"）输出的内容时所面临的投资风险。
         请您在使用本服务前认真阅读全部内容，<strong>本揭示书的存在不能也不会涵盖证券市场的全部风险</strong>。
       </p>
 

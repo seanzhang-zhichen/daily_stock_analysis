@@ -172,7 +172,7 @@ const AlertsPage: React.FC = () => {
   const totalNotificationPages = Math.max(1, Math.ceil(notificationTotal / PAGE_SIZE));
 
   useEffect(() => {
-    document.title = '提醒规则 - DSA';
+    document.title = '提醒规则 - AlphaLens';
   }, []);
 
   useEffect(() => {

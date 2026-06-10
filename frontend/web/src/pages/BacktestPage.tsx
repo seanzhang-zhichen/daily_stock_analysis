@@ -531,7 +531,7 @@ const BacktestResultsTable: React.FC<BacktestResultsTableProps> = ({
 const BacktestPage: React.FC = () => {
   // Set page title
   useEffect(() => {
-    document.title = '策略回测 - DSA';
+    document.title = '策略回测 - AlphaLens';
   }, []);
 
   // Defaults: 10-day eval window, last 30 days analysis range

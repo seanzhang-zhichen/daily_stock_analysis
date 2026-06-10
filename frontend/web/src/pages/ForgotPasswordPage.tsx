@@ -1,8 +1,9 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, MailQuestion } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Button, Input } from '../components/common';
+import { BrandLogo } from '../components/common/BrandLogo';
 import { SettingsAlert } from '../components/settings';
 import { accountApi } from '../api/account';
 import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api/error';
@@ -18,7 +19,7 @@ const ForgotPasswordPage: React.FC = () => {
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = '找回密码 - DSA';
+    document.title = '找回密码 - AlphaLens';
   }, []);
 
   const handleRequest = async (e: React.FormEvent) => {
@@ -78,10 +79,7 @@ const ForgotPasswordPage: React.FC = () => {
       <div className="relative z-10 w-full max-w-[400px]">
         {/* Logo */}
         <div className="mb-8 flex items-center justify-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-gradient shadow-[0_8px_24px_hsl(var(--primary)/0.35)]">
-            <MailQuestion className="h-4.5 w-4.5 text-white" />
-          </div>
-          <span className="text-lg font-bold tracking-tight text-[var(--login-text-primary)]">DSA</span>
+          <BrandLogo showText size="sm" textClassName="text-[var(--login-text-primary)]" />
         </div>
 
         {/* Card */}

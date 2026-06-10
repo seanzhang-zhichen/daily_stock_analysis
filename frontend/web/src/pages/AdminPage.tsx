@@ -1434,7 +1434,7 @@ const AdminPage: React.FC = () => {
   const [tab, setTab] = useState<TabKey>('overview');
 
   useEffect(() => {
-    document.title = '运营后台 - DSA';
+    document.title = '运营后台 - AlphaLens';
   }, []);
 
   const isAdmin = useMemo(() => Boolean(userMode?.user?.isAdmin), [userMode]);

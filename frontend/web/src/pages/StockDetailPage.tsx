@@ -121,7 +121,7 @@ const StockDetailPage: React.FC = () => {
   }, [stockCode]);
 
   useEffect(() => {
-    document.title = `${stockCode || '股票详情'} - DSA`;
+    document.title = `${stockCode || '股票详情'} - AlphaLens`;
   }, [stockCode]);
 
   useEffect(() => {

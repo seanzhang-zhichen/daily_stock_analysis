@@ -22,7 +22,6 @@ A股自选股智能分析系统 - 存储层
 """
 
 from src.storage.base import Base
-from src.storage.manager import DatabaseManager, get_db, persist_llm_usage
 from src.storage.models import (
     AlertNotificationRecord,
     AlertRuleRecord,
@@ -76,6 +75,21 @@ from src.storage.models import (
     StockIndexEntry,
     StockIndexMeta,
 )
+
+
+def __getattr__(name):
+    if name in {"DatabaseManager", "get_db", "persist_llm_usage"}:
+        from src.storage.manager import DatabaseManager, get_db, persist_llm_usage
+
+        values = {
+            "DatabaseManager": DatabaseManager,
+            "get_db": get_db,
+            "persist_llm_usage": persist_llm_usage,
+        }
+        globals().update(values)
+        return values[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # base

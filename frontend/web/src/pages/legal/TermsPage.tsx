@@ -7,7 +7,7 @@ const EFFECTIVE_DATE = '2026 年 5 月 18 日';
 
 const TermsPage: React.FC = () => {
   useEffect(() => {
-    document.title = '用户服务协议 - DSA';
+    document.title = '用户服务协议 - AlphaLens';
   }, []);
 
   return (
@@ -17,7 +17,7 @@ const TermsPage: React.FC = () => {
       effectiveDate={EFFECTIVE_DATE}
     >
       <p>
-        欢迎使用 DSA 智能分析（以下简称"本服务"）。本协议是您与本服务运营方就使用本服务所订立的协议。
+        欢迎使用 AlphaLens 智能分析（以下简称"本服务"）。本协议是您与本服务运营方就使用本服务所订立的协议。
         请您在注册或使用本服务前仔细阅读本协议全部条款。一旦您完成注册或开始使用本服务，即视为已阅读并同意本协议。
       </p>
 

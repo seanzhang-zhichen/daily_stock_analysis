@@ -17,7 +17,7 @@ vi.mock('../../hooks', () => ({
 describe('HelpPage', () => {
   beforeEach(() => {
     authState.userMode = null;
-    document.title = 'DSA';
+    document.title = 'AlphaLens';
   });
 
   it('renders FAQ, support guidance, and risk disclosure', () => {
@@ -34,7 +34,7 @@ describe('HelpPage', () => {
     expect(screen.getByRole('link', { name: '查看公告' })).toHaveAttribute('href', '/notices');
     expect(screen.getByRole('link', { name: '反馈指引' })).toHaveAttribute('href', '#support');
     expect(screen.getByText(/联系服务维护者处理/)).toBeInTheDocument();
-    expect(document.title).toBe('帮助中心 - DSA');
+    expect(document.title).toBe('帮助中心 - AlphaLens');
   });
 
   it('sends regular To C users to account settings instead of system settings', () => {

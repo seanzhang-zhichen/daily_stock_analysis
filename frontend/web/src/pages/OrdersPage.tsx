@@ -139,7 +139,7 @@ const OrdersPage: React.FC = () => {
   const [refundSuccessNo, setRefundSuccessNo] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = '我的订单 - DSA';
+    document.title = '我的订单 - AlphaLens';
   }, []);
 
   const loadOrders = useCallback(async () => {

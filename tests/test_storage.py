@@ -133,6 +133,35 @@ class TestStorage(unittest.TestCase):
                     os.environ[key] = value
             temp_dir.cleanup()
 
+    def test_file_sqlite_initialization_uses_alembic_not_create_all(self):
+        DatabaseManager.reset_instance()
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "sqlite_migration.db")
+
+        try:
+            with patch("src.storage.manager._base.Base.metadata.create_all") as mock_create_all:
+                with patch.object(DatabaseManager, "_run_alembic_upgrade") as mock_upgrade:
+                    DatabaseManager(db_url=f"sqlite:///{db_path}")
+
+            mock_create_all.assert_not_called()
+            mock_upgrade.assert_called_once()
+        finally:
+            DatabaseManager.reset_instance()
+            temp_dir.cleanup()
+
+    def test_memory_sqlite_initialization_uses_create_all_not_alembic(self):
+        DatabaseManager.reset_instance()
+
+        try:
+            with patch("src.storage.manager._base.Base.metadata.create_all") as mock_create_all:
+                with patch.object(DatabaseManager, "_run_alembic_upgrade") as mock_upgrade:
+                    DatabaseManager(db_url="sqlite:///:memory:")
+
+            mock_create_all.assert_called_once()
+            mock_upgrade.assert_not_called()
+        finally:
+            DatabaseManager.reset_instance()
+
     def test_sqlite_write_transactions_begin_immediate(self):
         DatabaseManager.reset_instance()
         db = DatabaseManager(db_url="sqlite:///:memory:")
