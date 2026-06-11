@@ -27,7 +27,7 @@ type AuthContextValue = {
     inviteCode?: string;
     termsAgreed?: boolean;
     termsVersion?: string;
-  }) => Promise<{ success: boolean; error?: ParsedApiError }>;
+  }) => Promise<{ success: boolean; requiresVerification?: boolean; error?: ParsedApiError }>;
   changePassword: (
     currentPassword: string,
     newPassword: string,
@@ -149,16 +149,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       inviteCode?: string;
       termsAgreed?: boolean;
       termsVersion?: string;
-    }): Promise<{ success: boolean; error?: ParsedApiError }> => {
+    }): Promise<{ success: boolean; requiresVerification?: boolean; error?: ParsedApiError }> => {
       try {
-        await accountApi.register(input);
-        await fetchStatus();
-        return { success: true };
+        const res = await accountApi.register(input);
+        return { success: true, requiresVerification: res.requiresVerification };
       } catch (err: unknown) {
         return { success: false, error: extractLoginError(err) };
       }
     },
-    [fetchStatus]
+    []
   );
 
   const changePassword = useCallback(

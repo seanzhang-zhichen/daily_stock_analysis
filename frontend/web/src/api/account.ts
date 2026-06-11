@@ -82,6 +82,7 @@ export type AccountStatusResponse = {
 
 export type RegisterResponse = {
   user: AccountUser;
+  requiresVerification: boolean;
 };
 
 export type LoginResponse = {
@@ -187,6 +188,13 @@ export const accountApi = {
   async verifyEmail(token: string): Promise<{ user: AccountUser }> {
     const { data } = await apiClient.post<{ user: AccountUser }>('/api/v1/account/verify-email', {
       token,
+    });
+    return data;
+  },
+
+  async requestEmailVerification(email: string): Promise<{ ok: boolean; message: string }> {
+    const { data } = await apiClient.post<{ ok: boolean; message: string }>('/api/v1/account/request-email-verification', {
+      email,
     });
     return data;
   },

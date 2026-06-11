@@ -57,6 +57,7 @@ from src.users.service import (
     change_password as svc_change_password,
     login as svc_login,
     register_user as svc_register,
+    request_email_verification as svc_request_email_verification,
     request_password_reset as svc_request_password_reset,
     reset_password as svc_reset_password,
     verify_email as svc_verify_email,
@@ -99,6 +100,10 @@ class VerifyEmailRequest(BaseModel):
 
 
 class RequestResetRequest(BaseModel):
+    email: str = Field(default="")
+
+
+class RequestEmailVerificationRequest(BaseModel):
     email: str = Field(default="")
 
 
@@ -391,7 +396,10 @@ async def account_register(
         ip=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    return JSONResponse(content={"user": _serialize_user(result.user, terms_version=settings.terms_version)})
+    return JSONResponse(content={
+        "user": _serialize_user(result.user, terms_version=settings.terms_version),
+        "requiresVerification": result.requires_verification,
+    })
 
 
 @router.post("/login", summary="邮箱密码登录")
@@ -460,6 +468,28 @@ async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(g
         db.rollback()
         return _user_error_response(exc)
     return {"user": _serialize_user(user, terms_version=settings.terms_version)}
+
+
+@router.post("/request-email-verification", summary="重新发送邮箱验证邮件")
+async def account_request_email_verification(body: RequestEmailVerificationRequest, db: Session = Depends(get_db)):
+    try:
+        settings = _get_settings_or_disabled(db)
+        try:
+            svc_request_email_verification(db, email=body.email, settings=settings)
+        except UserError as exc:
+            # 邮箱格式错误仍按错误返回；未知邮箱 / 已验证邮箱由 service 静默处理。
+            db.rollback()
+            return _user_error_response(exc)
+        _commit_or_rollback(db)
+    except UserError as exc:
+        db.rollback()
+        return _user_error_response(exc)
+    except Exception:
+        db.rollback()
+        logger.exception("request email verification failed")
+        return JSONResponse(status_code=500, content={"error": "internal_error", "message": "验证邮件发送失败, 请稍后再试"})
+
+    return {"ok": True, "message": "如果账号存在且尚未验证，验证邮件已重新发送，请前往邮箱查收。"}
 
 
 @router.post("/request-password-reset", summary="发起密码重置邮件")

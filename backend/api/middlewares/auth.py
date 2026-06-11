@@ -24,6 +24,7 @@ EXEMPT_PATHS = frozenset({
     "/api/v1/account/login",
     "/api/v1/account/logout",
     "/api/v1/account/verify-email",
+    "/api/v1/account/request-email-verification",
     "/api/v1/account/request-password-reset",
     "/api/v1/account/reset-password",
     # Phase 3: 一键退订链接出现在邮件中, 无需登录即可关闭推送

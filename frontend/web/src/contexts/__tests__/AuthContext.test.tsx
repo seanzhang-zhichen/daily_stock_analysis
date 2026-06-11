@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiError, createParsedApiError } from '../../api/error';
 import { AuthProvider, useAuth } from '../AuthContext';
 
-const { getStatus, login, changePassword, logout, resetDashboardState } = vi.hoisted(() => ({
+const { getStatus, login, accountRegister, changePassword, logout, resetDashboardState } = vi.hoisted(() => ({
   getStatus: vi.fn(),
   login: vi.fn(),
+  accountRegister: vi.fn(),
   changePassword: vi.fn(),
   logout: vi.fn(),
   resetDashboardState: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('../../api/account', () => ({
       renewal: null,
     }),
     login: vi.fn(),
+    register: accountRegister,
     logout: vi.fn(),
   },
 }));
@@ -58,6 +60,17 @@ const Probe = () => {
       </button>
       <button type="button" onClick={() => void auth.logout()}>
         trigger-logout
+      </button>
+      <button
+        type="button"
+        onClick={() => void auth.registerWithEmail({
+          email: 'new-user@example.com',
+          password: 'password123',
+          passwordConfirm: 'password123',
+          termsAgreed: true,
+        })}
+      >
+        trigger-register
       </button>
     </div>
   );
@@ -144,6 +157,32 @@ describe('AuthContext', () => {
 
     await screen.findByTestId('status');
     expect(resetDashboardState).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh global auth status immediately after registration', async () => {
+    getStatus.mockResolvedValueOnce({
+      authEnabled: false,
+      loggedIn: false,
+      passwordSet: false,
+      passwordChangeable: false,
+      setupState: 'no_password',
+    });
+    accountRegister.mockResolvedValue({
+      user: { id: 1, email: 'new-user@example.com' },
+      requiresVerification: true,
+    });
+
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>
+    );
+
+    await screen.findByTestId('status');
+    fireEvent.click(screen.getByRole('button', { name: 'trigger-register' }));
+
+    await waitFor(() => expect(accountRegister).toHaveBeenCalled());
+    expect(getStatus).toHaveBeenCalledTimes(1);
   });
 
   it('treats a 401 logout as already signed out after status refresh', async () => {

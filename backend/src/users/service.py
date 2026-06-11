@@ -108,6 +108,41 @@ def _validate_or_raise(password: str) -> None:
         raise UserError(UserErrorCode.INVALID_PASSWORD, err)
 
 
+def _send_verification_email(
+    db: Session,
+    *,
+    user: AppUser,
+    email_backend: Optional[EmailBackend],
+    settings: UserModeSettings,
+) -> None:
+    token = secrets.token_urlsafe(32)
+    repo.create_verification_token(
+        db,
+        user_id=user.id,
+        raw_token=token,
+        purpose="verify",
+        ttl_hours=settings.verification_ttl_hours,
+    )
+    verify_url = f"{get_frontend_public_base_url()}/verify-email?token={token}"
+    backend = email_backend or get_email_backend()
+    backend.send(
+        EmailMessageDTO(
+            to=user.email,
+            subject="验证你的邮箱 - DSA 智能分析",
+            body_text=(
+                "你好,\n\n"
+                "请点击以下链接完成邮箱验证，激活你的 DSA 智能分析账号：\n\n"
+                f"{verify_url}\n\n"
+                "备用验证 token：\n\n"
+                f"{token}\n\n"
+                f"链接 {settings.verification_ttl_hours} 小时内有效，点击一次即可完成验证。\n\n"
+                "若无法点击链接，请复制上方地址到浏览器中打开。\n\n"
+                "若不是你本人操作，请忽略本邮件。"
+            ),
+        )
+    )
+
+
 # --- 用例 ------------------------------------------------------------------
 
 
@@ -233,31 +268,11 @@ def register_user(
         )
 
     if settings.require_email_verification:
-        token = secrets.token_urlsafe(32)
-        repo.create_verification_token(
+        _send_verification_email(
             db,
-            user_id=user.id,
-            raw_token=token,
-            purpose="verify",
-            ttl_hours=settings.verification_ttl_hours,
-        )
-        verify_url = f"{get_frontend_public_base_url()}/verify-email?token={token}"
-        backend = email_backend or get_email_backend()
-        backend.send(
-            EmailMessageDTO(
-                to=user.email,
-                subject="验证你的邮箱 - DSA 智能分析",
-                body_text=(
-                    "你好,\n\n"
-                    "请点击以下链接完成邮箱验证，激活你的 DSA 智能分析账号：\n\n"
-                    f"{verify_url}\n\n"
-                    "备用验证 token：\n\n"
-                    f"{token}\n\n"
-                    f"链接 {settings.verification_ttl_hours} 小时内有效，点击一次即可完成验证。\n\n"
-                    "若无法点击链接，请复制上方地址到浏览器中打开。\n\n"
-                    "若不是你本人操作，请忽略本邮件。"
-                ),
-            )
+            user=user,
+            email_backend=email_backend,
+            settings=settings,
         )
         return RegistrationResult(user=user, issued_session=None, requires_verification=True)
 
@@ -327,6 +342,40 @@ def verify_email(
     if user is None:
         raise UserError(UserErrorCode.INVALID_TOKEN, "验证码无效或已过期")
     return repo.mark_email_verified(db, user)
+
+
+def request_email_verification(
+    db: Session,
+    *,
+    email: str,
+    email_backend: Optional[EmailBackend] = None,
+    settings: Optional[UserModeSettings] = None,
+) -> None:
+    """重新发送邮箱验证邮件。
+
+    为避免泄露注册状态，未知邮箱、已验证邮箱和未开启邮箱验证时均静默成功。
+    """
+    settings = settings or load_user_mode_settings()
+    _ensure_mode_enabled(settings)
+    email_normalized = _normalize_email(email)
+
+    if not settings.require_email_verification:
+        return
+
+    user = repo.get_user_by_email(db, email_normalized)
+    if user is None:
+        logger.info("email verification requested for unknown email %s", email_normalized)
+        return
+    if user.email_verified_at is not None:
+        logger.info("email verification requested for already verified user %s", email_normalized)
+        return
+
+    _send_verification_email(
+        db,
+        user=user,
+        email_backend=email_backend,
+        settings=settings,
+    )
 
 
 def request_password_reset(

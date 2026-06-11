@@ -51,6 +51,7 @@ from src.users.service import (
     change_password,
     login,
     register_user,
+    request_email_verification,
     request_password_reset,
     reset_password,
     verify_email,
@@ -258,6 +259,43 @@ class TestRegistration(_UsersTestBase):
         verified_user = verify_email(self.db, token=token, settings=settings)
         self.db.commit()
         self.assertIsNotNone(verified_user.email_verified_at)
+
+    def test_request_email_verification_resends_for_unverified_user(self):
+        settings = _enabled_settings(require_email_verification=True)
+        register_user(
+            self.db,
+            email="resend@example.com",
+            password="pw12345678",
+            password_confirm="pw12345678",
+            email_backend=self.email_backend,
+            settings=settings,
+            terms_agreed=True,
+        )
+        self.db.commit()
+        self.assertEqual(len(self.email_backend.sent), 1)
+
+        request_email_verification(
+            self.db,
+            email="resend@example.com",
+            email_backend=self.email_backend,
+            settings=settings,
+        )
+        self.db.commit()
+
+        self.assertEqual(len(self.email_backend.sent), 2)
+        self.assertIn("验证你的邮箱", self.email_backend.sent[-1].subject)
+
+    def test_request_email_verification_unknown_email_is_silent(self):
+        settings = _enabled_settings(require_email_verification=True)
+        request_email_verification(
+            self.db,
+            email="never-registered@example.com",
+            email_backend=self.email_backend,
+            settings=settings,
+        )
+        self.db.commit()
+
+        self.assertEqual(len(self.email_backend.sent), 0)
 
     def test_register_password_mismatch(self):
         with self.assertRaises(UserError) as ctx:

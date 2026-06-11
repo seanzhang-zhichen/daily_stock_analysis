@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] Web 注册成功后切换为查收验证邮件提示页，引导用户点击邮箱链接完成注册流程。
+- [改进] Web 注册邮箱验证页新增重新发送验证邮件能力，并补充未登录重发验证邮件 API。
 - [改进] Web 前端品牌名称更新为 AlphaLens，并替换浏览器 favicon、登录页与认证相关页面的品牌标识。
 - [修复] 修复数据库初始化在新 MySQL/文件型 SQLite 上先 `create_all` 再跑 Alembic 导致初始迁移建表冲突的问题，生产路径统一由 Alembic 管理 schema，迁移失败时阻断启动。
 - [改进] 继续优化 Web 回测、提醒与研报工作台页面视觉，统一筛选工具栏、表单输入区和研报草稿列表的卡片层次与移动端布局。
