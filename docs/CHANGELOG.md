@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 桌面端 Web 布局隐藏移动端导航悬浮按钮，避免侧边栏已展示时左上角仍出现重复菜单入口。
 - [改进] Web 注册成功后切换为查收验证邮件提示页，引导用户点击邮箱链接完成注册流程。
 - [改进] Web 注册邮箱验证页新增重新发送验证邮件能力，并补充未登录重发验证邮件 API。
 - [改进] Web 前端品牌名称更新为 AlphaLens，并替换浏览器 favicon、登录页与认证相关页面的品牌标识。
