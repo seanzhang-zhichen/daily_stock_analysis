@@ -12,7 +12,7 @@
 | Phase | 状态 | 说明 |
 | --- | --- | --- |
 | Phase 0：产品规划 | ✅ 已完成 | 本文档 + 线框 + 用户故事 + 决策锁定。 |
-| Phase 1：用户体系骨架 | ✅ 基本闭环 | `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` / `app_plans` / `app_subscriptions` / `app_redeem_codes` 等表已建好，`/api/v1/account/*` 已上线，前端 `/login` `/register` `/forgot-password` `/verify-email` 均可用，首次登录且自选股为空时进入 `/onboarding`，邮箱验证成功后的登录入口也携带 `/onboarding` 跳转；业务 API 已默认要求 `dsa_user_session`，history / analysis / portfolio / alerts / agent 已按当前用户隔离。剩余：语言偏好仍依赖全局 `SystemConfig`。详见 [`to-c-mode.md`](./to-c-mode.md)。 |
+| Phase 1：用户体系骨架 | ✅ 基本闭环 | `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` / `app_plans` / `app_subscriptions` / `app_redeem_codes` 等表已建好，`/api/v1/account/*` 已上线，前端 `/login` `/register` `/forgot-password` `/verify-email` 均可用，登录和邮箱验证成功后的默认入口均为首页；旧 `/onboarding` 仅保留为兼容重定向。业务 API 已默认要求 `dsa_user_session`，history / analysis / portfolio / alerts / agent 已按当前用户隔离。剩余：语言偏好仍依赖全局 `SystemConfig`。详见 [`to-c-mode.md`](./to-c-mode.md)。 |
 | Phase 2：商业化骨架 | 🟡 主要落地 | 配额服务已通过 `src/users/quota_guard.py` 接入 `/analysis/analyze`、`/agent/chat`、`/agent/chat/stream`、`/agent/research`；`AppPlan` / `AppSubscription` / `AppRedeemCode` 三张表 + `resolve_user_plan` / `redeem_code` / `grant_plan` 已上线；`/api/v1/account/redeem`、`/api/v1/account/model-preference`、`/api/v1/billing/{plans,subscription}` endpoint 已上线；前端 `/account` `/billing` 页面 + 顶栏 `QuotaIndicator` + 全局 `QuotaExceededDialog` 已可用；模型路由运行时已接入（见 Phase 4）。Plan 到期 / 续费闭环已落地：`app_plan_reminders` + `src/users/plan_lifecycle.py` 支持 7/3/1 天到期前邮件提醒、过期当日自动降级 free + 通知邮件，`/api/v1/account/status.renewal` + 前端 `RenewalBanner` 顶栏续费提示已上线。剩余：套餐 / 订阅的运营后台、平台 Key 配额池统一管理、支付闭环。 |
 | Phase 3：调度与通知 To C 化 | ✅ 基本闭环 | 新增 `app_user_watchlists`（per-user 自选股，含 `max_stocks` 上限）与 `app_user_notification_prefs`（`daily_push_enabled` / `email_enabled` / Webhook）两张表；服务层 `src/users/watchlist.py` / `src/users/notification_prefs.py`；API `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) 已上线；`main.py` `run_per_user_scheduled_analysis` 按开启日推且当前仍为 Pro 的用户分桶执行分析、调用 `src/users/notification_delivery.py` 发送 HTML 邮件（含一键退订链接，渲染走 `markdown2`）并按 `webhook_type` 分发到飞书 / 企业微信 / Discord / Telegram / 通用 JSON；新增 `src/users/unsubscribe.py` HMAC 无状态退订 token + `GET /api/v1/account/notification-prefs/unsubscribe` 公开端点（已加入 `AuthMiddleware` 白名单），操作写 `app_audit_logs`。前端 `AccountPage` 已新增「我的自选股」与「通知偏好」卡片（含 Pro Webhook 配置 UI）。剩余：HTML 邮件模板的视觉打磨（运营素材定稿后）、多用户并发调度（当前串行）。 |
 | Phase 4：模型偏好 + Pro 能力 | ✅ 主要落地 | `app_users.preferred_model` 与 `/api/v1/account/model-preference` 已就位，前端账户页支持用户选择管理员配置模型；`src/users/model_router.py` 已接入 `GeminiAnalyzer._call_litellm` 与 `LLMToolAdapter.call_completion`：平台路由在 `plan.allowed_models` 非空时过滤模型列表，空列表表示不额外限制，并优先使用用户首选模型；`user_id` 从 API 层 → factory → adapter 全链路已透传。Plan 到期自动降级已通过 `src/users/plan_lifecycle.py::downgrade_expired_user` 落地，调度器每日触发后回退 `plan_code` 至 free 并写 `app_subscriptions` source='expire'。剩余：`allowed_models` 具体运营配置与平台 Key 用量看板。 |
@@ -26,7 +26,7 @@
 - **数据**：历史、分析、Portfolio、Alert、Agent 会话、自选股、通知偏好已在 API 层按当前用户隔离；LLM 渠道仍由平台管理员全局配置。
 - **配置**：`.env` + `SystemConfig` 是「机器一份」全局配置；自选股、通知渠道和模型偏好已 per-user 化，用户模型偏好只允许从管理员配置且套餐允许的模型中选择。
 - **任务**：调度器已改为按用户分桶（`run_per_user_scheduled_analysis`），读取各用户当前套餐、自选股与通知偏好，仅对仍具备 Pro 权益的用户执行每日自动分析，单用户失败不影响其他用户；分析任务队列、任务状态和 SSE 已按当前用户隔离；Webhook 通知已在调度层通过 `dispatch_user_webhook` 实际发送（Pro 用户可用）。
-- **前端**：`frontend/web` 已有邮箱登录（含 `/verify-email`）、登录后 `/onboarding` 首次引导、账户页（自选股 + 通知偏好 + 模型偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股、通知偏好和模型偏好已完成 per-user 化。
+- **前端**：`frontend/web` 已有邮箱登录（含 `/verify-email`）、自选股页 `/watchlist`、账户页（自选股 + 通知偏好 + 模型偏好 + 底部退出登录）、会员中心（含 PaymentDialog）、配额提示、`/account/orders` / `/account/invoices` / `/admin` / `/notices` / `/help` / `/legal/*` 协议三件套；自选股、通知偏好和模型偏好已完成 per-user 化。
 - **桌面端**：`frontend/desktop` 是 Electron 单机壳，To C 化默认不强依赖它。
 
 ## 2. 目标产品形态（一句话）
@@ -60,7 +60,7 @@
 > 本节保留 MVP 总览；更细的角色拆分、验收标准和当前代码映射请参考 [`docs/to-c-user-stories.md`](./to-c-user-stories.md)。
 
 1. **注册登录**：用户用邮箱+密码注册，邮箱验证码激活；忘记密码可通过邮箱重置。
-2. **首次引导**：填 1–3 只自选股 → 立即生成一份 demo 决策报告。
+2. **自选股管理**：在账户页或 `/watchlist` 随时维护关注股票，供手动分析和每日推送使用。
 3. **每日订阅**：开启「每日推送」后，每个交易日傍晚收到自己自选股的报告邮件。
 4. **手动分析**：在 Web 上随时点击「立即分析」生成单只股票决策报告（受配额）。
 5. **Agent 问股**：在 `/chat` 页面与 AI 多轮交互，问询某只股票（受配额）。
@@ -76,7 +76,7 @@
 | # | 用户故事 | 状态 | 当前证据 / 缺口 |
 | --- | --- | --- | --- |
 | 1 | 注册登录 | ✅ 已落地 | `/api/v1/account/register` / `login` / `request-password-reset` / `reset-password` / `verify-email` 已上线，前端 `/login` / `/register` / `/forgot-password` / `/verify-email` 均可用；`VerifyEmailPage` 自动读取 URL `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。 |
-| 2 | 首次引导 | ✅ 已落地 | per-user 自选股 API 已上线；登录成功且无显式 `redirect` 时会检查自选股数量，为空则进入 `/onboarding`；邮箱验证成功页的登录入口携带 `/onboarding` redirect；引导页通过 `StockAutocomplete` 添加 1–3 只自选股（调用 watchlist API），进度条显示填写状态，完成后进入主页；`AccountPage` 亦可随时补充自选股。 |
+| 2 | 自选股管理 | ✅ 已落地 | per-user 自选股 API 已上线；登录成功后按 `redirect` 返回原目标页，无显式 `redirect` 时默认进入首页；邮箱验证成功页的登录入口不再携带引导跳转；`/watchlist` 通过 `StockAutocomplete` 管理自选股（调用 watchlist API），`AccountPage` 亦可随时补充自选股；旧 `/onboarding` 仅兼容重定向到首页。 |
 | 3 | 每日订阅 | ✅ 已落地 | 用户可通过 `PATCH /api/v1/account/notification-prefs` 开启 `daily_push_enabled`；调度器 `run_per_user_scheduled_analysis` 按用户当前套餐、自选股和通知偏好分桶，仅对当前仍为 Pro 的用户执行每日自动分析；分析后调用 `send_daily_email`（HTML 模板 + `markdown2` 渲染 + 一键退订链接）和 `dispatch_user_webhook`（按 `webhook_type` 投递到飞书 / 企业微信 / Discord / Telegram / 通用 JSON），单用户 / 单渠道失败不影响其他用户；点击邮件中的「一键退订」即可通过 `GET /api/v1/account/notification-prefs/unsubscribe?token=...` 自助关闭推送，写入 `app_audit_logs`。前端 `AccountPage` 已支持每日推送 / 邮件通知 / Pro Webhook 开关。剩余：HTML 模板视觉打磨与多用户并发调度优化。 |
 | 4 | 手动分析 | ✅ 已落地 | `/api/v1/analysis/analyze` 已要求登录、注入 `current_user.id` 并接入 `quota_guard`；同步 / 异步任务均记录归属用户；`/analysis/tasks`、`/tasks/stream` 和 `/status/{task_id}` 均按当前用户过滤；异步后台业务失败会按任务 `user_id` 返还分析配额。 |
 | 5 | Agent 问股 | ✅ 主要落地 | `/api/v1/agent/*` 已要求登录并接入 Agent 配额；非流式 `/agent/chat` 和 `/agent/research` 返回 `success=false` 时会返还已扣配额，异常 / 超时 / 流式 error 也保持返还；`LLMToolAdapter.call_completion` 已通过 `_resolve_user_model_route` 接入模型路由，平台路由在 `plan.allowed_models` 非空时过滤可用模型并优先使用用户首选模型；plan 到期已由 `plan_lifecycle` 自动降级到 free，过期用户不会继续吃 Pro 模型。剩余：`allowed_models` 具体运营配置。 |
@@ -169,7 +169,7 @@
   - `模型偏好`（从管理员配置且当前套餐允许的模型中选择）。
 - 桌面端 `frontend/desktop`：MVP 不强改，仅改登录调用。后续可作为 Pro 用户福利。
 
-> 当前实现：`/login`、`/register`、`/forgot-password`、`/verify-email`、`/onboarding`、`/account`、`/billing`、`/account/orders`、`/account/invoices`、`/admin`、`/notices`、`/help`、`/legal/terms`、`/legal/privacy`、`/legal/risk-disclosure` 均已上线。`/verify-email`（`VerifyEmailPage`）自动读取 `?token=` 参数完成邮箱验证，展示加载/成功/失败三态。注册成功后自动跳转 `/onboarding` 引导添加自选股；`AccountPage` 已新增「我的自选股」「通知偏好」与「模型偏好」卡片，含每日推送开关、邮件通知开关、Pro Webhook 配置 UI 和当前套餐可选模型选择，页面底部仅保留退出登录入口；顶栏 `QuotaIndicator` 在登录后显示当日剩余，全局 `QuotaExceededDialog` 监听 `dsa:quota-exceeded` 事件并提供升级引导。`/billing` 已接入 `PaymentDialog`（二维码 + 2s 轮询 + mock 调试按钮）。`/account/orders` 支持列表 + 取消 + 退款弹窗，`/account/invoices` 支持申请 + 历史列表。侧边栏铃铛图标显示近期公告数角标，帮助客服入口进入站内 `/help` 页面。`UserAuthPage` 注册表单已有协议三件套勾选框，未勾选时禁用提交。AuthContext 已暴露 `userMode`（含 `plan` / `quota`）/ `loginWithEmail` / `registerWithEmail` / `effectiveLoggedIn`。
+> 当前实现：`/login`、`/register`、`/forgot-password`、`/verify-email`、`/watchlist`、`/account`、`/billing`、`/account/orders`、`/account/invoices`、`/admin`、`/notices`、`/help`、`/legal/terms`、`/legal/privacy`、`/legal/risk-disclosure` 均已上线；旧 `/onboarding` 仅兼容重定向到首页。`/verify-email`（`VerifyEmailPage`）自动读取 `?token=` 参数完成邮箱验证，展示加载/成功/失败三态，成功后进入普通登录入口；`AccountPage` 已新增「我的自选股」「通知偏好」与「模型偏好」卡片，含每日推送开关、邮件通知开关、Pro Webhook 配置 UI 和当前套餐可选模型选择，页面底部仅保留退出登录入口；顶栏 `QuotaIndicator` 在登录后显示当日剩余，全局 `QuotaExceededDialog` 监听 `dsa:quota-exceeded` 事件并提供升级引导。`/billing` 已接入 `PaymentDialog`（二维码 + 2s 轮询 + mock 调试按钮）。`/account/orders` 支持列表 + 取消 + 退款弹窗，`/account/invoices` 支持申请 + 历史列表。侧边栏铃铛图标显示近期公告数角标，帮助客服入口进入站内 `/help` 页面。`UserAuthPage` 注册表单已有协议三件套勾选框，未勾选时禁用提交。AuthContext 已暴露 `userMode`（含 `plan` / `quota`）/ `loginWithEmail` / `registerWithEmail` / `effectiveLoggedIn`。
 > 未完成：邀请/推荐功能入口。
 > 关键页面线框请参考 [`docs/to-c-product-wireframes.md`](./to-c-product-wireframes.md)。
 
@@ -332,7 +332,7 @@
 - ✅ 协议三件套、注册同意、账号注销、个人数据导出已上线。
 - ✅ 注册防刷已包含一次性邮箱拦截、IP / 邮箱滚动窗口限频与可选 MX 校验；行为验证码仍为后续项。
 - ✅ 客服入口、FAQ、产品公告中心已上线；公告同步邮件给付费用户仍为后续项。
-- ✅ 增长埋点、自建事件 API、首次引导、续费提醒已上线；邀请奖励 / 推荐裂变仍为后续项。
+- ✅ 增长埋点、自建事件 API、自选股管理入口、续费提醒已上线；邀请奖励 / 推荐裂变仍为后续项。
 - 详见 §5.9 / §5.10 / §5.11。
 
 ### Phase 7：移动端 / 小程序（可选/后置）

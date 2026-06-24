@@ -23,7 +23,6 @@ import {
   loadLoginPage,
   loadNotFoundPage,
   loadNoticesPage,
-  loadOnboardingPage,
   loadOrdersPage,
   loadPortfolioPage,
   loadPrivacyPage,
@@ -58,7 +57,6 @@ const AlertsPage = lazy(loadAlertsPage);
 const StockDetailPage = lazy(loadStockDetailPage);
 const BillingPage = lazy(loadBillingPage);
 const VerifyEmailPage = lazy(loadVerifyEmailPage);
-const OnboardingPage = lazy(loadOnboardingPage);
 const OrdersPage = lazy(loadOrdersPage);
 const InvoicesPage = lazy(loadInvoicesPage);
 const AdminPage = lazy(loadAdminPage);
@@ -228,10 +226,7 @@ const AppContent: React.FC = () => {
             path="/verify-email"
             element={userModeEnabled ? <VerifyEmailPage /> : <Navigate to="/login" replace />}
           />
-          <Route
-            path="/onboarding"
-            element={userModeEnabled ? <OnboardingPage /> : <Navigate to="/login" replace />}
-          />
+          <Route path="/onboarding" element={<Navigate to="/" replace />} />
           {/* Phase 6 协议三件套, 公开访问 */}
           <Route path="/legal/terms" element={<TermsPage />} />
           <Route path="/legal/privacy" element={<PrivacyPage />} />

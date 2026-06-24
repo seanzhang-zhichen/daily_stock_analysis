@@ -85,18 +85,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
       if (mode === 'login') {
         const res = await loginWithEmail(email.trim(), password);
         if (res.success) {
-          let next = redirect;
-          if (!rawRedirect) {
-            try {
-              const watchlist = await accountApi.getWatchlist();
-              if (watchlist.count === 0) {
-                next = '/onboarding';
-              }
-            } catch {
-              next = redirect;
-            }
-          }
-          navigate(next, { replace: true });
+          navigate(redirect, { replace: true });
         } else {
           setError(res.error ?? '登录失败');
         }
@@ -115,7 +104,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
             setPassword('');
             setPasswordConfirm('');
           } else {
-            setInfo('注册成功！请登录后完成首次自选股设置。');
+            setInfo('注册成功！请登录后开始使用。');
           }
         } else {
           setError(res.error ?? '注册失败');

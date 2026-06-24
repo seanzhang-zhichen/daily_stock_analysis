@@ -2,8 +2,10 @@
 """Regression tests for application logging configuration."""
 
 import logging
+import sys
 
 import pytest
+from loguru import logger as loguru_logger
 
 from src.logging_config import LITELLM_LOGGERS, setup_logging
 
@@ -28,6 +30,9 @@ def restore_logging_state():
         root_logger.addHandler(handler)
     root_logger.setLevel(original_root_level)
 
+    loguru_logger.remove()
+    loguru_logger.add(sys.stderr)
+
     for logger_name, level in original_litellm_levels.items():
         logging.getLogger(logger_name).setLevel(level)
 
@@ -35,6 +40,7 @@ def restore_logging_state():
 def _read_debug_log(log_dir) -> str:
     for handler in logging.getLogger().handlers:
         handler.flush()
+    loguru_logger.complete()
     debug_log = next(log_dir.glob("stock_analysis_debug_*.log"))
     return debug_log.read_text(encoding="utf-8")
 
@@ -89,3 +95,16 @@ def test_invalid_litellm_log_level_falls_back_to_warning(tmp_path, monkeypatch):
     assert "invalid level warning should remain" in debug_log_text
     assert "LITELLM_LOG_LEVEL" in debug_log_text
     assert "已回退为 WARNING" in debug_log_text
+
+
+def test_loguru_and_standard_logging_share_configured_sinks(tmp_path):
+    setup_logging(log_prefix="stock_analysis", log_dir=str(tmp_path), debug=False)
+
+    logging.getLogger("src.sample").info("stdlib logging should be bridged")
+    loguru_logger.info("loguru direct logging should be written")
+
+    debug_log_text = _read_debug_log(tmp_path)
+
+    assert "stdlib logging should be bridged" in debug_log_text
+    assert "loguru direct logging should be written" in debug_log_text
+    assert "tests\\test_logging_config.py" in debug_log_text or "tests/test_logging_config.py" in debug_log_text

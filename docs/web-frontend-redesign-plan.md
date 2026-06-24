@@ -53,7 +53,7 @@
 | `/register` | `UserAuthPage` | 认证页 | P2 | 注册、协议勾选、邮箱验证引导 |
 | `/forgot-password` | `ForgotPasswordPage` | 认证页 | P2 | 找回密码、邮件发送状态、错误反馈 |
 | `/verify-email` | `VerifyEmailPage` | 认证页 | P2 | 邮箱验证状态、失败重试、跳转登录 |
-| `/onboarding` | `OnboardingPage` | 首次引导页 | P2 | 首次配置、用户模式判断、下一步引导 |
+| `/onboarding` | `Navigate` | 兼容重定向 | P3 | 旧首次引导链接回到首页 |
 | `/legal/*` | `TermsPage` / `PrivacyPage` / `RiskDisclosurePage` | 公开阅读页 | P3 | 公开访问、可读性、协议内容不丢失 |
 | `*` | `NotFoundPage` | 轻量状态页 | P3 | 404 说明、返回入口 |
 
@@ -468,7 +468,7 @@ AnalysisGrid
 - `StandardPageLayout`：普通设置、账号、账单、公告、后台页面。
 - `WorkspacePageLayout`：首页、持仓、回测等数据工作台。
 - `ChatWorkspaceLayout`：问股页的会话、消息流和输入区。
-- `AuthLayout`：登录、注册、找回密码、邮箱验证和首次引导。
+- `AuthLayout`：登录、注册、找回密码和邮箱验证。
 - `LegalLayout`：协议、隐私和风险披露等公开阅读页。
 
 ### 6.4 信息架构与导航建议
@@ -838,7 +838,7 @@ AnalysisGrid
 - 登录页需要同时兼容管理员密码登录和 To C 用户登录的选择逻辑。
 - `redirect` 参数语义保持不变，登录成功后回到原目标页面。
 - 注册页必须清晰展示协议、隐私和风险披露链接。
-- 找回密码、邮箱验证和首次引导应使用同一认证视觉体系。
+- 找回密码和邮箱验证应使用同一认证视觉体系。
 - 认证错误不只显示 toast，应在表单顶部或字段附近展示。
 
 ### 8.7 页面级验收清单
@@ -1156,7 +1156,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 - `InvoicesPage`。
 - `AdminPage`。
 - `NoticesPage`。
-- 登录、注册、找回密码、邮箱验证、首次引导。
+- 登录、注册、找回密码、邮箱验证。
 - legal pages。
 
 验收标准：
@@ -1172,7 +1172,7 @@ Tailwind 可以继续使用，但不能回到“页面内巨型 className 堆叠
 | 设置与系统 | `SettingsPage`、`NoticesPage`、`NotFoundPage` | 标准内容页、错误与空态、公开访问 |
 | 账号与商业化 | `AccountPage`、`BillingPage`、`OrdersPage`、`InvoicesPage` | 表格、权益、配额、支付/开票状态 |
 | 管理员 | `AdminPage` | 高密度数据页、权限态、危险操作 |
-| 认证与引导 | `LoginPage`、`UserAuthPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage` | 表单、redirect、协议、邮箱状态 |
+| 认证 | `LoginPage`、`UserAuthPage`、`ForgotPasswordPage`、`VerifyEmailPage` | 表单、redirect、协议、邮箱状态 |
 | 公开协议 | `legal/*` | 长文阅读、公开访问、移动端可读性 |
 
 ### Phase 6：旧体系删除与最终收口
@@ -1425,7 +1425,7 @@ npm run test:smoke
 | Phase 2：首页完整重构 | 已完成（代码） | `HistoryList` 新增客户端搜索过滤框（按股票代码/名称），支持无匹配空态提示；首页空态引导、任务面板、报告工具条、批量删除等均已基于新设计系统；旧首页 token 和样式已清零 | 深色模式与窄屏手工验收待进行 |
 | Phase 3：问股页完整重构 | 已完成（代码） | 技能选择从 checkbox 改为 chip 按钮（`ui-chat-skill-chip`），支持 `aria-pressed`，限额提示独立展示；AI 消息改为全宽文档卡（`w-full`），用户消息保持短气泡；`components.css` 新增 `ui-chat-skill-chip` / `ui-chat-skill-chip-active` 样式；所有相关测试已同步更新并通过 | 深色模式与窄屏手工验收待进行 |
 | Phase 4：持仓与回测完整重构 | 已完成 | `BacktestPage` 已将 `btn-primary`/`btn-secondary` 替换为 `Button variant="primary"/"outline"`，提取 `BacktestConfigBar`、`BacktestMetricSidebar`、`BacktestResultsTable` 子组件，外层迁移到 `workspace-page-layout`，`index.css` 删除 `--backtest-*` 私有 token；`PortfolioPage` 外层迁移到 `WorkspacePageLayout`，提取 `PortfolioControlBar`、`PortfolioMetricGrid`、`PositionsAndConcentrationPanel`、`PortfolioRiskSummary`、`PortfolioManualEntryPanel`、`PortfolioImportAndLedger` 全部子组件，所有输入/选择控件已迁移到 `ui-input`，`index.css` 删除旧 portfolio-page 作用域样式；数据页面旧 terminal/glass/neon 引用清零 | 无（已完成） |
-| Phase 5：其余页面完整重写 | 已完成主体 | `NotFoundPage`、`AccountPage`、`OrdersPage`、`InvoicesPage`、`BillingPage`、`NoticesPage`、`AdminPage`、`SettingsPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`OnboardingPage`、`UserAuthPage` 全部迁移完成；legal 页面（`TermsPage`、`PrivacyPage`、`RiskDisclosurePage`、`LegalPageLayout`）已使用 token 体系，本轮新增 `prose-legal` CSS 类到 `components.css` 补全法律协议文章排版 | 深色模式与窄屏手工验收待进行 |
+| Phase 5：其余页面完整重写 | 已完成主体 | `NotFoundPage`、`AccountPage`、`OrdersPage`、`InvoicesPage`、`BillingPage`、`NoticesPage`、`AdminPage`、`SettingsPage`、`ForgotPasswordPage`、`VerifyEmailPage`、`UserAuthPage` 全部迁移完成；`OnboardingPage` 已随首次引导取消而删除；legal 页面（`TermsPage`、`PrivacyPage`、`RiskDisclosurePage`、`LegalPageLayout`）已使用 token 体系，本轮新增 `prose-legal` CSS 类到 `components.css` 补全法律协议文章排版 | 深色模式与窄屏手工验收待进行 |
 | Phase 6：旧体系删除与最终收口 | 已完成（代码） | 前序完成 `index.css` 大规模清理（`--home-*`/`--settings-*` token、`terminal-card`/`glass-card` 等旧视觉类全部删除）；本轮清理最后遗留：删除空节 `/* ============ Financial Terminal Tokens ============ */` 和空节 `/* ============ Responsive ============ */`，更新旧 `(from Classic)` / `(from Terminal PR)` / `(Base/Classic)` 历史标注为语义标题（`1. THEME VARIABLES`、`2. GLOBAL STYLES`、`3. UTILITIES & ANIMATIONS`）；搜索 `terminal`/`neon`/`glow`/`glass`/`cyber`/`--home-`/`--chat-`/`--portfolio-`/`--settings-` 均无旧引用残留 | 深色模式与窄屏手工验收（手工任务，不可自动化） |
 
 本轮验证：

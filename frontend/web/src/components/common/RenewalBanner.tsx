@@ -98,7 +98,6 @@ export const RenewalBanner: React.FC = () => {
     location.pathname === '/register' ||
     location.pathname === '/forgot-password' ||
     location.pathname === '/verify-email' ||
-    location.pathname === '/onboarding' ||
     location.pathname.startsWith('/legal/')
   ) {
     return null;

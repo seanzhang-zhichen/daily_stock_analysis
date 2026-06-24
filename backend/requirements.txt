@@ -5,6 +5,7 @@
 
 # 核心依赖
 python-dotenv>=1.0.0        # 环境变量配置管理
+loguru>=0.7.0               # 统一日志输出与文件轮转
 tenacity>=8.2.0             # 重试机制（指数退避）
 sqlalchemy>=2.0.0           # ORM数据库操作
 schedule>=1.2.0             # 定时任务调度

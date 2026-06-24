@@ -129,7 +129,7 @@
 - `/admin`：运营后台，仅 `is_admin=True` 可访问，含概览 / 订单 / 退款审核 / 发票审核 / 用户 / 手动 grant-plan 六个标签页。
 - `/notices`：公告中心，公开可访问。
 - `/help`：帮助中心，提供 FAQ、反馈指引、配置入口与免责声明。
-- `/onboarding`：注册后自选股引导页，可添加最多 `min(plan.maxStocks, 3)` 只股票。
+- `/onboarding`：旧首次引导兼容路由，登录后重定向到首页；自选股通过 `/watchlist` 或 `/account` 随时维护。
 
 ## 7. 配额与 Plan 解析
 

@@ -21,7 +21,6 @@ const pageLoaders = {
   userAuth: () => import('../pages/UserAuthPage'),
   forgotPassword: () => import('../pages/ForgotPasswordPage'),
   verifyEmail: () => import('../pages/VerifyEmailPage'),
-  onboarding: () => import('../pages/OnboardingPage'),
   notFound: () => import('../pages/NotFoundPage'),
   terms: () => import('../pages/legal/TermsPage'),
   privacy: () => import('../pages/legal/PrivacyPage'),
@@ -51,7 +50,6 @@ export const loadLoginPage = pageLoaders.login;
 export const loadUserAuthPage = pageLoaders.userAuth;
 export const loadForgotPasswordPage = pageLoaders.forgotPassword;
 export const loadVerifyEmailPage = pageLoaders.verifyEmail;
-export const loadOnboardingPage = pageLoaders.onboarding;
 export const loadNotFoundPage = pageLoaders.notFound;
 export const loadTermsPage = pageLoaders.terms;
 export const loadPrivacyPage = pageLoaders.privacy;
@@ -81,7 +79,6 @@ const preloadByPath: Record<string, () => Promise<unknown>> = {
   '/register': pageLoaders.userAuth,
   '/forgot-password': pageLoaders.forgotPassword,
   '/verify-email': pageLoaders.verifyEmail,
-  '/onboarding': pageLoaders.onboarding,
   '/legal/terms': pageLoaders.terms,
   '/legal/privacy': pageLoaders.privacy,
   '/legal/risk-disclosure': pageLoaders.riskDisclosure,

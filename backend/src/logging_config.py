@@ -5,7 +5,7 @@
 ===================================
 
 职责：
-1. 提供统一的日志格式和配置常量
+1. 基于 Loguru 提供统一的日志格式和配置常量
 2. 支持控制台 + 文件（常规/调试）三层日志输出
 3. 自动降低第三方库日志级别
 """
@@ -14,12 +14,17 @@ import logging
 import os
 import sys
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Union
+
+from loguru import logger as loguru_logger
 
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(pathname)s:%(lineno)d | %(message)s"
+LOGURU_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | "
+    "{extra[relative_path]}:{extra[source_line]} | {message}\n{exception}"
+)
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _ALLOWED_LOG_LEVELS = {
     'DEBUG': logging.DEBUG,
@@ -31,22 +36,49 @@ _ALLOWED_LOG_LEVELS = {
 _DEFAULT_LITELLM_LOG_LEVEL = 'WARNING'
 
 
-class RelativePathFormatter(logging.Formatter):
-    """自定义 Formatter，输出相对路径而非绝对路径"""
+class InterceptHandler(logging.Handler):
+    """将标准库 logging 记录转发给 Loguru。"""
 
-    def __init__(self, fmt=None, datefmt=None, relative_to=None):
-        super().__init__(fmt, datefmt)
-        self.relative_to = Path(relative_to) if relative_to else Path.cwd()
-
-    def format(self, record):
-        # 将绝对路径转为相对路径
+    def emit(self, record: logging.LogRecord) -> None:
         try:
-            record.pathname = str(Path(record.pathname).relative_to(self.relative_to))
+            level = loguru_logger.level(record.levelname).name
         except ValueError:
-            # 如果无法转换为相对路径，保持原样
-            pass
-        return super().format(record)
+            level = record.levelno
 
+        loguru_logger.bind(
+            source_path=record.pathname,
+            source_line=record.lineno,
+        ).opt(exception=record.exc_info).log(
+            level,
+            record.getMessage(),
+        )
+
+
+def _make_loguru_format(project_root: Path) -> Callable[[dict], str]:
+    """创建输出项目相对路径的 Loguru formatter。"""
+
+    def _format(record: dict) -> str:
+        source_path = record["extra"].get("source_path", record["file"].path)
+        source_line = record["extra"].get("source_line", record["line"])
+        path = Path(source_path)
+        try:
+            relative_path = path.resolve().relative_to(project_root)
+        except ValueError:
+            relative_path = path
+        record["extra"]["relative_path"] = str(relative_path)
+        record["extra"]["source_line"] = source_line
+        return LOGURU_FORMAT
+
+    return _format
+
+
+def _logging_level_to_loguru(level: int) -> Union[int, str]:
+    if level <= logging.NOTSET:
+        return "DEBUG"
+    level_name = logging.getLevelName(level)
+    if isinstance(level_name, str) and not level_name.startswith("Level "):
+        return level_name
+    return level
 
 
 # 默认需要降低日志级别的第三方库
@@ -117,45 +149,49 @@ def setup_logging(
     log_file = log_path / f"{log_prefix}_{today_str}.log"
     debug_log_file = log_path / f"{log_prefix}_debug_{today_str}.log"
 
-    # 配置根 logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # 根 logger 设为 DEBUG，由 handler 控制输出级别
-
-    # 清除已有 handler，避免重复添加
-    if root_logger.handlers:
-        root_logger.handlers.clear()
     # 创建相对路径 Formatter（相对于项目根目录）
     project_root = Path.cwd()
-    rel_formatter = RelativePathFormatter(
-        LOG_FORMAT, LOG_DATE_FORMAT, relative_to=project_root
-    )
-    # Handler 1: 控制台输出
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_handler.setFormatter(rel_formatter)
-    root_logger.addHandler(console_handler)
+    loguru_format = _make_loguru_format(project_root)
 
-    # Handler 2: 常规日志文件（INFO 级别，10MB 轮转）
-    file_handler = RotatingFileHandler(
+    # Loguru sinks: 控制台 + 常规日志 + 调试日志
+    loguru_logger.remove()
+    loguru_logger.add(
+        sys.stdout,
+        level=_logging_level_to_loguru(level),
+        format=loguru_format,
+        colorize=False,
+        backtrace=False,
+        diagnose=False,
+        enqueue=False,
+    )
+    loguru_logger.add(
         log_file,
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,
-        encoding='utf-8'
+        level="INFO",
+        format=loguru_format,
+        rotation=10 * 1024 * 1024,
+        retention=5,
+        encoding='utf-8',
+        backtrace=False,
+        diagnose=False,
+        enqueue=False,
     )
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(rel_formatter)
-    root_logger.addHandler(file_handler)
-
-    # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
-    debug_handler = RotatingFileHandler(
+    loguru_logger.add(
         debug_log_file,
-        maxBytes=50 * 1024 * 1024,  # 50MB
-        backupCount=3,
-        encoding='utf-8'
+        level="DEBUG",
+        format=loguru_format,
+        rotation=50 * 1024 * 1024,
+        retention=3,
+        encoding='utf-8',
+        backtrace=False,
+        diagnose=False,
+        enqueue=False,
     )
-    debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(rel_formatter)
-    root_logger.addHandler(debug_handler)
+
+    # 标准库 logging 兼容层：保留现有 logging.getLogger(...) 调用方式。
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.DEBUG)  # 根 logger 设为 DEBUG，由 loguru sink 控制输出级别
+    root_logger.addHandler(InterceptHandler())
 
     # 降低第三方库的日志级别
     quiet_loggers = DEFAULT_QUIET_LOGGERS.copy()
@@ -185,12 +221,12 @@ def setup_logging(
     except ValueError:
         rel_debug_log_file = debug_log_file
 
-    logging.info(f"日志系统初始化完成，日志目录: {rel_log_path}")
-    logging.info(f"常规日志: {rel_log_file}")
-    logging.info(f"调试日志: {rel_debug_log_file}")
+    loguru_logger.info(f"日志系统初始化完成，日志目录: {rel_log_path}")
+    loguru_logger.info(f"常规日志: {rel_log_file}")
+    loguru_logger.info(f"调试日志: {rel_debug_log_file}")
     if invalid_litellm_level is not None:
-        logging.warning(
-            "LITELLM_LOG_LEVEL=%r 无效，已回退为 %s；可选值：%s",
+        loguru_logger.warning(
+            "LITELLM_LOG_LEVEL={!r} 无效，已回退为 {}；可选值：{}",
             invalid_litellm_level,
             _DEFAULT_LITELLM_LOG_LEVEL,
             ", ".join(_ALLOWED_LOG_LEVELS),
