@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Backtest endpoints."""
+"""Backtest endpoints.
+
+接口按当前登录用户隔离回测任务和结果查询。endpoint 层负责请求参数校验、服务层
+调用和 HTTP 错误映射，具体回测计算与指标聚合由 ``BacktestService`` 维护。
+"""
 
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ def _validate_analysis_date_range(
     analysis_date_from: Optional[date],
     analysis_date_to: Optional[date],
 ) -> None:
+    """Reject inverted inclusive analysis-date filters before service calls."""
     if analysis_date_from and analysis_date_to and analysis_date_from > analysis_date_to:
         raise HTTPException(
             status_code=400,
@@ -56,6 +61,7 @@ def run_backtest(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestRunResponse:
+    """Run backtest evaluation for the current user's analysis history."""
     try:
         service = BacktestService(db_manager)
         stats = service.run_backtest(
@@ -95,6 +101,7 @@ def get_backtest_results(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestResultsResponse:
+    """Return paginated backtest result rows for the current user."""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -141,6 +148,7 @@ def get_overall_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
+    """Return aggregate backtest metrics across all stocks for the user."""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -191,6 +199,7 @@ def get_stock_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
+    """Return aggregate backtest metrics for one stock code."""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)

@@ -4,6 +4,8 @@
 挂载位置: ``/api/v1/account/*``。
 
 提供多用户账户注册、登录、状态查询、密码与模型偏好等接口。
+本模块负责把用户服务层异常转换为前端稳定错误结构，并维护用户会话 cookie、
+协议同意状态、配额/积分摘要、自选股、通知偏好、注销和数据导出等账号能力。
 """
 
 from __future__ import annotations
@@ -79,6 +81,8 @@ router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
+    """注册请求体，包含邮箱密码、邀请码和协议同意状态。"""
+
     model_config = {"populate_by_name": True}
 
     email: str = Field(default="")
@@ -91,23 +95,33 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    """邮箱密码登录请求体。"""
+
     email: str = Field(default="")
     password: str = Field(default="")
 
 
 class VerifyEmailRequest(BaseModel):
+    """邮箱验证 token 请求体。"""
+
     token: str = Field(default="")
 
 
 class RequestResetRequest(BaseModel):
+    """密码重置邮件请求体。"""
+
     email: str = Field(default="")
 
 
 class RequestEmailVerificationRequest(BaseModel):
+    """重新发送邮箱验证邮件请求体。"""
+
     email: str = Field(default="")
 
 
 class ResetPasswordRequest(BaseModel):
+    """使用一次性 token 重置密码的请求体。"""
+
     model_config = {"populate_by_name": True}
 
     token: str = Field(default="")
@@ -116,6 +130,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
+    """登录态下修改密码的请求体。"""
+
     model_config = {"populate_by_name": True}
 
     current_password: str = Field(default="", alias="currentPassword")
@@ -124,16 +140,22 @@ class ChangePasswordRequest(BaseModel):
 
 
 class RedeemRequest(BaseModel):
+    """兑换码升级套餐请求体。"""
+
     code: str = Field(default="")
 
 
 class ModelPreferenceUpdateRequest(BaseModel):
+    """当前用户模型偏好更新请求体。"""
+
     model_config = {"populate_by_name": True}
 
     preferred_model: str | None = Field(default=None, alias="preferredModel")
 
 
 class ProfileUpdateRequest(BaseModel):
+    """当前用户个人资料更新请求体。"""
+
     model_config = {"populate_by_name": True}
 
     display_name: str | None = Field(default=None, alias="displayName")
@@ -141,6 +163,8 @@ class ProfileUpdateRequest(BaseModel):
 
 
 class WatchlistAddRequest(BaseModel):
+    """添加单只自选股的请求体。"""
+
     model_config = {"populate_by_name": True}
 
     stock_code: str = Field(default="", alias="stockCode")
@@ -148,12 +172,16 @@ class WatchlistAddRequest(BaseModel):
 
 
 class WatchlistSetRequest(BaseModel):
+    """全量替换当前用户自选股列表的请求体。"""
+
     model_config = {"populate_by_name": True}
 
     stocks: list[dict] = Field(default_factory=list)
 
 
 class NotificationPrefsUpdateRequest(BaseModel):
+    """当前用户通知偏好增量更新请求体。"""
+
     model_config = {"populate_by_name": True}
 
     daily_push_enabled: bool | None = Field(default=None, alias="dailyPushEnabled")
@@ -188,6 +216,7 @@ _USER_ERROR_HTTP_STATUS = {
 
 
 def _user_error_response(exc: UserError) -> JSONResponse:
+    """Convert domain-level user errors into the public JSON error shape."""
     status = _USER_ERROR_HTTP_STATUS.get(exc.code, 400)
     return JSONResponse(
         status_code=status,
@@ -196,6 +225,7 @@ def _user_error_response(exc: UserError) -> JSONResponse:
 
 
 def _cookie_kwargs(request: Request, settings: UserModeSettings) -> dict:
+    """Build To C user-session cookie attributes from runtime settings."""
     secure = False
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
         proto = request.headers.get("X-Forwarded-Proto", "").lower()
@@ -218,11 +248,13 @@ def _attach_session_cookie(
     issued: IssuedSession,
     settings: UserModeSettings,
 ) -> None:
+    """Attach an issued user session to a FastAPI response."""
     params = _cookie_kwargs(request, settings)
     response.set_cookie(value=issued.cookie_value, **params)
 
 
 def _serialize_user(user, *, terms_version: str | None = None) -> dict:
+    """Serialize AppUser into the account API's frontend-facing shape."""
     current_terms_version = (terms_version or CURRENT_TERMS_VERSION).strip()
     return {
         "id": user.id,
@@ -284,6 +316,7 @@ def _status_payload(
     request: Request,
     db: Session,
 ) -> dict:
+    """Build the shared account status/me response payload."""
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
 
@@ -340,10 +373,12 @@ def _status_payload(
 
 
 def _get_settings_or_disabled(db: Session | None = None):
+    """Load user-mode settings for endpoints that need runtime account config."""
     return load_user_mode_settings(db)
 
 
 def _commit_or_rollback(db: Session) -> None:
+    """Commit DB changes and roll back before re-raising on failure."""
     try:
         db.commit()
     except Exception:
@@ -367,6 +402,7 @@ async def account_register(
     body: RegisterRequest,
     db: Session = Depends(get_db),
 ):
+    """Register a new user and return verification requirements without logging in."""
     try:
         settings = _get_settings_or_disabled(db)
         result = svc_register(
@@ -408,6 +444,7 @@ async def account_login(
     body: LoginRequest,
     db: Session = Depends(get_db),
 ):
+    """Authenticate email/password credentials and attach a session cookie."""
     try:
         settings = _get_settings_or_disabled(db)
         issued = svc_login(
@@ -440,6 +477,7 @@ async def account_login(
 
 @router.post("/logout", summary="登出当前 session")
 async def account_logout(request: Request, db: Session = Depends(get_db)):
+    """Revoke the current session when present and always clear the browser cookie."""
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     revoked = False
     if cookie_value:
@@ -460,6 +498,7 @@ async def account_logout(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/verify-email", summary="邮箱验证")
 async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
+    """Verify an email address using a service-issued token."""
     try:
         settings = _get_settings_or_disabled(db)
         user = svc_verify_email(db, token=body.token, settings=settings)
@@ -472,6 +511,7 @@ async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(g
 
 @router.post("/request-email-verification", summary="重新发送邮箱验证邮件")
 async def account_request_email_verification(body: RequestEmailVerificationRequest, db: Session = Depends(get_db)):
+    """Request another verification email without revealing account existence."""
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -494,6 +534,7 @@ async def account_request_email_verification(body: RequestEmailVerificationReque
 
 @router.post("/request-password-reset", summary="发起密码重置邮件")
 async def account_request_reset(body: RequestResetRequest, db: Session = Depends(get_db)):
+    """Start password reset flow while keeping unknown emails indistinguishable."""
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -516,6 +557,7 @@ async def account_request_reset(body: RequestResetRequest, db: Session = Depends
 
 @router.post("/reset-password", summary="使用 token 重置密码")
 async def account_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Reset a password using a valid one-time token."""
     try:
         settings = _get_settings_or_disabled(db)
         svc_reset_password(
@@ -534,6 +576,7 @@ async def account_reset_password(body: ResetPasswordRequest, db: Session = Depen
 
 
 def _require_current_user(request: Request, db: Session):
+    """Resolve the current user from cookie or raise a domain auth error."""
     settings = load_user_mode_settings(db)
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
@@ -544,6 +587,7 @@ def _require_current_user(request: Request, db: Session):
 
 @router.get("/me", summary="当前登录用户信息")
 async def account_me(request: Request, db: Session = Depends(get_db)):
+    """Return the current session user and active terms version."""
     try:
         settings, user = _require_current_user(request, db)
     except UserError as exc:
@@ -552,6 +596,7 @@ async def account_me(request: Request, db: Session = Depends(get_db)):
 
 
 def _normalize_display_name(value: str | None) -> str | None:
+    """Normalize optional display name from profile update requests."""
     normalized = (value or "").strip()
     if not normalized:
         return None
@@ -561,6 +606,7 @@ def _normalize_display_name(value: str | None) -> str | None:
 
 
 def _normalize_avatar_url(value: str | None) -> str | None:
+    """Normalize avatar URL and reject unsupported schemes."""
     normalized = (value or "").strip()
     if not normalized:
         return None
@@ -578,6 +624,7 @@ async def account_update_profile(
     body: ProfileUpdateRequest,
     db: Session = Depends(get_db),
 ):
+    """Update display name and avatar URL for the current user."""
     try:
         settings, user = _require_current_user(request, db)
         user.display_name = _normalize_display_name(body.display_name)
@@ -611,6 +658,7 @@ async def account_change_password(
     body: ChangePasswordRequest,
     db: Session = Depends(get_db),
 ):
+    """Change password for the current user and clear the existing session cookie."""
     try:
         settings, user = _require_current_user(request, db)
         svc_change_password(
@@ -647,6 +695,7 @@ async def account_redeem(
     body: RedeemRequest,
     db: Session = Depends(get_db),
 ):
+    """Redeem a plan code for the current user and return updated entitlement data."""
     try:
         settings, user = _require_current_user(request, db)
         sub = svc_redeem_code(db, user, code=body.code)
@@ -701,6 +750,7 @@ async def account_redeem(
 
 
 def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
+    """Return model ids the current user is allowed to choose."""
     service = SystemConfigService()
     platform_models = service.get_runtime_llm_models()
     seen = set()
@@ -715,6 +765,7 @@ def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> l
 
 @router.get("/model-preference", summary="获取当前用户可选模型与模型偏好")
 async def account_get_model_preference(request: Request, db: Session = Depends(get_db)):
+    """Return allowed LLM models plus stored and effective user preference."""
     try:
         settings, user = _require_current_user(request, db)
     except UserError as exc:
@@ -736,6 +787,7 @@ async def account_update_model_preference(
     body: ModelPreferenceUpdateRequest,
     db: Session = Depends(get_db),
 ):
+    """Persist the user's preferred model after plan entitlement validation."""
     try:
         settings, user = _require_current_user(request, db)
         models = _allowed_models_for_user(db, user, settings)
@@ -776,11 +828,13 @@ async def account_update_model_preference(
 
 
 def _serialize_watchlist_item(item) -> dict:
+    """Serialize one watchlist row for account APIs."""
     return {"stockCode": item.stock_code, "stockName": item.stock_name}
 
 
 @router.get("/watchlist", summary="获取当前用户自选股列表")
 async def account_get_watchlist(request: Request, db: Session = Depends(get_db)):
+    """Return the current user's watchlist and plan stock limit."""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -802,6 +856,7 @@ async def account_add_watchlist(
     body: WatchlistAddRequest,
     db: Session = Depends(get_db),
 ):
+    """Add one stock to the current user's watchlist within plan limits."""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -832,6 +887,7 @@ async def account_set_watchlist(
     body: WatchlistSetRequest,
     db: Session = Depends(get_db),
 ):
+    """Replace the current user's watchlist with validated stock codes."""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -878,6 +934,7 @@ async def account_remove_watchlist(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    """Remove one stock from the current user's watchlist."""
     try:
         _, user = _require_current_user(request, db)
         deleted = svc_remove_stock(db, user_id=user.id, stock_code=stock_code)
@@ -906,6 +963,7 @@ async def account_remove_watchlist(
 
 
 def _serialize_prefs(prefs) -> dict:
+    """Serialize notification preference row using frontend camelCase keys."""
     return {
         "dailyPushEnabled": prefs.daily_push_enabled,
         "emailEnabled": prefs.email_enabled,
@@ -916,6 +974,7 @@ def _serialize_prefs(prefs) -> dict:
 
 @router.get("/notification-prefs", summary="获取当前用户通知偏好")
 async def account_get_notification_prefs(request: Request, db: Session = Depends(get_db)):
+    """Return notification preferences for the current user."""
     try:
         _, user = _require_current_user(request, db)
     except UserError as exc:
@@ -932,6 +991,7 @@ async def account_update_notification_prefs(
     body: NotificationPrefsUpdateRequest,
     db: Session = Depends(get_db),
 ):
+    """Update notification preferences after checking plan notification entitlements."""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -961,6 +1021,7 @@ async def account_update_notification_prefs(
 
 
 def _render_unsubscribe_page(*, success: bool, message: str) -> HTMLResponse:
+    """Render the public unsubscribe result page."""
     color = "#059669" if success else "#dc2626"
     title = "退订成功" if success else "退订失败"
     status_code = 200 if success else 400

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class PushoverSender:
+    """Send notifications through the Pushover messages API."""
     
     def __init__(self, config: Config):
         """

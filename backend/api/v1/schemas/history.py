@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-历史记录相关模型
-===================================
+"""History and persisted analysis-report schemas.
 
-职责：
-1. 定义历史记录列表和详情模型
-2. 定义分析报告完整模型
+历史接口既返回列表摘要，也返回结构化分析报告。这里的报告模型需要兼容旧历史
+数据，因此部分字段保持 Optional，情绪评分等历史值也不在 schema 层做过窄约束。
 """
 
 from typing import Optional, List, Any
@@ -30,6 +26,7 @@ class HistoryItem(BaseModel):
     created_at: Optional[str] = Field(None, description="创建时间")
     
     class Config:
+        """Document OpenAPI example metadata for history item responses."""
         json_schema_extra = {
             "example": {
                 "id": 1234,
@@ -45,7 +42,7 @@ class HistoryItem(BaseModel):
 
 
 class HistoryListResponse(BaseModel):
-    """历史记录列表响应"""
+    """Paginated history-list response."""
     
     total: int = Field(..., description="总记录数")
     page: int = Field(..., description="当前页码")
@@ -53,6 +50,7 @@ class HistoryListResponse(BaseModel):
     items: List[HistoryItem] = Field(default_factory=list, description="记录列表")
     
     class Config:
+        """Document OpenAPI example metadata for paginated history responses."""
         json_schema_extra = {
             "example": {
                 "total": 100,
@@ -64,25 +62,26 @@ class HistoryListResponse(BaseModel):
 
 
 class DeleteHistoryRequest(BaseModel):
-    """删除历史记录请求"""
+    """Request body for deleting one or more history records by primary key."""
 
     record_ids: List[int] = Field(default_factory=list, description="要删除的历史记录主键 ID 列表")
 
 
 class DeleteHistoryResponse(BaseModel):
-    """删除历史记录响应"""
+    """Deletion summary for history records."""
 
     deleted: int = Field(..., description="实际删除的历史记录数量")
 
 
 class NewsIntelItem(BaseModel):
-    """新闻情报条目"""
+    """One news item attached to or derived from an analysis report."""
 
     title: str = Field(..., description="新闻标题")
     snippet: str = Field("", description="新闻摘要（最多200字）")
     url: str = Field(..., description="新闻链接")
 
     class Config:
+        """Document OpenAPI example metadata for news intelligence items."""
         json_schema_extra = {
             "example": {
                 "title": "公司发布业绩快报，营收同比增长 20%",
@@ -93,12 +92,13 @@ class NewsIntelItem(BaseModel):
 
 
 class NewsIntelResponse(BaseModel):
-    """新闻情报响应"""
+    """List response for news intelligence items."""
 
     total: int = Field(..., description="新闻条数")
     items: List[NewsIntelItem] = Field(default_factory=list, description="新闻列表")
 
     class Config:
+        """Document OpenAPI example metadata for news intelligence list responses."""
         json_schema_extra = {
             "example": {
                 "total": 2,
@@ -108,7 +108,7 @@ class NewsIntelResponse(BaseModel):
 
 
 class ReportMeta(BaseModel):
-    """报告元信息"""
+    """Metadata that identifies a persisted analysis report."""
 
     model_config = ConfigDict(protected_namespaces=("model_validate", "model_dump"))
 
@@ -125,7 +125,7 @@ class ReportMeta(BaseModel):
 
 
 class ReportSummary(BaseModel):
-    """报告概览区"""
+    """High-level conclusion section of an analysis report."""
     
     analysis_summary: Optional[str] = Field(None, description="关键结论")
     operation_advice: Optional[str] = Field(None, description="操作建议")
@@ -138,7 +138,7 @@ class ReportSummary(BaseModel):
 
 
 class ReportStrategy(BaseModel):
-    """策略点位区"""
+    """Suggested trading levels extracted from the analysis report."""
     
     ideal_buy: Optional[str] = Field(None, description="理想买入价")
     secondary_buy: Optional[str] = Field(None, description="第二买入价")
@@ -147,7 +147,7 @@ class ReportStrategy(BaseModel):
 
 
 class ReportDetails(BaseModel):
-    """报告详情区"""
+    """Detailed evidence and raw context attached to an analysis report."""
     
     news_content: Optional[str] = Field(None, description="新闻摘要")
     raw_result: Optional[Any] = Field(None, description="原始分析结果（JSON）")
@@ -161,7 +161,7 @@ class ReportDetails(BaseModel):
 
 
 class AnalysisReport(BaseModel):
-    """完整分析报告"""
+    """Structured full analysis report returned by history detail APIs."""
 
     meta: ReportMeta = Field(..., description="元信息")
     summary: ReportSummary = Field(..., description="概览区")
@@ -169,6 +169,7 @@ class AnalysisReport(BaseModel):
     details: Optional[ReportDetails] = Field(None, description="详情区")
 
     class Config:
+        """Document OpenAPI example metadata for structured report responses."""
         json_schema_extra = {
             "example": {
                 "meta": {
@@ -198,11 +199,12 @@ class AnalysisReport(BaseModel):
 
 
 class MarkdownReportResponse(BaseModel):
-    """Markdown 格式报告响应"""
+    """Markdown-rendered report response for download/copy workflows."""
 
     content: str = Field(..., description="Markdown 格式的完整报告内容")
 
     class Config:
+        """Document OpenAPI example metadata for markdown report responses."""
         json_schema_extra = {
             "example": {
                 "content": "# 📊 贵州茅台 (600519) 分析报告\n\n> 分析日期：**2024-01-01**\n\n..."

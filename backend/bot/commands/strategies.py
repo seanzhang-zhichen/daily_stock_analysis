@@ -25,18 +25,22 @@ class StrategiesCommand(BotCommand):
 
     @property
     def name(self) -> str:
+        """Return the primary command name used by the dispatcher."""
         return "strategies"
 
     @property
     def aliases(self) -> List[str]:
+        """Return aliases for listing Agent skills and strategies."""
         return ["skills", "策略", "策略列表"]
 
     @property
     def description(self) -> str:
+        """Return the short help-list description."""
         return "查看可用交易策略"
 
     @property
     def usage(self) -> str:
+        """Return the argument pattern shown in command help."""
         return "/strategies [active]"
 
     def execute(self, message: BotMessage, args: List[str]) -> BotResponse:

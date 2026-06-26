@@ -460,6 +460,7 @@ class AgentExecutor:
         max_steps: int = 10,
         timeout_seconds: Optional[float] = None,
     ):
+        """Store runtime dependencies and prompt configuration for legacy runs."""
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions

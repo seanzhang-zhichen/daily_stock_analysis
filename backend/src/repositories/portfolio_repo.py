@@ -46,6 +46,7 @@ class PortfolioRepository:
     """DB access layer for portfolio P0 domain."""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Use the injected database manager for tests or the app singleton in runtime."""
         self.db = db_manager or DatabaseManager.get_instance()
 
     # ------------------------------------------------------------------
@@ -60,6 +61,7 @@ class PortfolioRepository:
         base_currency: str,
         owner_id: Optional[str] = None,
     ) -> PortfolioAccount:
+        """Create an active portfolio account and return the refreshed ORM row."""
         with self.db.get_session() as session:
             row = PortfolioAccount(
                 owner_id=owner_id,
@@ -75,6 +77,7 @@ class PortfolioRepository:
             return row
 
     def get_account(self, account_id: int, include_inactive: bool = False) -> Optional[PortfolioAccount]:
+        """Return one account, hiding soft-deactivated rows by default."""
         with self.db.get_session() as session:
             return self.get_account_in_session(
                 session=session,
@@ -87,6 +90,7 @@ class PortfolioRepository:
         include_inactive: bool = False,
         owner_id: Optional[str] = None,
     ) -> List[PortfolioAccount]:
+        """List accounts, optionally scoped to an owner and including inactive rows."""
         with self.db.get_session() as session:
             query = select(PortfolioAccount)
             if not include_inactive:
@@ -103,6 +107,7 @@ class PortfolioRepository:
         account_id: int,
         include_inactive: bool = False,
     ) -> Optional[PortfolioAccount]:
+        """Session-scoped account lookup for callers already inside a transaction."""
         conditions = [PortfolioAccount.id == account_id]
         if not include_inactive:
             conditions.append(PortfolioAccount.is_active.is_(True))
@@ -111,6 +116,7 @@ class PortfolioRepository:
         ).scalar_one_or_none()
 
     def update_account(self, account_id: int, fields: Dict[str, Any]) -> Optional[PortfolioAccount]:
+        """Patch mutable account fields and return None when the account is absent."""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
@@ -125,6 +131,7 @@ class PortfolioRepository:
             return row
 
     def deactivate_account(self, account_id: int) -> bool:
+        """Soft-delete an account so historical events remain available."""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
@@ -141,6 +148,11 @@ class PortfolioRepository:
     # ------------------------------------------------------------------
     @contextmanager
     def portfolio_write_session(self):
+        """Open a serialized portfolio write transaction.
+
+        SQLite uses ``BEGIN IMMEDIATE`` here so concurrent ledger writes fail fast
+        with ``PortfolioBusyError`` instead of interleaving cache invalidation.
+        """
         session = self.db.get_session()
         try:
             session.connection().exec_driver_sql("BEGIN IMMEDIATE")
@@ -181,6 +193,7 @@ class PortfolioRepository:
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
     ) -> PortfolioTrade:
+        """Add a trade in its own serialized transaction and detach the returned row."""
         with self.portfolio_write_session() as session:
             row = self.add_trade_in_session(
                 session=session,
@@ -211,6 +224,7 @@ class PortfolioRepository:
         currency: str,
         note: Optional[str] = None,
     ) -> PortfolioCashLedger:
+        """Add a cash ledger event and invalidate derived portfolio state."""
         with self.portfolio_write_session() as session:
             row = self.add_cash_ledger_in_session(
                 session=session,
@@ -237,6 +251,7 @@ class PortfolioRepository:
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
     ) -> PortfolioCorporateAction:
+        """Add a corporate action event and invalidate affected snapshots."""
         with self.portfolio_write_session() as session:
             row = self.add_corporate_action_in_session(
                 session=session,
@@ -278,14 +293,17 @@ class PortfolioRepository:
             return int(row.account_id) if row is not None else None
 
     def delete_trade(self, trade_id: int) -> bool:
+        """Delete a trade and clear derived cache from the trade date onward."""
         with self.portfolio_write_session() as session:
             return self.delete_trade_in_session(session=session, trade_id=trade_id)
 
     def delete_cash_ledger(self, entry_id: int) -> bool:
+        """Delete a cash ledger row and clear derived cache from its event date."""
         with self.portfolio_write_session() as session:
             return self.delete_cash_ledger_in_session(session=session, entry_id=entry_id)
 
     def delete_corporate_action(self, action_id: int) -> bool:
+        """Delete a corporate action and clear affected derived portfolio state."""
         with self.portfolio_write_session() as session:
             return self.delete_corporate_action_in_session(session=session, action_id=action_id)
 
@@ -310,6 +328,7 @@ class PortfolioRepository:
             )
 
     def has_trade_uid_in_session(self, *, session: Any, account_id: int, trade_uid: str) -> bool:
+        """Session-scoped uniqueness check for caller-managed import transactions."""
         row = session.execute(
             select(PortfolioTrade.id).where(
                 and_(
@@ -321,6 +340,7 @@ class PortfolioRepository:
         return row is not None
 
     def has_trade_dedup_hash_in_session(self, *, session: Any, account_id: int, dedup_hash: str) -> bool:
+        """Session-scoped dedup hash check used by import batches."""
         row = session.execute(
             select(PortfolioTrade.id).where(
                 and_(
@@ -349,6 +369,7 @@ class PortfolioRepository:
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
     ) -> PortfolioTrade:
+        """Insert a trade inside an existing write session and translate duplicates."""
         row = PortfolioTrade(
             account_id=account_id,
             trade_uid=trade_uid,
@@ -393,6 +414,7 @@ class PortfolioRepository:
         currency: str,
         note: Optional[str] = None,
     ) -> PortfolioCashLedger:
+        """Insert a cash movement inside an existing write session."""
         row = PortfolioCashLedger(
             account_id=account_id,
             event_date=event_date,
@@ -425,6 +447,7 @@ class PortfolioRepository:
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
     ) -> PortfolioCorporateAction:
+        """Insert a corporate action inside an existing write session."""
         row = PortfolioCorporateAction(
             account_id=account_id,
             symbol=symbol,
@@ -447,6 +470,7 @@ class PortfolioRepository:
         return row
 
     def delete_trade_in_session(self, *, session: Any, trade_id: int) -> bool:
+        """Session-scoped trade delete that invalidates only affected future snapshots."""
         row = session.execute(
             select(PortfolioTrade).where(PortfolioTrade.id == trade_id).limit(1)
         ).scalar_one_or_none()
@@ -462,6 +486,7 @@ class PortfolioRepository:
         return True
 
     def delete_cash_ledger_in_session(self, *, session: Any, entry_id: int) -> bool:
+        """Session-scoped cash event delete that clears dependent caches."""
         row = session.execute(
             select(PortfolioCashLedger).where(PortfolioCashLedger.id == entry_id).limit(1)
         ).scalar_one_or_none()
@@ -477,6 +502,7 @@ class PortfolioRepository:
         return True
 
     def delete_corporate_action_in_session(self, *, session: Any, action_id: int) -> bool:
+        """Session-scoped corporate action delete that clears dependent caches."""
         row = session.execute(
             select(PortfolioCorporateAction).where(PortfolioCorporateAction.id == action_id).limit(1)
         ).scalar_one_or_none()
@@ -495,6 +521,7 @@ class PortfolioRepository:
     # Event reads
     # ------------------------------------------------------------------
     def list_trades(self, account_id: int, as_of: date) -> List[PortfolioTrade]:
+        """List all trades up to ``as_of`` in deterministic ledger order."""
         with self.db.get_session() as session:
             return self.list_trades_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -505,6 +532,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioTrade]:
+        """Session-scoped trade listing for valuation calculators."""
         rows = session.execute(
             select(PortfolioTrade)
             .where(
@@ -518,6 +546,7 @@ class PortfolioRepository:
         return list(rows)
 
     def list_cash_ledger(self, account_id: int, as_of: date) -> List[PortfolioCashLedger]:
+        """List all cash movements up to ``as_of`` in event order."""
         with self.db.get_session() as session:
             return self.list_cash_ledger_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -528,6 +557,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioCashLedger]:
+        """Session-scoped cash ledger listing for portfolio reconstruction."""
         rows = session.execute(
             select(PortfolioCashLedger)
             .where(
@@ -541,6 +571,7 @@ class PortfolioRepository:
         return list(rows)
 
     def list_corporate_actions(self, account_id: int, as_of: date) -> List[PortfolioCorporateAction]:
+        """List corporate actions effective on or before ``as_of``."""
         with self.db.get_session() as session:
             return self.list_corporate_actions_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -551,6 +582,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioCorporateAction]:
+        """Session-scoped corporate action listing for valuation replay."""
         rows = session.execute(
             select(PortfolioCorporateAction)
             .where(
@@ -608,6 +640,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioTrade], int]:
+        """Return a paginated trade query, optionally scoped by account owner."""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -653,6 +686,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCashLedger], int]:
+        """Return a paginated cash ledger query with optional owner scoping."""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -697,6 +731,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCorporateAction], int]:
+        """Return a paginated corporate-action query with symbol/type filters."""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -735,10 +770,12 @@ class PortfolioRepository:
     # Price / FX
     # ------------------------------------------------------------------
     def get_latest_close(self, symbol: str, as_of: date) -> Optional[float]:
+        """Return the latest close price on or before ``as_of`` without its date."""
         close = self.get_latest_close_with_date(symbol=symbol, as_of=as_of)
         return close[0] if close is not None else None
 
     def get_latest_close_with_date(self, symbol: str, as_of: date) -> Optional[Tuple[float, date]]:
+        """Return the latest close price and quote date for valuation staleness checks."""
         with self.db.get_session() as session:
             row = session.execute(
                 select(StockDaily)
@@ -765,6 +802,7 @@ class PortfolioRepository:
         source: str = "manual",
         is_stale: bool = False,
     ) -> None:
+        """Upsert a daily FX rate for a currency pair."""
         with self.db.get_session() as session:
             existing = session.execute(
                 select(PortfolioFxRate).where(
@@ -800,6 +838,7 @@ class PortfolioRepository:
         to_currency: str,
         as_of: date,
     ) -> Optional[PortfolioFxRate]:
+        """Return the newest FX rate on or before ``as_of`` for a currency pair."""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioFxRate)
@@ -857,6 +896,7 @@ class PortfolioRepository:
         lots: Iterable[Dict[str, Any]],
         valuation_currency: str,
     ) -> None:
+        """Replace cached positions/lots for one account and cost method."""
         with self.db.get_session() as session:
             session.execute(
                 delete(PortfolioPosition).where(
@@ -911,6 +951,7 @@ class PortfolioRepository:
             session.commit()
 
     def _invalidate_account_cache_in_session(self, *, session: Any, account_id: int, from_date: date) -> None:
+        """Drop derived portfolio caches that may depend on a changed ledger event."""
         session.execute(
             delete(PortfolioPositionLot).where(PortfolioPositionLot.account_id == account_id)
         )
@@ -928,6 +969,7 @@ class PortfolioRepository:
 
     @staticmethod
     def _is_sqlite_locked_error(exc: OperationalError) -> bool:
+        """Return True for SQLite lock messages that should become PortfolioBusyError."""
         err_text = str(getattr(exc, "orig", exc)).lower()
         return any(
             token in err_text
@@ -946,6 +988,7 @@ class PortfolioRepository:
         trade_uid: Optional[str],
         dedup_hash: Optional[str],
     ) -> Exception:
+        """Map low-level unique constraint errors to domain-specific exceptions."""
         err_text = str(getattr(exc, "orig", exc)).lower()
         if trade_uid and ("uix_portfolio_trade_uid" in err_text or "unique" in err_text):
             return DuplicateTradeUidError(
@@ -978,6 +1021,7 @@ class PortfolioRepository:
         fx_stale: bool,
         payload: str,
     ) -> None:
+        """Insert or update one daily portfolio snapshot row."""
         with self.db.get_session() as session:
             existing = session.execute(
                 select(PortfolioDailySnapshot).where(

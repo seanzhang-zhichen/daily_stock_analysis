@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Background worker for persisted and legacy alert rules."""
+"""Background worker for persisted and legacy alert rules.
+
+The worker runs one polling cycle at a time. It evaluates DB rules first, then
+legacy JSON rules from config, records trigger/degraded/failure outcomes, and
+deduplicates notifications with an in-memory fingerprint TTL.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +34,8 @@ WRITABLE_TRIGGER_STATUSES = frozenset({"triggered", "skipped", "degraded", "fail
 
 @dataclass
 class RuntimeAlertRule:
+    """Normalized runtime rule with its dedupe key and source label."""
+
     key: str
     rule: Any
     source: str
@@ -46,6 +53,7 @@ class AlertWorker:
         now_provider: Optional[Callable[[], float]] = None,
         fingerprint_ttl_seconds: int = ALERT_WORKER_FINGERPRINT_TTL_SECONDS,
     ) -> None:
+        """Create a worker with injectable config/service/notifier for tests."""
         self.config_provider = config_provider or self._default_config_provider
         self.service = service or AlertService()
         self.notifier = notifier
@@ -55,6 +63,7 @@ class AlertWorker:
 
     @staticmethod
     def _default_config_provider():
+        """Load runtime config lazily to avoid import cycles during startup."""
         from src.config import get_config
 
         return get_config()
@@ -128,6 +137,7 @@ class AlertWorker:
         return stats
 
     def _load_runtime_rules(self, config: Any) -> List[RuntimeAlertRule]:
+        """Load enabled DB rules and non-duplicate legacy env rules."""
         runtime_rules: List[RuntimeAlertRule] = []
         seen_keys = set()
 
@@ -161,6 +171,7 @@ class AlertWorker:
         return runtime_rules
 
     def _load_legacy_rules(self, config: Any) -> List[Tuple[str, Any]]:
+        """Parse legacy ``AGENT_EVENT_ALERT_RULES_JSON`` into runtime rules."""
         raw_rules = getattr(config, "agent_event_alert_rules_json", "")
         try:
             parsed_rules = parse_event_alert_rules(raw_rules)
@@ -206,10 +217,12 @@ class AlertWorker:
 
     @staticmethod
     def _semantic_key(target_scope: str, target: str, alert_type: str, parameters: Dict[str, Any]) -> str:
+        """Build a stable semantic key used for dedupe and notification cooldown."""
         canonical_params = json.dumps(parameters or {}, ensure_ascii=False, sort_keys=True)
         return f"{target_scope}:{target}:{alert_type}:{canonical_params}"
 
     def _record_trigger(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any], status: str) -> None:
+        """Persist one alert evaluation outcome into trigger history."""
         try:
             rule_id = int(result.get("rule_id") or 0) or None
         except (TypeError, ValueError):
@@ -229,6 +242,7 @@ class AlertWorker:
         self.service.repo.create_trigger(fields)
 
     def _record_trigger_safely(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any], status: str) -> bool:
+        """Record trigger history without letting DB errors stop the worker cycle."""
         try:
             self._record_trigger(runtime_rule, result, status)
             return True
@@ -242,6 +256,7 @@ class AlertWorker:
 
     @staticmethod
     def _optional_float(value: Any) -> Optional[float]:
+        """Coerce optional numeric fields from evaluation results."""
         if value is None:
             return None
         try:
@@ -251,11 +266,13 @@ class AlertWorker:
 
     @staticmethod
     def _diagnostics_for_status(status: str, result: Dict[str, Any]) -> Optional[str]:
+        """Return diagnostic text only for non-triggered evaluation outcomes."""
         if status == "triggered":
             return None
         return result.get("message") or result.get("reason")
 
     def _should_notify(self, rule_key: str) -> bool:
+        """Return whether this semantic rule is outside its notification cooldown."""
         now = self.now_provider()
         last_seen = self._trigger_fingerprints.get(rule_key)
         if last_seen is not None and now - last_seen < self.fingerprint_ttl_seconds:
@@ -263,9 +280,11 @@ class AlertWorker:
         return True
 
     def _mark_notified(self, rule_key: str) -> None:
+        """Remember the last notification time for a semantic rule."""
         self._trigger_fingerprints[rule_key] = self.now_provider()
 
     def _prune_fingerprints(self) -> None:
+        """Drop expired notification cooldown fingerprints."""
         now = self.now_provider()
         expired_keys = [
             key
@@ -276,6 +295,7 @@ class AlertWorker:
             self._trigger_fingerprints.pop(key, None)
 
     def _send_notification(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any]) -> bool:
+        """Send one alert notification through the normal notification service."""
         from src.notification import NotificationBuilder, NotificationService
 
         notification_service = self.notifier or NotificationService()
@@ -288,6 +308,7 @@ class AlertWorker:
         return bool(sent)
 
     def _send_notification_safely(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any]) -> bool:
+        """Convert notification exceptions into a failed send result."""
         try:
             return self._send_notification(runtime_rule, result)
         except Exception as exc:

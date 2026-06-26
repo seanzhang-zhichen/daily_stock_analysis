@@ -1,4 +1,9 @@
-"""System configuration endpoints."""
+"""System configuration endpoints.
+
+这些接口只允许管理员访问，用于动态设置表单、.env 导入导出、运行时配置更新、
+LLM/通知通道测试和模型发现。原始 .env 备份额外受 ``_allow_env_backup_access``
+保护，避免在未启用管理认证的服务端环境暴露敏感配置。
+"""
 
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ class EnvBackupAccessDenied(Exception):
     """Raised when raw `.env` backup access is not allowed for this request."""
 
     def __init__(self, *, status_code: int, message: str) -> None:
+        """Store the HTTP status and display message for endpoint conversion."""
         super().__init__(message)
         self.status_code = status_code
         self.message = message
@@ -77,6 +83,7 @@ def _allow_env_backup_access(request: Request) -> None:
 
 
 def _raise_env_backup_access_error(exc: EnvBackupAccessDenied) -> None:
+    """Convert env-backup gate failures into the public API error shape."""
     raise HTTPException(
         status_code=exc.status_code,
         detail={
@@ -101,7 +108,7 @@ def get_system_config(
     include_schema: bool = Query(True, description="Whether to include schema metadata"),
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> SystemConfigResponse:
-    """Load and return current system configuration."""
+    """Load current config values, optionally with frontend schema metadata."""
     try:
         payload = service.get_config(include_schema=include_schema)
         return SystemConfigResponse.model_validate(payload)
@@ -161,7 +168,7 @@ def update_system_config(
     request: UpdateSystemConfigRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> UpdateSystemConfigResponse:
-    """Validate and persist system configuration updates."""
+    """Validate, version-check, persist, and optionally reload configuration."""
     try:
         payload = service.update(
             config_version=request.config_version,
@@ -215,7 +222,7 @@ def export_system_config(
     request: Request,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> ExportSystemConfigResponse:
-    """Export the active `.env` file for config backup."""
+    """Export raw saved `.env` content after backup-access checks."""
     try:
         _allow_env_backup_access(request)
     except EnvBackupAccessDenied as exc:
@@ -267,7 +274,7 @@ def import_system_config(
     request_obj: Request,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> UpdateSystemConfigResponse:
-    """Import a `.env` backup into the active config."""
+    """Import raw `.env` text with validation and optimistic conflict checks."""
     try:
         _allow_env_backup_access(request_obj)
     except EnvBackupAccessDenied as exc:
@@ -332,7 +339,7 @@ def validate_system_config(
     request: ValidateSystemConfigRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> ValidateSystemConfigResponse:
-    """Run pre-save validation only."""
+    """Run pre-save validation without writing files or reloading runtime state."""
     try:
         payload = service.validate(items=[item.model_dump() for item in request.items])
         return ValidateSystemConfigResponse.model_validate(payload)
@@ -361,7 +368,7 @@ def test_llm_channel(
     request: TestLLMChannelRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> TestLLMChannelResponse:
-    """Validate and test one channel definition without writing `.env`."""
+    """Validate and smoke-test one LLM channel definition without saving it."""
     try:
         payload = service.test_llm_channel(
             name=request.name,
@@ -407,7 +414,7 @@ def test_notification_channel(
     request: TestNotificationChannelRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> TestNotificationChannelResponse:
-    """Validate and test one notification channel without writing `.env`."""
+    """Send a draft notification-channel test without saving configuration."""
     try:
         payload = service.test_notification_channel(
             channel=request.channel,
@@ -451,7 +458,7 @@ def discover_llm_channel_models(
     request: DiscoverLLMChannelModelsRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> DiscoverLLMChannelModelsResponse:
-    """Discover models for one channel definition without writing `.env`."""
+    """Call a draft LLM channel's model-list endpoint without saving it."""
     try:
         payload = service.discover_llm_channel_models(
             name=request.name,
@@ -494,7 +501,7 @@ def discover_llm_channel_models(
 def get_system_config_schema(
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> SystemConfigSchemaResponse:
-    """Return schema metadata for system configuration fields."""
+    """Return categorized field metadata for dynamic settings-page rendering."""
     try:
         payload = service.get_schema()
         return SystemConfigSchemaResponse.model_validate(payload)

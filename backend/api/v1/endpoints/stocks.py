@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-股票数据接口
-===================================
+"""Stock data, import parsing, and image extraction endpoints.
 
-职责：
-1. POST /api/v1/stocks/extract-from-image 从图片提取股票代码
-2. POST /api/v1/stocks/parse-import 解析 CSV/Excel/剪贴板
-3. GET /api/v1/stocks/{code}/quote 实时行情接口
-4. GET /api/v1/stocks/{code}/history 历史行情接口
+本模块提供公开股票搜索、图片/文本/文件解析、实时行情和历史 K 线查询。上传类接口
+在进入服务层前先做 MIME、大小和格式校验；行情接口保持同步函数，让 FastAPI 在线程池
+中执行可能阻塞的数据源调用。
 """
 
 import logging
@@ -47,13 +42,15 @@ _SEARCH_RATE_MAX_REQUESTS = 60
 _search_rate_lock = threading.Lock()
 _search_rate_state: dict[str, tuple[int, float]] = {}
 
-# 须在 /{stock_code} 路由之前定义
+# 搜索路由必须在 /{stock_code}/... 动态路由之前定义，否则会被当作股票代码。
 ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
 
 
 def _check_search_rate_limit(key: str) -> bool:
+    """Return whether one client can issue another stock-search request."""
     now = time.time()
     with _search_rate_lock:
+        # 顺手清理过期窗口，避免长期运行进程中内存随客户端 IP 无界增长。
         for state_key, (_, started_at) in list(_search_rate_state.items()):
             if now - started_at > _SEARCH_RATE_WINDOW_SEC:
                 _search_rate_state.pop(state_key, None)
@@ -77,6 +74,7 @@ def search_stock_index(
     q: str = Query("", min_length=1, max_length=64, description="股票代码、中文名、拼音或别名"),
     limit: int = Query(20, ge=1, le=50, description="返回数量"),
 ) -> dict:
+    """Search the local stock index for autocomplete suggestions."""
     client_host = request.client.host if request.client else "unknown"
     if not _check_search_rate_limit(client_host):
         raise HTTPException(
@@ -108,11 +106,7 @@ def extract_from_image(
     file: Optional[UploadFile] = File(None, description="图片文件（表单字段名 file）"),
     include_raw: bool = Query(False, description="是否在结果中包含原始 LLM 响应"),
 ) -> ExtractFromImageResponse:
-    """
-    从上传的图片中提取股票代码（使用 Vision LLM）。
-
-    表单字段请使用 file 上传图片。优先级：Gemini / Anthropic / OpenAI（首个可用）。
-    """
+    """Extract stock candidates from an uploaded image using the Vision pipeline."""
     if not file or not file.filename:
         raise HTTPException(
             status_code=400,
@@ -130,7 +124,7 @@ def extract_from_image(
         )
 
     try:
-        # 先读取限定大小，再检查是否还有剩余（语义清晰：超出则拒绝）
+        # 先读取限定大小，再探测是否还有剩余字节；超过上限就拒绝，避免完整读入大文件。
         data = file.file.read(MAX_SIZE_BYTES)
         if file.file.read(1):
             raise HTTPException(
@@ -180,12 +174,11 @@ def extract_from_image(
     description="上传 CSV/Excel 文件或粘贴文本，自动解析股票代码。文件上限 2MB，文本上限 100KB。",
 )
 async def parse_import(request: Request) -> ExtractFromImageResponse:
-    """
-    解析 CSV/Excel 文件或剪贴板文本。
+    """Parse stock candidates from uploaded files or pasted text.
 
-    - multipart/form-data + file: 上传文件
-    - application/json + {"text": "..."}: 粘贴文本
-    - 优先使用 file，若同时提供则忽略 text
+    支持 ``multipart/form-data`` 的 ``file`` 字段，以及
+    ``application/json`` 的 ``{"text": "..."}``。两类输入分别走服务层解析，
+    endpoint 只负责读取、大小限制和错误转换。
     """
     content_type = (request.headers.get("content-type") or "").lower()
 
@@ -297,24 +290,11 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
     description="获取指定股票的最新行情数据"
 )
 def get_stock_quote(stock_code: str) -> StockQuote:
-    """
-    获取股票实时行情
-    
-    获取指定股票的最新行情数据
-    
-    Args:
-        stock_code: 股票代码（如 600519、00700、AAPL）
-        
-    Returns:
-        StockQuote: 实时行情数据
-        
-    Raises:
-        HTTPException: 404 - 股票不存在
-    """
+    """Return the latest normalized quote for one stock code."""
     try:
         service = StockService()
         
-        # 使用 def 而非 async def，FastAPI 自动在线程池中执行
+        # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
         result = service.get_realtime_quote(stock_code)
         
         if result is None:
@@ -370,30 +350,18 @@ def get_stock_history(
     period: str = Query("daily", description="K 线周期", pattern="^(daily|weekly|monthly)$"),
     days: int = Query(30, ge=1, le=365, description="获取天数")
 ) -> StockHistoryResponse:
-    """
-    获取股票历史行情
-    
-    获取指定股票的历史 K 线数据
-    
-    Args:
-        stock_code: 股票代码
-        period: K 线周期 (daily/weekly/monthly)
-        days: 获取天数
-        
-    Returns:
-        StockHistoryResponse: 历史行情数据
-    """
+    """Return historical K-line data for one stock code and period."""
     try:
         service = StockService()
         
-        # 使用 def 而非 async def，FastAPI 自动在线程池中执行
+        # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
         result = service.get_history_data(
             stock_code=stock_code,
             period=period,
             days=days
         )
         
-        # 转换为响应模型
+        # 服务层返回 dict 列表，这里收敛为公开 Pydantic 响应模型。
         data = [
             KLineData(
                 date=item.get("date"),
@@ -416,7 +384,7 @@ def get_stock_history(
         )
     
     except ValueError as e:
-        # period 参数不支持的错误（如 weekly/monthly）
+        # 服务层用 ValueError 表达不支持的周期，映射为请求参数错误。
         raise HTTPException(
             status_code=422,
             detail={

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class CustomWebhookSender:
+    """Send notifications to arbitrary JSON webhook endpoints."""
 
     def __init__(self, config: Config):
         """
@@ -147,6 +148,7 @@ class CustomWebhookSender:
         return success_count > 0
 
     def _post_custom_webhook(self, url: str, payload: dict, timeout: int = 30) -> bool:
+        """POST one custom webhook payload and return a success boolean."""
         headers = {
             'Content-Type': 'application/json; charset=utf-8',
             'User-Agent': 'StockAnalysis/1.0',
@@ -198,6 +200,7 @@ class CustomWebhookSender:
         timeout_seconds: float,
         index: int,
     ) -> Dict[str, Any]:
+        """POST one test webhook payload and return diagnostic attempt metadata."""
         headers = {
             'Content-Type': 'application/json; charset=utf-8',
             'User-Agent': 'StockAnalysis/1.0',
@@ -258,6 +261,7 @@ class CustomWebhookSender:
 
     @staticmethod
     def _classify_custom_webhook_exception(exc: Exception) -> Tuple[str, bool]:
+        """Classify webhook test exceptions into stable error code and retryability."""
         if isinstance(exc, requests.exceptions.Timeout):
             return "timeout", True
         if isinstance(exc, requests.exceptions.ConnectionError):
@@ -349,6 +353,7 @@ class CustomWebhookSender:
         return payload
     
     def _send_dingtalk_chunked(self, url: str, content: str, max_bytes: int = 20000) -> bool:
+        """Send oversized DingTalk markdown messages in byte-limited chunks."""
         import time as _time
 
         # 为 payload 开销预留空间，避免 body 超限
@@ -389,11 +394,13 @@ class CustomWebhookSender:
     
     @staticmethod
     def _is_dingtalk_webhook(url: str) -> bool:
+        """Return whether a webhook URL targets DingTalk."""
         url_lower = (url or "").lower()
         return 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower
 
     @staticmethod
     def _is_discord_webhook(url: str) -> bool:
+        """Return whether a webhook URL targets Discord."""
         url_lower = (url or "").lower()
         return (
             'discord.com/api/webhooks' in url_lower

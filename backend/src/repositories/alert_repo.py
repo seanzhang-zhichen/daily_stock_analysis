@@ -18,9 +18,11 @@ class AlertRepository:
     """DB access layer for alert rules and read-only alert history."""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Use the shared database manager unless tests inject an isolated one."""
         self.db = db_manager or DatabaseManager.get_instance()
 
     def create_rule(self, fields: Dict[str, Any]) -> AlertRuleRecord:
+        """Persist a validated alert rule payload and return the refreshed row."""
         with self.db.get_session() as session:
             row = AlertRuleRecord(**fields)
             session.add(row)
@@ -50,6 +52,7 @@ class AlertRepository:
         *,
         user_id: Optional[int] = None,
     ) -> Optional[AlertRuleRecord]:
+        """Patch a rule, optionally scoped by owner, and return None when missing."""
         with self.db.get_session() as session:
             conditions = [AlertRuleRecord.id == rule_id]
             if user_id is not None:
@@ -67,6 +70,7 @@ class AlertRepository:
             return row
 
     def delete_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> bool:
+        """Delete a rule by id, respecting user ownership when provided."""
         with self.db.get_session() as session:
             conditions = [AlertRuleRecord.id == rule_id]
             if user_id is not None:
@@ -87,6 +91,7 @@ class AlertRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertRuleRecord], int]:
+        """Return a filtered rule page plus the total count for API pagination."""
         conditions = []
         if enabled is not None:
             conditions.append(AlertRuleRecord.enabled.is_(enabled))
@@ -117,6 +122,7 @@ class AlertRepository:
             return list(rows), int(total)
 
     def list_enabled_rules(self, *, limit: int = 1000) -> List[AlertRuleRecord]:
+        """Return enabled rules for the worker, clamping the scan size defensively."""
         safe_limit = max(1, min(int(limit), 1000))
         with self.db.get_session() as session:
             rows = session.execute(
@@ -128,6 +134,7 @@ class AlertRepository:
             return list(rows)
 
     def create_trigger(self, fields: Dict[str, Any]) -> AlertTriggerRecord:
+        """Persist an alert trigger after checking fields required by downstream APIs."""
         if not fields.get("target"):
             raise ValueError("alert trigger target is required")
         if not fields.get("status"):
@@ -150,6 +157,7 @@ class AlertRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertTriggerRecord], int]:
+        """Return trigger history joined to rules so user scoping stays enforceable."""
         conditions = []
         if user_id is not None:
             conditions.append(AlertRuleRecord.user_id == user_id)
@@ -189,6 +197,7 @@ class AlertRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertNotificationRecord], int]:
+        """Return notification delivery history with optional trigger/user filters."""
         conditions = []
         if user_id is not None:
             conditions.append(AlertRuleRecord.user_id == user_id)

@@ -334,18 +334,23 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
 
     # ---- Helpers ----
     def body(i):
+        """Return absolute candle body size for row index i."""
         return abs(c[i] - o[i])
 
     def upper_shadow(i):
+        """Return upper shadow length for row index i."""
         return h[i] - max(c[i], o[i])
 
     def lower_shadow(i):
+        """Return lower shadow length for row index i."""
         return min(c[i], o[i]) - l[i]
 
     def is_bullish(i):
+        """Return True when candle i closes above open."""
         return c[i] > o[i]
 
     def is_bearish(i):
+        """Return True when candle i closes below open."""
         return c[i] < o[i]
 
     avg_body = sum(body(i) for i in range(n)) / n if n > 0 else 1

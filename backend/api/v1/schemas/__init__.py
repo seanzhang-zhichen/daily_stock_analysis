@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-API v1 Schemas 模块初始化
-===================================
+"""Convenience exports for API v1 Pydantic models.
 
-职责：
-1. 导出所有 Pydantic 模型
+schema 真实定义仍按业务域拆分在同级文件中。本模块保留集中导出，兼容历史代码
+中的 ``from api.v1.schemas import Foo`` 写法，也让测试可以从一个入口拿到公开
+契约模型。
 """
 
 from api.v1.schemas.common import (

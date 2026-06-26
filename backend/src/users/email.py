@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class EmailMessageDTO:
+    """邮件发送请求对象，避免各调用方直接操作 EmailMessage。"""
+
     to: str
     subject: str
     body_text: str
@@ -31,6 +33,8 @@ class EmailMessageDTO:
 
 
 class EmailBackend(Protocol):
+    """邮件后端协议，便于测试注入 fake backend。"""
+
     def send(self, message: EmailMessageDTO) -> None:  # noqa: D401
         """发送邮件, 失败时抛出异常。"""
 
@@ -39,6 +43,7 @@ class LoggingEmailBackend:
     """默认实现: 不真正发件, 仅写日志。"""
 
     def send(self, message: EmailMessageDTO) -> None:
+        """把邮件内容写入日志，作为开发环境的 fail-safe 后端。"""
         logger.warning(
             "[email-stub] to=%s subject=%s\n%s",
             message.to,
@@ -60,6 +65,7 @@ class SmtpEmailBackend:
         use_tls: bool = True,
         use_ssl: bool = False,
     ) -> None:
+        """保存 SMTP 连接参数，实际连接在每次 send 时创建。"""
         self._host = host
         self._port = port
         self._username = username
@@ -69,6 +75,7 @@ class SmtpEmailBackend:
         self._use_ssl = use_ssl
 
     def send(self, message: EmailMessageDTO) -> None:
+        """发送一封文本/HTML 邮件，认证信息为空时跳过 login。"""
         msg = EmailMessage()
         msg["Subject"] = message.subject
         msg["From"] = self._sender
@@ -92,6 +99,7 @@ class SmtpEmailBackend:
 
 
 def _coerce_int(value: str | None, default: int) -> int:
+    """解析整数环境变量，非法时回退到默认值。"""
     try:
         return int((value or "").strip() or default)
     except ValueError:

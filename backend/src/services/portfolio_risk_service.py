@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Portfolio risk service for concentration, drawdown and stop-loss proximity."""
+"""Portfolio risk service for concentration, drawdown and stop-loss proximity.
+
+Risk blocks are computed from replayed portfolio snapshots. The service may
+backfill missing daily snapshots for the requested lookback window so drawdown
+metrics remain meaningful even if the risk endpoint is opened infrequently.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ class PortfolioRiskService:
         portfolio_service: Optional[PortfolioService] = None,
         config: Optional[Config] = None,
     ):
+        """Initialize repository/service dependencies and lazy data manager state."""
         self.repo = repo or PortfolioRepository()
         self.portfolio_service = portfolio_service or PortfolioService(repo=self.repo)
         self.config = config or get_config()
@@ -35,6 +41,7 @@ class PortfolioRiskService:
         cost_method: str = "fifo",
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Build all configured portfolio risk blocks for one account scope/date."""
         as_of_date = as_of or date.today()
         snapshot = self.portfolio_service.get_portfolio_snapshot(
             account_id=account_id,
@@ -96,6 +103,7 @@ class PortfolioRiskService:
         cost_method: str,
         lookback_days: int,
     ) -> None:
+        """Backfill missing daily snapshots needed for drawdown calculations."""
         if lookback_days <= 0:
             return
 
@@ -150,6 +158,7 @@ class PortfolioRiskService:
         as_of_date: date,
         lookback_days: int,
     ) -> date:
+        """Start backfill no earlier than lookback start or first account activity."""
         window_start = as_of_date - timedelta(days=lookback_days)
         if account_id is not None:
             first_activity = self.repo.get_first_activity_date(account_id=account_id, as_of=as_of_date)
@@ -165,6 +174,7 @@ class PortfolioRiskService:
         return max(window_start, min(first_activity_candidates))
 
     def _build_concentration(self, snapshot: Dict[str, Any], threshold_pct: float, *, as_of_date: date) -> Dict[str, Any]:
+        """Compute single-symbol concentration weights in the base currency."""
         total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)
         exposure_by_symbol: Dict[str, float] = {}
         for account in snapshot.get("accounts", []):
@@ -210,6 +220,7 @@ class PortfolioRiskService:
         *,
         as_of_date: date,
     ) -> Dict[str, Any]:
+        """Compute sector/board concentration, classifying CN holdings best-effort."""
         total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)
         sector_exposure: Dict[str, float] = {}
         sector_symbols: Dict[str, set] = {}
@@ -280,6 +291,7 @@ class PortfolioRiskService:
         coverage: Dict[str, int],
         errors: List[str],
     ) -> str:
+        """Resolve one position into its primary sector with per-report caching."""
         cache_key = (symbol, market)
         if cache_key in board_cache:
             return board_cache[cache_key]
@@ -305,6 +317,7 @@ class PortfolioRiskService:
         return board_cache[cache_key]
 
     def _fetch_belong_boards(self, symbol: str) -> List[Dict[str, Any]]:
+        """Fetch board membership from the data provider when available."""
         manager = self._get_data_manager()
         if manager is None:
             return []
@@ -315,6 +328,7 @@ class PortfolioRiskService:
 
     @staticmethod
     def _pick_primary_board_name(boards: List[Dict[str, Any]]) -> Optional[str]:
+        """Prefer industry board names over generic concepts when possible."""
         if not boards:
             return None
 
@@ -335,6 +349,7 @@ class PortfolioRiskService:
         return preferred or fallback
 
     def _get_data_manager(self):
+        """Lazily initialize DataFetcherManager and fail open on import/setup errors."""
         if self._data_manager is not None:
             return self._data_manager
         if self._data_manager_init_error:
@@ -357,6 +372,7 @@ class PortfolioRiskService:
         threshold_pct: float,
         lookback_days: int,
     ) -> Dict[str, Any]:
+        """Compute max/current drawdown from stored daily equity snapshots."""
         rows = self.repo.list_daily_snapshots_for_risk(
             as_of=as_of_date,
             cost_method=cost_method,
@@ -408,6 +424,7 @@ class PortfolioRiskService:
 
     @staticmethod
     def _build_stop_loss(snapshot: Dict[str, Any], thresholds: Dict[str, Any]) -> Dict[str, Any]:
+        """Find positions near or beyond the configured cost-based loss threshold."""
         stop_loss_pct = float(thresholds["stop_loss_alert_pct"])
         near_ratio = float(thresholds["stop_loss_near_ratio"])
         near_threshold = stop_loss_pct * near_ratio

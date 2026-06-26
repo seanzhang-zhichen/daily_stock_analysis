@@ -41,6 +41,7 @@ class ResolvedPlan:
 
     @property
     def is_pro(self) -> bool:
+        """free 以外的套餐都按付费/高级权益处理。"""
         return self.code != "free"
 
 
@@ -48,6 +49,7 @@ _FREE_PLAN_CODE = "free"
 
 
 def _parse_allowed_models(raw: Optional[str]) -> List[str]:
+    """解析套餐允许模型列表，兼容 JSON 数组和逗号分隔旧格式。"""
     if not raw:
         return []
     try:
@@ -60,6 +62,7 @@ def _parse_allowed_models(raw: Optional[str]) -> List[str]:
 
 
 def _resolved_plan_from_row(row: AppPlan, *, expires_at: Optional[datetime]) -> ResolvedPlan:
+    """把数据库套餐行转换成运行期不可变快照。"""
     code = (row.code or "").strip().lower()
     return ResolvedPlan(
         code=code,
@@ -74,6 +77,7 @@ def _resolved_plan_from_row(row: AppPlan, *, expires_at: Optional[datetime]) -> 
 
 
 def serialize_plan_row(row: AppPlan, *, include_allowed_models: bool = False, source: str = "db") -> dict:
+    """序列化套餐目录项，供账户页和管理后台使用。"""
     code = (row.code or "").strip().lower()
     payload = {
         "code": code,
@@ -94,6 +98,7 @@ def serialize_plan_row(row: AppPlan, *, include_allowed_models: bool = False, so
 
 
 def _sort_plan_payloads(plans: List[dict]) -> List[dict]:
+    """按产品展示顺序排序套餐，未知套餐排在后面。"""
     order = {"free": 0, "pro": 1, "pro_yearly": 2}
     return sorted(
         plans,
@@ -111,6 +116,7 @@ def list_plan_catalog(
     include_inactive: bool = False,
     include_allowed_models: bool = False,
 ) -> List[dict]:
+    """返回可展示套餐目录，free 始终保留。"""
     plans_by_code = {}
     rows = db.query(AppPlan).order_by(AppPlan.price_cents.asc(), AppPlan.code.asc()).all()
     for row in rows:
@@ -129,6 +135,7 @@ def list_plan_catalog(
 
 
 def _free_plan_from_db(db: Session) -> ResolvedPlan:
+    """读取 free 套餐；缺失时抛业务错误提醒初始化异常。"""
     row = db.query(AppPlan).filter(AppPlan.code == _FREE_PLAN_CODE).first()
     if row is None:
         raise UserError(UserErrorCode.NOT_FOUND, "app_plans 缺少 free 套餐配置")
@@ -136,6 +143,7 @@ def _free_plan_from_db(db: Session) -> ResolvedPlan:
 
 
 def get_plan_by_code(db: Session, plan_code: str) -> Optional[AppPlan]:
+    """按 code 查找启用中的套餐。"""
     return (
         db.query(AppPlan)
         .filter(AppPlan.code == plan_code, AppPlan.is_active.is_(True))

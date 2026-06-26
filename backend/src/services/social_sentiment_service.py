@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-Social Sentiment Intelligence Service
-===================================
+"""Optional social sentiment enrichment for US stock analysis prompts.
 
-Fetches Reddit / X (Twitter) / Polymarket social sentiment data
-from api.adanos.org for US stock tickers.
-
-Optional — requires SOCIAL_SENTIMENT_API_KEY.
-Only activates for US stock codes (AAPL, TSLA, etc.).
+The service fetches Reddit, X/Twitter, and Polymarket signals from
+``api.adanos.org`` when ``SOCIAL_SENTIMENT_API_KEY`` is configured. Failures are
+soft because social data is supplementary and must not block core analysis.
 """
 
 import logging
@@ -70,6 +65,7 @@ class SocialSentimentService:
     _TRENDING_CACHE_TTL = 600  # 10 minutes
 
     def __init__(self, api_key: Optional[str] = None, api_url: str = "https://api.adanos.org"):
+        """Initialize API settings and per-process trending endpoint cache."""
         self._api_key = (api_key or "").strip() or None
         self._api_url = (api_url or "https://api.adanos.org").rstrip("/")
         # Simple in-memory cache: {"key": (timestamp, data)}
@@ -79,10 +75,12 @@ class SocialSentimentService:
 
     @property
     def is_available(self) -> bool:
+        """Return whether the optional social sentiment API can be used."""
         return self._api_key is not None
 
     @property
     def _headers(self) -> Dict[str, str]:
+        """Build request headers without exposing the API key in logs."""
         return {"X-API-Key": self._api_key or "", "Accept": "application/json"}
 
     # ------------------------------------------------------------------
@@ -104,6 +102,7 @@ class SocialSentimentService:
 
     @classmethod
     def _cache_wait_timeout_seconds(cls) -> float:
+        """Bound follower-thread waits to the request retry budget."""
         request_budget = (_REQUEST_TIMEOUT * _REQUEST_RETRY_ATTEMPTS) + _REQUEST_RETRY_WAIT_CAP
         return max(1.0, min(float(cls._TRENDING_CACHE_TTL), float(request_budget), 30.0))
 

@@ -25,10 +25,13 @@ _FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
 
 class FinnhubFetcher(BaseFetcher):
+    """Finnhub-backed US OHLCV and quote fetcher."""
+
     name = "FinnhubFetcher"
     priority = 2
 
     def __init__(self):
+        """Load Finnhub API key from config/env; missing key disables this fetcher."""
         from src.config import get_config
         config = get_config()
         self._api_key = getattr(config, 'finnhub_api_key', None) or os.getenv('FINNHUB_API_KEY')
@@ -36,9 +39,11 @@ class FinnhubFetcher(BaseFetcher):
             logger.debug("[Finnhub] API key not configured, fetcher disabled")
 
     def _is_us_stock(self, stock_code: str) -> bool:
+        """Return True when stock_code is supported by Finnhub US endpoints."""
         return is_us_stock_code(stock_code)
 
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """Fetch raw daily candle data from Finnhub."""
         if not self._api_key:
             raise DataFetchError("[Finnhub] API key not configured")
         if not self._is_us_stock(stock_code):
@@ -78,6 +83,7 @@ class FinnhubFetcher(BaseFetcher):
         })
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
+        """Normalize Finnhub candle rows into the project standard schema."""
         if df.empty:
             return df
 
@@ -97,6 +103,7 @@ class FinnhubFetcher(BaseFetcher):
         return df
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
+        """Fetch Finnhub quote endpoint data as UnifiedRealtimeQuote."""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 
@@ -147,6 +154,7 @@ class FinnhubFetcher(BaseFetcher):
         )
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
+        """Resolve ticker description through Finnhub search."""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 

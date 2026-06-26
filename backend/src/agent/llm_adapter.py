@@ -39,6 +39,8 @@ def _resolve_litellm_exception(name: str) -> type[BaseException]:
         return exc
 
     class _FallbackLiteLLMError(Exception):
+        """Fallback exception used when LiteLLM stubs omit the named error class."""
+
         pass
 
     _FallbackLiteLLMError.__name__ = f"Fallback{name}"
@@ -156,6 +158,7 @@ class LLMToolAdapter:
     """
 
     def __init__(self, config=None, user_id: Optional[int] = None):
+        """Initialise LiteLLM routing for platform defaults and optional user model prefs."""
         config = config or get_config()
         self._config = config
         self._user_id = user_id
@@ -166,6 +169,7 @@ class LLMToolAdapter:
         self._init_litellm()
 
     def _resolve_user_model_route(self, models_to_try: List[str]) -> Optional[ModelRoute]:
+        """Resolve per-user model restrictions/preferences from the database."""
         user_id = getattr(self, "_user_id", None)
         if not user_id:
             return None

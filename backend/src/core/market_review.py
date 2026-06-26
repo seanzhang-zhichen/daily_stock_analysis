@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-股票智能分析系统 - 大盘复盘模块（支持 A 股 / 港股 / 美股）
-===================================
+"""Market review orchestration for A-share, HK, and US daily recaps.
 
-职责：
-1. 根据 MARKET_REVIEW_REGION 配置选择市场区域（cn / hk / us / both）
-2. 执行大盘复盘分析并生成复盘报告
-3. 保存和发送复盘报告
+This module is the CLI/API/Bot-facing wrapper around ``MarketAnalyzer``. It
+normalizes region selection, persists the generated recap into the same history
+table as stock analyses, saves a markdown file, and optionally sends a
+notification. Data collection and prompt construction stay in ``MarketAnalyzer``.
 """
 
 import logging
@@ -30,6 +27,7 @@ MARKET_REVIEW_REPORT_TYPE = "market_review"
 
 
 def _get_market_review_text(language: str) -> dict[str, str]:
+    """Return localized titles used by file output, push content, and sections."""
     normalized = normalize_report_language(language)
     if normalized == "en":
         return {
@@ -59,8 +57,11 @@ def run_market_review(
     override_region: Optional[str] = None,
     query_id: Optional[str] = None,
 ) -> Optional[str]:
-    """
-    执行大盘复盘分析
+    """执行大盘复盘分析。
+
+    ``merge_notification`` is used by the main stock-analysis flow: market
+    review should still be generated and persisted, but the notification is
+    delayed so individual-stock and market-review content can be pushed once.
 
     Args:
         notifier: 通知服务
@@ -85,8 +86,8 @@ def run_market_review(
     _ALL_MARKETS = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
     _VALID_SINGLES = {'cn', 'us', 'hk'}
 
-    # Determine which markets to run.
-    # region can be: 'cn', 'hk', 'us', 'both', or a comma-joined subset like 'cn,us'.
+    # Accept both the legacy "both" flag and the newer comma-joined subset.
+    # Invalid entries are ignored so one bad token does not block valid regions.
     if ',' in region:
         run_markets = [m.strip() for m in region.split(',') if m.strip() in _VALID_SINGLES]
     elif region == 'both':
@@ -171,7 +172,12 @@ def _persist_market_review_history(
     config: object,
     query_id: Optional[str] = None,
 ) -> int:
-    """Persist market review output into the existing analysis history table."""
+    """Persist market review output into the existing analysis history table.
+
+    Market recaps reuse ``AnalysisResult`` so API/history consumers do not need
+    a separate storage contract. Persistence is best-effort: failures are logged
+    and must not prevent report-file generation or notifications.
+    """
     try:
         from src.storage import DatabaseManager
 
@@ -225,6 +231,7 @@ def _persist_market_review_history(
 
 
 def _summarize_market_review(review_report: str, report_language: str) -> str:
+    """Extract a compact history summary from the first meaningful report line."""
     for line in (review_report or "").splitlines():
         text = line.strip().lstrip("#").strip()
         if text and not text.startswith("---") and not text.startswith(">"):

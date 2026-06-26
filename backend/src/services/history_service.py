@@ -40,6 +40,7 @@ class MarkdownReportGenerationError(Exception):
     """Exception raised when Markdown report generation fails due to internal errors."""
 
     def __init__(self, message: str, record_id: str = None):
+        """Store the optional history record id that failed markdown rebuild."""
         self.message = message
         self.record_id = record_id
         super().__init__(self.message)
@@ -331,6 +332,7 @@ class HistoryService:
         }
 
     def _get_price_history(self, stock_code: Optional[str], days: int = 60) -> List[Dict[str, Any]]:
+        """Return recent stored OHLC rows for chart display in history detail."""
         if not stock_code or stock_code == "market_review":
             return []
 

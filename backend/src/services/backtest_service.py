@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Backtest orchestration service."""
+"""Backtest orchestration service.
+
+This service bridges stored analysis history, daily OHLC data, the pure
+``BacktestEngine``, and summary rollups. It owns database fetch/save behavior;
+the scoring rules themselves stay in ``src.core.backtest_engine``.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ class BacktestService:
     MAX_DYNAMIC_SUMMARY_ROWS = 2000
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Initialize repositories over the shared database manager."""
         self.db = db_manager or DatabaseManager.get_instance()
         self.repo = BacktestRepository(self.db)
         self.stock_repo = StockRepository(self.db)
@@ -39,6 +45,12 @@ class BacktestService:
         limit: int = 200,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Evaluate eligible historical analyses and persist backtest results.
+
+        ``force`` replaces existing evaluations for the same window/version.
+        Missing daily bars are filled best-effort through data providers before a
+        record is marked ``insufficient_data``.
+        """
         config = get_config()
 
         if eval_window_days is None:
@@ -226,6 +238,7 @@ class BacktestService:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Return paginated evaluation rows with optional stock/date filtering."""
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
 
@@ -267,6 +280,7 @@ class BacktestService:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
+        """Return stored summary metrics or a bounded dynamic date-filter summary."""
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
         lookup_code = OVERALL_SENTINEL_CODE if scope == "overall" else code
@@ -344,6 +358,7 @@ class BacktestService:
         return normalized
 
     def _resolve_analysis_date(self, analysis) -> Optional[date]:
+        """Resolve the trade date represented by an analysis history record."""
         parsed = self.repo.parse_analysis_date_from_snapshot(analysis.context_snapshot)
         if parsed:
             return parsed
@@ -353,6 +368,7 @@ class BacktestService:
         return None
 
     def _try_fill_daily_data(self, *, code: str, analysis_date: date, eval_window_days: int) -> None:
+        """Fetch and store missing daily bars needed by one backtest window."""
         try:
             from data_provider.base import DataFetcherManager
 
@@ -372,6 +388,7 @@ class BacktestService:
             logger.warning(f"补全日线数据失败({code}): {exc}")
 
     def _recompute_summaries(self, *, touched_codes: List[str], eval_window_days: int, engine_version: str) -> None:
+        """Rebuild overall and per-stock summary rows after saving evaluations."""
         with self.db.get_session() as session:
             # overall
             overall_rows = session.execute(
@@ -414,6 +431,7 @@ class BacktestService:
 
     @staticmethod
     def _build_summary_model(summary_data: Dict[str, Any]) -> BacktestSummary:
+        """Convert engine summary dict into a persistable ORM model."""
         return BacktestSummary(
             scope=summary_data.get("scope"),
             code=summary_data.get("code"),
@@ -447,6 +465,7 @@ class BacktestService:
         stock_name: Optional[str] = None,
         trend_prediction: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Serialize one backtest result row for API responses."""
         return {
             "analysis_history_id": row.analysis_history_id,
             "code": row.code,
@@ -484,6 +503,7 @@ class BacktestService:
 
     @staticmethod
     def _summary_to_dict(row: BacktestSummary) -> Dict[str, Any]:
+        """Serialize one stored summary row for API responses."""
         return {
             "scope": row.scope,
             "code": None if row.code == OVERALL_SENTINEL_CODE else row.code,
@@ -532,6 +552,7 @@ class BacktestService:
 
     @staticmethod
     def _pct_to_ratio(value: Optional[float], default: float = 0.0) -> float:
+        """Convert percent values into ratios used by learning summaries."""
         try:
             return float(value) / 100.0
         except (TypeError, ValueError):
@@ -539,6 +560,7 @@ class BacktestService:
 
     @staticmethod
     def _actual_movement_from_return(value: Optional[float]) -> Optional[str]:
+        """Bucket realized return into up/down/flat for Agent learning memory."""
         if value is None:
             return None
         try:
@@ -561,6 +583,11 @@ class BacktestService:
         engine_version: str,
         max_rows: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Compute a transient summary for date-filtered API queries.
+
+        Dynamic summaries are capped by ``MAX_DYNAMIC_SUMMARY_ROWS`` to avoid a
+        heavy full-table aggregation on interactive API requests.
+        """
         filtered_rows = [row for row in rows if getattr(row, "engine_version", None) == engine_version]
         if eval_window_days is not None:
             summary_window_days = int(eval_window_days)

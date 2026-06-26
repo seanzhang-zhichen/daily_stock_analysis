@@ -50,18 +50,22 @@ class HistoryCommand(BotCommand):
 
     @property
     def name(self) -> str:
+        """Return the primary command name used by the dispatcher."""
         return "history"
 
     @property
     def aliases(self) -> List[str]:
+        """Return localized aliases for conversation history lookup."""
         return ["历史", "会话"]
 
     @property
     def description(self) -> str:
+        """Return the short help-list description."""
         return "查看 Agent 对话历史"
 
     @property
     def usage(self) -> str:
+        """Return the argument pattern shown in command help."""
         return "/history [session_id | clear]"
 
     def execute(self, message: BotMessage, args: List[str]) -> BotResponse:

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Service layer for Alert API MVP."""
+"""Service layer for alert rule CRUD, evaluation, and serialization.
+
+The persisted Alert API reuses runtime rule classes from ``src.agent.events``.
+This service normalizes API payloads into those runtime classes, performs dry-run
+evaluation for the UI, and keeps trigger/notification history API-safe by
+sanitizing diagnostic text before returning it.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +55,7 @@ class AlertService:
     """Business logic for alert rule CRUD and dry-run evaluation."""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Initialize alert repository over the shared database manager."""
         self.db = db_manager or DatabaseManager.get_instance()
         self.repo = AlertRepository(self.db)
 
@@ -58,6 +65,7 @@ class AlertService:
         *,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Create one alert rule after validating target/type/parameters."""
         fields = self._normalize_rule_payload(payload)
         if user_id is not None:
             fields["user_id"] = user_id
@@ -69,6 +77,7 @@ class AlertService:
         *,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Return one user-scoped alert rule or raise not-found."""
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -81,6 +90,7 @@ class AlertService:
         *,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Patch an alert rule by merging request fields with stored values."""
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -97,6 +107,7 @@ class AlertService:
         return self._serialize_rule(updated)
 
     def delete_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> bool:
+        """Delete one alert rule within the optional user scope."""
         return self.repo.delete_rule(rule_id, user_id=user_id)
 
     def enable_rule(
@@ -106,6 +117,7 @@ class AlertService:
         *,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Enable or disable one alert rule."""
         updated = self.repo.update_rule(rule_id, {"enabled": enabled}, user_id=user_id)
         if updated is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -123,6 +135,7 @@ class AlertService:
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        """List alert rules with API pagination metadata."""
         rows, total = self.repo.list_rules(
             enabled=enabled,
             alert_type=alert_type,
@@ -146,6 +159,7 @@ class AlertService:
         *,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Dry-run one persisted rule and return the same evaluation shape as worker."""
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -170,6 +184,7 @@ class AlertService:
             }
 
     async def _evaluate_rule(self, rule, monitor: EventMonitor) -> Dict[str, Any]:
+        """Dispatch one runtime rule to its alert-type-specific evaluator."""
         if isinstance(rule, PriceAlert):
             return await self._evaluate_price(rule, monitor)
         if isinstance(rule, PriceChangeAlert):
@@ -179,6 +194,7 @@ class AlertService:
         return self._evaluation_error(rule, f"unsupported runtime alert type: {rule.alert_type}")
 
     async def _evaluate_price(self, rule: PriceAlert, monitor: EventMonitor) -> Dict[str, Any]:
+        """Evaluate a price-cross rule against the realtime quote monitor."""
         threshold = float(rule.price)
         try:
             quote = await monitor._get_realtime_quote(rule.stock_code)
@@ -243,6 +259,7 @@ class AlertService:
         )
 
     async def _evaluate_price_change(self, rule: PriceChangeAlert, monitor: EventMonitor) -> Dict[str, Any]:
+        """Evaluate a percent-change rule against realtime quote fields."""
         threshold = abs(float(rule.change_pct))
         try:
             quote = await monitor._get_realtime_quote(rule.stock_code)
@@ -305,7 +322,9 @@ class AlertService:
         )
 
     async def _evaluate_volume(self, rule: VolumeAlert) -> Dict[str, Any]:
+        """Evaluate a volume-spike rule using recent daily data."""
         def _fetch_daily_data():
+            """Fetch daily data in a worker thread because providers are blocking."""
             from data_provider import DataFetcherManager
 
             return DataFetcherManager().get_daily_data(rule.stock_code, days=20)
@@ -401,6 +420,7 @@ class AlertService:
         data_source: Optional[str] = None,
         data_timestamp: Optional[datetime] = None,
     ) -> Dict[str, Any]:
+        """Build a normalized successful-trigger evaluation payload."""
         sanitized_message = self._sanitize_text(message)
         return {
             "rule_id": self._runtime_rule_id(rule),
@@ -426,6 +446,7 @@ class AlertService:
         data_source: Optional[str] = None,
         data_timestamp: Optional[datetime] = None,
     ) -> Dict[str, Any]:
+        """Build a normalized non-trigger evaluation payload."""
         sanitized_message = self._sanitize_text(message)
         return {
             "rule_id": self._runtime_rule_id(rule),
@@ -449,6 +470,7 @@ class AlertService:
         data_source: Optional[str] = None,
         data_timestamp: Optional[datetime] = None,
     ) -> Dict[str, Any]:
+        """Build a normalized failed-evaluation payload."""
         sanitized_message = self._sanitize_text(str(exc) or "Alert evaluation failed")
         return {
             "rule_id": self._runtime_rule_id(rule),
@@ -465,10 +487,12 @@ class AlertService:
 
     @staticmethod
     def _runtime_rule_id(rule) -> int:
+        """Read the persisted rule id carried in runtime-rule metadata."""
         return int(rule.metadata.get("persisted_rule_id", 0) or 0)
 
     @staticmethod
     def _threshold_for_rule(rule) -> Optional[float]:
+        """Return the user-configured numeric threshold for known rule types."""
         if isinstance(rule, PriceAlert):
             return float(rule.price)
         if isinstance(rule, PriceChangeAlert):
@@ -477,6 +501,7 @@ class AlertService:
 
     @staticmethod
     def _data_source_for_rule(rule) -> Optional[str]:
+        """Return the primary data source used by a runtime rule type."""
         if isinstance(rule, (PriceAlert, PriceChangeAlert)):
             return "realtime_quote"
         if isinstance(rule, VolumeAlert):
@@ -485,6 +510,7 @@ class AlertService:
 
     @classmethod
     def _extract_quote_datetime(cls, quote: Any) -> Optional[datetime]:
+        """Extract the best available timestamp from a realtime quote object."""
         for field_name in (
             "data_timestamp",
             "timestamp",
@@ -503,6 +529,7 @@ class AlertService:
 
     @staticmethod
     def _read_quote_field(quote: Any, field_name: str) -> Any:
+        """Read one field from dict/object/to_dict quote shapes."""
         if quote is None:
             return None
         if isinstance(quote, dict):
@@ -519,6 +546,7 @@ class AlertService:
 
     @classmethod
     def _extract_daily_timestamp(cls, df: Any) -> Optional[datetime]:
+        """Extract the latest timestamp from a daily-data dataframe."""
         if df is None or getattr(df, "empty", True):
             return None
 
@@ -541,6 +569,7 @@ class AlertService:
 
     @staticmethod
     def _coerce_datetime(value: Any) -> Optional[datetime]:
+        """Coerce provider timestamp/date shapes while rejecting ambiguous numbers."""
         if value is None:
             return None
         if isinstance(value, datetime):
@@ -597,6 +626,7 @@ class AlertService:
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        """List recorded alert evaluation outcomes."""
         rows, total = self.repo.list_triggers(
             rule_id=rule_id,
             target=target,
@@ -622,6 +652,7 @@ class AlertService:
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        """List alert notification delivery attempts."""
         rows, total = self.repo.list_notifications(
             trigger_id=trigger_id,
             channel=channel,
@@ -638,6 +669,7 @@ class AlertService:
         }
 
     def _normalize_rule_payload(self, payload: Dict[str, Any], *, source: str = "api") -> Dict[str, Any]:
+        """Validate API payload and return repository-ready rule fields."""
         target_scope = str(payload.get("target_scope") or "single_symbol").strip()
         if target_scope not in SUPPORTED_TARGET_SCOPES:
             raise AlertServiceError(f"unsupported target_scope: {target_scope}")
@@ -681,11 +713,13 @@ class AlertService:
         }
 
     def _validate_rule_update_payload(self, payload: Dict[str, Any]) -> None:
+        """Reject nulls for non-nullable fields during partial updates."""
         for field_name, value in payload.items():
             if value is None and field_name not in NULLABLE_RULE_UPDATE_FIELDS:
                 raise AlertServiceError(f"{field_name} must not be null")
 
     def _normalize_parameters(self, alert_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize and validate alert-type-specific parameters."""
         if not isinstance(parameters, dict):
             raise AlertServiceError("parameters must be an object")
 
@@ -711,6 +745,7 @@ class AlertService:
 
     @staticmethod
     def _positive_float(value: Any, field_name: str) -> float:
+        """Parse a strictly positive numeric parameter."""
         try:
             number = float(value)
         except (TypeError, ValueError) as exc:
@@ -720,6 +755,7 @@ class AlertService:
         return number
 
     def _to_runtime_rule(self, row: AlertRuleRecord):
+        """Convert one persisted rule row into an EventMonitor runtime rule."""
         data = self._serialize_rule(row)
         parameters = data["parameters"]
         if data["alert_type"] == "price_cross":
@@ -745,6 +781,7 @@ class AlertService:
         raise UnsupportedAlertTypeError(f"unsupported alert_type for P1 Alert API: {data['alert_type']}")
 
     def _serialize_rule(self, row: AlertRuleRecord) -> Dict[str, Any]:
+        """Serialize a rule row into the public API shape."""
         return {
             "id": row.id,
             "name": row.name,
@@ -762,6 +799,7 @@ class AlertService:
         }
 
     def _serialize_trigger(self, row: AlertTriggerRecord) -> Dict[str, Any]:
+        """Serialize a trigger row and sanitize any diagnostic text."""
         return {
             "id": row.id,
             "rule_id": row.rule_id,
@@ -777,6 +815,7 @@ class AlertService:
         }
 
     def _serialize_notification(self, row: AlertNotificationRecord) -> Dict[str, Any]:
+        """Serialize one notification attempt row for API responses."""
         return {
             "id": row.id,
             "trigger_id": row.trigger_id,
@@ -792,6 +831,7 @@ class AlertService:
 
     @staticmethod
     def _default_rule_name(*, target: str, alert_type: str, parameters: Dict[str, Any]) -> str:
+        """Generate a concise display name when the user omits one."""
         if alert_type == "price_cross":
             return f"{target} price {parameters['direction']} {parameters['price']}"
         if alert_type == "price_change_percent":
@@ -802,9 +842,11 @@ class AlertService:
 
     @staticmethod
     def _dump_json(value: Dict[str, Any]) -> str:
+        """Dump policy/parameter JSON deterministically for storage."""
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
     def _dump_json_or_none(self, value: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Dump optional policy JSON and validate that provided values are objects."""
         if value is None:
             return None
         if not isinstance(value, dict):
@@ -813,6 +855,7 @@ class AlertService:
 
     @staticmethod
     def _load_json(raw: Optional[str], *, default: Any) -> Any:
+        """Load stored JSON fields defensively."""
         if raw is None or raw == "":
             return default
         try:
@@ -822,6 +865,7 @@ class AlertService:
 
     @staticmethod
     def _sanitize_text(text: Any) -> str:
+        """Redact secrets/URLs from diagnostics before logs or API output."""
         sanitized = str(text or "").strip()
         if not sanitized:
             return ""

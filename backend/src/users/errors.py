@@ -8,6 +8,8 @@ from enum import Enum
 
 
 class UserErrorCode(str, Enum):
+    """用户体系对外暴露的稳定错误码。"""
+
     REGISTRATION_DISABLED = "registration_disabled"
     INVALID_EMAIL = "invalid_email"
     INVALID_PASSWORD = "invalid_password"
@@ -35,4 +37,5 @@ class UserError(Exception):
     message: str
 
     def __str__(self) -> str:  # noqa: D105
+        """返回便于日志阅读的 code/message 组合。"""
         return f"{self.code.value}: {self.message}"

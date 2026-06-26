@@ -47,6 +47,7 @@ __all__ = [
 
 
 def __getattr__(name):
+    """Lazy-load heavier skill components to avoid circular imports at package import time."""
     if name == "SkillAgent":
         from src.agent.skills.skill_agent import SkillAgent
 

@@ -29,12 +29,14 @@ class ModelRoute:
 
 
 def _provider_from_model(model: str) -> str:
+    """从 provider/model 格式中提取 provider，缺省按 openai 处理。"""
     if "/" in model:
         return model.split("/", 1)[0].strip().lower()
     return (model or "openai").strip().lower()
 
 
 def _filter_allowed_models(models: List[str], allowed_models: List[str]) -> List[str]:
+    """按套餐允许列表过滤模型；空列表表示不限制。"""
     allowed = {item.strip() for item in allowed_models if item.strip()}
     if not allowed:
         return models
@@ -42,6 +44,7 @@ def _filter_allowed_models(models: List[str], allowed_models: List[str]) -> List
 
 
 def _ordered_unique(models: List[str]) -> List[str]:
+    """按原顺序去重模型候选，过滤空字符串。"""
     seen = set()
     ordered: List[str] = []
     for model in models:
@@ -54,6 +57,7 @@ def _ordered_unique(models: List[str]) -> List[str]:
 
 
 def _select_preferred_model(user: AppUser, models: List[str]) -> Optional[str]:
+    """选择用户偏好模型；偏好不在可用列表中时忽略。"""
     preferred = (getattr(user, "preferred_model", None) or "").strip()
     if preferred and preferred in models:
         return preferred
@@ -66,6 +70,7 @@ def _platform_model_candidates(
     platform_primary_model: Optional[str] = None,
     platform_models: Optional[List[str]] = None,
 ) -> tuple[List[str], str, List[str]]:
+    """合并平台主模型、尝试列表和全局模型列表。"""
     resolved_platform_models = (
         list(platform_models)
         if platform_models is not None

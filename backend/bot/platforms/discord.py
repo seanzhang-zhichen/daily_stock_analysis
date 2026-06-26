@@ -30,6 +30,7 @@ class DiscordPlatform(BotPlatform):
     """Discord 平台适配器"""
 
     def __init__(self):
+        """Load Discord interaction verification settings from configuration."""
         from src.config import get_config
 
         config = get_config()
@@ -325,6 +326,7 @@ class DiscordPlatform(BotPlatform):
         return None
 
     def _build_command_content(self, interaction_data: Dict[str, Any]) -> str:
+        """Reconstruct slash-command text from Discord interaction payload data."""
         command_name = str(interaction_data.get("name", "")).strip()
         if not command_name:
             return ""
@@ -334,6 +336,7 @@ class DiscordPlatform(BotPlatform):
         return " ".join(parts).strip()
 
     def _append_option_parts(self, parts: List[str], options: Any) -> None:
+        """Append nested Discord slash-command option values to command parts."""
         if not isinstance(options, list):
             return
 
@@ -365,6 +368,7 @@ class DiscordPlatform(BotPlatform):
                 parts.append(str(value))
 
     def _parse_timestamp(self, value: Any) -> datetime:
+        """Parse Discord ISO timestamps, falling back to current time on bad input."""
         if not value:
             return datetime.now()
 

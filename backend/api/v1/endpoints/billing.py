@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Billing endpoints (Phase 2 + Phase 5).
 
 挂载位置: ``/api/v1/billing/*``。
@@ -20,6 +20,8 @@ Phase 5 (订单 / 回调 / 退款 / 发票):
   GET    /invoices                       - 列出我的发票
 
 当 ``PAYMENT_ENABLED=false`` 时（默认），/pay 端点返回 503 并提示使用人工汇款兜底。
+真实支付、mock 支付、退款、发票和回调处理都委托 ``OrderService``/gateway 完成，
+endpoint 层只负责用户归属校验、审计日志和 HTTP 响应形状。
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ router = APIRouter()
 
 
 def _serialize_subscription(row: AppSubscription) -> dict:
+    """Serialize subscription ORM rows using frontend camelCase field names."""
     return {
         "id": int(row.id),
         "planCode": row.plan_code,
@@ -62,6 +65,7 @@ def _serialize_subscription(row: AppSubscription) -> dict:
 
 
 def _resolve_request_user(request: Request, db: Session) -> Optional[AppUser]:
+    """Resolve optional user from cookie for public billing pages."""
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_value:
         return None
@@ -97,6 +101,7 @@ async def billing_subscription(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Return current user's effective plan and recent subscription history."""
     plan = resolve_user_plan(db, current_user)
     history_rows = (
         db.query(AppSubscription)
@@ -138,14 +143,17 @@ _credit_svc = CreditOrderService()
 
 
 def _flag(name: str) -> bool:
+    """Return whether an environment feature flag is truthy."""
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
 def _payment_enabled(db: Session) -> bool:
+    """Read platform switch for real payment gateway usage."""
     return bool(get_platform_setting_value(db, "PAYMENT_ENABLED"))
 
 
 def _order_expire_minutes(db: Session) -> int:
+    """Read order expiration duration from platform settings."""
     return int(get_platform_setting_value(db, "ORDER_EXPIRE_MINUTES"))
 
 
@@ -217,6 +225,7 @@ async def get_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Return one subscription order owned by the current user."""
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -342,6 +351,7 @@ async def cancel_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Cancel a cancellable subscription order owned by the current user."""
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -508,7 +518,7 @@ async def request_refund(
     current_user: AppUser = Depends(get_current_user),
     body: dict = Body(...),
 ):
-    """请求体: ``{ "orderNo": "...", "reason": "..." }``"""
+    """Create a refund request for a paid order owned by the current user."""
     order_no = body.get("orderNo") or ""
     reason = body.get("reason") or ""
     if not order_no:
@@ -548,6 +558,7 @@ async def get_refund(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Return one refund request owned by the current user."""
     refund = _svc.get_refund(db, refund_no, user_id=current_user.id)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款记录不存在")
@@ -563,7 +574,7 @@ async def request_invoice(
     current_user: AppUser = Depends(get_current_user),
     body: dict = Body(...),
 ):
-    """请求体: ``{ "orderNo": "...", "invoiceType": "personal"|"company", "title": "...", "email": "...", "taxId": "..." }``"""
+    """Create an invoice request after validating required invoice fields."""
     order_no = body.get("orderNo") or ""
     invoice_type = body.get("invoiceType") or "personal"
     title = body.get("title") or ""
@@ -611,6 +622,7 @@ async def list_invoices(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """List invoice requests for the current user."""
     invoices = _svc.list_invoices(db, user_id=current_user.id)
     from src.services.billing.order_service import serialize_invoice
     return {"invoices": [serialize_invoice(i) for i in invoices]}
@@ -621,6 +633,7 @@ async def list_orders(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """List subscription orders for the current user."""
     orders = _svc.list_orders(db, user_id=current_user.id)
     from src.services.billing.order_service import serialize_order
     return {"orders": [serialize_order(o) for o in orders]}

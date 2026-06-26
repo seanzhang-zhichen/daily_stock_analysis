@@ -35,12 +35,14 @@ def parse_json_field(value: Any) -> Any:
 
 
 def _non_empty_dict(value: Any) -> Optional[Dict[str, Any]]:
+    """Return a dictionary only when it is both typed correctly and non-empty."""
     if not isinstance(value, dict):
         return None
     return value if value else None
 
 
 def _normalize_belong_boards(value: Any) -> List[Dict[str, Any]]:
+    """Normalize board membership items into stable name/code/type dictionaries."""
     if not isinstance(value, list):
         return []
 
@@ -68,6 +70,7 @@ def _normalize_belong_boards(value: Any) -> List[Dict[str, Any]]:
 
 
 def _safe_float(value: Any) -> Optional[float]:
+    """Parse numeric and percent-like strings into floats, returning None on failure."""
     if value is None:
         return None
     try:
@@ -84,6 +87,7 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _normalize_sector_ranking_items(value: Any) -> List[Dict[str, Any]]:
+    """Normalize sector ranking rows while preserving only useful fields."""
     if not isinstance(value, list):
         return []
 
@@ -106,6 +110,7 @@ def _normalize_sector_ranking_items(value: Any) -> List[Dict[str, Any]]:
 
 
 def _normalize_sector_rankings(value: Any) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+    """Normalize top/bottom sector rankings from a fundamental context block."""
     if not isinstance(value, dict):
         return None
 

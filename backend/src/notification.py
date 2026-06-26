@@ -221,9 +221,11 @@ class NotificationService(
         return normalize_report_language(getattr(get_config(), "report_language", "zh"))
 
     def _get_labels(self, payload: Optional[Any] = None) -> Dict[str, str]:
+        """Return localized report labels for a result payload or global config."""
         return get_report_labels(self._get_report_language(payload))
 
     def _get_display_name(self, result: AnalysisResult, language: Optional[str] = None) -> str:
+        """Return localized and markdown-escaped stock display name."""
         report_language = normalize_report_language(language or self._get_report_language(result))
         return self._escape_md(
             get_localized_stock_name(result.name, result.code, report_language)
@@ -277,6 +279,7 @@ class NotificationService(
         return self.generate_dashboard_report(results, report_date=report_date)
 
     def _collect_models_used(self, results: List[AnalysisResult]) -> List[str]:
+        """Collect unique non-placeholder LLM model names used by analysis results."""
         if not self._should_show_llm_model():
             return []
         models: List[str] = []
@@ -287,6 +290,7 @@ class NotificationService(
         return list(dict.fromkeys(models))
 
     def _should_show_llm_model(self) -> bool:
+        """Return whether reports should include LLM model attribution."""
         return bool(getattr(self._config, "report_show_llm_model", self._report_show_llm_model))
     
     @staticmethod
@@ -602,6 +606,7 @@ class NotificationService(
         import time
         
         def get_bytes(s: str) -> int:
+            """Return UTF-8 byte length for Feishu Stream chunk budgeting."""
             return len(s.encode('utf-8'))
         
         # 按段落或分隔线分割
@@ -1645,6 +1650,7 @@ class NotificationService(
     }
 
     def _get_source_display_name(self, source: Any, language: Optional[str]) -> str:
+        """Localize market snapshot source labels when a mapping is known."""
         raw_source = str(source or "N/A")
         mapping = self._SOURCE_DISPLAY_NAMES.get(raw_source)
         if not mapping:
@@ -1652,6 +1658,7 @@ class NotificationService(
         return mapping[normalize_report_language(language)]
 
     def _append_market_snapshot(self, lines: List[str], result: AnalysisResult) -> None:
+        """Append a localized market snapshot table to report markdown lines."""
         snapshot = getattr(result, 'market_snapshot', None)
         if not snapshot:
             return

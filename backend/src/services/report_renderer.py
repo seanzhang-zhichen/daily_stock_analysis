@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-Report Engine - Jinja2 Report Renderer
-===================================
+"""Jinja2 report renderer used by notification/report generation paths.
 
-Renders reports from Jinja2 templates. Falls back to caller's logic on template
-missing or render error. Template path is relative to project root.
-Any expensive data preparation should be injected by the caller via extra_context.
+The renderer is optional: missing templates, missing Jinja2, or render errors
+return ``None`` so callers can fall back to their built-in report generator.
+Expensive data preparation should be injected through ``extra_context``.
 """
 
 import logging
@@ -144,6 +141,7 @@ def render(
     report_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def failed_checks(checklist: List[str]) -> List[str]:
+        """Expose only failed/warning checklist items to templates."""
         return [c for c in (checklist or []) if c.startswith("❌") or c.startswith("⚠️")]
 
     context: Dict[str, Any] = {

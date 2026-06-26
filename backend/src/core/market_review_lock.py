@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Shared execution lock for market review runs."""
+"""Shared execution lock for market review runs.
+
+The lock combines a process-local flag with a same-host lock file. It prevents
+API, CLI and scheduler entrypoints that share a data directory from running
+market review concurrently, while still allowing stale lock cleanup after a
+crash or forced process exit.
+"""
 
 import logging
 import errno
@@ -26,17 +32,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketReviewExecutionLock:
+    """Token returned to callers that successfully acquire the review lock."""
+
     handle: Any
     path: Path
     uses_flock: bool
 
 
 def market_review_lock_path(config: Config) -> Path:
+    """Resolve lock-file location next to the configured database file."""
     database_path = getattr(config, "database_path", "./data/stock_analysis.db")
     return Path(database_path).parent / "market_review.lock"
 
 
 def _write_market_review_lock_metadata(handle: Any) -> None:
+    """Write PID and start time so stale lock files can be diagnosed/cleaned."""
     handle.seek(0)
     handle.truncate()
     handle.write(f"pid={os.getpid()}\nstarted_at={datetime.now().isoformat()}\n")
@@ -44,6 +54,7 @@ def _write_market_review_lock_metadata(handle: Any) -> None:
 
 
 def _is_process_alive(pid: int) -> bool:
+    """Return whether a process id appears alive on the current platform."""
     if pid <= 0:
         return False
 
@@ -60,6 +71,7 @@ def _is_process_alive(pid: int) -> bool:
 
 
 def _is_windows_process_alive(pid: int) -> bool:
+    """Windows implementation of process liveness probing."""
     try:
         import ctypes
     except ImportError:  # pragma: no cover - ctypes is part of stdlib
@@ -89,6 +101,7 @@ def _is_windows_process_alive(pid: int) -> bool:
 
 
 def _read_lock_metadata(lock_path: Path) -> dict[str, str]:
+    """Read best-effort key/value metadata from an existing lock file."""
     try:
         raw = lock_path.read_text(encoding="utf-8")
     except OSError:
@@ -103,6 +116,7 @@ def _read_lock_metadata(lock_path: Path) -> dict[str, str]:
 
 
 def _is_lock_file_expired(lock_path: Path) -> bool:
+    """Fallback stale check based on lock-file mtime."""
     try:
         modified_at = datetime.fromtimestamp(lock_path.stat().st_mtime)
     except OSError:
@@ -114,6 +128,7 @@ def _is_lock_file_expired(lock_path: Path) -> bool:
 
 
 def _is_stale_lock(lock_path: Path) -> bool:
+    """Return whether an existing lock file can be safely replaced."""
     metadata = _read_lock_metadata(lock_path)
     pid_raw = metadata.get("pid")
     if not pid_raw:
@@ -208,6 +223,7 @@ def try_acquire_market_review_lock(
 def release_market_review_lock(
     lock_token: Optional[MarketReviewExecutionLock],
 ) -> None:
+    """Release a previously acquired market-review lock token."""
     if lock_token is None:
         return
 

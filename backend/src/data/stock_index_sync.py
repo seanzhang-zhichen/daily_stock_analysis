@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Seed and synchronize the generated stock index resource into the database."""
+
 from __future__ import annotations
 
 import hashlib
@@ -16,10 +18,12 @@ STOCK_INDEX_RESOURCE_PATH = Path(__file__).resolve().parent / "resources" / STOC
 
 
 def get_stock_index_source_path() -> Path:
+    """Return the bundled stock index resource path."""
     return STOCK_INDEX_RESOURCE_PATH
 
 
 def _tuple_to_entry(item: list[Any]) -> dict[str, Any] | None:
+    """Convert compact list-form resource rows into named entry dictionaries."""
     if len(item) < 3:
         return None
     return {
@@ -37,6 +41,7 @@ def _tuple_to_entry(item: list[Any]) -> dict[str, Any] | None:
 
 
 def load_stock_index_source(path: Path | None = None) -> tuple[list[dict[str, Any]], str]:
+    """Load stock index entries and return them with a content hash version."""
     source_path = path or get_stock_index_source_path()
     raw = source_path.read_bytes()
     version = hashlib.sha256(raw).hexdigest()
@@ -58,11 +63,13 @@ def load_stock_index_source(path: Path | None = None) -> tuple[list[dict[str, An
 
 
 def sync_stock_index_to_db(path: Path | None = None) -> int:
+    """Upsert stock index resource entries into persistent storage."""
     entries, version = load_stock_index_source(path)
     return StockIndexRepository().upsert_entries(entries, version=version)
 
 
 def ensure_stock_index_seeded() -> None:
+    """Best-effort seed of the stock index when the database table is empty."""
     repo = StockIndexRepository()
     try:
         if repo.count() > 0:

@@ -1,15 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-异步任务服务层
-===================================
+"""Legacy async task service used by Bot-style single-stock analysis.
 
-职责：
-1. 管理异步分析任务（线程池）
-2. 执行股票分析并推送结果
-3. 查询任务状态和历史
-
-迁移自 web/services.py 的 AnalysisService 类
+New API task submission mostly goes through ``AnalysisTaskQueue``. This service
+is kept as a smaller compatibility layer for older Bot/web call sites that only
+need a thread-pool task id and in-memory status map.
 """
 
 from __future__ import annotations
@@ -41,6 +35,7 @@ class TaskService:
     _lock = threading.Lock()
 
     def __init__(self, max_workers: int = 3):
+        """Initialize the legacy task map and lazy thread pool."""
         self._executor: Optional[ThreadPoolExecutor] = None
         self._max_workers = max_workers
         self._tasks: Dict[str, Dict[str, Any]] = {}

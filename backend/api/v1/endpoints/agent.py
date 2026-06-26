@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Agent API endpoints.
+"""Agent API endpoints.
+
+这些接口提供 Agent 对话、技能/策略目录、会话历史、通知通道转发、研究任务和 SSE
+流式输出。用户维度的配额、积分扣减和 session_id 隔离都在 endpoint 层进入执行器前完成。
 """
 
 import asyncio
@@ -58,6 +60,7 @@ router = APIRouter()
 
 
 def _current_user_id_or_none(current_user: Any) -> Optional[int]:
+    """Extract a numeric user id from AppUser-like objects."""
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
@@ -68,6 +71,7 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
 
 
 def _db_user(db: Session, current_user: AppUser) -> AppUser:
+    """Reload the current user from DB when possible for fresh quota/credit state."""
     user_id = _current_user_id_or_none(current_user)
     if user_id is None or not hasattr(db, "query"):
         return current_user
@@ -85,6 +89,7 @@ def _scope_session_id(
     raw_session_id: Optional[str],
     current_user: Optional[AppUser],
 ) -> str:
+    """Prefix chat session ids with user id to prevent cross-user history access."""
     if current_user is None:
         return raw_session_id or str(uuid.uuid4())
     prefix = f"u{current_user.id}:"
@@ -97,6 +102,8 @@ def _scope_session_id(
     return f"{prefix}{inner}"
 
 class ChatRequest(BaseModel):
+    """Agent chat request with optional session, skills and reusable context."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     message: str
@@ -110,27 +117,37 @@ class ChatRequest(BaseModel):
         return self.skills
 
 class ChatResponse(BaseModel):
+    """Agent chat response returned by non-streaming chat calls."""
+
     success: bool
     content: str
     session_id: str
     error: Optional[str] = None
 
 class SkillInfo(BaseModel):
+    """Minimal skill metadata exposed to frontend selectors."""
+
     id: str
     name: str
     description: str
 
 class SkillsResponse(BaseModel):
+    """Available skill list plus the configured default skill id."""
+
     skills: List[SkillInfo]
     default_skill_id: str = ""
 
 
 class StrategiesResponse(BaseModel):
+    """Backward-compatible strategy list response using skill metadata shape."""
+
     strategies: List[SkillInfo]
     default_strategy_id: str = ""
 
 
 class AgentModelDeployment(BaseModel):
+    """One configured Agent model deployment option."""
+
     deployment_id: str
     model: str
     provider: str
@@ -142,6 +159,8 @@ class AgentModelDeployment(BaseModel):
 
 
 class AgentModelsResponse(BaseModel):
+    """Configured Agent model deployments response."""
+
     models: List[AgentModelDeployment]
 
 
@@ -155,6 +174,7 @@ async def get_agent_models():
 
 
 def _build_skills_response(config) -> SkillsResponse:
+    """Build available skill metadata from runtime config."""
     from src.agent.factory import get_skill_manager
     from src.agent.skills.defaults import get_primary_default_skill_id
 
@@ -285,6 +305,8 @@ async def agent_chat(
 
 
 class SessionItem(BaseModel):
+    """Summary row for one persisted Agent chat session."""
+
     session_id: str
     title: str
     message_count: int
@@ -292,9 +314,13 @@ class SessionItem(BaseModel):
     last_active: Optional[str] = None
 
 class SessionsResponse(BaseModel):
+    """Paginated session list response for chat history."""
+
     sessions: List[SessionItem]
 
 class SessionMessagesResponse(BaseModel):
+    """Message list response for one Agent chat session."""
+
     session_id: str
     messages: List[Dict[str, Any]]
 
@@ -414,10 +440,14 @@ async def _run_research_in_background(
 # ============================================================
 
 class ResearchRequest(BaseModel):
+    """Deep research request for either a free-form question or stock context."""
+
     question: str
     stock_code: Optional[str] = None
 
 class ResearchResponse(BaseModel):
+    """Deep research response with report content, source list and token usage."""
+
     success: bool
     content: str
     sources: List[str] = Field(default_factory=list)
@@ -595,6 +625,7 @@ async def agent_chat_stream(
     stream_result: Dict[str, Any] = {"failed": False}
 
     def progress_callback(event: dict):
+        """Bridge executor progress events from worker thread into the SSE queue."""
         # Enrich tool events with display names
         if event.get("type") in ("tool_start", "tool_done"):
             tool = event.get("tool", "")
@@ -604,6 +635,7 @@ async def agent_chat_stream(
     _stream_user_id = current_user_id
 
     def run_sync():
+        """Run blocking Agent chat in a worker and publish terminal stream events."""
         try:
             executor = _build_executor(config, skills or None, user_id=_stream_user_id)
             result = executor.chat(
@@ -634,6 +666,7 @@ async def agent_chat_stream(
             )
 
     async def event_generator():
+        """Yield Agent progress events as SSE frames until done, error or timeout."""
         # Start executor in a thread so we don't block the event loop
         fut = loop.run_in_executor(None, run_sync)
         try:

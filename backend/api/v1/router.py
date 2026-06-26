@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-API v1 路由聚合
-===================================
+"""Aggregate all API v1 endpoint routers under ``/api/v1``.
 
-职责：
-1. 聚合 v1 版本的所有 endpoint 路由
-2. 统一添加 /api/v1 前缀
+每个业务域在 ``api.v1.endpoints`` 下维护自己的 router，本文件只负责统一前缀
+和 OpenAPI tag。新增 endpoint 模块时应在这里显式 include，便于审查公开 API
+面是否发生变化。
 """
 
 from fastapi import APIRouter
@@ -30,7 +27,7 @@ from api.v1.endpoints import (
     usage,
 )
 
-# 创建 v1 版本主路由
+# v1 版本主路由；所有下面 include 的 prefix 都会自动拼到 /api/v1 之后。
 router = APIRouter(prefix="/api/v1")
 
 router.include_router(

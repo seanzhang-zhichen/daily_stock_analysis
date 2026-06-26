@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class PushplusSender:
+    """Send notifications through the PushPlus send API."""
     
     def __init__(self, config: Config):
         """
@@ -100,6 +101,7 @@ class PushplusSender:
         *,
         timeout_seconds: Optional[float] = None,
     ) -> bool:
+        """Send one PushPlus markdown message payload."""
         payload = {
             "token": self._pushplus_token,
             "title": title,

@@ -44,6 +44,7 @@ from src.users.quota import (
 
 
 def _today_utc() -> date:
+    """返回配额窗口使用的 UTC 日期。"""
     return datetime.utcnow().date()
 
 
@@ -56,6 +57,7 @@ _KIND_TO_LIMIT_FIELD = {
 
 
 def _plan_limit_for(plan: ResolvedPlan, kind: str) -> int:
+    """从套餐快照中取出指定业务 kind 的每日上限。"""
     field = _KIND_TO_LIMIT_FIELD.get(kind)
     if field is None:
         raise ValueError(f"unsupported quota kind: {kind!r}")
@@ -85,6 +87,7 @@ class QuotaOutcome:
 
     @property
     def remaining(self) -> Optional[int]:
+        """返回本次检查后的剩余额度；None 表示不限额。"""
         if self.limit <= 0:
             return None
         return max(0, self.limit - self.used)

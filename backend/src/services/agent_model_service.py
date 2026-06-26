@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Helpers for exposing configured Agent model deployments."""
+"""Helpers for exposing configured Agent model deployments.
+
+The settings/API layer uses this module to display Agent-capable LiteLLM
+deployments without leaking credentials. It reports provider/source metadata
+only; secrets remain in ``Config``.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ from src.config import get_effective_agent_models_to_try, get_effective_agent_pr
 
 
 def _get_models_source(config) -> str:
+    """Return the effective source label for model-list metadata."""
     source = getattr(config, "llm_models_source", "")
     if source in {"litellm_config", "llm_channels"}:
         return source
@@ -16,6 +22,7 @@ def _get_models_source(config) -> str:
 
 
 def _get_model_provider(model_name: str) -> str:
+    """Infer provider from a LiteLLM-style ``provider/model`` name."""
     if not model_name:
         return "unknown"
     if "/" in model_name:
@@ -24,6 +31,7 @@ def _get_model_provider(model_name: str) -> str:
 
 
 def _build_deployments(config) -> List[Dict[str, Any]]:
+    """Build raw deployment records from configured LiteLLM model entries."""
     source = _get_models_source(config)
     primary_model = get_effective_agent_primary_model(config)
     fallback_models = set(get_effective_agent_models_to_try(config)[1:])
@@ -54,7 +62,11 @@ def _build_deployments(config) -> List[Dict[str, Any]]:
 
 
 def list_agent_model_deployments(config) -> List[Dict[str, Any]]:
-    """Return configured Agent model deployments without exposing secrets."""
+    """Return configured Agent model deployments without exposing secrets.
+
+    Primary and fallback models are sorted first so the UI can highlight the
+    models the Agent will actually try before secondary deployment metadata.
+    """
     deployments = _build_deployments(config)
     return sorted(
         deployments,

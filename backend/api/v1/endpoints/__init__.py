@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-API v1 Endpoints 模块初始化
-===================================
+"""Endpoint module exports for API v1.
 
-职责：
-1. 声明所有 endpoint 路由模块
+具体路由挂载在 ``api.v1.router`` 中完成；这里集中导入 endpoint 模块，方便路由
+聚合和测试代码使用稳定模块名引用。
 """
 
 from api.v1.endpoints import (

@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class RiskAgent(BaseAgent):
+    """Screen material risks and write risk flags back to shared context."""
+
     agent_name = "risk"
     max_steps = 4
     tool_names = [
@@ -36,6 +38,7 @@ class RiskAgent(BaseAgent):
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
+        """Build the risk-only prompt and strict JSON output schema."""
         return """\
 You are a **Risk Screening Agent** focused exclusively on identifying \
 risks and red flags for the given stock.
@@ -80,6 +83,7 @@ from your search results. Do NOT invent risks.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        """Ask for a risk scan, reusing existing intel data when available."""
         parts = [f"Screen stock **{ctx.stock_code}**"]
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
@@ -93,6 +97,7 @@ from your search results. Do NOT invent risks.
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
+        """Parse risk JSON and propagate each structured flag to the context."""
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[RiskAgent] failed to parse risk JSON")
@@ -125,4 +130,3 @@ def _risk_to_signal(risk_level: str) -> str:
         "high": "strong_sell",
     }
     return mapping.get(risk_level, "hold")
-

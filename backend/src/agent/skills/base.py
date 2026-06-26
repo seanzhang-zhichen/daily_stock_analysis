@@ -83,6 +83,7 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n?(.*)$", re.DOTA
 
 
 def _coerce_string_list(value: object) -> List[str]:
+    """Coerce YAML/frontmatter scalar or list values into a clean string list."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -93,6 +94,7 @@ def _coerce_string_list(value: object) -> List[str]:
 
 
 def _coerce_bool(value: object, default: bool = False) -> bool:
+    """Coerce common YAML/string boolean spellings into bool."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -107,6 +109,7 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 
 
 def _coerce_int(value: object, default: int = 100) -> int:
+    """Coerce priority-like values into int with a safe default."""
     if value is None:
         return default
     try:
@@ -116,6 +119,7 @@ def _coerce_int(value: object, default: int = 100) -> int:
 
 
 def _parse_skill_frontmatter(raw_text: str) -> tuple[Dict[str, object], str]:
+    """Split a SKILL.md file into YAML frontmatter metadata and Markdown body."""
     import yaml
 
     match = _FRONTMATTER_RE.match(raw_text)
@@ -130,6 +134,7 @@ def _parse_skill_frontmatter(raw_text: str) -> tuple[Dict[str, object], str]:
 
 
 def _infer_skill_description(instructions: str) -> str:
+    """Use the first Markdown paragraph as a fallback skill description."""
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", instructions or "") if part.strip()]
     if not paragraphs:
         return ""
@@ -334,6 +339,7 @@ class SkillManager:
     """
 
     def __init__(self):
+        """Create an empty in-memory skill registry."""
         self._skills: Dict[str, Skill] = {}
 
     def register(self, skill: Skill) -> None:

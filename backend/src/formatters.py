@@ -25,6 +25,7 @@ _SPECIAL_CHAR_REGEX = re.compile(r'[\U00010000-\U000FFFFF]')
 
 
 def _page_marker(i: int, total: int) -> str:
+    """Return a compact page marker for chunked notification messages."""
     return f"{PAGE_MARKER_PREFIX} {i+1}/{total}"
 
 
@@ -261,10 +262,12 @@ def markdown_to_plain_text(markdown_text: str) -> str:
 
 
 def _bytes(s: str) -> int:
+    """Return UTF-8 byte length for notification payload budgeting."""
     return len(s.encode('utf-8'))
 
 
 def _chunk_by_max_bytes(content: str, max_bytes: int) -> List[str]:
+    """Force-split content into byte-limited chunks with truncation markers."""
     if _bytes(content) <= max_bytes:
         return [content]
     if max_bytes < MIN_MAX_BYTES:
@@ -301,6 +304,7 @@ def chunk_content_by_max_bytes(content: str, max_bytes: int, add_page_marker: bo
         分割后的区块列表
     """
     def _chunk(content: str, max_bytes: int) -> List[str]:
+        """Recursively split content by natural separators under a byte limit."""
         # 优先按分隔线/标题分割，保证分页自然
         if max_bytes < MIN_MAX_BYTES:
             raise ValueError(f"max_bytes={max_bytes} < {MIN_MAX_BYTES}, 可能陷入无限递归。")
@@ -594,6 +598,7 @@ def chunk_content_by_max_words(
         分割后的区块列表
     """
     def _chunk(content: str, max_words: int, special_char_len: int = 2) -> list[str]:
+        """Recursively split content by natural separators under a word budget."""
         if max_words < MIN_MAX_WORDS:
             # Safe guard，避免无限递归
             # 理论上，max_words在每次递归中可以减小到无限小，但实际中不太可能发生，

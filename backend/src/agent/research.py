@@ -66,6 +66,7 @@ class ResearchAgent:
         max_sub_questions: int = _DEFAULT_MAX_SUB_QUESTIONS,
         sub_question_max_steps: int = _DEFAULT_SUB_QUESTION_MAX_STEPS,
     ):
+        """Store dependencies and clamp research planning/execution limits."""
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.token_budget = token_budget

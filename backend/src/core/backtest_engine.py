@@ -43,13 +43,25 @@ class BacktestResultLike(Protocol):
 
 @dataclass(frozen=True)
 class EvaluationConfig:
+    """Runtime knobs for one backtest evaluation window.
+
+    ``neutral_band_pct`` defines the price-move band treated as inconclusive,
+    and ``engine_version`` is persisted with results so future scoring changes
+    can coexist with older evaluations.
+    """
+
     eval_window_days: int
     neutral_band_pct: float = 2.0
     engine_version: str = "v1"
 
 
 class BacktestEngine:
-    """Long-only daily-bar backtesting engine."""
+    """Long-only daily-bar backtesting engine.
+
+    The engine deliberately works with Protocol-like inputs instead of ORM
+    models. Repositories can pass database rows, tests can pass small stubs, and
+    the scoring rules remain pure and deterministic.
+    """
 
     # Operation advice keywords (Chinese + English)
     _BULLISH_KEYWORDS = (
@@ -388,6 +400,7 @@ class BacktestEngine:
 
     @staticmethod
     def _normalize_text(value: Optional[str]) -> str:
+        """Normalize free-form advice before keyword matching."""
         return str(value or "").strip().lower()
 
     @classmethod
@@ -515,6 +528,7 @@ class BacktestEngine:
         direction_expected: str,
         neutral_band_pct: float,
     ) -> tuple[Optional[str], Optional[bool]]:
+        """Classify realized stock return against the inferred advice direction."""
         if stock_return_pct is None:
             return None, None
 
@@ -565,6 +579,13 @@ class BacktestEngine:
         Optional[float],
         str,
     ]:
+        """Evaluate stop-loss/take-profit hits across forward daily bars.
+
+        Daily bars expose high/low but not intraday ordering. When both targets
+        are touched in the same bar, the result is marked ``ambiguous`` and the
+        simulated exit assumes stop-loss first to keep the risk estimate
+        conservative.
+        """
         if position != "long":
             return (
                 None,
@@ -642,6 +663,7 @@ class BacktestEngine:
 
     @staticmethod
     def _average(values: Iterable[Optional[float]]) -> Optional[float]:
+        """Return a rounded average while ignoring missing numeric values."""
         items = [float(v) for v in values if v is not None]
         if not items:
             return None
@@ -649,6 +671,7 @@ class BacktestEngine:
 
     @staticmethod
     def _compute_advice_breakdown(results: List[BacktestResultLike]) -> Dict[str, Any]:
+        """Aggregate win/loss/neutral counts by original operation advice text."""
         breakdown: Dict[str, Dict[str, int]] = {}
         for row in results:
             raw_advice = row.operation_advice
@@ -670,6 +693,7 @@ class BacktestEngine:
 
     @staticmethod
     def _compute_diagnostics(results: List[BacktestResultLike]) -> Dict[str, Any]:
+        """Return low-level status counts useful for API/debug dashboards."""
         status_counts: Dict[str, int] = {}
         first_hit_counts: Dict[str, int] = {}
         for row in results:

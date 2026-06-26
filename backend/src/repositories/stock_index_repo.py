@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""Repository and in-memory search cache for the local stock index.
+
+The index is used by API and agent flows to map user-entered stock codes,
+Chinese names, pinyin and aliases to canonical stock metadata.
+"""
 from __future__ import annotations
 
 import json
@@ -24,6 +29,8 @@ _SEARCH_RESULT_CACHE_MAX_SIZE = 512
 
 @dataclass(frozen=True)
 class _CachedStockIndexEntry:
+    """Normalized stock index row stored in the process-level search cache."""
+
     canonical_code: str
     display_code: str
     name_zh: str
@@ -44,10 +51,12 @@ class _CachedStockIndexEntry:
 
 
 def normalize_stock_query(value: str) -> str:
+    """Normalize user search text so full-width and case variants match."""
     return unicodedata.normalize("NFKC", str(value or "")).strip().lower()
 
 
 def _safe_aliases(raw: str | None) -> list[str]:
+    """Decode aliases JSON from storage, returning an empty list on bad payloads."""
     if not raw:
         return []
     try:
@@ -60,6 +69,7 @@ def _safe_aliases(raw: str | None) -> list[str]:
 
 
 def _entry_normalized_value(entry: Any, attr: str, normalized_attr: str) -> str:
+    """Read a pre-normalized field when cached entries provide one."""
     value = getattr(entry, normalized_attr, None)
     if value is not None:
         return str(value)
@@ -67,6 +77,12 @@ def _entry_normalized_value(entry: Any, attr: str, normalized_attr: str) -> str:
 
 
 def _match_score(query: str, entry: Any) -> tuple[int, str]:
+    """Score a stock index entry against one normalized query.
+
+    Higher scores represent stronger matches: exact code/name/alias first,
+    then prefix matches, then contains matches. The returned field explains
+    which user-facing attribute produced the best match.
+    """
     q = normalize_stock_query(query)
     canonical = _entry_normalized_value(entry, "canonical_code", "canonical_norm")
     display = _entry_normalized_value(entry, "display_code", "display_norm")
@@ -108,6 +124,7 @@ def _match_score(query: str, entry: Any) -> tuple[int, str]:
 
 
 def _match_type(score: int) -> str:
+    """Map a numeric match score to the API's coarse match category."""
     if score >= 90:
         return "exact"
     if score >= 70:
@@ -118,6 +135,8 @@ def _match_type(score: int) -> str:
 
 
 class StockIndexRepository:
+    """Database-backed stock index repository with short-lived process cache."""
+
     _search_cache_lock = RLock()
     _search_cache_db_url: str | None = None
     _search_cache_loaded_at = 0.0
@@ -125,10 +144,12 @@ class StockIndexRepository:
     _search_result_cache: dict[tuple[str, int, bool], list[dict[str, Any]]] = {}
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Use an injected manager for tests or the shared database in runtime."""
         self.db = db_manager or DatabaseManager.get_instance()
 
     @classmethod
     def clear_search_cache(cls) -> None:
+        """Clear both index-entry and query-result caches after index changes."""
         with cls._search_cache_lock:
             cls._search_cache_db_url = None
             cls._search_cache_loaded_at = 0.0
@@ -136,9 +157,11 @@ class StockIndexRepository:
             cls._search_result_cache = {}
 
     def _search_cache_namespace(self) -> str:
+        """Return the database identity used to avoid sharing cache across test DBs."""
         return str(getattr(self.db, "_db_url", ""))
 
     def _load_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
+        """Load all searchable stock rows and precompute normalized fields."""
         stmt = select(
             StockIndexEntry.canonical_code,
             StockIndexEntry.display_code,
@@ -188,6 +211,7 @@ class StockIndexRepository:
         return tuple(entries)
 
     def _get_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
+        """Return cached search entries, reloading after TTL or database switch."""
         namespace = self._search_cache_namespace()
         now = monotonic()
         cls = type(self)
@@ -206,20 +230,25 @@ class StockIndexRepository:
             return entries
 
     def preload_search_cache(self) -> int:
+        """Warm the search cache and return the number of cached entries."""
         return len(self._get_search_entries())
 
     def count(self) -> int:
+        """Return the number of stock index entries currently stored."""
         with self.db.get_session() as session:
             return int(session.execute(select(func.count()).select_from(StockIndexEntry)).scalar() or 0)
 
     def get_meta(self) -> StockIndexMeta | None:
+        """Return sync metadata for the current stock index payload."""
         with self.db.get_session() as session:
             return session.get(StockIndexMeta, STOCK_INDEX_META_KEY)
 
     def upsert_entries(self, entries: Iterable[dict[str, Any]], *, version: str) -> int:
+        """Replace the stock index with incoming entries and update sync metadata."""
         prepared = list(entries)
 
         def write(session: Session) -> int:
+            """Write callback executed under DatabaseManager's serialized transaction."""
             existing_codes = set(session.execute(select(StockIndexEntry.canonical_code)).scalars().all())
             incoming_codes: set[str] = set()
             now = datetime.now()
@@ -272,6 +301,7 @@ class StockIndexRepository:
         return count
 
     def search(self, query: str, *, limit: int = 20, active_only: bool = True) -> list[dict[str, Any]]:
+        """Search code/name/pinyin/alias fields and return ranked API suggestions."""
         normalized = normalize_stock_query(query)
         if not normalized:
             return []
@@ -312,6 +342,7 @@ class StockIndexRepository:
         return result
 
     def get_name_by_code(self, stock_code: str) -> str | None:
+        """Resolve a display name by common CN/HK code variants."""
         query = normalize_stock_query(stock_code)
         if not query:
             return None

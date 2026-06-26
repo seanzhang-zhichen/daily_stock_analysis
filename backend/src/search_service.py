@@ -162,6 +162,7 @@ class BaseSearchProvider(ABC):
     
     @property
     def name(self) -> str:
+        """Return provider display name for logs and fallback metadata."""
         return self._name
     
     @property
@@ -285,6 +286,7 @@ class TavilySearchProvider(BaseSearchProvider):
     """
     
     def __init__(self, api_keys: List[str]):
+        """Initialize Tavily provider with one or more API keys."""
         super().__init__(api_keys, "Tavily")
     
     def _do_search(
@@ -474,6 +476,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
     }
     
     def __init__(self, api_keys: List[str]):
+        """Initialize SerpAPI provider with rotating API keys."""
         super().__init__(api_keys, "SerpAPI")
     
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
@@ -875,6 +878,7 @@ class BochaSearchProvider(BaseSearchProvider):
     """
     
     def __init__(self, api_keys: List[str]):
+        """Initialize Bocha provider with rotating API keys."""
         super().__init__(api_keys, "Bocha")
     
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
@@ -1071,6 +1075,7 @@ class AnspireSearchProvider(BaseSearchProvider):
     """
     
     def __init__(self, api_keys: List[str]):
+        """Initialize Anspire provider with rotating API keys."""
         super().__init__(api_keys, "Anspire")
     
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
@@ -1267,6 +1272,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
     _CB_COOLDOWN_SECONDS = 300  # 5 minutes
 
     def __init__(self, api_keys: List[str]):
+        """Initialize MiniMax provider and its circuit-breaker state."""
         super().__init__(api_keys, "MiniMax")
         # Circuit breaker state
         self._consecutive_failures = 0
@@ -1285,6 +1291,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             return True
 
     def _record_success(self, key: str) -> None:
+        """Record a successful MiniMax call and close the circuit breaker."""
         with self._state_lock:
             super()._record_success(key)
             # Reset circuit breaker on success
@@ -1292,6 +1299,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             self._circuit_open_until = 0.0
 
     def _record_error(self, key: str) -> None:
+        """Record a MiniMax failure and open the circuit after threshold breaches."""
         warning_message = None
         with self._state_lock:
             super()._record_error(key)
@@ -1494,6 +1502,7 @@ class BraveSearchProvider(BaseSearchProvider):
     API_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
     def __init__(self, api_keys: List[str]):
+        """Initialize Brave Search provider with rotating API keys."""
         super().__init__(api_keys, "Brave")
 
     def _do_search(
@@ -1706,6 +1715,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
     _public_instances_lock = threading.Lock()
 
     def __init__(self, base_urls: Optional[List[str]] = None, *, use_public_instances: bool = False):
+        """Initialize SearXNG with self-hosted bases or public-instance discovery."""
         normalized_base_urls = [url.rstrip("/") for url in (base_urls or []) if url.strip()]
         super().__init__(normalized_base_urls, "SearXNG")
         self._base_urls = normalized_base_urls
@@ -1715,6 +1725,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @property
     def is_available(self) -> bool:
+        """Return whether any self-hosted or public SearXNG route is enabled."""
         return bool(self._base_urls) or self._use_public_instances
 
     @classmethod
@@ -1747,6 +1758,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _time_range(days: int) -> str:
+        """Map requested recency days to SearXNG time_range values."""
         if days <= 1:
             return "day"
         if days <= 7:
@@ -1757,6 +1769,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _search_latency_seconds(cls, instance_data: Dict[str, Any]) -> float:
+        """Extract search latency metric used to rank public instances."""
         timing = (instance_data.get("timing") or {}).get("search") or {}
         all_timing = timing.get("all")
         if isinstance(all_timing, dict):
@@ -1768,6 +1781,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _extract_public_instances(cls, payload: Any) -> List[str]:
+        """Extract healthy public SearXNG URLs from searx.space metadata."""
         if not isinstance(payload, dict):
             return []
 
@@ -1802,6 +1816,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _get_public_instances(cls) -> List[str]:
+        """Fetch and cache public SearXNG instances with stale fallback/backoff."""
         now = time.time()
         with cls._public_instances_lock:
             stale_urls: List[str] = []
@@ -1865,6 +1880,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return []
 
     def _rotate_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
+        """Return a cursor-rotated subset to spread SearXNG instance load."""
         if not pool or max_attempts <= 0:
             return []
         with self._cursor_lock:
@@ -2372,6 +2388,7 @@ class SearchService:
         return f"{query}|{max_results}|{days}"
 
     def _get_cached_locked(self, key: str) -> Optional['SearchResponse']:
+        """Return an unexpired cache entry while the cache lock is held."""
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -2391,6 +2408,7 @@ class SearchService:
         self,
         key: str,
     ) -> Tuple[Optional['SearchResponse'], bool, Optional[threading.Event]]:
+        """Return cached response or reserve responsibility for filling the key."""
         with self._cache_lock:
             cached = self._get_cached_locked(key)
             if cached is not None:
@@ -2404,6 +2422,7 @@ class SearchService:
             return None, False, event
 
     def _release_cache_fill(self, key: str, event: threading.Event) -> None:
+        """Release one in-flight cache fill reservation and wake waiters."""
         with self._cache_lock:
             current = self._cache_inflight.get(key)
             if current is event:
@@ -2411,6 +2430,7 @@ class SearchService:
                 event.set()
 
     def _wait_for_cached(self, key: str, event: threading.Event) -> Optional['SearchResponse']:
+        """Wait briefly for another thread to fill a cache entry."""
         event.wait(timeout=max(1.0, min(float(self._cache_ttl), 30.0)))
         return self._get_cached(key)
 

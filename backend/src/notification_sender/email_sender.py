@@ -49,6 +49,7 @@ SMTP_CONFIGS = {
 
 
 class EmailSender:
+    """Send report notifications by SMTP with optional inline images."""
     
     def __init__(self, config: Config):
         """

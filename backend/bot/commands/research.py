@@ -36,21 +36,26 @@ class ResearchCommand(BotCommand):
 
     @property
     def name(self) -> str:
+        """Return the primary command name used by the dispatcher."""
         return "research"
 
     @property
     def aliases(self) -> List[str]:
+        """Return localized and English aliases for deep research."""
         return ["深研", "deepsearch"]
 
     @property
     def description(self) -> str:
+        """Return the short help-list description."""
         return "Deep research on a stock or market topic"
 
     @property
     def usage(self) -> str:
+        """Return the argument pattern shown in command help."""
         return "/research <stock_code|topic> [specific question]"
 
     def execute(self, message: BotMessage, args: List[str]) -> BotResponse:
+        """Execute deep research for either a stock-prefixed query or free topic."""
         if not args:
             return BotResponse.text_response(
                 f"Usage: {self.usage}\n"

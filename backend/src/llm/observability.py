@@ -44,6 +44,7 @@ def flush_llm_observability() -> None:
 
 
 def _langfuse_is_configured() -> bool:
+    """Return whether both Langfuse keys are present in the environment."""
     return bool(
         os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
         and os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
@@ -51,6 +52,7 @@ def _langfuse_is_configured() -> bool:
 
 
 def _resolve_langfuse_base_url() -> str:
+    """Resolve and synchronize legacy/current Langfuse host environment names."""
     base_url = os.environ.get("LANGFUSE_OTEL_HOST", "").strip()
     host = os.environ.get("LANGFUSE_HOST", "").strip()
     if base_url:
@@ -64,6 +66,7 @@ def _resolve_langfuse_base_url() -> str:
 
 
 def _setup_langfuse() -> None:
+    """Configure LiteLLM Langfuse callbacks when credentials are available."""
     secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
     if not secret_key:
         return

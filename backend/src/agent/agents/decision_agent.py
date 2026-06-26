@@ -30,9 +30,11 @@ class DecisionAgent(BaseAgent):
 
     @staticmethod
     def _is_chat_mode(ctx: AgentContext) -> bool:
+        """Return True when the decision stage should answer conversationally."""
         return ctx.meta.get("response_mode") == "chat"
 
     def system_prompt(self, ctx: AgentContext) -> str:
+        """Build the synthesis prompt for JSON dashboard or chat response modes."""
         report_language = normalize_report_language(ctx.meta.get("report_language", "zh"))
         if self._is_chat_mode(ctx):
             prompt = """\
@@ -125,6 +127,7 @@ new decision_type values.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        """Package prior opinions, risk flags and the user query for synthesis."""
         if self._is_chat_mode(ctx):
             parts = [
                 "# User Question",

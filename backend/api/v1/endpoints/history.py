@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-历史记录接口
-===================================
+"""History and persisted report endpoints.
 
-职责：
-1. 提供 GET /api/v1/history 历史列表查询接口
-2. 提供 GET /api/v1/history/{query_id} 历史详情查询接口
+历史记录接口按当前登录用户隔离数据，支持列表摘要、批量删除、结构化报告详情、
+关联新闻和 Markdown 报告输出。详情接口需要兼容旧历史数据，因此会在 endpoint
+层补齐语言、本地化展示、实时价格兜底和结构化财务/板块字段。
 """
 
 import logging
@@ -51,6 +48,7 @@ router = APIRouter()
 
 
 def _current_user_id_or_none(current_user: AppUser) -> Optional[int]:
+    """Return current user's numeric id, keeping service calls tolerant in tests."""
     return getattr(current_user, "id", None)
 
 
@@ -73,26 +71,11 @@ def get_history_list(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HistoryListResponse:
-    """
-    获取历史分析列表
-    
-    分页获取历史分析记录摘要，支持按股票代码和日期范围筛选
-    
-    Args:
-        stock_code: 股票代码筛选
-        start_date: 开始日期
-        end_date: 结束日期
-        page: 页码
-        limit: 每页数量
-        db_manager: 数据库管理器依赖
-        
-    Returns:
-        HistoryListResponse: 历史记录列表
-    """
+    """Return paginated analysis-history summaries for the current user."""
     try:
         service = HistoryService(db_manager)
         
-        # 使用 def 而非 async def，FastAPI 自动在线程池中执行
+        # HistoryService performs synchronous DB/file work; keep the endpoint sync so FastAPI uses a worker thread.
         result = service.get_history_list(
             stock_code=stock_code,
             start_date=start_date,
@@ -102,7 +85,7 @@ def get_history_list(
             user_id=_current_user_id_or_none(current_user),
         )
         
-        # 转换为响应模型
+        # 服务层返回 dict，endpoint 收敛为公开 schema，避免存储字段直接泄漏给前端。
         items = [
             HistoryItem(
                 id=item.get("id"),
@@ -151,9 +134,7 @@ def delete_history_records(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> DeleteHistoryResponse:
-    """
-    按主键 ID 批量删除历史分析记录。
-    """
+    """Delete selected history records after de-duplicating request ids."""
     record_ids = sorted({record_id for record_id in request.record_ids if record_id is not None})
     if not record_ids:
         raise HTTPException(
@@ -200,26 +181,11 @@ def get_history_detail(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> AnalysisReport:
-    """
-    获取历史报告详情
-    
-    根据分析历史记录主键 ID 或 query_id 获取完整的历史分析报告。
-    优先尝试按主键 ID（整数）查询，若参数不是合法整数则按 query_id 查询。
-    
-    Args:
-        record_id: 分析历史记录主键 ID（整数）或 query_id（字符串）
-        db_manager: 数据库管理器依赖
-        
-    Returns:
-        AnalysisReport: 完整分析报告
-        
-    Raises:
-        HTTPException: 404 - 报告不存在
-    """
+    """Return one structured report by numeric history id or legacy query_id."""
     try:
         service = HistoryService(db_manager)
         
-        # Try integer ID first, fall back to query_id string lookup
+        # Try integer ID first, then fall back to query_id string lookup for old links.
         result = service.resolve_and_get_detail(
             record_id,
             user_id=_current_user_id_or_none(current_user),
@@ -276,7 +242,7 @@ def get_history_detail(
             report_language,
         )
 
-        # 构建响应模型
+        # 构建结构化响应模型，同时按报告语言本地化名称、建议和趋势文案。
         meta = ReportMeta(
             id=result.get("id"),
             query_id=result.get("query_id", ""),
@@ -376,20 +342,7 @@ def get_history_news(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> NewsIntelResponse:
-    """
-    获取历史报告关联新闻
-
-    根据分析历史记录 ID 或 query_id 获取关联的新闻情报列表。
-    在内部完成 record_id → query_id 的解析。
-
-    Args:
-        record_id: 分析历史记录主键 ID（整数）或 query_id（字符串）
-        limit: 返回数量限制
-        db_manager: 数据库管理器依赖
-
-    Returns:
-        NewsIntelResponse: 新闻情报列表
-    """
+    """Return news items associated with one history record or query_id."""
     try:
         service = HistoryService(db_manager)
         items = service.resolve_and_get_news(
@@ -439,22 +392,7 @@ def get_history_markdown(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> MarkdownReportResponse:
-    """
-    获取历史报告的 Markdown 格式内容
-
-    根据分析历史记录 ID 或 query_id 生成与推送通知格式一致的 Markdown 报告。
-
-    Args:
-        record_id: 分析历史记录主键 ID（整数）或 query_id（字符串）
-        db_manager: 数据库管理器依赖
-
-    Returns:
-        MarkdownReportResponse: Markdown 格式的完整报告
-
-    Raises:
-        HTTPException: 404 - 报告不存在
-        HTTPException: 500 - 报告生成失败（服务器内部错误）
-    """
+    """Generate the notification-style Markdown report for one history item."""
     service = HistoryService(db_manager)
 
     try:

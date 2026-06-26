@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Read-only notification configuration diagnostics."""
+"""Read-only notification configuration diagnostics.
+
+Diagnostics are designed for CLI/API display and must never include secret
+values. The module checks presence, pairing, routing, and noise-control settings
+without attempting to send any notification.
+"""
 
 from __future__ import annotations
 
@@ -72,6 +77,7 @@ class NotificationDiagnosticResult:
 
     @property
     def ok(self) -> bool:
+        """Return whether the diagnostic run has no blocking errors."""
         return not self.errors
 
 
@@ -245,10 +251,12 @@ P6_CHANNEL_ACTIONS_ENV_KEYS: Tuple[str, ...] = (
 
 
 def _value(config: Config, attr: str):
+    """Read a config attribute using the normalized runtime attribute name."""
     return getattr(config, attr, None)
 
 
 def _has(config: Config, attr: str) -> bool:
+    """Return whether a config attribute is meaningfully populated."""
     value = _value(config, attr)
     if isinstance(value, (list, tuple, set, dict)):
         return bool(value)
@@ -261,6 +269,7 @@ def _issue(
     message: str,
     key: Optional[str] = None,
 ) -> NotificationDiagnosticIssue:
+    """Create a structured diagnostic issue."""
     return NotificationDiagnosticIssue(severity=severity, code=code, message=message, key=key)
 
 
@@ -276,6 +285,7 @@ def _require_pair(
     warnings: Optional[List[NotificationDiagnosticIssue]] = None,
     severity: IssueSeverity = "error",
 ) -> None:
+    """Validate paired notification settings such as token/chat-id combos."""
     left = _has(config, left_attr)
     right = _has(config, right_attr)
     target = errors if severity == "error" else warnings
@@ -557,6 +567,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
 
 
 def _format_issues(title: str, issues: Sequence[NotificationDiagnosticIssue]) -> List[str]:
+    """Format one severity bucket for human-readable CLI output."""
     if not issues:
         return [f"{title}: 无"]
     lines = [f"{title}:"]

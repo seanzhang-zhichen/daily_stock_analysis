@@ -89,6 +89,7 @@ class ToolRegistry:
     """
 
     def __init__(self):
+        """Create an empty name -> ToolDefinition mapping."""
         self._tools: Dict[str, ToolDefinition] = {}
 
     # ----- Registration -----
@@ -122,9 +123,11 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     def __len__(self) -> int:
+        """Return number of registered tools."""
         return len(self._tools)
 
     def __contains__(self, name: str) -> bool:
+        """Return whether a tool name is registered."""
         return name in self._tools
 
     # ----- Schema generation -----
@@ -189,6 +192,7 @@ def tool(
             ...
     """
     def decorator(func: Callable) -> Callable:
+        """Register the decorated function and return it unchanged."""
         # Infer parameters from type hints if not provided
         params = parameters
         if params is None:

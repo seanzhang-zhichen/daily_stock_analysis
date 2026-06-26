@@ -198,6 +198,7 @@ class _DatabaseManagerBase:
             raise
 
     def _seed_builtin_app_plans(self) -> None:
+        """确保数据库至少存在 free 套餐，避免空库启动后配额查询失败。"""
         session = self._SessionLocal()
         try:
             exists = session.query(AppPlan.id).filter(AppPlan.code == "free").first()
@@ -225,6 +226,7 @@ class _DatabaseManagerBase:
             session.close()
 
     def _seed_builtin_credit_packages(self) -> None:
+        """初始化默认积分包；已存在同 code 时跳过，保持运营配置可覆盖。"""
         defaults = [
             {
                 "code": "credits_200",
@@ -283,6 +285,7 @@ class _DatabaseManagerBase:
 
         @event.listens_for(self._engine, "connect")
         def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
+            """在每个 SQLite 连接创建时设置等待锁与 WAL 选项。"""
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute(f"PRAGMA busy_timeout={int(self._sqlite_busy_timeout_ms)}")
@@ -294,10 +297,12 @@ class _DatabaseManagerBase:
                 cursor.close()
 
     def _is_file_sqlite_database(self) -> bool:
+        """判断当前引擎是否指向文件型 SQLite 数据库。"""
         database = (self._engine.url.database or "").strip()
         return bool(database) and database.lower() != ":memory:"
 
     def _is_memory_sqlite_database(self) -> bool:
+        """判断当前引擎是否是内存 SQLite，用于测试态 create_all 分支。"""
         if not self._is_sqlite_engine:
             return False
         database = (self._engine.url.database or "").strip().lower()
@@ -312,6 +317,7 @@ class _DatabaseManagerBase:
         operation_name: str,
         write_operation: Callable[[Session], T],
     ) -> T:
+        """执行带 SQLite 锁重试的写事务，并把提交/回滚集中在一处。"""
         max_retries = self._sqlite_write_retry_max if self._is_sqlite_engine else 0
 
         for attempt in range(max_retries + 1):
@@ -352,6 +358,7 @@ class _DatabaseManagerBase:
 
     @staticmethod
     def _is_sqlite_locked_error(exc: OperationalError) -> bool:
+        """识别 SQLite 锁竞争错误，供写入重试逻辑判断是否可重试。"""
         err_text = str(getattr(exc, "orig", exc)).lower()
         return any(
             token in err_text
@@ -402,6 +409,7 @@ class _DatabaseManagerBase:
 
     @staticmethod
     def _normalize_daily_date(value: Any) -> Any:
+        """将日线数据中的字符串或 pandas 时间戳归一化为 date。"""
         if isinstance(value, str):
             return datetime.strptime(value, '%Y-%m-%d').date()
         if isinstance(value, pd.Timestamp):
@@ -412,6 +420,7 @@ class _DatabaseManagerBase:
 
     @staticmethod
     def _normalize_sql_value(value: Any) -> Any:
+        """把 pandas NaN/NaT 转成 SQL NULL，避免写入不可序列化值。"""
         return None if pd.isna(value) else value
 
     @staticmethod

@@ -53,6 +53,7 @@ class ConfigValidationError(Exception):
     """Raised when one or more submitted fields fail validation."""
 
     def __init__(self, issues: List[Dict[str, Any]]):
+        """Store structured validation issues for API callers."""
         super().__init__("Configuration validation failed")
         self.issues = issues
 
@@ -61,6 +62,7 @@ class ConfigConflictError(Exception):
     """Raised when submitted config_version is stale."""
 
     def __init__(self, current_version: str):
+        """Expose the latest version so clients can reload and retry."""
         super().__init__("Configuration version conflict")
         self.current_version = current_version
 
@@ -69,6 +71,7 @@ class ConfigImportError(Exception):
     """Raised when an imported `.env` payload is invalid."""
 
     def __init__(self, message: str):
+        """Store a user-facing import failure message."""
         super().__init__(message)
         self.message = message
 
@@ -179,6 +182,7 @@ class SystemConfigService:
     }
 
     def __init__(self, manager: Optional[ConfigManager] = None):
+        """Initialize the config file manager dependency."""
         self._manager = manager or ConfigManager()
 
     def get_schema(self) -> Dict[str, Any]:
@@ -196,10 +200,12 @@ class SystemConfigService:
 
     @staticmethod
     def _build_display_config_map(raw_config_map: Dict[str, str]) -> Dict[str, str]:
+        """Normalize env keys to uppercase for schema lookup/display."""
         return {key.upper(): value for key, value in raw_config_map.items()}
 
     @staticmethod
     def _resolve_display_value(raw_value: str, field_schema: Dict[str, Any], raw_value_exists: bool) -> str:
+        """Return displayed value, falling back to schema defaults for switches."""
         if raw_value_exists:
             return raw_value
 
@@ -745,6 +751,7 @@ class SystemConfigService:
 
     @classmethod
     def _normalize_llm_capability_checks(cls, capability_checks: Sequence[str]) -> List[str]:
+        """Keep requested LLM capability checks in a stable display/execution order."""
         requested = {str(check).strip().lower() for check in capability_checks if str(check).strip()}
         return [check for check in cls._LLM_CAPABILITY_ORDER if check in requested]
 
@@ -755,6 +762,7 @@ class SystemConfigService:
         reason: str,
         message: str,
     ) -> Dict[str, Dict[str, Any]]:
+        """Build per-capability skipped results when the base model test fails."""
         return {
             capability: cls._build_llm_capability_result(
                 capability=capability,
@@ -778,6 +786,7 @@ class SystemConfigService:
         timeout_seconds: float,
         capability_checks: Sequence[str],
     ) -> Dict[str, Dict[str, Any]]:
+        """Run optional capability probes for JSON, tools, stream, and vision."""
         results: Dict[str, Dict[str, Any]] = {}
         for capability in capability_checks:
             if capability == "json":
@@ -824,6 +833,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
+        """Probe whether the model honors JSON object response formatting."""
         try:
             started_at = time.perf_counter()
             response = litellm_module.completion(
@@ -892,6 +902,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
+        """Probe whether the model can return an explicit tool call."""
         tools = [
             {
                 "type": "function",
@@ -955,6 +966,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
+        """Probe whether the model can stream at least one content chunk."""
         stream = None
         started_at = time.perf_counter()
         try:
@@ -1013,6 +1025,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
+        """Probe whether the model accepts image input."""
         try:
             started_at = time.perf_counter()
             response = litellm_module.completion(
@@ -1068,6 +1081,7 @@ class SystemConfigService:
         max_tokens: int,
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Build LiteLLM kwargs for short, isolated capability probes."""
         try:
             timeout = float(timeout_seconds)
         except (TypeError, ValueError):
@@ -1103,6 +1117,7 @@ class SystemConfigService:
         latency_ms: Optional[int] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Build a sanitized capability result payload for the API."""
         return {
             "status": status,
             "message": cls._sanitize_llm_error_text(message),
@@ -1120,6 +1135,7 @@ class SystemConfigService:
         diagnostic: _LLMDiagnostic,
         error: str,
     ) -> Dict[str, Any]:
+        """Convert a classified LLM diagnostic into a capability result."""
         details = cls._merge_llm_diagnostic_details({"error": error}, diagnostic)
         return cls._build_llm_capability_result(
             capability=capability,
@@ -1132,6 +1148,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_tool_call_names(response: Any) -> List[str]:
+        """Extract returned tool-call names from dict/object LiteLLM responses."""
         choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
         if not choices:
             return []
@@ -1154,6 +1171,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_stream_chunk_content(chunk: Any) -> str:
+        """Extract text from one dict/object stream chunk."""
         choices = chunk.get("choices") if isinstance(chunk, dict) else getattr(chunk, "choices", None)
         if not choices:
             return ""
@@ -1171,6 +1189,7 @@ class SystemConfigService:
 
     @classmethod
     def _classify_llm_capability_exception(cls, exc: Exception, capability: str) -> _LLMDiagnostic:
+        """Classify capability probe failures separately from base model failures."""
         text = str(exc).lower()
         capability_tokens = {
             "json": ("response_format", "json_object", "json mode"),
@@ -1742,6 +1761,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_numeric_range(key: str, numeric_value: float, validation: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return validation issues for numeric min/max schema constraints."""
         issues: List[Dict[str, Any]] = []
         min_value = validation.get("min")
         max_value = validation.get("max")
@@ -1778,6 +1798,7 @@ class SystemConfigService:
 
     @staticmethod
     def _split_csv(value: str) -> List[str]:
+        """Split comma-separated env values, dropping empty entries."""
         return [item.strip() for item in (value or "").split(",") if item.strip()]
 
     def _build_notification_test_effective_map(
@@ -1834,6 +1855,7 @@ class SystemConfigService:
         channel: str,
         effective_map: Dict[str, str],
     ) -> Optional[str]:
+        """Return channel-specific config validation text before sending a test."""
         if channel == "ntfy":
             ntfy_url = (effective_map.get("NTFY_URL") or "").strip()
             if not ntfy_url:
@@ -1862,6 +1884,7 @@ class SystemConfigService:
         return Config(**kwargs)
 
     def _parse_notification_test_value(self, key: str, value: str, value_type: str) -> Any:
+        """Parse one notification test env value into Config constructor shape."""
         if value_type == "csv":
             return self._split_csv(value)
         if value_type == "bool":
@@ -1886,6 +1909,7 @@ class SystemConfigService:
         content: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
+        """Dispatch one isolated notification test through the channel sender."""
         from src.notification_sender import (
             AstrbotSender,
             CustomWebhookSender,
@@ -1970,11 +1994,13 @@ class SystemConfigService:
 
     @staticmethod
     def _build_notification_test_content(title: str, content: str) -> str:
+        """Combine notification title/content for simple sender APIs."""
         title = title.strip()
         content = content.strip()
         return f"{title}\n\n{content}" if title else content
 
     def _resolve_notification_test_target(self, channel: str, effective_map: Dict[str, str]) -> str:
+        """Return a masked human-readable destination for test result display."""
         for key in self._NOTIFICATION_TEST_TARGET_KEYS.get(channel, ()):
             raw_value = (effective_map.get(key) or "").strip()
             if not raw_value:
@@ -1997,6 +2023,7 @@ class SystemConfigService:
         latency_ms: Optional[int],
         attempts: Sequence[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        """Build the notification-test response payload with sanitized attempts."""
         sanitized_attempts = [cls._sanitize_notification_attempt(attempt) for attempt in attempts]
         return {
             "success": success,
@@ -2010,6 +2037,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_notification_attempt(cls, attempt: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize one notification send attempt before returning it to clients."""
         sanitized = dict(attempt)
         if "message" in sanitized:
             sanitized["message"] = cls._sanitize_notification_text(sanitized["message"])
@@ -2019,6 +2047,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_notification_text(cls, text: Any) -> str:
+        """Redact tokens, sendkeys, and URLs from notification diagnostics."""
         sanitized = cls._sanitize_llm_error_text(text)
         if not sanitized:
             return ""
@@ -2033,6 +2062,7 @@ class SystemConfigService:
 
     @staticmethod
     def _mask_notification_target(target: str, *, source_key: Optional[str] = None) -> str:
+        """Mask a destination URL/token while retaining enough routing context."""
         value = (target or "").strip()
         if not value:
             return ""
@@ -2087,6 +2117,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_notification_exception(exc: Exception) -> Tuple[str, bool]:
+        """Classify notification send exceptions into API error code/retryability."""
         if isinstance(exc, requests.exceptions.Timeout):
             return "timeout", True
         if isinstance(exc, requests.exceptions.ConnectionError):
@@ -2105,6 +2136,7 @@ class SystemConfigService:
         message: str,
         next_step: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Build one setup-status checklist item."""
         return {
             "key": key,
             "title": title,
@@ -2117,6 +2149,7 @@ class SystemConfigService:
 
     @staticmethod
     def _is_setup_relevant_env_key(key: str) -> bool:
+        """Return whether an env key should be included in setup-status checks."""
         if key in {
             "STOCK_LIST",
             "DATABASE_PATH",
@@ -2199,15 +2232,18 @@ class SystemConfigService:
 
     @staticmethod
     def _has_any_config_value(effective_map: Dict[str, str], keys: Sequence[str]) -> bool:
+        """Return whether any of the given env keys has a non-empty value."""
         return any((effective_map.get(key) or "").strip() for key in keys)
 
     @staticmethod
     def _has_valid_ntfy_endpoint(effective_map: Dict[str, str]) -> bool:
+        """Return whether NTFY_URL includes both server and topic."""
         ntfy_server_url, ntfy_topic = resolve_ntfy_endpoint(effective_map.get("NTFY_URL"))
         return bool(ntfy_server_url and ntfy_topic)
 
     @staticmethod
     def _has_valid_gotify_config(effective_map: Dict[str, str]) -> bool:
+        """Return whether Gotify URL/token are sufficient for sending."""
         return bool(
             resolve_gotify_message_endpoint(effective_map.get("GOTIFY_URL"))
             and (effective_map.get("GOTIFY_TOKEN") or "").strip()
@@ -2215,6 +2251,7 @@ class SystemConfigService:
 
     @classmethod
     def _provider_has_setup_credentials(cls, provider: str, effective_map: Dict[str, str]) -> bool:
+        """Check whether a direct provider has enough credentials for setup status."""
         normalized = canonicalize_llm_channel_protocol(provider)
         if normalized == "ollama":
             return True
@@ -2238,6 +2275,7 @@ class SystemConfigService:
 
     @classmethod
     def _has_setup_runtime_source_for_model(cls, model: str, effective_map: Dict[str, str]) -> bool:
+        """Return whether a model's provider has a usable direct runtime source."""
         normalized_model = (model or "").strip()
         if not normalized_model:
             return False
@@ -2246,6 +2284,7 @@ class SystemConfigService:
 
     @classmethod
     def _collect_setup_channel_models(cls, effective_map: Dict[str, str]) -> List[str]:
+        """Collect enabled LLM channel models that have usable protocol/credentials."""
         models: List[str] = []
         seen: Set[str] = set()
         for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
@@ -2284,6 +2323,7 @@ class SystemConfigService:
         return models
 
     def _resolve_setup_primary_model(self, effective_map: Dict[str, str]) -> Tuple[str, str]:
+        """Resolve the primary model used by setup status and explain failures."""
         explicit_model = (effective_map.get("LITELLM_MODEL") or "").strip()
         yaml_models = self._collect_yaml_models_from_map(effective_map)
         channel_models = self._collect_setup_channel_models(effective_map)
@@ -2308,6 +2348,7 @@ class SystemConfigService:
         return "", "尚未检测到主模型配置"
 
     def _build_setup_primary_llm_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
+        """Build setup check item for the primary LLM channel."""
         model, source = self._resolve_setup_primary_model(effective_map)
         if model:
             source_label = {
@@ -2338,6 +2379,7 @@ class SystemConfigService:
         effective_map: Dict[str, str],
         primary_check: Dict[str, Any],
     ) -> Dict[str, Any]:
+        """Build setup check item for Agent LLM inheritance/override."""
         agent_model_raw = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
         if not agent_model_raw:
             if primary_check["status"] == "configured":
@@ -2397,6 +2439,7 @@ class SystemConfigService:
         )
 
     def _build_setup_stock_list_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
+        """Build setup check item for the required watchlist."""
         stocks = self._split_csv(effective_map.get("STOCK_LIST") or "")
         if stocks:
             return self._setup_check(
@@ -2418,6 +2461,7 @@ class SystemConfigService:
         )
 
     def _build_setup_notification_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
+        """Build setup check item for optional notification channels."""
         configured = (
             self._has_any_config_value(effective_map, ("WECHAT_WEBHOOK_URL", "FEISHU_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"))
             or (
@@ -2483,6 +2527,7 @@ class SystemConfigService:
         )
 
     def _build_setup_storage_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
+        """Build setup check item for local database path writability."""
         db_path = Path((effective_map.get("DATABASE_PATH") or "./data/stock_analysis.db").strip()).expanduser()
         parent = db_path.parent if db_path.parent != Path("") else Path(".")
         probe = parent
@@ -2595,6 +2640,7 @@ class SystemConfigService:
         latency_ms: Optional[int] = None,
         capability_results: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Build a sanitized LLM channel test/discovery response."""
         payload: Dict[str, Any] = {
             "success": success,
             "message": cls._sanitize_llm_error_text(message),
@@ -2619,6 +2665,7 @@ class SystemConfigService:
         base_details: Optional[Dict[str, Any]],
         diagnostic: _LLMDiagnostic,
     ) -> Dict[str, Any]:
+        """Merge diagnostic reason/details into an existing details payload."""
         details: Dict[str, Any] = dict(base_details or {})
         if diagnostic.reason:
             details.setdefault("reason", diagnostic.reason)
@@ -2627,6 +2674,7 @@ class SystemConfigService:
 
     @staticmethod
     def _sanitize_llm_error_text(text: Any) -> str:
+        """Redact credentials from LLM errors before API/log display."""
         if text is None:
             return ""
         sanitized = str(text).strip()
@@ -2647,6 +2695,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_llm_details(cls, details: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Recursively sanitize string values in LLM diagnostic details."""
         if not details:
             return {}
         sanitized: Dict[str, Any] = {}
@@ -2666,6 +2715,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_llm_http_error(status_code: int, error_text: str) -> _LLMDiagnostic:
+        """Classify model-list HTTP failures into user-facing diagnostic codes."""
         lowered = (error_text or "").lower()
         if SystemConfigService._has_model_access_denied_signal(error_text or ""):
             return _LLMDiagnostic(
@@ -2736,6 +2786,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_model_not_found_signal(text: str) -> bool:
+        """Detect provider text that specifically says a model id is missing."""
         lowered = text.lower()
 
         model_candidates = [
@@ -2757,6 +2808,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_model_access_denied_signal(text: str) -> bool:
+        """Detect provider text that says the model exists but is inaccessible."""
         lowered = text.lower()
         if "model" not in lowered:
             return False
@@ -2781,6 +2833,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_request_blocked_signal(text: str) -> bool:
+        """Detect policy/moderation blocking while excluding transport blocks."""
         lowered = text.lower()
         if SystemConfigService._has_transport_blocked_signal(lowered):
             return False
@@ -2798,6 +2851,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_transport_blocked_signal(text: str) -> bool:
+        """Detect network/firewall blocking messages."""
         lowered = text.lower()
         transport_tokens = (
             "connection blocked",
@@ -2811,6 +2865,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_provider_prefix_mismatch_signal(text: str) -> bool:
+        """Detect LiteLLM/provider-prefix mismatch messages."""
         lowered = text.lower()
         mismatch_tokens = (
             "provider prefix",
@@ -2824,6 +2879,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_llm_exception(exc: Exception) -> _LLMDiagnostic:
+        """Classify LiteLLM exceptions into stable API diagnostic codes."""
         exc_name = type(exc).__name__.lower()
         text = str(exc).lower()
         if isinstance(exc, TimeoutError) or "timeout" in exc_name or "timed out" in text:
@@ -2895,6 +2951,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_completion_content(response: Any) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+        """Extract text from a LiteLLM completion response with parse diagnostics."""
         if response is None:
             return "", "empty_response", "Completion returned no response object", "null_response"
 

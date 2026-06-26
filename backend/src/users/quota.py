@@ -47,11 +47,13 @@ class QuotaConfig:
 
 
 def _ensure_kind(kind: str) -> None:
+    """校验配额 kind，避免写入不可识别的计数行。"""
     if kind not in _VALID_KINDS:
         raise ValueError(f"unsupported quota kind: {kind!r}")
 
 
 def _today_utc() -> date:
+    """返回 UTC 日期，确保跨时区部署时每日窗口一致。"""
     return datetime.utcnow().date()
 
 
@@ -62,6 +64,7 @@ def _get_counter(
     counter_date: date,
     kind: str,
 ) -> Optional[AppUserUsageCounter]:
+    """读取单个用户/日期/kind 的计数行。"""
     stmt = select(AppUserUsageCounter).where(
         AppUserUsageCounter.user_id == user_id,
         AppUserUsageCounter.counter_date == counter_date,
@@ -183,12 +186,14 @@ class QuotaSnapshot:
 
     @property
     def analysis_remaining(self) -> Optional[int]:
+        """返回分析剩余额度；None 表示不限额。"""
         if self.analysis_limit <= 0:
             return None
         return max(0, self.analysis_limit - self.analysis_used)
 
     @property
     def agent_remaining(self) -> Optional[int]:
+        """返回 Agent 剩余额度；None 表示不限额。"""
         if self.agent_limit <= 0:
             return None
         return max(0, self.agent_limit - self.agent_used)

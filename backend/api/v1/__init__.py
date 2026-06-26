@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-API v1 模块初始化
-===================================
+"""Versioned API exports.
 
-职责：
-1. 导出 v1 版本 API 的路由
+v1 的所有 endpoint 都通过 ``api_v1_router`` 汇总后挂载到应用工厂中。外部代码
+只需要依赖这个聚合路由，避免绕过版本前缀直接引用具体 endpoint 模块。
 """
 
 from api.v1.router import router as api_v1_router

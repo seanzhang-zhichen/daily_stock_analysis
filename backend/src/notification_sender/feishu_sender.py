@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuSender:
+    """Send notifications through Feishu custom robot webhooks."""
     
     def __init__(self, config: Config):
         """
@@ -193,6 +194,7 @@ class FeishuSender:
         security_fields = self._build_security_fields()
 
         def _post_payload(payload: Dict[str, Any]) -> bool:
+            """POST one Feishu payload with optional signing fields attached."""
             request_payload = dict(payload)
             request_payload.update(security_fields)
             logger.debug(f"飞书请求 URL: {self._feishu_url}")

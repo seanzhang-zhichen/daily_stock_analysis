@@ -63,12 +63,14 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _safe_str(value: Any) -> str:
+    """Return a stripped string, using an empty string for missing values."""
     if value is None:
         return ""
     return str(value).strip()
 
 
 def _safe_datetime(value: Any) -> Optional[datetime]:
+    """Parse heterogeneous AkShare date values into ``datetime`` when possible."""
     if value is None:
         return None
     try:
@@ -84,6 +86,7 @@ def _safe_datetime(value: Any) -> Optional[datetime]:
 
 
 def _normalize_code(raw: Any) -> str:
+    """Normalize exchange-prefixed or suffixed stock codes for row matching."""
     s = _safe_str(raw).upper()
     if "." in s:
         s = s.split(".", 1)[0]
@@ -142,6 +145,7 @@ def _extract_cash_dividend_per_share(row: pd.Series) -> Optional[float]:
 
 
 def _filter_rows_by_code(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
+    """Filter dataframe rows by stock code when code-like columns are present."""
     if df is None or df.empty:
         return pd.DataFrame()
     code_cols = [c for c in df.columns if any(k in str(c) for k in ("代码", "股票代码", "证券代码", "symbol", "ts_code"))]
@@ -161,6 +165,7 @@ def _filter_rows_by_code(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
 
 
 def _normalize_report_date(value: Any) -> Optional[str]:
+    """Convert report date-like values to ISO date strings."""
     parsed = _safe_datetime(value)
     return parsed.date().isoformat() if parsed else None
 
@@ -170,6 +175,7 @@ def _build_dividend_payload(
     stock_code: str,
     max_events: int = 5,
 ) -> Dict[str, Any]:
+    """Build recent and trailing-year pre-tax cash dividend payloads."""
     work_df = _filter_rows_by_code(dividend_df, stock_code)
     if work_df.empty:
         return {}
@@ -268,6 +274,7 @@ class AkshareFundamentalAdapter:
         self,
         candidates: List[Tuple[str, Dict[str, Any]]],
     ) -> Tuple[Optional[pd.DataFrame], Optional[str], List[str]]:
+        """Try AkShare dataframe functions in order and return the first non-empty result."""
         errors: List[str] = []
         try:
             import akshare as ak

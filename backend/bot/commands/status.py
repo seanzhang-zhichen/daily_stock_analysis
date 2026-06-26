@@ -28,18 +28,22 @@ class StatusCommand(BotCommand):
     
     @property
     def name(self) -> str:
+        """返回命令主名称，用于 `/status` 路由注册。"""
         return "status"
     
     @property
     def aliases(self) -> List[str]:
+        """返回状态命令的短别名和中文触发词。"""
         return ["s", "状态", "info"]
     
     @property
     def description(self) -> str:
+        """返回帮助列表中展示的命令简述。"""
         return "显示系统状态"
     
     @property
     def usage(self) -> str:
+        """返回帮助详情中展示的参数格式。"""
         return "/status"
     
     def execute(self, message: BotMessage, args: List[str]) -> BotResponse:
@@ -146,6 +150,7 @@ class StatusCommand(BotCommand):
         """格式化状态信息"""
         # 状态图标
         def icon(enabled: bool) -> str:
+            """Return a compact availability icon for status rows."""
             return "✅" if enabled else "❌"
         
         lines = [

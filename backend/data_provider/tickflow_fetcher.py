@@ -53,6 +53,7 @@ class TickFlowFetcher(BaseFetcher):
     priority = 99
 
     def __init__(self, api_key: Optional[str], timeout: float = 30.0):
+        """Store TickFlow credentials and lazy-client state for market review calls."""
         self.api_key = (api_key or "").strip()
         self.timeout = timeout
         self._client = None
@@ -74,6 +75,7 @@ class TickFlowFetcher(BaseFetcher):
                 logger.debug("[TickFlowFetcher] 关闭客户端失败: %s", exc)
 
     def __del__(self) -> None:
+        """Best-effort cleanup for interpreter shutdown paths."""
         try:
             self.close()
         except Exception:
@@ -81,11 +83,13 @@ class TickFlowFetcher(BaseFetcher):
             pass
 
     def _build_client(self):
+        """Construct the TickFlow SDK client lazily."""
         from tickflow import TickFlow
 
         return TickFlow(api_key=self.api_key, timeout=self.timeout)
 
     def _get_client(self):
+        """Return a cached TickFlow client or None when no API key is configured."""
         if not self.api_key:
             return None
         if self._client is not None:
@@ -99,17 +103,20 @@ class TickFlowFetcher(BaseFetcher):
     def _fetch_raw_data(
         self, stock_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
+        """Reject generic OHLCV fetches; this fetcher is market-review only."""
         raise DataFetchError(
             "TickFlowFetcher P0 only supports market review endpoints"
         )
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
+        """Reject generic normalization; TickFlow P0 does not return daily bars."""
         raise DataFetchError(
             "TickFlowFetcher P0 only supports market review endpoints"
         )
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
+        """Convert quote fields to float, treating blanks/dashes as missing."""
         if value in (None, "", "-"):
             return None
         try:
@@ -119,6 +126,7 @@ class TickFlowFetcher(BaseFetcher):
 
     @classmethod
     def _ratio_to_percent(cls, value: Any) -> Optional[float]:
+        """Convert ratio values to percentage units."""
         ratio = cls._safe_float(value)
         if ratio is None:
             return None
@@ -126,12 +134,14 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _extract_name(quote: Dict[str, Any]) -> str:
+        """Extract display name from TickFlow quote payload."""
         ext = quote.get("ext") or {}
         name = ext.get("name") or quote.get("name") or ""
         return str(name).strip()
 
     @staticmethod
     def _is_universe_permission_error(exc: Exception) -> bool:
+        """Detect TickFlow permission errors for universe queries."""
         status_code = getattr(exc, "status_code", None)
         code = str(getattr(exc, "code", "") or "").upper()
         message = (
@@ -154,6 +164,7 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _is_cn_equity_symbol(symbol: str) -> bool:
+        """Return True for explicit SH/SZ/BJ six-digit equity symbols."""
         normalized = normalize_stock_code(symbol)
         upper_symbol = (symbol or "").strip().upper()
         return (
@@ -164,10 +175,12 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _round_limit_price(prev_close: float, ratio: float) -> float:
+        """Round Chinese limit-up/down theoretical price to two decimals."""
         return math.floor(prev_close * (1 + ratio) * 100 + 0.5) / 100.0
 
     @classmethod
     def _get_limit_ratio(cls, pure_code: str, name: str) -> float:
+        """Return price-limit ratio for BSE, STAR/ChiNext, ST and regular stocks."""
         if is_bse_code(pure_code):
             return 0.30
         if is_kc_cy_stock(pure_code):

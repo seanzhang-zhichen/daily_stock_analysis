@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""System configuration API schemas."""
+"""System configuration API schemas.
+
+配置接口同时服务动态表单渲染、.env 导入导出、运行时校验和连通性测试。敏感值
+通过 ``mask_token`` 与 ``is_masked`` 表达，schema 只描述契约，不在这里持久化
+或解密真实配置。
+"""
 
 from __future__ import annotations
 
@@ -137,7 +142,7 @@ class SystemConfigUpdateItem(BaseModel):
 
 
 class UpdateSystemConfigRequest(BaseModel):
-    """Update request payload."""
+    """Update request payload with optimistic version and mask-token support."""
 
     config_version: str
     mask_token: str = "******"
@@ -190,7 +195,7 @@ class ValidateSystemConfigResponse(BaseModel):
 
 
 class TestLLMChannelRequest(BaseModel):
-    """Request payload for testing one LLM channel."""
+    """Request payload for testing one LLM channel without saving it first."""
 
     name: str = "channel"
     protocol: str = "openai"
@@ -245,7 +250,7 @@ class NotificationTestAttempt(BaseModel):
 
 
 class TestNotificationChannelRequest(BaseModel):
-    """Request payload for testing one notification channel."""
+    """Request payload for testing one notification channel with draft config."""
 
     channel: NotificationTestChannel
     items: List[SystemConfigUpdateItem] = Field(default_factory=list)
@@ -268,7 +273,7 @@ class TestNotificationChannelResponse(BaseModel):
 
 
 class DiscoverLLMChannelModelsRequest(BaseModel):
-    """Request payload for discovering models from one LLM channel."""
+    """Request payload for discovering models from one unsaved LLM channel."""
 
     name: str = "channel"
     protocol: str = "openai"

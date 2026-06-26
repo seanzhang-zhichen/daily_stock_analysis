@@ -31,18 +31,22 @@ class BatchCommand(BotCommand):
     
     @property
     def name(self) -> str:
+        """返回命令主名称，用于 `/batch` 路由注册。"""
         return "batch"
     
     @property
     def aliases(self) -> List[str]:
+        """返回批量分析命令的短别名和中文触发词。"""
         return ["b", "批量", "全部"]
     
     @property
     def description(self) -> str:
+        """返回帮助列表中展示的命令简述。"""
         return "批量分析自选股"
     
     @property
     def usage(self) -> str:
+        """返回帮助详情中展示的参数格式。"""
         return "/batch [数量]"
     
     @property

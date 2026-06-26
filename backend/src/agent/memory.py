@@ -72,6 +72,7 @@ class AgentMemory:
     """
 
     def __init__(self, enabled: bool = False, min_samples: int = _MIN_CALIBRATION_SAMPLES):
+        """Create memory access with feature flag and calibration sample threshold."""
         self.enabled = enabled
         self.min_samples = min_samples
 

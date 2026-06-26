@@ -135,6 +135,7 @@ def is_time_in_quiet_hours(now: datetime, quiet_hours: Tuple[int, int]) -> bool:
 
 
 def _resolve_now(timezone_name: Optional[str], now: Optional[datetime]) -> datetime:
+    """Resolve the evaluation time in configured notification timezone."""
     raw_timezone = str(timezone_name or "").strip()
     if raw_timezone:
         if ZoneInfo is None:
@@ -154,10 +155,12 @@ def _resolve_now(timezone_name: Optional[str], now: Optional[datetime]) -> datet
 
 
 def _timestamp(now: datetime) -> float:
+    """Convert a timezone-aware or naive datetime into a comparable timestamp."""
     return now.timestamp()
 
 
 def _cleanup_expired(now_ts: float) -> None:
+    """Remove expired dedup, cooldown and in-flight reservation records."""
     expired_dedup = [key for key, expires_at in _dedup_expires_at.items() if expires_at <= now_ts]
     for key in expired_dedup:
         _dedup_expires_at.pop(key, None)
@@ -184,10 +187,12 @@ def _cleanup_expired(now_ts: float) -> None:
 
 
 def _stable_content_hash(content: str) -> str:
+    """Return a deterministic hash used as the default dedup key."""
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
 def _state_key(prefix: str, route_type: str, severity: str, key: str) -> str:
+    """Build a namespaced notification-noise state key."""
     return f"{prefix}:{route_type}:{severity}:{key}"
 
 
@@ -199,6 +204,7 @@ def _build_keys(
     dedup_key: Optional[str],
     cooldown_key: Optional[str],
 ) -> Tuple[str, str]:
+    """Build dedup and cooldown keys from explicit keys or content defaults."""
     dedup_part = str(dedup_key).strip() if dedup_key else _stable_content_hash(content)
     cooldown_part = str(cooldown_key).strip() if cooldown_key else "default"
     return (
@@ -253,6 +259,7 @@ def _evaluate_notification_noise(
     cooldown_key: Optional[str],
     now: Optional[datetime],
 ) -> NotificationNoiseDecision:
+    """Evaluate quiet-hours, severity, dedup, cooldown and reservation rules."""
     route = str(route_type or "default").strip().lower() or "default"
     resolved_severity = normalize_notification_severity(route, severity)
     dedup_ttl = max(0, int(getattr(config, "notification_dedup_ttl_seconds", 0) or 0))
@@ -363,6 +370,7 @@ def _evaluate_notification_noise(
 
 
 def _release_reserved_locked(decision: NotificationNoiseDecision) -> None:
+    """Release in-flight reservations while the notification state lock is held."""
     if decision.dedup_reserved and decision.dedup_key:
         dedup_inflight = _dedup_inflight_until.get(decision.dedup_key)
         if dedup_inflight and dedup_inflight[1] == decision.reservation_token:

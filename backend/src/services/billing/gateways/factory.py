@@ -38,10 +38,12 @@ def set_gateway_override(provider: str, gateway: Optional[PaymentGateway]) -> No
 
 
 def clear_gateway_overrides() -> None:
+    """Clear all test/mock gateway overrides."""
     _OVERRIDES.clear()
 
 
 def _flag(name: str) -> bool:
+    """Read a boolean-like environment flag."""
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
@@ -61,6 +63,7 @@ def _read_pem_or_path(env_name_pem: str, env_name_path: str) -> Optional[str]:
 
 
 def _build_wechat() -> Optional[PaymentGateway]:
+    """Build a WeChat gateway when all required credentials are configured."""
     app_id = (os.environ.get("WECHAT_PAY_APP_ID") or "").strip()
     mch_id = (os.environ.get("WECHAT_PAY_MCH_ID") or "").strip()
     apiv3_key = (os.environ.get("WECHAT_PAY_APIV3_KEY") or "").strip()
@@ -95,6 +98,7 @@ def _build_wechat() -> Optional[PaymentGateway]:
 
 
 def _build_alipay() -> Optional[PaymentGateway]:
+    """Build an Alipay gateway when all required credentials are configured."""
     app_id = (os.environ.get("ALIPAY_APP_ID") or "").strip()
     pubkey_pem = _read_pem_or_path(
         "ALIPAY_PUBLIC_KEY_PEM",
@@ -143,6 +147,7 @@ def get_gateway(provider: str, db: Optional[Session] = None) -> Optional[Payment
 
 
 def has_gateway(provider: str) -> bool:
+    """Return whether a provider gateway is currently available."""
     return get_gateway(provider) is not None
 
 

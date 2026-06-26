@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-大盘复盘市场区域配置
+"""Market-region metadata for daily market review.
 
-定义各市场区域的指数、新闻搜索词、Prompt 提示等元数据，
-供 MarketAnalyzer 按 region 切换 A 股/美股复盘行为。
+Each profile describes the representative index, news-search queries, prompt
+hints, and available market-stat sections for one region. ``MarketAnalyzer``
+uses these profiles to switch CN/HK/US recap behavior without scattering
+region-specific constants through the analysis code.
 """
 
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ from typing import List
 
 @dataclass
 class MarketProfile:
-    """大盘复盘市场区域配置"""
+    """Region-specific inputs and feature switches for market review."""
 
     region: str  # "cn" | "us"
     # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX
@@ -68,7 +69,7 @@ HK_PROFILE = MarketProfile(
 
 
 def get_profile(region: str) -> MarketProfile:
-    """根据 region 返回对应的 MarketProfile"""
+    """Return the configured MarketProfile, defaulting to CN for unknown values."""
     if region == "us":
         return US_PROFILE
     if region == "hk":

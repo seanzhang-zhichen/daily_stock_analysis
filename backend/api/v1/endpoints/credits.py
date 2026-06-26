@@ -3,6 +3,8 @@
 
 Mounted at ``/api/v1/credits/*``. This is intentionally separate from
 ``/billing`` subscription endpoints: credit purchases top up balance only.
+The endpoint layer coordinates payment-mode flags, audit logging, and gateway
+handoff; order creation and fulfillment rules stay in ``CreditOrderService``.
 """
 
 from __future__ import annotations
@@ -31,23 +33,28 @@ _svc = CreditOrderService()
 
 
 def _flag(name: str) -> bool:
+    """Return whether an environment feature flag is truthy."""
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
 def _payment_enabled(db: Session) -> bool:
+    """Read platform switch for real payment gateway usage."""
     return bool(get_platform_setting_value(db, "PAYMENT_ENABLED"))
 
 
 def _payment_mock_enabled() -> bool:
+    """Return whether local mock payment endpoints are enabled."""
     return _flag("PAYMENT_MOCK_ENABLED")
 
 
 def _order_expire_minutes(db: Session) -> int:
+    """Read order expiration duration from platform settings."""
     return int(get_platform_setting_value(db, "ORDER_EXPIRE_MINUTES"))
 
 
 @router.get("/packages", summary="列出可购买积分包")
 async def list_credit_packages(db: Session = Depends(get_db)):
+    """List active credit packages available for purchase."""
     packages = _svc.list_packages(db)
     return {"packages": [serialize_credit_package(p) for p in packages]}
 
@@ -59,6 +66,7 @@ async def create_credit_order(
     current_user: AppUser = Depends(get_current_user),
     body: dict = Body(...),
 ):
+    """Create a credit top-up order for the current user."""
     package_code = body.get("packageCode") or ""
     provider = body.get("provider") or "manual"
     if not package_code:
@@ -104,6 +112,7 @@ async def list_credit_orders(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """List current user's credit purchase orders."""
     orders = _svc.list_orders(db, user_id=current_user.id)
     return {"orders": [serialize_credit_order(o) for o in orders]}
 
@@ -114,6 +123,7 @@ async def get_credit_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Return one credit order owned by the current user."""
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="积分订单不存在")
@@ -126,6 +136,7 @@ async def pay_credit_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Start payment for a credit order through real or mock gateway mode."""
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="积分订单不存在")
@@ -176,6 +187,7 @@ async def mock_pay_credit_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Fulfill a credit order in local mock-payment mode only."""
     if not _payment_mock_enabled():
         raise HTTPException(status_code=403, detail="mock-pay 端点仅在 PAYMENT_MOCK_ENABLED=true 时可用")
     order = _svc.get_order(db, order_no, user_id=current_user.id)
@@ -197,6 +209,7 @@ async def cancel_credit_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Cancel a cancellable credit order owned by the current user."""
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="积分订单不存在")

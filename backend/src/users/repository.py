@@ -20,6 +20,7 @@ from src.users.passwords import hash_token
 
 
 def get_user_by_email(db: Session, email: str) -> Optional[AppUser]:
+    """按规范化邮箱查询用户；空邮箱直接返回 None。"""
     if not email:
         return None
     normalized = email.strip().lower()
@@ -27,6 +28,7 @@ def get_user_by_email(db: Session, email: str) -> Optional[AppUser]:
 
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[AppUser]:
+    """按主键查询用户；空 id 直接返回 None。"""
     if not user_id:
         return None
     return db.query(AppUser).filter(AppUser.id == int(user_id)).first()
@@ -40,6 +42,7 @@ def create_user(
     plan_code: str = "free",
     email_verified: bool = False,
 ) -> AppUser:
+    """创建用户基础行；业务校验和邀请码逻辑由 service 层负责。"""
     record = AppUser(
         email=email.strip().lower(),
         password_hash=password_hash,
@@ -53,6 +56,7 @@ def create_user(
 
 
 def update_password(db: Session, user: AppUser, new_password_hash: str) -> AppUser:
+    """更新密码哈希，不在仓储层校验密码强度。"""
     user.password_hash = new_password_hash
     db.add(user)
     db.flush()
@@ -60,6 +64,7 @@ def update_password(db: Session, user: AppUser, new_password_hash: str) -> AppUs
 
 
 def mark_email_verified(db: Session, user: AppUser) -> AppUser:
+    """标记邮箱已验证；重复调用保持首次验证时间。"""
     if user.email_verified_at is None:
         user.email_verified_at = datetime.utcnow()
         db.add(user)
@@ -68,6 +73,7 @@ def mark_email_verified(db: Session, user: AppUser) -> AppUser:
 
 
 def touch_last_login(db: Session, user: AppUser) -> AppUser:
+    """更新最近登录时间。"""
     user.last_login_at = datetime.utcnow()
     db.add(user)
     db.flush()
@@ -82,6 +88,7 @@ def create_verification_token(
     purpose: str,
     ttl_hours: int,
 ) -> AppUserEmailVerification:
+    """创建一次性邮箱验证/重置 token，数据库只保存哈希。"""
     expires_at = datetime.utcnow() + timedelta(hours=ttl_hours)
     record = AppUserEmailVerification(
         user_id=user_id,

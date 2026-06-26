@@ -40,6 +40,7 @@ class InterceptHandler(logging.Handler):
     """将标准库 logging 记录转发给 Loguru。"""
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Forward one standard logging record into Loguru with source metadata."""
         try:
             level = loguru_logger.level(record.levelname).name
         except ValueError:
@@ -58,6 +59,7 @@ def _make_loguru_format(project_root: Path) -> Callable[[dict], str]:
     """创建输出项目相对路径的 Loguru formatter。"""
 
     def _format(record: dict) -> str:
+        """Populate Loguru extra fields used by the shared format string."""
         source_path = record["extra"].get("source_path", record["file"].path)
         source_line = record["extra"].get("source_line", record["line"])
         path = Path(source_path)
@@ -73,6 +75,7 @@ def _make_loguru_format(project_root: Path) -> Callable[[dict], str]:
 
 
 def _logging_level_to_loguru(level: int) -> Union[int, str]:
+    """Convert stdlib logging levels into values accepted by Loguru sinks."""
     if level <= logging.NOTSET:
         return "DEBUG"
     level_name = logging.getLevelName(level)

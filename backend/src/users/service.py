@@ -65,6 +65,7 @@ _rate_state: dict[str, Tuple[int, float]] = {}
 
 
 def _rate_check(key: str) -> bool:
+    """检查内存限流窗口内的失败次数是否仍允许继续尝试。"""
     now = time.time()
     with _rate_lock:
         for k, (_, ts) in list(_rate_state.items()):
@@ -75,6 +76,7 @@ def _rate_check(key: str) -> bool:
 
 
 def _rate_record_failure(key: str) -> None:
+    """记录一次失败尝试，窗口过期时重新计数。"""
     now = time.time()
     with _rate_lock:
         count, first = _rate_state.get(key, (0, now))
@@ -85,6 +87,7 @@ def _rate_record_failure(key: str) -> None:
 
 
 def _rate_clear(key: str) -> None:
+    """在登录成功后清理该 key 的失败计数。"""
     with _rate_lock:
         _rate_state.pop(key, None)
 
@@ -93,16 +96,19 @@ def _rate_clear(key: str) -> None:
 
 
 def _ensure_mode_enabled(settings: UserModeSettings) -> None:
+    """保留模式开关检查入口；当前 To C 模式恒开启。"""
     return None
 
 
 def _normalize_email(email: str) -> str:
+    """校验并规范化邮箱，错误统一转成 UserError。"""
     if not is_valid_email(email or ""):
         raise UserError(UserErrorCode.INVALID_EMAIL, "请输入合法邮箱")
     return email.strip().lower()
 
 
 def _validate_or_raise(password: str) -> None:
+    """校验密码强度并按用户体系错误码抛出。"""
     err = validate_password_strength(password)
     if err:
         raise UserError(UserErrorCode.INVALID_PASSWORD, err)
@@ -115,6 +121,7 @@ def _send_verification_email(
     email_backend: Optional[EmailBackend],
     settings: UserModeSettings,
 ) -> None:
+    """创建邮箱验证 token 并通过配置的邮件后端发出。"""
     token = secrets.token_urlsafe(32)
     repo.create_verification_token(
         db,
@@ -148,6 +155,8 @@ def _send_verification_email(
 
 @dataclass(frozen=True)
 class RegistrationResult:
+    """注册用例返回值，表示是否已直接签发登录 session。"""
+
     user: AppUser
     issued_session: Optional[IssuedSession] = None
     requires_verification: bool = True
@@ -297,6 +306,7 @@ def login(
     ip: Optional[str] = None,
     settings: Optional[UserModeSettings] = None,
 ) -> IssuedSession:
+    """邮箱密码登录；失败限流、状态和邮箱验证都在这里统一处理。"""
     settings = settings or load_user_mode_settings()
     _ensure_mode_enabled(settings)
 
@@ -333,6 +343,7 @@ def verify_email(
     token: str,
     settings: Optional[UserModeSettings] = None,
 ) -> AppUser:
+    """消费邮箱验证 token 并标记用户已验证。"""
     settings = settings or load_user_mode_settings()
     _ensure_mode_enabled(settings)
     row = repo.consume_verification_token(db, raw_token=token, purpose="verify")
@@ -426,6 +437,7 @@ def reset_password(
     new_password_confirm: str,
     settings: Optional[UserModeSettings] = None,
 ) -> AppUser:
+    """消费重置 token、更新密码，并撤销该用户所有旧 session。"""
     settings = settings or load_user_mode_settings()
     _ensure_mode_enabled(settings)
     if new_password != new_password_confirm:
@@ -454,6 +466,7 @@ def change_password(
     new_password_confirm: str,
     settings: Optional[UserModeSettings] = None,
 ) -> AppUser:
+    """登录态修改密码；校验当前密码后撤销所有旧 session。"""
     settings = settings or load_user_mode_settings()
     _ensure_mode_enabled(settings)
     if not verify_password(current_password or "", user.password_hash):

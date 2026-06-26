@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def _dt(val: Optional[datetime]) -> Optional[str]:
+    """把可空 datetime 转成 JSON 友好的 ISO 字符串。"""
     return val.isoformat() if val else None
 
 

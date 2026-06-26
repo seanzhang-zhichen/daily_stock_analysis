@@ -59,6 +59,7 @@ class AppUser(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     def to_dict(self) -> Dict[str, Any]:
+        """序列化给 API 使用，避免泄露 password_hash / session 等敏感字段。"""
         return {
             'id': self.id,
             'email': self.email,
@@ -266,6 +267,8 @@ class AppPlan(Base):
 
 
 class AppPlatformSetting(Base):
+    """平台运行时配置表，由管理后台维护并可覆盖环境变量默认值。"""
+
     __tablename__ = 'app_platform_settings'
 
     id = Column(Integer, primary_key=True, autoincrement=True)

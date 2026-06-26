@@ -45,6 +45,7 @@ class SkillAggregator:
         ctx: AgentContext,
         min_samples: int = _MIN_BACKTEST_SAMPLES,
     ) -> Optional[AgentOpinion]:
+        """Combine individual skill opinions into one weighted consensus opinion."""
         skill_opinions = [op for op in ctx.opinions if is_skill_agent_name(op.agent_name)]
         if not skill_opinions:
             return None
@@ -122,6 +123,7 @@ class SkillAggregator:
         min_samples: int,
         perf_weight: Optional[float] = None,
     ) -> float:
+        """Compute one skill's aggregation weight from confidence and performance."""
         base_weight = opinion.confidence
         if perf_weight is not None:
             return base_weight * perf_weight
@@ -129,6 +131,7 @@ class SkillAggregator:
 
     @staticmethod
     def _backtest_factor(agent_name: str, min_samples: int) -> float:
+        """Return a backtest-derived multiplier when enough samples exist."""
         if not SkillAggregator._use_backtest_autoweight():
             return 1.0
 
@@ -147,6 +150,7 @@ class SkillAggregator:
 
     @staticmethod
     def _use_backtest_autoweight() -> bool:
+        """Read whether skill consensus should use backtest performance weighting."""
         try:
             from src.config import get_config
 

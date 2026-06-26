@@ -52,6 +52,7 @@ class ConfigIssue:
     field: str = ""
 
     def __str__(self) -> str:  # noqa: D105
+        """Return the human-readable issue message."""
         return self.message
 
 
@@ -899,6 +900,7 @@ class Config:
     _BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS = frozenset()
 
     def __post_init__(self) -> None:
+        """Normalize enum-like config values after dataclass construction."""
         _log = logging.getLogger(__name__)
         if self.agent_arch not in self._VALID_AGENT_ARCH:
             _log.warning(
@@ -1816,11 +1818,13 @@ class Config:
 
     @classmethod
     def _has_bootstrap_runtime_env_override(cls, key: str) -> bool:
+        """Return whether a key was explicitly overridden outside the env file."""
         cls._capture_bootstrap_runtime_env_overrides()
         return key in cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES
 
     @classmethod
     def _had_bootstrap_runtime_env_key(cls, key: str) -> bool:
+        """Return whether a watched key existed in the bootstrap process env."""
         cls._capture_bootstrap_runtime_env_overrides()
         return key in cls._BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS
 
@@ -2124,6 +2128,7 @@ class Config:
         available_router_model_set = set(available_router_models)
 
         def _has_runtime_source_for_model(model: str) -> bool:
+            """Return whether a model has a direct provider key or router entry."""
             if not model or _uses_direct_env_provider(model):
                 return True
             provider = _get_litellm_provider(model)

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Portfolio endpoints (P0 core account + snapshot workflow)."""
+"""Portfolio endpoints (P0 core account + snapshot workflow).
+
+组合接口按当前登录用户隔离账户、交易、现金流水和公司行为。endpoint 层负责把
+服务层的业务错误映射为 HTTP 400/409/500，并把导入、快照、风控等结果收敛为
+公开 Pydantic schema。
+"""
 
 from __future__ import annotations
 
@@ -48,6 +53,7 @@ router = APIRouter()
 
 
 def _bad_request(exc: Exception) -> HTTPException:
+    """Map validation errors from portfolio services to HTTP 400."""
     return HTTPException(
         status_code=400,
         detail={"error": "validation_error", "message": str(exc)},
@@ -55,6 +61,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 
 def _internal_error(message: str, exc: Exception) -> HTTPException:
+    """Log unexpected portfolio failures and map them to HTTP 500."""
     logger.error(f"{message}: {exc}", exc_info=True)
     return HTTPException(
         status_code=500,
@@ -63,6 +70,7 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
 
 
 def _conflict_error(*, error: str, message: str) -> HTTPException:
+    """Return HTTP 409 for portfolio busy/oversell/conflict states."""
     return HTTPException(
         status_code=409,
         detail={"error": error, "message": message},
@@ -70,6 +78,7 @@ def _conflict_error(*, error: str, message: str) -> HTTPException:
 
 
 def _serialize_import_record(item: dict) -> PortfolioImportTradeItem:
+    """Normalize parsed import records before validating response schema."""
     payload = dict(item)
     trade_date = payload.get("trade_date")
     if isinstance(trade_date, date):
@@ -89,6 +98,7 @@ def create_account(
     request: PortfolioAccountCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
+    """Create a portfolio account owned by the current user."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -116,6 +126,7 @@ def list_accounts(
     include_inactive: bool = Query(False, description="Whether to include inactive accounts"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountListResponse:
+    """List portfolio accounts visible to the current user."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -136,6 +147,7 @@ def update_account(
     request: PortfolioAccountUpdateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
+    """Update mutable metadata for a portfolio account."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -172,6 +184,7 @@ def delete_account(
     account_id: int,
     current_user: AppUser = Depends(get_current_user),
 ):
+    """Deactivate a portfolio account without physically deleting event history."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -198,6 +211,7 @@ def create_trade(
     request: PortfolioTradeCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
+    """Record one buy/sell trade and recalculate affected portfolio state."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -245,6 +259,7 @@ def list_trades(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioTradeListResponse:
+    """List trade events with optional account/date/symbol filters."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -275,6 +290,7 @@ def delete_trade(
     trade_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
+    """Delete one trade event and report the deletion count."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -303,6 +319,7 @@ def create_cash_ledger(
     request: PortfolioCashLedgerCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
+    """Record one cash in/out event for a portfolio account."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -339,6 +356,7 @@ def list_cash_ledger(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCashLedgerListResponse:
+    """List cash ledger events with optional filters."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -368,6 +386,7 @@ def delete_cash_ledger(
     entry_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
+    """Delete one cash ledger event."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -396,6 +415,7 @@ def create_corporate_action(
     request: PortfolioCorporateActionCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
+    """Record one dividend or split-adjustment event."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -436,6 +456,7 @@ def list_corporate_actions(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCorporateActionListResponse:
+    """List corporate action events with optional filters."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -466,6 +487,7 @@ def delete_corporate_action(
     action_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
+    """Delete one corporate action event."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -496,6 +518,7 @@ def get_snapshot(
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioSnapshotResponse:
+    """Return a portfolio valuation snapshot for one or all accounts."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -522,6 +545,7 @@ def parse_csv_import(
     broker: str = Form(..., description="Broker id: huatai/citic/cmb"),
     file: UploadFile = File(...),
 ) -> PortfolioImportParseResponse:
+    """Parse an uploaded broker CSV without writing trades."""
     importer = PortfolioImportService()
     try:
         content = file.file.read()
@@ -547,6 +571,7 @@ def parse_csv_import(
     summary="List supported broker CSV parsers",
 )
 def list_csv_brokers() -> PortfolioImportBrokerListResponse:
+    """List broker CSV parsers supported by the import service."""
     importer = PortfolioImportService()
     try:
         return PortfolioImportBrokerListResponse(brokers=importer.list_supported_brokers())
@@ -567,6 +592,7 @@ def commit_csv_import(
     file: UploadFile = File(...),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioImportCommitResponse:
+    """Parse and commit broker CSV rows with duplicate detection."""
     importer = PortfolioImportService()
     owner_id_str = str(current_user.id)
     if owner_id_str is not None:
@@ -609,6 +635,7 @@ def refresh_fx_rates(
     as_of: Optional[date] = Query(None, description="Rate date, default today"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioFxRefreshResponse:
+    """Refresh FX rates used for portfolio valuation, preserving stale fallback."""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -632,6 +659,7 @@ def get_risk_report(
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioRiskResponse:
+    """Return concentration, drawdown, and stop-loss risk dimensions."""
     service = PortfolioRiskService()
     owner_id_str = str(current_user.id)
     try:

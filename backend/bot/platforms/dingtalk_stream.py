@@ -59,12 +59,14 @@ class DingtalkStreamHandler:
 
     @staticmethod
     def _truncate_log_content(text: str, max_len: int = 200) -> str:
+        """Trim multiline message content before writing structured logs."""
         cleaned = text.replace("\n", " ").strip()
         if len(cleaned) > max_len:
             return f"{cleaned[:max_len]}..."
         return cleaned
 
     def _log_incoming_message(self, message: BotMessage) -> None:
+        """Log non-sensitive DingTalk stream message metadata and content summary."""
         content = message.raw_content or message.content or ""
         summary = self._truncate_log_content(content)
         self._logger.info(
@@ -81,6 +83,7 @@ class DingtalkStreamHandler:
             """内部消息处理器"""
 
             def __init__(self, parent: 'DingtalkStreamHandler'):
+                """Bind the SDK callback handler to its outer stream handler."""
                 super().__init__()
                 self._parent = parent
                 self.logger = logger
@@ -238,6 +241,7 @@ class DingtalkStreamClient:
         """创建消息处理函数"""
 
         async def handle_message(message: BotMessage) -> BotResponse:
+            """Dispatch one DingTalk Stream message through the async bot dispatcher."""
             from bot.dispatcher import get_dispatcher
             dispatcher = get_dispatcher()
             return await dispatcher.dispatch_async(message)

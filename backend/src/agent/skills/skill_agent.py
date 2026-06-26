@@ -27,6 +27,7 @@ class SkillAgent(BaseAgent):
     max_steps = 4
 
     def __init__(self, skill_id: Optional[str] = None, strategy_id: Optional[str] = None, **kwargs):
+        """Initialise one runtime agent bound to a single skill definition."""
         super().__init__(**kwargs)
         resolved_skill_id = skill_id or strategy_id
         if not resolved_skill_id:
@@ -53,6 +54,7 @@ class SkillAgent(BaseAgent):
         return None
 
     def system_prompt(self, ctx: AgentContext) -> str:
+        """Build the prompt that applies this specific skill's instructions."""
         if self._skill:
             instructions = self._skill.instructions or self._skill.description
             display = self._skill.display_name
@@ -84,6 +86,7 @@ Return **only** a JSON object:
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        """Provide stock identity and technical context to the skill evaluator."""
         parts = [
             f"Evaluate **{self.skill_id}** skill for stock "
             f"**{ctx.stock_code}** ({ctx.stock_name or 'unknown'}).",
@@ -101,6 +104,7 @@ Return **only** a JSON object:
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
+        """Parse the skill evaluation JSON into a standard AgentOpinion."""
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[SkillAgent:%s] failed to parse opinion JSON", self.skill_id)

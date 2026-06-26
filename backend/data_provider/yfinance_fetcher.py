@@ -444,6 +444,7 @@ class YfinanceFetcher(BaseFetcher):
             return None
 
         def _fetch_prev_close() -> Optional[float]:
+            """Fetch the previous daily close from Stooq as a realtime quote fallback."""
             history_url = f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=d"
             history_request = Request(
                 history_url,

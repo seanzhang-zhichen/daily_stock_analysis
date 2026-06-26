@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Alert API schemas."""
+"""Alert API schemas.
+
+告警接口围绕规则、触发记录和通知投递记录展开。创建/更新请求保留
+``parameters``、``cooldown_policy``、``notification_policy`` 为字典，
+便于不同 alert_type 逐步扩展自己的配置结构。
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ DryRunStatusValue = Literal["triggered", "not_triggered", "evaluation_error"]
 
 
 class AlertRuleCreateRequest(BaseModel):
+    """Request body for creating an alert rule."""
+
     name: Optional[str] = Field(None, max_length=64)
     target_scope: TargetScopeValue = "single_symbol"
     target: str = Field(..., min_length=1, max_length=64)
@@ -26,6 +33,8 @@ class AlertRuleCreateRequest(BaseModel):
 
 
 class AlertRuleUpdateRequest(BaseModel):
+    """Partial update body for an existing alert rule."""
+
     name: Optional[str] = Field(None, max_length=64)
     target_scope: Optional[TargetScopeValue] = None
     target: Optional[str] = Field(None, min_length=1, max_length=64)
@@ -38,6 +47,8 @@ class AlertRuleUpdateRequest(BaseModel):
 
 
 class AlertRuleItem(BaseModel):
+    """Alert rule representation returned to API clients."""
+
     id: int
     name: str
     target_scope: str
@@ -54,6 +65,8 @@ class AlertRuleItem(BaseModel):
 
 
 class AlertRuleListResponse(BaseModel):
+    """Paginated alert-rule list response."""
+
     items: List[AlertRuleItem] = Field(default_factory=list)
     total: int
     page: int
@@ -61,10 +74,14 @@ class AlertRuleListResponse(BaseModel):
 
 
 class AlertDeleteResponse(BaseModel):
+    """Deletion summary for alert-rule bulk operations."""
+
     deleted: int
 
 
 class AlertRuleTestResponse(BaseModel):
+    """Dry-run evaluation result for one alert rule."""
+
     rule_id: int
     status: DryRunStatusValue
     triggered: bool
@@ -73,6 +90,8 @@ class AlertRuleTestResponse(BaseModel):
 
 
 class AlertTriggerItem(BaseModel):
+    """One historical alert trigger event."""
+
     id: int
     rule_id: Optional[int] = None
     target: str
@@ -87,6 +106,8 @@ class AlertTriggerItem(BaseModel):
 
 
 class AlertTriggerListResponse(BaseModel):
+    """Paginated alert-trigger history response."""
+
     items: List[AlertTriggerItem] = Field(default_factory=list)
     total: int
     page: int
@@ -94,6 +115,8 @@ class AlertTriggerListResponse(BaseModel):
 
 
 class AlertNotificationItem(BaseModel):
+    """One notification delivery attempt produced by an alert trigger."""
+
     id: int
     trigger_id: Optional[int] = None
     channel: str
@@ -107,6 +130,8 @@ class AlertNotificationItem(BaseModel):
 
 
 class AlertNotificationListResponse(BaseModel):
+    """Paginated alert notification-attempt response."""
+
     items: List[AlertNotificationItem] = Field(default_factory=list)
     total: int
     page: int

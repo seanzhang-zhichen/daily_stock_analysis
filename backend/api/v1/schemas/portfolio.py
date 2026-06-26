@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Portfolio API schemas."""
+"""Portfolio API schemas.
+
+组合接口覆盖账户、交易流水、现金流水、公司行为、持仓快照、券商导入、汇率刷新
+和风险概览。请求模型用于写入事件，响应模型尽量贴近前端表格/看板展示形状。
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,8 @@ from pydantic import BaseModel, Field
 
 
 class PortfolioAccountCreateRequest(BaseModel):
+    """Request body for creating a portfolio account."""
+
     name: str = Field(..., min_length=1, max_length=64)
     broker: Optional[str] = Field(None, max_length=64)
     market: Literal["cn", "hk", "us"] = "cn"
@@ -18,6 +24,8 @@ class PortfolioAccountCreateRequest(BaseModel):
 
 
 class PortfolioAccountUpdateRequest(BaseModel):
+    """Partial update body for a portfolio account."""
+
     name: Optional[str] = Field(None, min_length=1, max_length=64)
     broker: Optional[str] = Field(None, max_length=64)
     market: Optional[Literal["cn", "hk", "us"]] = None
@@ -27,6 +35,8 @@ class PortfolioAccountUpdateRequest(BaseModel):
 
 
 class PortfolioAccountItem(BaseModel):
+    """Portfolio account metadata returned by account-list APIs."""
+
     id: int
     owner_id: Optional[str] = None
     name: str
@@ -39,10 +49,14 @@ class PortfolioAccountItem(BaseModel):
 
 
 class PortfolioAccountListResponse(BaseModel):
+    """List response for portfolio accounts."""
+
     accounts: List[PortfolioAccountItem] = Field(default_factory=list)
 
 
 class PortfolioTradeCreateRequest(BaseModel):
+    """Request body for recording a buy/sell trade event."""
+
     account_id: int
     symbol: str = Field(..., min_length=1, max_length=16)
     trade_date: date
@@ -58,6 +72,8 @@ class PortfolioTradeCreateRequest(BaseModel):
 
 
 class PortfolioCashLedgerCreateRequest(BaseModel):
+    """Request body for recording cash in/out ledger events."""
+
     account_id: int
     event_date: date
     direction: Literal["in", "out"]
@@ -67,6 +83,8 @@ class PortfolioCashLedgerCreateRequest(BaseModel):
 
 
 class PortfolioCorporateActionCreateRequest(BaseModel):
+    """Request body for recording dividends or split adjustments."""
+
     account_id: int
     symbol: str = Field(..., min_length=1, max_length=16)
     effective_date: date
@@ -79,14 +97,20 @@ class PortfolioCorporateActionCreateRequest(BaseModel):
 
 
 class PortfolioEventCreatedResponse(BaseModel):
+    """Generic creation response for portfolio event tables."""
+
     id: int
 
 
 class PortfolioDeleteResponse(BaseModel):
+    """Deletion summary for portfolio resources."""
+
     deleted: int
 
 
 class PortfolioTradeListItem(BaseModel):
+    """One normalized trade event returned in trade history."""
+
     id: int
     account_id: int
     trade_uid: Optional[str] = None
@@ -104,6 +128,8 @@ class PortfolioTradeListItem(BaseModel):
 
 
 class PortfolioTradeListResponse(BaseModel):
+    """Paginated trade-history response."""
+
     items: List[PortfolioTradeListItem] = Field(default_factory=list)
     total: int
     page: int
@@ -111,6 +137,8 @@ class PortfolioTradeListResponse(BaseModel):
 
 
 class PortfolioCashLedgerListItem(BaseModel):
+    """One cash ledger event returned in cash history."""
+
     id: int
     account_id: int
     event_date: str
@@ -122,6 +150,8 @@ class PortfolioCashLedgerListItem(BaseModel):
 
 
 class PortfolioCashLedgerListResponse(BaseModel):
+    """Paginated cash-ledger response."""
+
     items: List[PortfolioCashLedgerListItem] = Field(default_factory=list)
     total: int
     page: int
@@ -129,6 +159,8 @@ class PortfolioCashLedgerListResponse(BaseModel):
 
 
 class PortfolioCorporateActionListItem(BaseModel):
+    """One corporate action event returned in action history."""
+
     id: int
     account_id: int
     symbol: str
@@ -143,6 +175,8 @@ class PortfolioCorporateActionListItem(BaseModel):
 
 
 class PortfolioCorporateActionListResponse(BaseModel):
+    """Paginated corporate-action response."""
+
     items: List[PortfolioCorporateActionListItem] = Field(default_factory=list)
     total: int
     page: int
@@ -150,6 +184,8 @@ class PortfolioCorporateActionListResponse(BaseModel):
 
 
 class PortfolioPositionItem(BaseModel):
+    """Current position valuation for one symbol."""
+
     symbol: str
     market: str
     currency: str
@@ -169,6 +205,8 @@ class PortfolioPositionItem(BaseModel):
 
 
 class PortfolioAccountSnapshot(BaseModel):
+    """Account-level holdings, cash, and PnL snapshot."""
+
     account_id: int
     account_name: str
     owner_id: Optional[str] = None
@@ -189,6 +227,8 @@ class PortfolioAccountSnapshot(BaseModel):
 
 
 class PortfolioSnapshotResponse(BaseModel):
+    """Portfolio-level snapshot aggregated across accounts."""
+
     as_of: str
     cost_method: str
     currency: str
@@ -205,6 +245,8 @@ class PortfolioSnapshotResponse(BaseModel):
 
 
 class PortfolioImportTradeItem(BaseModel):
+    """One parsed trade row from an imported broker statement."""
+
     trade_date: str
     symbol: str
     side: Literal["buy", "sell"]
@@ -218,6 +260,8 @@ class PortfolioImportTradeItem(BaseModel):
 
 
 class PortfolioImportParseResponse(BaseModel):
+    """Parse result for an uploaded/imported broker statement."""
+
     broker: str
     record_count: int
     skipped_count: int
@@ -227,6 +271,8 @@ class PortfolioImportParseResponse(BaseModel):
 
 
 class PortfolioImportCommitResponse(BaseModel):
+    """Commit result after inserting parsed import rows."""
+
     account_id: int
     record_count: int
     inserted_count: int
@@ -237,16 +283,22 @@ class PortfolioImportCommitResponse(BaseModel):
 
 
 class PortfolioImportBrokerItem(BaseModel):
+    """Supported broker parser metadata."""
+
     broker: str
     aliases: List[str] = Field(default_factory=list)
     display_name: Optional[str] = None
 
 
 class PortfolioImportBrokerListResponse(BaseModel):
+    """List response for supported broker import parsers."""
+
     brokers: List[PortfolioImportBrokerItem] = Field(default_factory=list)
 
 
 class PortfolioFxRefreshResponse(BaseModel):
+    """Result of refreshing FX rates needed for portfolio valuation."""
+
     as_of: str
     account_count: int
     refresh_enabled: bool
@@ -258,6 +310,8 @@ class PortfolioFxRefreshResponse(BaseModel):
 
 
 class PortfolioRiskResponse(BaseModel):
+    """Portfolio risk summary grouped by risk dimension."""
+
     as_of: str
     account_id: Optional[int] = None
     cost_method: str

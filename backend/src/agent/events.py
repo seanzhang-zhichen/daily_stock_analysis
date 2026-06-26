@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 class AlertType(str, Enum):
+    """Supported alert rule categories, including placeholders for future runtime support."""
+
     PRICE_CROSS = "price_cross"
     PRICE_CHANGE_PERCENT = "price_change_percent"
     VOLUME_SPIKE = "volume_spike"
@@ -46,6 +48,8 @@ class AlertType(str, Enum):
 
 
 class AlertStatus(str, Enum):
+    """Lifecycle status for an alert rule."""
+
     ACTIVE = "active"
     TRIGGERED = "triggered"
     EXPIRED = "expired"
@@ -60,10 +64,12 @@ _RUNTIME_SUPPORTED_ALERT_TYPES = frozenset({
 
 
 def _supported_alert_type_names() -> str:
+    """Return a readable list of alert types this runtime can evaluate."""
     return ", ".join(sorted(alert_type.value for alert_type in _RUNTIME_SUPPORTED_ALERT_TYPES))
 
 
 def _ensure_runtime_supported_alert_type(alert_type: AlertType) -> None:
+    """Reject configured alert types that currently have no evaluation implementation."""
     if alert_type not in _RUNTIME_SUPPORTED_ALERT_TYPES:
         raise ValueError(
             f"unsupported alert_type for current EventMonitor runtime: {alert_type.value} "
@@ -127,6 +133,7 @@ class PriceAlert(AlertRule):
     price: float = 0.0
 
     def __post_init__(self):
+        """Fill a human-readable default description."""
         if not self.description:
             self.description = f"{self.stock_code} price {self.direction} {self.price}"
 
@@ -139,6 +146,7 @@ class PriceChangeAlert(AlertRule):
     change_pct: float = 3.0
 
     def __post_init__(self):
+        """Fill a human-readable default description."""
         if not self.description:
             self.description = f"{self.stock_code} change {self.direction} {self.change_pct}%"
 
@@ -150,6 +158,7 @@ class VolumeAlert(AlertRule):
     multiplier: float = 2.0  # trigger when volume > multiplier × avg
 
     def __post_init__(self):
+        """Fill a human-readable default description."""
         if not self.description:
             self.description = f"{self.stock_code} volume > {self.multiplier}× average"
 
@@ -162,6 +171,7 @@ class SentimentAlert(AlertRule):
     to_sentiment: str = "negative"
 
     def __post_init__(self):
+        """Fill a human-readable default description for future sentiment hooks."""
         if not self.description:
             self.description = f"{self.stock_code} sentiment shift: {self.from_sentiment} → {self.to_sentiment}"
 
@@ -184,6 +194,7 @@ class EventMonitor:
     """
 
     def __init__(self):
+        """Create an empty in-memory rule set and callback list."""
         self.rules: List[AlertRule] = []
         self._callbacks: List[Callable[[TriggeredAlert], None]] = []
 
@@ -261,11 +272,13 @@ class EventMonitor:
         return None
 
     def _fetch_realtime_quote(self, stock_code: str) -> Any:
+        """Fetch realtime quote synchronously so async wrapper can offload it."""
         from data_provider import DataFetcherManager
 
         return DataFetcherManager().get_realtime_quote(stock_code)
 
     async def _get_realtime_quote(self, stock_code: str) -> Any:
+        """Fetch realtime quote without blocking the event loop."""
         return await asyncio.to_thread(self._fetch_realtime_quote, stock_code)
 
     async def _check_price(self, rule: PriceAlert) -> Optional[TriggeredAlert]:
@@ -336,6 +349,7 @@ class EventMonitor:
         """Check volume spike against recent average."""
         try:
             def _fetch_daily_data():
+                """Fetch recent daily bars in a worker thread."""
                 from data_provider import DataFetcherManager
 
                 fm = DataFetcherManager()
@@ -549,6 +563,7 @@ def build_event_monitor_from_config(config=None, notifier=None) -> Optional[Even
     notification_service = notifier or NotificationService()
 
     def _notify(triggered: TriggeredAlert) -> None:
+        """Convert a triggered alert into the existing notification payload."""
         title = f"Event Alert | {triggered.rule.stock_code}"
         content = triggered.message or triggered.rule.description or "Alert triggered"
         alert_text = NotificationBuilder.build_simple_alert(title=title, content=content, alert_type="warning")

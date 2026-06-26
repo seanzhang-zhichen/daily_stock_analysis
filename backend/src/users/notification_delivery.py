@@ -77,6 +77,7 @@ def _build_html_body(
     unsubscribe_url: str,
     user_email: str,
 ) -> str:
+    """构建 HTML 邮件正文，固定附加免责声明与一键退订链接。"""
     rendered = _render_markdown_to_html(report_markdown or "")
     safe_email = html_lib.escape(user_email or "")
     safe_unsubscribe = html_lib.escape(unsubscribe_url or "")
@@ -194,6 +195,7 @@ def send_daily_email(
 
 
 def _post_json(url: str, payload: dict, *, label: str) -> bool:
+    """向 webhook 发送 JSON，失败只记录日志并返回 False。"""
     try:
         resp = requests.post(
             url,
@@ -219,6 +221,7 @@ def _post_json(url: str, payload: dict, *, label: str) -> bool:
 
 
 def _truncate_text(content: str, max_chars: int) -> str:
+    """按字符长度截断文本，并附加统一截断提示。"""
     if not content:
         return ""
     if len(content) <= max_chars:
@@ -227,6 +230,7 @@ def _truncate_text(content: str, max_chars: int) -> str:
 
 
 def _truncate_bytes(content: str, max_bytes: int) -> str:
+    """按 UTF-8 字节长度截断文本，避免超过渠道 payload 限制。"""
     if not content:
         return ""
     encoded = content.encode("utf-8")

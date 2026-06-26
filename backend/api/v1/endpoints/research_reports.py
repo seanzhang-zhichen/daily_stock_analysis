@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Paid research report endpoints."""
+"""Paid research report endpoints.
+
+公开端允许浏览已发布研报、购买解锁全文、点赞/点踩和评论；运营端允许具备
+``is_research_operator`` 身份的用户维护自己的研报。购买、互动和序列化逻辑集中在
+``research_report_service`` 中，endpoint 层负责权限与 HTTP 错误转换。
+"""
 
 from __future__ import annotations
 
@@ -35,6 +40,8 @@ router = APIRouter()
 
 
 class ResearchReportCreateRequest(BaseModel):
+    """Research-operator request body for creating a report draft."""
+
     title: str = Field(..., min_length=2, max_length=255)
     summary: str = Field(..., min_length=2, max_length=4000)
     previewContent: str = Field(..., min_length=2)
@@ -46,6 +53,8 @@ class ResearchReportCreateRequest(BaseModel):
 
 
 class ResearchReportUpdateRequest(BaseModel):
+    """Research-operator partial update body for an existing report."""
+
     title: Optional[str] = Field(default=None, min_length=2, max_length=255)
     summary: Optional[str] = Field(default=None, min_length=2, max_length=4000)
     previewContent: Optional[str] = Field(default=None, min_length=2)
@@ -57,18 +66,24 @@ class ResearchReportUpdateRequest(BaseModel):
 
 
 class ReactionRequest(BaseModel):
+    """Like/dislike request; null clears the current user's reaction."""
+
     reaction: Optional[str] = Field(default=None, pattern="^(like|dislike)$")
 
 
 class CommentRequest(BaseModel):
+    """Visible user comment payload for a published report."""
+
     content: str = Field(..., min_length=1, max_length=2000)
 
 
 def _optional_user(request: Request) -> Optional[AppUser]:
+    """Resolve an optional user so public endpoints can personalize output."""
     return get_optional_current_user(request)
 
 
 def get_research_operator_user(current_user: AppUser = Depends(get_current_user)) -> AppUser:
+    """Require a logged-in user with research-operator permissions."""
     if not bool(getattr(current_user, "is_research_operator", False)):
         raise HTTPException(
             status_code=403,
@@ -78,6 +93,7 @@ def get_research_operator_user(current_user: AppUser = Depends(get_current_user)
 
 
 def _get_report_or_404(db: Session, report_id: int) -> AppResearchReport:
+    """Load any research report or raise a public 404."""
     report = db.query(AppResearchReport).filter(AppResearchReport.id == int(report_id)).first()
     if report is None:
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -85,6 +101,7 @@ def _get_report_or_404(db: Session, report_id: int) -> AppResearchReport:
 
 
 def _get_published_report_or_404(db: Session, report_id: int) -> AppResearchReport:
+    """Load a published research report, hiding drafts as 404."""
     report = _get_report_or_404(db, report_id)
     if not bool(report.is_published):
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -99,6 +116,7 @@ def list_research_reports(
     db: Session = Depends(get_db),
     current_user: Optional[AppUser] = Depends(_optional_user),
 ) -> dict:
+    """List published research reports, optionally personalized for the viewer."""
     query = db.query(AppResearchReport).filter(AppResearchReport.is_published == True)  # noqa: E712
     if category:
         query = query.filter(AppResearchReport.category == category)
@@ -125,6 +143,7 @@ def operator_list_research_reports(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
+    """List reports authored by the current research operator."""
     query = db.query(AppResearchReport).filter(AppResearchReport.author_id == int(operator.id))
     total = query.count()
     reports = (
@@ -145,6 +164,7 @@ def get_research_report(
     db: Session = Depends(get_db),
     current_user: Optional[AppUser] = Depends(_optional_user),
 ) -> dict:
+    """Return one published report, including full content when user can access it."""
     report = _get_published_report_or_404(db, report_id)
     return {"report": serialize_report(db, report, user=current_user, include_full=True)}
 
@@ -155,6 +175,7 @@ def unlock_research_report(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
+    """Purchase/unlock a published report using the current user's credits."""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -197,6 +218,7 @@ def react_research_report(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
+    """Set, change, or clear the current user's reaction to a report."""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -217,6 +239,7 @@ def list_comments(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
+    """List visible comments for one published research report."""
     report = _get_published_report_or_404(db, report_id)
     rows = (
         db.query(AppResearchReportComment, AppUser)
@@ -248,6 +271,7 @@ def create_comment(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
+    """Create a visible comment on a published research report."""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -259,6 +283,7 @@ def create_comment(
 
 
 def _get_operator_report_or_404(db: Session, report_id: int, operator: AppUser) -> AppResearchReport:
+    """Load a report owned by the operator, hiding others as 404."""
     report = _get_report_or_404(db, report_id)
     if int(report.author_id or 0) != int(operator.id):
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -271,6 +296,7 @@ def operator_create_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
+    """Create a research report draft owned by the operator."""
     report = create_report(
         db,
         author=operator,
@@ -295,6 +321,7 @@ def operator_update_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
+    """Update an operator-owned research report."""
     report = _get_operator_report_or_404(db, report_id, operator)
     report = update_report(
         db,
@@ -319,6 +346,7 @@ def operator_delete_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> Response:
+    """Delete an operator-owned report only while it has no related records."""
     report = _get_operator_report_or_404(db, report_id, operator)
     related_count = (
         db.query(AppResearchReportPurchase.id)
@@ -344,6 +372,7 @@ def operator_publish_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
+    """Publish an operator-owned research report."""
     report = publish_report(db, _get_operator_report_or_404(db, report_id, operator))
     db.commit()
     db.refresh(report)
@@ -356,6 +385,7 @@ def operator_unpublish_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
+    """Unpublish an operator-owned research report."""
     report = unpublish_report(db, _get_operator_report_or_404(db, report_id, operator))
     db.commit()
     db.refresh(report)

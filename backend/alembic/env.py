@@ -32,6 +32,7 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    """Resolve database URL from Alembic attributes, ini config or app config."""
     configured_url = config.attributes.get("database_url")
     if configured_url:
         return str(configured_url)

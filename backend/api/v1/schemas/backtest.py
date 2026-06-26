@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Backtest API schemas."""
+"""Backtest API schemas.
+
+回测接口用于评估历史分析建议在后续行情中的表现。这里的模型描述回测任务触发、
+分页结果和聚合指标，字段保持接近存储层结果，方便前端表格和指标卡直接消费。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,8 @@ from pydantic import BaseModel, Field
 
 
 class BacktestRunRequest(BaseModel):
+    """Request body for starting or refreshing backtest calculations."""
+
     code: Optional[str] = Field(None, description="仅回测指定股票")
     force: bool = Field(False, description="强制重新计算")
     eval_window_days: Optional[int] = Field(None, ge=1, le=120, description="评估窗口（交易日数）")
@@ -17,6 +23,8 @@ class BacktestRunRequest(BaseModel):
 
 
 class BacktestRunResponse(BaseModel):
+    """Summary counters returned after a backtest run finishes."""
+
     processed: int = Field(..., description="候选记录数")
     saved: int = Field(..., description="写入回测结果数")
     completed: int = Field(..., description="完成回测数")
@@ -25,6 +33,8 @@ class BacktestRunResponse(BaseModel):
 
 
 class BacktestResultItem(BaseModel):
+    """One evaluated analysis-history record and its realized market outcome."""
+
     analysis_history_id: int
     code: str
     stock_name: Optional[str] = None
@@ -60,6 +70,8 @@ class BacktestResultItem(BaseModel):
 
 
 class BacktestResultsResponse(BaseModel):
+    """Paginated list of backtest result rows."""
+
     total: int
     page: int
     limit: int
@@ -67,6 +79,8 @@ class BacktestResultsResponse(BaseModel):
 
 
 class PerformanceMetrics(BaseModel):
+    """Aggregated backtest performance metrics for a scope/code/window."""
+
     scope: str
     code: Optional[str] = None
     eval_window_days: int

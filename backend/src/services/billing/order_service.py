@@ -63,30 +63,35 @@ ORDER_EXPIRE_MINUTES = 15  # 默认订单超时时间（分钟）
 # ── 编号生成 ──────────────────────────────────────────────────────────────────
 
 def _gen_no(prefix: str) -> str:
+    """Generate an order/refund/invoice number with date and random suffix."""
     today = datetime.now().strftime("%Y%m%d")
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
     return f"{prefix}{today}{suffix}"
 
 
 def gen_order_no() -> str:
+    """Generate a subscription order number."""
     return _gen_no("DSA")
 
 
 def gen_refund_no() -> str:
+    """Generate a refund request number."""
     return _gen_no("RF")
 
 
 def gen_invoice_no() -> str:
+    """Generate an invoice request number."""
     return _gen_no("INV")
 
 
 # ── 状态机校验 ────────────────────────────────────────────────────────────────
 
 class InvalidTransitionError(ValueError):
-    pass
+    """Raised when an order status transition is not allowed."""
 
 
 def _assert_transition(current: str, new: str) -> None:
+    """Validate subscription order status transitions."""
     if (current, new) not in _VALID_TRANSITIONS:
         raise InvalidTransitionError(
             f"订单状态不允许从 '{current}' 变更为 '{new}'"
@@ -96,6 +101,7 @@ def _assert_transition(current: str, new: str) -> None:
 # ── 序列化 ────────────────────────────────────────────────────────────────────
 
 def serialize_order(order: AppOrder) -> dict:
+    """Serialize a subscription order for API responses."""
     return {
         "orderNo": order.order_no,
         "planCode": order.plan_code,
@@ -115,6 +121,7 @@ def serialize_order(order: AppOrder) -> dict:
 
 
 def serialize_refund(refund: AppRefund) -> dict:
+    """Serialize a refund request for API responses."""
     return {
         "refundNo": refund.refund_no,
         "orderNo": refund.order_no,
@@ -146,6 +153,7 @@ class CallbackOutcome:
 
 
 def serialize_invoice(invoice: AppInvoice) -> dict:
+    """Serialize an invoice request for API responses."""
     return {
         "invoiceNo": invoice.invoice_no,
         "orderNo": invoice.order_no,
@@ -239,12 +247,14 @@ class OrderService:
         return order
 
     def get_order(self, db: Session, order_no: str, user_id: Optional[int] = None) -> Optional[AppOrder]:
+        """Fetch one order, optionally scoped to the owning user."""
         q = db.query(AppOrder).filter(AppOrder.order_no == order_no)
         if user_id is not None:
             q = q.filter(AppOrder.user_id == user_id)
         return q.first()
 
     def list_orders(self, db: Session, user_id: int, limit: int = 50) -> List[AppOrder]:
+        """List a user's recent subscription orders."""
         return (
             db.query(AppOrder)
             .filter(AppOrder.user_id == user_id)
@@ -254,6 +264,7 @@ class OrderService:
         )
 
     def cancel_order(self, db: Session, order: AppOrder) -> AppOrder:
+        """Close an unpaid subscription order."""
         _assert_transition(order.status, "closed")
         order.status = "closed"
         order.updated_at = datetime.utcnow()
@@ -262,6 +273,7 @@ class OrderService:
         return order
 
     def mark_pending(self, db: Session, order: AppOrder) -> AppOrder:
+        """Move a created order into pending state after initiating payment."""
         _assert_transition(order.status, "pending")
         order.status = "pending"
         order.updated_at = datetime.utcnow()
@@ -315,6 +327,7 @@ class OrderService:
         signature: Optional[str] = None,
         signature_valid: bool = False,
     ) -> AppPaymentEvent:
+        """Record a gateway payment event idempotently by provider event id."""
         existing = db.query(AppPaymentEvent).filter(AppPaymentEvent.provider_event_id == provider_event_id).first()
         if existing:
             return existing
@@ -410,6 +423,7 @@ class OrderService:
         return CallbackOutcome(event=event, fulfilled=True)
 
     def _mark_event_processed(self, db: Session, event: AppPaymentEvent) -> None:
+        """Mark a subscription payment event as processed."""
         if event.processed:
             return
         event.processed = True
@@ -427,6 +441,7 @@ class OrderService:
         amount_cents: int,
         reason: str,
     ) -> AppRefund:
+        """Create a refund request for a paid order."""
         if order.status not in ("paid",):
             raise ValueError("只有已支付的订单才可申请退款")
 
@@ -452,12 +467,14 @@ class OrderService:
         return refund
 
     def get_refund(self, db: Session, refund_no: str, user_id: Optional[int] = None) -> Optional[AppRefund]:
+        """Fetch one refund request, optionally scoped to owner."""
         q = db.query(AppRefund).filter(AppRefund.refund_no == refund_no)
         if user_id is not None:
             q = q.filter(AppRefund.user_id == user_id)
         return q.first()
 
     def list_refunds(self, db: Session, user_id: int) -> List[AppRefund]:
+        """List a user's refund requests."""
         return (
             db.query(AppRefund)
             .filter(AppRefund.user_id == user_id)
@@ -544,6 +561,7 @@ class OrderService:
         reviewer: AppUser,
         note: Optional[str] = None,
     ) -> AppRefund:
+        """Reject a pending refund request with an optional note."""
         if refund.status not in ("pending",):
             raise ValueError(f"退款状态 '{refund.status}' 不允许 reject")
         refund.status = "rejected"
@@ -570,6 +588,7 @@ class OrderService:
         email: str,
         tax_id: Optional[str] = None,
     ) -> AppInvoice:
+        """Create an invoice request for a paid order."""
         if order.status != "paid":
             raise ValueError("只有已支付的订单才可申请发票")
         if order.user_id != user.id:
@@ -599,12 +618,14 @@ class OrderService:
         return inv
 
     def get_invoice(self, db: Session, invoice_no: str, user_id: Optional[int] = None) -> Optional[AppInvoice]:
+        """Fetch one invoice request, optionally scoped to owner."""
         q = db.query(AppInvoice).filter(AppInvoice.invoice_no == invoice_no)
         if user_id is not None:
             q = q.filter(AppInvoice.user_id == user_id)
         return q.first()
 
     def list_invoices(self, db: Session, user_id: int) -> List[AppInvoice]:
+        """List a user's invoice requests."""
         return (
             db.query(AppInvoice)
             .filter(AppInvoice.user_id == user_id)
@@ -615,6 +636,7 @@ class OrderService:
     def list_invoices_admin(
         self, db: Session, status: Optional[str] = None, limit: int = 200
     ) -> List[AppInvoice]:
+        """List invoice requests for admin review."""
         q = db.query(AppInvoice)
         if status:
             q = q.filter(AppInvoice.status == status)
@@ -627,6 +649,7 @@ class OrderService:
         reviewer: AppUser,
         issued_url: Optional[str] = None,
     ) -> AppInvoice:
+        """Mark an invoice request as issued."""
         if invoice.status != "pending":
             raise ValueError(f"发票状态 '{invoice.status}' 不允许 issue")
         invoice.status = "issued"
@@ -654,6 +677,7 @@ class OrderService:
         invoice: AppInvoice,
         reviewer: AppUser,
     ) -> AppInvoice:
+        """Reject a pending invoice request."""
         if invoice.status != "pending":
             raise ValueError(f"发票状态 '{invoice.status}' 不允许 reject")
         invoice.status = "rejected"
@@ -722,6 +746,7 @@ class OrderService:
         provider: Optional[str] = None,
         limit: int = 200,
     ) -> List[AppOrder]:
+        """List subscription orders for admin operations."""
         q = db.query(AppOrder)
         if status:
             q = q.filter(AppOrder.status == status)

@@ -101,6 +101,7 @@ def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
 
 
 def _append_history_metadata(response: dict, metadata: Dict[str, Any]) -> dict:
+    """Attach normalization warnings/metadata to a history tool response."""
     if metadata:
         response.update(metadata)
     return response

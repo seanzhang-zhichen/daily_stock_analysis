@@ -31,18 +31,22 @@ class AnalyzeCommand(BotCommand):
     
     @property
     def name(self) -> str:
+        """返回命令主名称，用于 `/analyze` 路由注册。"""
         return "analyze"
     
     @property
     def aliases(self) -> List[str]:
+        """返回分析命令的短别名和中文触发词。"""
         return ["a", "分析", "查"]
     
     @property
     def description(self) -> str:
+        """返回帮助列表中展示的命令简述。"""
         return "分析指定股票"
     
     @property
     def usage(self) -> str:
+        """返回帮助详情中展示的参数格式。"""
         return "/analyze <股票代码> [full]"
     
     def validate_args(self, args: List[str]) -> Optional[str]:

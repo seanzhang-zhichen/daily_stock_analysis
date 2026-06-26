@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Auth middleware: protect /api/v1/* with multi-user sessions."""
+"""Authentication middleware for API business endpoints.
+
+中间件只拦截 ``/api/v1/*`` 下需要登录的业务接口。公开接口、回调、健康检查、
+OpenAPI 文档和登录注册链路通过 ``EXEMPT_PATHS`` 放行，以保证用户尚未建立
+会话时仍能完成账号流程或被外部平台回调。
+"""
 
 from __future__ import annotations
 
@@ -16,6 +21,8 @@ from src.users.sessions import resolve_session
 
 logger = logging.getLogger(__name__)
 
+# 这里使用精确路径白名单，避免把整段前缀误放开。确需放行一组资源时，
+# 在 _path_exempt 中单独写带边界判断的前缀规则。
 EXEMPT_PATHS = frozenset({
     "/api/v1/auth/login",
     "/api/v1/auth/status",
@@ -53,7 +60,12 @@ EXEMPT_PATHS = frozenset({
 
 
 def _path_exempt(path: str) -> bool:
-    """Check if path is exempt from auth."""
+    """Return whether ``path`` can bypass login enforcement.
+
+    ``rstrip("/")`` 让 ``/foo`` 与 ``/foo/`` 拥有一致行为；research report
+    需要按资源前缀公开访问，因此在这里单独处理，避免扩大 ``EXEMPT_PATHS``
+    的匹配语义。
+    """
     normalized = path.rstrip("/") or "/"
     if normalized == "/api/v1/research-reports" or normalized.startswith("/api/v1/research-reports/"):
         return True
@@ -61,11 +73,16 @@ def _path_exempt(path: str) -> bool:
 
 
 def _resolve_user_session(request: Request):
-    """Lookup the C 端 user bound to the request, if any.
+    """Look up the To C user bound to the request, if any.
 
     Returns the :class:`AppUser` ORM row when found, ``None`` otherwise. The
     user is stashed on ``request.state.user`` so downstream dependencies can
     read it without re-querying the DB.
+
+    A short-lived SQLAlchemy session is opened here because middleware runs
+    before FastAPI dependency injection. The ORM object is only used during
+    the current request and is cached on ``request.state`` immediately after
+    validation succeeds.
     """
     cookie_val = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_val:
@@ -79,17 +96,20 @@ def _resolve_user_session(request: Request):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Require a valid multi-user session for /api/v1/* business endpoints."""
+    """Require a valid multi-user session for protected API endpoints."""
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable,
     ):
+        """Attach session context or reject protected requests before routing."""
         path = request.url.path
         if _path_exempt(path):
             return await call_next(request)
 
+        # Static files, root routes, docs and legacy non-v1 endpoints stay out
+        # of this middleware's responsibility unless explicitly added above.
         if not path.startswith("/api/v1/"):
             return await call_next(request)
 
@@ -108,10 +128,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 def add_auth_middleware(app):
-    """Add auth middleware to protect API routes.
-
-    The middleware is always registered; whether auth is enforced is determined
-    at request time by is_auth_enabled() so the decision stays consistent across
-    any runtime configuration reload.
-    """
+    """Register authentication middleware on a FastAPI application."""
     app.add_middleware(AuthMiddleware)

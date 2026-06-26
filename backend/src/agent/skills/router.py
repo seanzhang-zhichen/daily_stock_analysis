@@ -30,6 +30,7 @@ class SkillRouter:
         ctx: AgentContext,
         max_count: int = 3,
     ) -> List[str]:
+        """Select skill ids by explicit request, routing mode, regime or defaults."""
         requested_skills = ctx.meta.get("skills_requested") or ctx.meta.get("strategies_requested", [])
         if requested_skills:
             logger.info("[SkillRouter] user-requested skills: %s", requested_skills)
@@ -73,6 +74,7 @@ class SkillRouter:
         return self.select_skills(ctx, max_count=max_count)
 
     def _detect_regime(self, ctx: AgentContext) -> Optional[str]:
+        """Infer a coarse market regime from the technical agent opinion."""
         for op in ctx.opinions:
             if op.agent_name != "technical":
                 continue
@@ -100,6 +102,7 @@ class SkillRouter:
 
     @staticmethod
     def _get_routing_mode() -> str:
+        """Read skill routing mode from config, defaulting to auto on errors."""
         try:
             from src.config import get_config
 
@@ -111,10 +114,12 @@ class SkillRouter:
 
     @staticmethod
     def _get_available_ids() -> set:
+        """Return ids for currently loadable skills."""
         return {skill.name for skill in SkillRouter._get_available_skills()}
 
     @staticmethod
     def _get_available_skills() -> list:
+        """Load skills from the factory singleton or a fresh skill manager."""
         try:
             from src.agent.factory import _SKILL_MANAGER_PROTOTYPE
 
@@ -131,6 +136,7 @@ class SkillRouter:
 
     @classmethod
     def _get_manual_skills(cls, max_count: int) -> List[str]:
+        """Return configured manual skills, falling back to defaults when invalid."""
         configured: List[str] = []
         try:
             from src.config import get_config

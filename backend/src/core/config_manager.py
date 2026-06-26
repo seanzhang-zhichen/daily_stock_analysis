@@ -1,4 +1,9 @@
-"""Configuration file manager with atomic read/write behavior."""
+"""Configuration file manager with atomic read/write behavior.
+
+The web settings API updates ``.env`` through this module. It preserves comments
+and unknown raw lines where possible, skips masked sensitive values, and uses an
+atomic replace with a mounted-file fallback for Docker/Windows environments.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +28,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConfigLineEntry:
-    """Structured representation of a single `.env` line."""
+    """Structured representation of a single `.env` line.
+
+    ``raw`` lines are intentionally preserved. They allow hand-written content
+    that python-dotenv does not parse cleanly to survive a settings save.
+    """
 
     kind: Literal["assignment", "comment", "blank", "raw"]
     raw_line: str
@@ -33,6 +42,7 @@ class ConfigLineEntry:
 
     @classmethod
     def parse(cls, raw_line: str) -> "ConfigLineEntry":
+        """Classify one physical line without losing its original text."""
         stripped = raw_line.strip()
         if not stripped:
             return cls(kind="blank", raw_line=raw_line)
@@ -52,6 +62,7 @@ class ConfigLineEntry:
 
     @classmethod
     def assignment(cls, key: str, value: str) -> "ConfigLineEntry":
+        """Create an updated assignment line for a normalized key/value pair."""
         return cls(
             kind="assignment",
             raw_line=f"{key}={value}",
@@ -61,15 +72,22 @@ class ConfigLineEntry:
         )
 
     def render(self) -> str:
+        """Render the original line unless this entry was replaced by an update."""
         if self.kind == "assignment" and self.updated and self.key is not None:
             return f"{self.key}={self.value}"
         return self.raw_line
 
 
 class ConfigManager:
-    """Manage `.env` read/write operations with optimistic versioning."""
+    """Manage `.env` read/write operations with optimistic versioning.
+
+    The class is process-thread-safe, but it is not a distributed lock. API
+    callers should still use the returned version string to detect stale edits
+    across browser sessions or processes.
+    """
 
     def __init__(self, env_path: Optional[Path] = None):
+        """Initialize manager for the active env file path."""
         self._env_path = env_path or self._resolve_env_path()
         self._lock = threading.RLock()
 
@@ -115,7 +133,12 @@ class ConfigManager:
         sensitive_keys: Set[str],
         mask_token: str,
     ) -> Tuple[List[str], List[str], str]:
-        """Apply updates into `.env` file using atomic replace when possible."""
+        """Apply updates into `.env` file using atomic replace when possible.
+
+        Sensitive values equal to ``mask_token`` mean "keep the current secret".
+        Returning them in ``skipped_masked`` lets the API explain why those fields
+        were not rewritten without exposing the underlying value.
+        """
         with self._lock:
             current_values = self.read_config_map()
             mutable_updates: Dict[str, str] = {}
@@ -188,6 +211,7 @@ class ConfigManager:
             os.fsync(file_obj.fileno())
 
     def _read_entries(self) -> List[ConfigLineEntry]:
+        """Read the current file as renderable entries, preserving line order."""
         if not self._env_path.exists():
             return []
         return [
@@ -197,6 +221,7 @@ class ConfigManager:
 
     @staticmethod
     def _find_last_key_indexes(entries: List[ConfigLineEntry]) -> Dict[str, int]:
+        """Map keys to their last assignment so duplicate env keys follow dotenv."""
         key_to_index: Dict[str, int] = {}
         for index, entry in enumerate(entries):
             if entry.kind != "assignment" or entry.key is None:
@@ -207,6 +232,7 @@ class ConfigManager:
 
     @staticmethod
     def _resolve_env_path() -> Path:
+        """Resolve the active `.env` path from ENV_FILE or the repository root."""
         env_file = os.getenv("ENV_FILE")
         if env_file:
             return Path(env_file).resolve()

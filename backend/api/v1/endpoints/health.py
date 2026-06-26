@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-健康检查接口
-===================================
+"""API v1 health-check endpoint.
 
-职责：
-1. 提供 /api/v1/health 健康检查接口
-2. 用于负载均衡器和监控系统
+该路由只返回进程级存活状态和当前时间戳，不访问数据库、外部行情源或 LLM 服务。
+它适合作为负载均衡和本地 smoke test 的轻量探针；更深入的依赖检查应放到专门的
+诊断接口中，避免健康检查自身拖慢主服务。
 """
 
 from datetime import datetime
@@ -20,14 +17,7 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """
-    健康检查接口
-    
-    用于负载均衡器或监控系统检查服务状态
-    
-    Returns:
-        HealthResponse: 包含服务状态和时间戳
-    """
+    """Return a lightweight liveness response for API v1."""
     return HealthResponse(
         status="ok",
         timestamp=datetime.now().isoformat()

@@ -60,6 +60,7 @@ class MarketIndex:
     amplitude: float = 0.0       # 振幅(%)
     
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize index quote fields for reports and notifications."""
         return {
             'code': self.code,
             'name': self.name,
@@ -128,6 +129,7 @@ class MarketAnalyzer:
         self.strategy = get_market_strategy_blueprint(self.region)
 
     def _get_review_language(self) -> str:
+        """Resolve report language, forcing English for US-market reviews."""
         configured = normalize_report_language(
             getattr(getattr(self, "config", None), "report_language", "zh")
         )
@@ -136,11 +138,13 @@ class MarketAnalyzer:
         return configured
 
     def _get_template_review_language(self) -> str:
+        """Resolve the configured language for template selection."""
         return normalize_report_language(
             getattr(getattr(self, "config", None), "report_language", "zh")
         )
 
     def _get_market_scope_name(self, review_language: str | None = None) -> str:
+        """Return localized market scope name for prompt and report copy."""
         review_language = review_language or self._get_review_language()
         if self.region == "us":
             return "US market"
@@ -169,6 +173,7 @@ class MarketAnalyzer:
         return f"{amount_raw:.0f}"
 
     def _get_index_change_arrow(self, change_pct: float) -> str:
+        """Return a color-coded direction marker respecting configured market colors."""
         if change_pct == 0:
             return "⚪"
         color_scheme = getattr(getattr(self, "config", None), "market_review_color_scheme", "green_up")
@@ -177,6 +182,7 @@ class MarketAnalyzer:
         return "🟢" if change_pct > 0 else "🔴"
 
     def _get_review_title(self, date: str) -> str:
+        """Build the localized market recap title for a trading date."""
         if self._get_review_language() == "en":
             market_names = {"us": "US Market Recap", "hk": "HK Market Recap"}
             market_name = market_names.get(self.region, "A-share Market Recap")
@@ -184,6 +190,7 @@ class MarketAnalyzer:
         return f"## {date} 大盘复盘"
 
     def _get_index_hint(self) -> str:
+        """Return the prompt hint describing which indices to emphasize."""
         if self._get_review_language() == "en":
             if self.region == "us":
                 return "Analyze the key moves in the S&P 500, Nasdaq, Dow, and other major indices."
@@ -193,6 +200,7 @@ class MarketAnalyzer:
         return self.profile.prompt_index_hint
 
     def _get_strategy_prompt_block(self) -> str:
+        """Return the market-specific strategy blueprint used in LLM prompts."""
         if self.region == "hk" and self._get_review_language() == "en":
             return """## Strategy Blueprint: Hong Kong Market Regime Strategy
 Focus on HSI trend, southbound flow dynamics, and sector rotation to define next-session risk posture.
@@ -250,6 +258,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 - Defensive: indices weaken and laggards broaden; prioritize risk control and de-risking."""
 
     def _get_strategy_markdown_block(self, review_language: str | None = None) -> str:
+        """Return the localized strategy framework block for generated reports."""
         review_language = review_language or self._get_review_language()
         if self.region == "hk" and review_language == "en":
             return """### 6. Strategy Framework
@@ -266,6 +275,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 """
 
     def _get_market_mood_text(self, mood_key: str, review_language: str | None = None) -> str:
+        """Map internal market mood keys to localized display text."""
         review_language = review_language or self._get_review_language()
         if review_language == "en":
             mapping = {
@@ -632,6 +642,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         }
 
     def _build_market_light_reasons_zh(self, overview: MarketOverview, score: int) -> List[str]:
+        """Build Chinese reason bullets for the market traffic-light score."""
         participation = overview.up_count + overview.down_count
         up_ratio = overview.up_count / participation if participation else None
         reasons: List[str] = [f"盘面温度 {score}/100"]
@@ -650,6 +661,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         return reasons[:4]
 
     def _build_market_light_reasons_en(self, overview: MarketOverview, score: int) -> List[str]:
+        """Build English reason bullets for the market traffic-light score."""
         participation = overview.up_count + overview.down_count
         up_ratio = overview.up_count / participation if participation else None
         reasons: List[str] = [f"market temperature {score}/100"]
@@ -765,6 +777,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @staticmethod
     def _get_news_field(item: Any, field: str) -> str:
+        """Read a news field from object or dict payloads."""
         if hasattr(item, field):
             value = getattr(item, field, "") or ""
         elif isinstance(item, dict):
@@ -775,6 +788,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @classmethod
     def _format_news_source_cell(cls, item: Any) -> str:
+        """Format source/date/link metadata for the market-news markdown table."""
         source = cls._compact_news_text(cls._get_news_field(item, "source"), limit=40)
         date_text = cls._compact_news_text(cls._get_news_field(item, "published_date"), limit=24)
         url = cls._compact_news_text(cls._get_news_field(item, "url"), limit=0)
@@ -786,6 +800,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @staticmethod
     def _compact_news_text(value: str, *, limit: int) -> str:
+        """Collapse whitespace and optionally truncate news table text."""
         text = " ".join(str(value or "").split())
         if limit <= 0 or len(text) <= limit:
             return text
@@ -793,14 +808,17 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @staticmethod
     def _format_optional_number(value: float) -> str:
+        """Format optional numeric values, treating zero as unavailable."""
         return "N/A" if value in (None, 0, 0.0) else f"{value:.2f}"
 
     @staticmethod
     def _format_optional_pct(value: float) -> str:
+        """Format optional percentage values, treating zero as unavailable."""
         return "N/A" if value in (None, 0, 0.0) else f"{value:.2f}%"
 
     @staticmethod
     def _format_signed_pct(value: Any) -> str:
+        """Format a signed percentage while tolerating invalid inputs."""
         try:
             numeric_value = float(value)
         except (TypeError, ValueError):
@@ -809,15 +827,18 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @staticmethod
     def _escape_table_cell(value: str) -> str:
+        """Escape markdown table separators inside one cell value."""
         return value.replace("|", "\\|")
 
     @staticmethod
     def _build_temperature_bar(score: int) -> str:
+        """Render a ten-segment text bar for the market temperature score."""
         filled = max(0, min(10, round(score / 10)))
         return "█" * filled + "░" * (10 - filled)
 
     @staticmethod
     def _describe_turnover(total_amount: float) -> str:
+        """Describe A-share turnover intensity from aggregate amount."""
         if total_amount >= 15000:
             return "高活跃度"
         if total_amount >= 9000:
@@ -827,6 +848,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         return "暂无数据"
 
     def _build_market_temperature(self, overview: MarketOverview) -> tuple[int, str]:
+        """Compute blended market temperature score from breadth, indices and turnover."""
         participants = overview.up_count + overview.down_count
         breadth_score = 50
         if participants:

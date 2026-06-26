@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-API 依赖注入模块
-===================================
+"""Reusable FastAPI dependency providers.
 
-职责：
-1. 提供数据库 Session 依赖
-2. 提供配置依赖
-3. 提供服务层依赖
+本模块集中放置请求级资源获取逻辑，包括数据库 Session、全局配置、当前登录
+用户与应用生命周期内共享的服务实例。把这些依赖集中维护，可以让 endpoint
+函数保持薄而明确，也便于测试时替换依赖。
 """
 
 from typing import Generator, Optional
@@ -23,18 +19,11 @@ from src.users.sessions import resolve_session
 
 
 def get_db() -> Generator[Session, None, None]:
-    """
-    获取数据库 Session 依赖
-    
-    使用 FastAPI 依赖注入机制，确保请求结束后自动关闭 Session
-    
-    Yields:
-        Session: SQLAlchemy Session 对象
-        
-    Example:
-        @router.get("/items")
-        async def get_items(db: Session = Depends(get_db)):
-            ...
+    """Yield a request-scoped SQLAlchemy Session and close it afterwards.
+
+    FastAPI 会在 endpoint 执行完成后继续推进 generator，因此 ``finally``
+    中的 ``session.close()`` 能覆盖正常返回、HTTPException 和未处理异常。
+    调用方不应把该 Session 持久保存到后台任务或全局变量。
     """
     db_manager = DatabaseManager.get_instance()
     session = db_manager.get_session()
@@ -45,22 +34,12 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_config_dep() -> Config:
-    """
-    获取配置依赖
-    
-    Returns:
-        Config: 配置单例对象
-    """
+    """Return the process-wide configuration object for dependency injection."""
     return get_config()
 
 
 def get_database_manager() -> DatabaseManager:
-    """
-    获取数据库管理器依赖
-    
-    Returns:
-        DatabaseManager: 数据库管理器单例对象
-    """
+    """Return the database manager singleton for services that need factories."""
     return DatabaseManager.get_instance()
 
 
@@ -91,7 +70,7 @@ def get_optional_current_user(request: Request) -> Optional[AppUser]:
 
 
 def get_current_user(request: Request) -> AppUser:
-    """Strict variant: raises 401 when no user is bound to this request."""
+    """Return the current user, raising 401 for anonymous requests."""
     user = get_optional_current_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail={"error": "unauthorized", "message": "请先登录"})
@@ -99,10 +78,10 @@ def get_current_user(request: Request) -> AppUser:
 
 
 def get_admin_user(request: Request) -> AppUser:
-    """Strict variant: 要求已登录且 ``is_admin=True``。
+    """Return the current admin user or raise the matching auth error.
 
     用于 ``/api/v1/admin/*`` 的运营后台 endpoint 鉴权。
-    未登录返回 401, 已登录但非 admin 返回 403。
+    未登录返回 401，已登录但非 admin 返回 403，便于前端区分“需要登录”和“权限不足”。
     """
     user = get_optional_current_user(request)
     if user is None:
@@ -116,7 +95,12 @@ def get_admin_user(request: Request) -> AppUser:
 
 
 def get_system_config_service(request: Request) -> SystemConfigService:
-    """Get app-lifecycle shared SystemConfigService instance."""
+    """Get the app-lifecycle shared SystemConfigService instance.
+
+    ``api.app.app_lifespan`` normally creates this service once and stores it
+    on ``app.state``. The fallback keeps tests and manually constructed FastAPI
+    apps usable even when lifespan hooks were not executed.
+    """
     service = getattr(request.app.state, "system_config_service", None)
     if service is None:
         service = SystemConfigService()

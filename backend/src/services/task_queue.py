@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-A股自选股智能分析系统 - 异步任务队列
-===================================
+"""In-process asynchronous analysis task queue.
 
-职责：
-1. 管理异步分析任务的生命周期
-2. 防止相同股票代码重复提交
-3. 提供 SSE 事件广播机制
-4. 任务完成后持久化到数据库
+The queue owns API task lifecycle, duplicate-stock suppression, SSE event
+broadcasting, and best-effort quota/credit refunds when analysis fails. It is a
+singleton inside one backend process; it does not coordinate across processes.
 """
 
 from __future__ import annotations
@@ -43,6 +38,7 @@ def _dedupe_stock_code_key(stock_code: str) -> str:
 
 
 def _dedupe_task_key(stock_code: str, user_id: Optional[int] = None) -> str:
+    """Build duplicate-detection key scoped by user in To C mode."""
     owner = f"user:{int(user_id)}" if user_id is not None else "global"
     return f"{owner}:{_dedupe_stock_code_key(stock_code)}"
 
@@ -136,6 +132,7 @@ class DuplicateTaskError(Exception):
     当股票已在分析中时抛出此异常
     """
     def __init__(self, stock_code: str, existing_task_id: str):
+        """Store the conflicting stock/task pair for API error responses."""
         self.stock_code = stock_code
         self.existing_task_id = existing_task_id
         super().__init__(f"股票 {stock_code} 正在分析中 (task_id: {existing_task_id})")
@@ -158,6 +155,7 @@ class AnalysisTaskQueue:
     _instance_lock = threading.Lock()
     
     def __new__(cls, *args, **kwargs):
+        """Create the process-wide singleton queue instance."""
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -165,6 +163,7 @@ class AnalysisTaskQueue:
         return cls._instance
     
     def __init__(self, max_workers: int = 3):
+        """Initialize queue state once even when singleton is requested often."""
         # 防止重复初始化
         if hasattr(self, '_initialized') and self._initialized:
             return
@@ -668,6 +667,7 @@ class AnalysisTaskQueue:
             service = AnalysisService()
 
             def _on_progress(progress: int, message: str) -> None:
+                """Bridge pipeline progress callbacks back into task events."""
                 self.update_task_progress(task_id, progress, message)
 
             result = service.analyze_stock(
@@ -841,6 +841,7 @@ class AnalysisTaskQueue:
     # ========== SSE 事件广播 ==========
     
     def _refund_analysis_quota(self, user_id: Optional[int], quota_date: Optional[date]) -> None:
+        """Best-effort daily quota refund when a paid/limited analysis fails."""
         if user_id is None:
             return
         try:
@@ -866,6 +867,7 @@ class AnalysisTaskQueue:
         task_id: Optional[str],
         analysis_credit_cost: int,
     ) -> None:
+        """Best-effort credit refund with idempotency tied to the failed task."""
         if user_id is None:
             return
         try:

@@ -153,9 +153,11 @@ class PytdxFetcher(BaseFetcher):
         self._last_unavailable_reason = ""
 
     def _is_in_connection_cooldown(self) -> bool:
+        """Return True while PyTDX connection retries are suppressed."""
         return time.time() < self._unavailable_until
 
     def _mark_connection_cooldown(self, reason: str) -> None:
+        """Record a connection failure and start a temporary cooldown."""
         self._unavailable_until = time.time() + _PYTDX_CONNECTION_COOLDOWN_SECONDS
         self._last_unavailable_reason = str(reason or "").strip()
         logger.info(
@@ -165,6 +167,7 @@ class PytdxFetcher(BaseFetcher):
         )
 
     def is_available_for_request(self, capability: str = "") -> bool:
+        """Return whether this fetcher should be attempted for the requested capability."""
         return not self._is_in_connection_cooldown()
     
     def _get_pytdx(self):

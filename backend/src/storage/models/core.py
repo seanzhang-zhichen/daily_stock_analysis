@@ -69,6 +69,7 @@ class StockDaily(Base):
     )
     
     def __repr__(self):
+        """返回调试友好的日线记录摘要。"""
         return f"<StockDaily(code={self.code}, date={self.date}, close={self.close})>"
     
     def to_dict(self) -> Dict[str, Any]:
@@ -136,6 +137,7 @@ class NewsIntel(Base):
     )
 
     def __repr__(self) -> str:
+        """返回调试友好的新闻记录摘要，避免打印完整正文。"""
         return f"<NewsIntel(code={self.code}, title={self.title[:20]}...)>"
 
 
@@ -161,6 +163,7 @@ class FundamentalSnapshot(Base):
     )
 
     def __repr__(self) -> str:
+        """返回调试友好的基本面快照摘要。"""
         return f"<FundamentalSnapshot(query_id={self.query_id}, code={self.code})>"
 
 
@@ -233,6 +236,8 @@ class AnalysisHistory(Base):
 
 
 class StockIndexEntry(Base):
+    """本地股票搜索索引条目，覆盖代码、中文名、拼音和别名。"""
+
     __tablename__ = 'stock_index'
 
     canonical_code = Column(String(32), primary_key=True)
@@ -255,6 +260,7 @@ class StockIndexEntry(Base):
     )
 
     def to_suggestion_dict(self) -> Dict[str, Any]:
+        """序列化为前端搜索建议所需的最小字段集。"""
         return {
             "canonicalCode": self.canonical_code,
             "displayCode": self.display_code,
@@ -264,6 +270,8 @@ class StockIndexEntry(Base):
 
 
 class StockIndexMeta(Base):
+    """股票索引同步元数据，用于判断本地索引版本和规模。"""
+
     __tablename__ = 'stock_index_meta'
 
     key = Column(String(64), primary_key=True)

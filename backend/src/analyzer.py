@@ -82,6 +82,7 @@ class _LiteLLMStreamError(RuntimeError):
     """Internal error wrapper that records whether any text was streamed."""
 
     def __init__(self, message: str, *, partial_received: bool = False):
+        """Store stream error text and whether partial content was received."""
         super().__init__(message)
         self.partial_received = partial_received
 
@@ -108,6 +109,7 @@ class _AllModelsFailedError(Exception):
         last_model: Optional[str] = None,
         last_usage: Optional[Dict[str, Any]] = None,
     ):
+        """Store last raw response/model metadata for best-effort fallback."""
         super().__init__(message)
         self.last_response_text = last_response_text
         self.last_model = last_model
@@ -122,6 +124,7 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
     missing: List[str] = []
 
     def _is_blank_text(value: Any) -> bool:
+        """Return whether a mandatory text field is absent or blank."""
         if value is None:
             return True
         if isinstance(value, str):
@@ -129,9 +132,11 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
         return True
 
     def _is_invalid_risk_alerts(value: Any) -> bool:
+        """Return whether risk alerts fail the required list contract."""
         return not isinstance(value, list)
 
     def _is_invalid_stop_loss(value: Any) -> bool:
+        """Return whether stop-loss value is missing or structurally invalid."""
         if value is None:
             return True
         if isinstance(value, (list, tuple, dict)):
@@ -172,6 +177,7 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
     """Fill missing mandatory fields with placeholders (in-place). Module-level for pipeline."""
 
     def _is_blank_text(value: Any) -> bool:
+        """Return whether a text field needs placeholder fill."""
         if value is None:
             return True
         if isinstance(value, str):
@@ -179,9 +185,11 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
         return True
 
     def _is_invalid_risk_alerts(value: Any) -> bool:
+        """Return whether the risk-alert field needs placeholder fill."""
         return not isinstance(value, list)
 
     def _is_invalid_stop_loss(value: Any) -> bool:
+        """Return whether the stop-loss field needs placeholder fill."""
         if value is None:
             return True
         if isinstance(value, (list, tuple, dict)):
@@ -323,6 +331,7 @@ _CAPITAL_FLOW_UNAVAILABLE_STATUS = {
 
 
 def _is_meaningful_text(value: Any) -> bool:
+    """Return whether text is non-empty and not a known placeholder value."""
     text = str(value).strip() if value is not None else ""
     if not text:
         return False
@@ -433,6 +442,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
     lowered = text.strip().lower()
 
     def _has_negation_scope_break(gap: str) -> bool:
+        """Return whether words between negation and hint break negation scope."""
         normalized_gap = gap.lower()
         for token in _NEGATION_SCOPE_BREAK_TOKENS:
             token_index = normalized_gap.find(token)
@@ -441,6 +451,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
         return False
 
     def _is_valid_negation_gap(token: str, gap: str) -> bool:
+        """Return whether a negation token can validly negate across the gap."""
         if not gap:
             return True
         if token not in {"未", "无", "非"}:
@@ -448,6 +459,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
         return any(gap.startswith(prefix) for prefix in _SINGLE_CHAR_NEGATION_GAP_PREFIXES)
 
     def _is_negated_match(index: int) -> bool:
+        """Return whether a trend hint match is negated by nearby context."""
         prefix = lowered[max(0, index - _NEGATION_LOOKBACK_CHARS):index]
         for token in _NEGATION_TOKENS:
             token_index = prefix.rfind(token)
@@ -862,6 +874,7 @@ def stabilize_decision_with_structure(
 
 
 def _has_structural_risk_alert(result: "AnalysisResult") -> bool:
+    """Return whether result/dashboard text contains structural risk signals."""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
 
     risk_text = getattr(result, "risk_warning", "")
@@ -887,6 +900,7 @@ def _has_structural_risk_alert(result: "AnalysisResult") -> bool:
 
 
 def _is_significant_structural_risk(value: Any) -> bool:
+    """Return whether one risk string is meaningful and structurally important."""
     text = str(value or "").strip()
     if not _is_meaningful_text(text):
         return False
@@ -899,6 +913,7 @@ def _is_significant_structural_risk(value: Any) -> bool:
 
 
 def _sync_stability_dashboard_fields(result: "AnalysisResult") -> None:
+    """Mirror top-level decision fields into the dashboard compatibility payload."""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
     result.dashboard = dashboard
     dashboard["sentiment_score"] = getattr(result, "sentiment_score", None)
@@ -907,6 +922,7 @@ def _sync_stability_dashboard_fields(result: "AnalysisResult") -> None:
 
 
 def _as_dict_for_decision_guard(value: Any) -> Dict[str, Any]:
+    """Convert dict-like indicator inputs into plain dictionaries for guards."""
     if isinstance(value, dict):
         return value
     if hasattr(value, "to_dict"):
@@ -921,12 +937,14 @@ def _as_dict_for_decision_guard(value: Any) -> Dict[str, Any]:
 
 
 def _first_list_value(value: Any) -> Any:
+    """Return first sequence item when indicators provide list-like values."""
     if isinstance(value, (list, tuple)) and value:
         return value[0]
     return value
 
 
 def _coerce_numeric_value(value: Any) -> Optional[float]:
+    """Parse numeric dashboard/indicator values while ignoring placeholders."""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -946,6 +964,7 @@ def _coerce_numeric_value(value: Any) -> Optional[float]:
 
 
 def _first_numeric_value(*values: Any) -> Optional[float]:
+    """Return the first parseable numeric value from flat or nested inputs."""
     for value in values:
         if isinstance(value, (list, tuple)):
             nested = _first_numeric_value(*value)
@@ -959,12 +978,14 @@ def _first_numeric_value(*values: Any) -> Optional[float]:
 
 
 def _capital_flow_bias(fundamental_context: Optional[Dict[str, Any]]) -> str:
+    """Return capital-flow direction without exposing diagnostic status."""
     return _capital_flow_bias_with_status(fundamental_context)[0]
 
 
 def _capital_flow_bias_with_status(
     fundamental_context: Optional[Dict[str, Any]],
 ) -> tuple[str, str]:
+    """Classify stock capital flow as inflow/outflow/neutral/unavailable."""
     if not isinstance(fundamental_context, dict):
         return "unavailable", "invalid_context"
     block = fundamental_context.get("capital_flow")
@@ -980,6 +1001,7 @@ def _capital_flow_bias_with_status(
         return "unavailable", "empty_stock_flow"
 
     def _flow_direction(value: Optional[float]) -> Optional[str]:
+        """Convert a numeric flow amount into inflow/outflow/neutral signal."""
         if value is None or value == 0:
             return None
         return "inflow" if value > 0 else "outflow"
@@ -1005,6 +1027,7 @@ def _capital_flow_bias_with_status(
 
 
 def _capital_flow_status_for_stability(reason: str, language: str) -> str:
+    """Localize the capital-flow unavailability reason for stability metadata."""
     normalized = str(reason or "").strip().lower()
     if "not_supported" in normalized or "unsupported" in normalized or "not available" in normalized:
         return "市场资金流服务暂不支持" if language == "zh" else "Capital flow source unsupported"
@@ -1022,6 +1045,7 @@ def _set_decision_stability_unavailable(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
+    """Record that decision-stability calibration was skipped due to missing flow."""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
     result.dashboard = dashboard
     dashboard["decision_stability"] = {
@@ -1037,6 +1061,7 @@ def _set_decision_stability_unavailable(
 
 
 def _bound_hold_watch_sentiment_score(result: "AnalysisResult") -> None:
+    """Clamp sentiment score into the neutral hold/watch range."""
     try:
         score = int(getattr(result, "sentiment_score", 50))
     except (TypeError, ValueError):
@@ -1058,6 +1083,7 @@ def _apply_hold_watch_dashboard(
     has_position: str,
     capital_flow_status: Optional[str] = None,
 ) -> None:
+    """Apply standardized hold/watch wording and dashboard stability metadata."""
     result.operation_advice = advice
 
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
@@ -1103,6 +1129,7 @@ def _downgrade_buy_without_capital_flow(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
+    """Downgrade buy decisions when capital-flow confirmation is unavailable."""
     status_text = _capital_flow_status_for_stability(flow_status, language)
     if language == "zh":
         advice = "持有观察"
@@ -1148,6 +1175,7 @@ def _downgrade_to_structural_hold(
     resistance: Optional[float],
     flow_bias: str,
 ) -> None:
+    """Downgrade aggressive decisions to hold when structural guardrails trigger."""
     result.decision_type = "hold"
     _bound_hold_watch_sentiment_score(result)
     _set_structural_hold_wording(
@@ -1173,6 +1201,7 @@ def _set_structural_hold_wording(
     resistance: Optional[float],
     flow_bias: str,
 ) -> None:
+    """Apply localized wording for structural hold/watch downgrade reasons."""
     advice = {
         "zh": {
             "range": "震荡观望",
@@ -1832,6 +1861,7 @@ class GeminiAnalyzer:
         config: Config,
         platform_models: List[str],
     ) -> Optional[ModelRoute]:
+        """Resolve per-user model entitlement route when user context is present."""
         user_id = getattr(self, "_user_id", None)
         if not user_id:
             return None
@@ -2050,6 +2080,7 @@ class GeminiAnalyzer:
             return {}
 
         def _get_value(key: str) -> int:
+            """Read one usage counter from dict or object-style LiteLLM usage."""
             if isinstance(usage_obj, dict):
                 return int(usage_obj.get(key) or 0)
             return int(getattr(usage_obj, key, 0) or 0)
@@ -2453,6 +2484,7 @@ class GeminiAnalyzer:
             AnalysisResult 对象
         """
         def _emit_progress(progress: int, message: str) -> None:
+            """Safely forward analyzer progress updates to the optional callback."""
             if progress_callback is None:
                 return
             try:

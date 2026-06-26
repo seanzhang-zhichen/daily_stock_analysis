@@ -1,7 +1,9 @@
 """Reusable market review runtime assembly helpers.
 
-Centralize the analyzer/search/notification construction so API, CLI and Bot
-entrypoints share one initialization path for 大盘复盘.
+Centralize analyzer/search/notification construction so API, CLI, scheduler,
+and Bot entrypoints share one initialization path for 大盘复盘. Keeping runtime
+assembly here avoids subtle differences in optional search/LLM behavior across
+entrypoints.
 """
 
 from __future__ import annotations
@@ -15,7 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def has_configured_llm_runtime(config: Config) -> bool:
-    """Return whether any LLM model configuration is available."""
+    """Return whether any supported LLM model configuration is available.
+
+    The analyzer can be configured through LiteLLM, channel lists, or legacy
+    provider-specific API keys. This check intentionally stays broad so market
+    review can still run template-only when no model is configured.
+    """
     if (getattr(config, "litellm_model", "") or "").strip():
         return True
     if getattr(config, "llm_model_list", None):
@@ -45,8 +52,11 @@ def build_market_review_runtime(
     config: Config,
     source_message: Optional[Any] = None,
 ) -> Tuple[Any, Any, Any]:
-    """
-    Build shared NotificationService, GeminiAnalyzer and SearchService instances.
+    """Build shared NotificationService, GeminiAnalyzer and SearchService instances.
+
+    Search and LLM are optional dependencies. Search is only created when the
+    config reports search capability; analyzer creation is skipped when no LLM
+    runtime exists or when the analyzer initializes but is not available.
     """
     from src.analyzer import GeminiAnalyzer
     from src.notification import NotificationService
@@ -57,6 +67,8 @@ def build_market_review_runtime(
     search_service = None
     has_search_capability = getattr(config, "has_search_capability_enabled", None)
     if callable(has_search_capability) and has_search_capability():
+        # SearchService itself handles provider key rotation and per-provider
+        # fallback; this helper only decides whether search should participate.
         search_service = SearchService(
             bocha_keys=getattr(config, "bocha_api_keys", None),
             tavily_keys=getattr(config, "tavily_api_keys", None),

@@ -42,12 +42,14 @@ class UserModeSettings:
 
 
 def _parse_invite_codes(raw: Optional[str]) -> tuple[str, ...]:
+    """解析逗号分隔的邀请码配置，自动去掉空项。"""
     if not raw:
         return ()
     return tuple(code.strip() for code in raw.split(",") if code.strip())
 
 
 def _setting(db, key: str):
+    """读取平台配置值，允许数据库配置覆盖默认环境语义。"""
     return get_platform_setting_value(db, key)
 
 

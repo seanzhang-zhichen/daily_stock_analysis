@@ -60,6 +60,7 @@ _RUNTIME_ENV_FILE_KEYS = set()
 
 
 def _get_active_env_path() -> Path:
+    """Return the env file path selected by ENV_FILE or the project default."""
     env_file = os.getenv("ENV_FILE")
     if env_file:
         return Path(env_file)
@@ -67,6 +68,7 @@ def _get_active_env_path() -> Path:
 
 
 def _read_active_env_values() -> Optional[Dict[str, str]]:
+    """Read active env-file values, returning None only on parse/read failure."""
     env_path = _get_active_env_path()
     if not env_path.exists():
         return {}
@@ -174,15 +176,19 @@ class _LazyPipelineDescriptor:
     _resolved = None
 
     def __set_name__(self, owner, name):
+        """Remember the exported attribute name for descriptor protocol completeness."""
         self._name = name
 
     def __get__(self, obj, objtype=None):
+        """Resolve and cache StockAnalysisPipeline on first access."""
         if self._resolved is None:
             self._resolved = _get_stock_analysis_pipeline()
         return self._resolved
 
 
 class _ModuleExports:
+    """Container for lazy module-level compatibility exports."""
+
     StockAnalysisPipeline = _LazyPipelineDescriptor()
 
 
@@ -190,6 +196,7 @@ _exports = _ModuleExports()
 
 
 def __getattr__(name: str):
+    """Provide lazy compatibility access for historical module attributes."""
     if name == "StockAnalysisPipeline":
         return _exports.StockAnalysisPipeline
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -430,6 +437,7 @@ def _run_market_review_with_shared_lock(
     run_market_review_func: Callable[..., Optional[str]],
     **kwargs: Any,
 ) -> Optional[str]:
+    """Run market review while honoring the cross-entry shared execution lock."""
     from src.core.market_review_lock import (
         release_market_review_lock,
         try_acquire_market_review_lock,
@@ -859,6 +867,7 @@ def start_api_server(
     app = create_app(serve_frontend=serve_frontend)
 
     def run_server():
+        """Run the FastAPI app in the background server thread."""
         level_name = (config.log_level or "INFO").lower()
         uvicorn.run(
             app,
@@ -874,6 +883,7 @@ def start_api_server(
 
 
 def _should_prepare_webui_frontend_assets(args, config: Config) -> bool:
+    """Return whether startup should verify or build WebUI frontend assets."""
     explicit_webui_requested = bool(
         getattr(args, "webui", False) or getattr(args, "webui_only", False)
     )
@@ -948,6 +958,7 @@ def _build_schedule_time_provider(default_schedule_time: str):
     manager = ConfigManager()
 
     def _provider() -> str:
+        """Resolve schedule time from process env, persisted config or default."""
         if "SCHEDULE_TIME" in _INITIAL_PROCESS_ENV:
             return os.getenv("SCHEDULE_TIME", default_schedule_time)
 
@@ -1158,6 +1169,7 @@ def main() -> int:
             schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
 
             def scheduled_task():
+                """Run scheduled analysis and account lifecycle jobs with fresh config."""
                 runtime_config = _reload_runtime_config()
                 run_full_analysis(runtime_config, args, scheduled_stock_codes)
                 run_per_user_scheduled_analysis(runtime_config, args)
@@ -1172,6 +1184,7 @@ def main() -> int:
                 alert_worker = AlertWorker(config_provider=_reload_runtime_config)
 
                 def event_monitor_task():
+                    """Run one alert-worker polling pass and log triggered reminders."""
                     stats = alert_worker.run_once()
                     triggered_count = stats.get("triggered", 0)
                     if triggered_count:

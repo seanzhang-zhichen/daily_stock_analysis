@@ -78,6 +78,7 @@ from src.storage.models import (
 
 
 def __getattr__(name):
+    """按需导入 DatabaseManager 相关对象，避免导入模型时提前初始化数据库。"""
     if name in {"DatabaseManager", "get_db", "persist_llm_usage"}:
         from src.storage.manager import DatabaseManager, get_db, persist_llm_usage
 

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Load and cache stock-code/name lookup data from the persisted stock index."""
+
 from __future__ import annotations
 
 import logging
@@ -15,6 +17,7 @@ _STOCK_INDEX_CACHE_LOCK = RLock()
 
 
 def _add_lookup_key(keys: set[str], value: str) -> None:
+    """Add raw and uppercase variants of one non-empty lookup key."""
     candidate = str(value or "").strip()
     if not candidate:
         return
@@ -23,6 +26,7 @@ def _add_lookup_key(keys: set[str], value: str) -> None:
 
 
 def _build_lookup_keys(canonical_code: str, display_code: str) -> Iterable[str]:
+    """Build code variants used to match A-share, HK and suffixed symbols."""
     keys: set[str] = set()
     _add_lookup_key(keys, canonical_code)
     _add_lookup_key(keys, display_code)
@@ -97,6 +101,7 @@ def get_index_stock_name(stock_code: str) -> str | None:
 
 
 def _clear_stock_index_cache_for_tests() -> None:
+    """Reset the module cache so tests can reload stock index rows."""
     global _STOCK_INDEX_CACHE
     with _STOCK_INDEX_CACHE_LOCK:
         _STOCK_INDEX_CACHE = None

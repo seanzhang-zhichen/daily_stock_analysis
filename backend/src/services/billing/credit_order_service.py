@@ -43,10 +43,11 @@ CREDIT_ORDER_EXPIRE_MINUTES = 15
 
 
 class InvalidCreditOrderTransitionError(ValueError):
-    pass
+    """Raised when a credit order attempts an invalid status transition."""
 
 
 def _assert_credit_transition(current: str, new: str) -> None:
+    """Validate credit-order status transitions against the whitelist."""
     if (current, new) not in VALID_CREDIT_ORDER_TRANSITIONS:
         raise InvalidCreditOrderTransitionError(
             f"credit order status cannot change from {current!r} to {new!r}"
@@ -54,12 +55,14 @@ def _assert_credit_transition(current: str, new: str) -> None:
 
 
 def _gen_credit_order_no() -> str:
+    """Generate a human-readable unique-ish credit order number."""
     today = datetime.now().strftime("%Y%m%d")
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
     return f"DSAC{today}{suffix}"
 
 
 def serialize_credit_package(package: AppCreditPackage) -> dict:
+    """Serialize a credit package catalog row for API responses."""
     return {
         "code": package.code,
         "name": package.name,
@@ -72,6 +75,7 @@ def serialize_credit_package(package: AppCreditPackage) -> dict:
 
 
 def serialize_credit_order(order: AppCreditOrder) -> dict:
+    """Serialize a credit order row without exposing internal ledger details."""
     return {
         "orderNo": order.order_no,
         "packageCode": order.package_code,
@@ -92,6 +96,8 @@ def serialize_credit_order(order: AppCreditOrder) -> dict:
 
 @dataclass
 class CreditCallbackOutcome:
+    """Structured result of processing a credit payment callback."""
+
     event: AppCreditPaymentEvent
     fulfilled: bool = False
     already_processed: bool = False
@@ -99,13 +105,17 @@ class CreditCallbackOutcome:
 
 
 class CreditOrderService:
+    """Manage credit package orders and idempotent payment fulfillment."""
+
     def list_packages(self, db: Session, *, include_inactive: bool = False) -> List[AppCreditPackage]:
+        """List active credit packages by display/order price."""
         q = db.query(AppCreditPackage)
         if not include_inactive:
             q = q.filter(AppCreditPackage.is_active.is_(True))
         return q.order_by(AppCreditPackage.sort_order.asc(), AppCreditPackage.price_cents.asc()).all()
 
     def get_package(self, db: Session, package_code: str) -> Optional[AppCreditPackage]:
+        """Return one active package by code."""
         return (
             db.query(AppCreditPackage)
             .filter(AppCreditPackage.code == package_code, AppCreditPackage.is_active.is_(True))
@@ -123,6 +133,7 @@ class CreditOrderService:
         coupon_code: Optional[str] = None,
         expire_minutes: int = CREDIT_ORDER_EXPIRE_MINUTES,
     ) -> AppCreditOrder:
+        """Create or reuse an unexpired credit order for one user/package."""
         now = datetime.utcnow()
         existing = (
             db.query(AppCreditOrder)
@@ -183,12 +194,14 @@ class CreditOrderService:
         return order
 
     def get_order(self, db: Session, order_no: str, user_id: Optional[int] = None) -> Optional[AppCreditOrder]:
+        """Fetch one credit order, optionally scoped to its owner."""
         q = db.query(AppCreditOrder).filter(AppCreditOrder.order_no == order_no)
         if user_id is not None:
             q = q.filter(AppCreditOrder.user_id == user_id)
         return q.first()
 
     def list_orders(self, db: Session, user_id: int, limit: int = 50) -> List[AppCreditOrder]:
+        """List a user's recent credit orders."""
         return (
             db.query(AppCreditOrder)
             .filter(AppCreditOrder.user_id == user_id)
@@ -198,6 +211,7 @@ class CreditOrderService:
         )
 
     def mark_pending(self, db: Session, order: AppCreditOrder) -> AppCreditOrder:
+        """Move a freshly created credit order into pending payment state."""
         _assert_credit_transition(order.status, "pending")
         order.status = "pending"
         order.updated_at = datetime.utcnow()
@@ -206,6 +220,7 @@ class CreditOrderService:
         return order
 
     def cancel_order(self, db: Session, order: AppCreditOrder) -> AppCreditOrder:
+        """Close an unpaid credit order."""
         _assert_credit_transition(order.status, "closed")
         order.status = "closed"
         order.updated_at = datetime.utcnow()
@@ -219,6 +234,7 @@ class CreditOrderService:
         order: AppCreditOrder,
         provider_trade_no: Optional[str] = None,
     ) -> AppCreditOrder:
+        """Mark a credit order paid and grant purchased credits idempotently."""
         if order.status == "paid":
             return order
         _assert_credit_transition(order.status, "paid")
@@ -255,6 +271,7 @@ class CreditOrderService:
         signature: Optional[str] = None,
         signature_valid: bool = False,
     ) -> AppCreditPaymentEvent:
+        """Record a raw payment callback event idempotently by provider event id."""
         existing = (
             db.query(AppCreditPaymentEvent)
             .filter(AppCreditPaymentEvent.provider_event_id == provider_event_id)
@@ -282,6 +299,7 @@ class CreditOrderService:
         result: CallbackResult,
         signature_raw: Optional[str] = None,
     ) -> Optional[CreditCallbackOutcome]:
+        """Process a verified gateway callback and fulfill the matching order."""
         order_no = result.out_trade_no or ""
         if not order_no:
             return None
@@ -324,6 +342,7 @@ class CreditOrderService:
         return CreditCallbackOutcome(event=event, fulfilled=True)
 
     def _mark_event_processed(self, db: Session, event: AppCreditPaymentEvent) -> None:
+        """Mark a credit payment event as processed."""
         if event.processed:
             return
         event.processed = True

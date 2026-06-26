@@ -32,6 +32,8 @@ _CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 @dataclass(frozen=True)
 class CreditSettings:
+    """积分系统运行时配置快照，来自平台设置表。"""
+
     enabled: bool
     registration_bonus: int
     referral_signup_bonus: int
@@ -44,6 +46,8 @@ class CreditSettings:
 
 @dataclass(frozen=True)
 class CreditOutcome:
+    """一次积分扣费尝试的结果，供 endpoint 决定是否继续业务。"""
+
     user: AppUser
     kind: str
     cost: int
@@ -55,10 +59,12 @@ class CreditOutcome:
 
     @property
     def remaining(self) -> int:
+        """返回非负余额，便于前端直接展示。"""
         return max(0, self.balance)
 
 
 def load_credit_settings(db: Optional[Session]) -> CreditSettings:
+    """读取积分开关、奖励和消费成本配置。"""
     return CreditSettings(
         enabled=bool(get_platform_setting_value(db, "CREDIT_SYSTEM_ENABLED")),
         registration_bonus=int(get_platform_setting_value(db, "CREDIT_REGISTRATION_BONUS")),
@@ -72,6 +78,7 @@ def load_credit_settings(db: Optional[Session]) -> CreditSettings:
 
 
 def _credit_cost_for(settings: CreditSettings, kind: str) -> int:
+    """根据业务 kind 返回本次应扣积分，未知 kind 视为调用错误。"""
     if kind == KIND_ANALYSIS:
         return max(0, int(settings.analysis_cost))
     if kind == KIND_AGENT:
@@ -80,10 +87,12 @@ def _credit_cost_for(settings: CreditSettings, kind: str) -> int:
 
 
 def normalize_referral_code(value: Optional[str]) -> str:
+    """标准化邀请码/推荐码，保证查询大小写不敏感。"""
     return (value or "").strip().upper()
 
 
 def ensure_referral_code(db: Session, user: AppUser) -> str:
+    """确保用户拥有唯一推荐码；已存在时保持不变。"""
     code = normalize_referral_code(getattr(user, "referral_code", None))
     if code:
         return code
@@ -99,6 +108,7 @@ def ensure_referral_code(db: Session, user: AppUser) -> str:
 
 
 def get_user_by_referral_code(db: Session, code: Optional[str]) -> Optional[AppUser]:
+    """按推荐码查找邀请人，空值直接返回 None。"""
     normalized = normalize_referral_code(code)
     if not normalized:
         return None
@@ -106,6 +116,7 @@ def get_user_by_referral_code(db: Session, code: Optional[str]) -> Optional[AppU
 
 
 def get_referral_for_invitee(db: Session, invitee_user_id: int) -> Optional[AppUserReferral]:
+    """返回某个被邀请用户的邀请关系；每个 invitee 最多一条。"""
     return (
         db.query(AppUserReferral)
         .filter(AppUserReferral.invitee_user_id == int(invitee_user_id))
@@ -114,6 +125,7 @@ def get_referral_for_invitee(db: Session, invitee_user_id: int) -> Optional[AppU
 
 
 def get_referred_users_count(db: Session, inviter_user_id: int) -> int:
+    """统计邀请人累计邀请的注册用户数。"""
     return (
         db.query(AppUserReferral)
         .filter(AppUserReferral.inviter_user_id == int(inviter_user_id))
@@ -122,6 +134,7 @@ def get_referred_users_count(db: Session, inviter_user_id: int) -> int:
 
 
 def _existing_ledger_by_key(db: Session, idempotency_key: Optional[str]) -> Optional[AppCreditLedger]:
+    """按幂等键查找既有流水，避免重复发放或重复扣费。"""
     if not idempotency_key:
         return None
     return (
@@ -142,6 +155,7 @@ def add_credits(
     idempotency_key: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
+    """增加用户积分并写正向流水；amount<=0 时不产生流水。"""
     amount = int(amount or 0)
     if amount <= 0:
         return None
@@ -181,6 +195,7 @@ def consume_credits(
     idempotency_key: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
+    """扣减积分并写负向流水；余额不足时抛 ValueError。"""
     amount = int(amount or 0)
     if amount <= 0:
         return None
@@ -222,6 +237,7 @@ def refund_credits(
     idempotency_key: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
+    """按退款原因补回积分，内部复用正向加积分流水。"""
     return add_credits(
         db,
         user=user,
@@ -242,6 +258,7 @@ def register_referral(
     invite_code: Optional[str],
     settings: Optional[CreditSettings] = None,
 ) -> Optional[AppUserReferral]:
+    """建立邀请关系，并在配置开启时给邀请人发注册奖励。"""
     if inviter is None or invitee is None:
         return None
     if int(inviter.id) == int(invitee.id):
@@ -279,6 +296,7 @@ def register_referral(
 
 
 def grant_registration_bonus(db: Session, *, user: AppUser, settings: Optional[CreditSettings] = None) -> None:
+    """给新注册用户发放一次性注册奖励。"""
     settings = settings or load_credit_settings(db)
     if not settings.enabled or settings.registration_bonus <= 0:
         return
@@ -300,6 +318,7 @@ def grant_subscription_credit_rewards(
     user: AppUser,
     settings: Optional[CreditSettings] = None,
 ) -> None:
+    """订阅支付完成后发放本人订阅奖励和邀请首单奖励。"""
     settings = settings or load_credit_settings(db)
     if not settings.enabled:
         return
@@ -356,6 +375,7 @@ def grant_credit_purchase(
     order_no: str,
     package_code: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
+    """积分包支付完成后把购买额度入账。"""
     return add_credits(
         db,
         user=user,
@@ -377,6 +397,7 @@ def enforce_credits(
     related_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> CreditOutcome:
+    """检查并扣减一次积分，返回可序列化的结果对象。"""
     settings = load_credit_settings(db)
     cost = _credit_cost_for(settings, kind)
     balance = int(getattr(user, "credit_balance", 0) or 0)
@@ -431,6 +452,7 @@ def refund_consumed_credits(
     related_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> None:
+    """业务失败时退回已成功扣减的积分。"""
     if outcome is None or not outcome.consumed or outcome.cost <= 0:
         return
     refund_credits(
@@ -445,6 +467,7 @@ def refund_consumed_credits(
 
 
 def credit_exceeded_payload(outcome: CreditOutcome) -> dict:
+    """把余额不足结果转换为前端约定的错误体。"""
     return {
         "error": "credit_exceeded",
         "message": f"积分不足，当前余额 {outcome.balance}，本次需要 {outcome.cost}",
@@ -456,6 +479,7 @@ def credit_exceeded_payload(outcome: CreditOutcome) -> dict:
 
 
 def serialize_credit_snapshot(db: Session, user: AppUser) -> dict:
+    """返回账户积分余额、成本和奖励配置快照。"""
     settings = load_credit_settings(db)
     ensure_referral_code(db, user)
     return {

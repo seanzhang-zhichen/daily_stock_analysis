@@ -51,6 +51,7 @@ class AlipayGateway(PaymentGateway):
         notify_url: Optional[str] = None,
         return_url: Optional[str] = None,
     ) -> None:
+        """Store Alipay credentials and callback URLs."""
         self.app_id = app_id
         self.alipay_public_key_pem = alipay_public_key_pem
         self.app_private_key_pem = app_private_key_pem
@@ -60,6 +61,7 @@ class AlipayGateway(PaymentGateway):
     # ── 内部: 平台公钥加载 ─────────────────────────────────────────────────
 
     def _load_alipay_public_key(self):  # type: ignore[no-untyped-def]
+        """Load the configured Alipay public key or certificate PEM."""
         from cryptography.hazmat.primitives.serialization import (
             load_pem_public_key,
         )
@@ -76,6 +78,7 @@ class AlipayGateway(PaymentGateway):
     # ── 验签 ───────────────────────────────────────────────────────────────
 
     def verify_callback(self, headers: dict, body: bytes) -> CallbackResult:
+        """Verify and normalize an Alipay async notification callback."""
         body_text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
 
         # urllib.parse.parse_qsl 已经做了 URL decode

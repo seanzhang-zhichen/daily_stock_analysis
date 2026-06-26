@@ -2,7 +2,9 @@
 """Configuration field metadata registry.
 
 This module is the single source of truth for configuration UI metadata,
-validation hints, and category grouping.
+validation hints, and category grouping. The registry intentionally lives in a
+plain Python structure so backend APIs, web forms, and documentation helpers can
+share one schema without importing frontend code.
 """
 
 from __future__ import annotations
@@ -2786,7 +2788,12 @@ def _extract_option_values(options: List[Any]) -> List[str]:
 
 
 def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str, Any]:
-    """Return field definition for key, including inferred fallback metadata."""
+    """Return field definition for key, including inferred fallback metadata.
+
+    Unknown environment keys remain editable through the settings UI. Their
+    category/control metadata is inferred from the key name and optional current
+    value instead of requiring every extension key to be registered up front.
+    """
     key_upper = key.upper()
     if key_upper in _FIELD_DEFINITIONS:
         field = deepcopy(_FIELD_DEFINITIONS[key_upper])
@@ -2819,7 +2826,7 @@ def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str
 
 
 def build_schema_response() -> Dict[str, Any]:
-    """Build schema payload grouped by category."""
+    """Build schema payload grouped by category for the settings API."""
     category_map: Dict[str, Dict[str, Any]] = {}
     for category in get_category_definitions():
         category_map[category["category"]] = {**category, "fields": []}
@@ -2842,11 +2849,13 @@ def build_schema_response() -> Dict[str, Any]:
 
 
 def _is_sensitive_key(key: str) -> bool:
+    """Detect keys that should be masked and rendered with password controls."""
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD")
     return any(marker in key for marker in markers)
 
 
 def _infer_category(key: str) -> str:
+    """Infer a stable category for unregistered environment keys."""
     if key == "STOCK_LIST":
         return "base"
     if key.startswith("BACKTEST_"):
@@ -2897,6 +2906,7 @@ def _infer_category(key: str) -> str:
 
 
 def _infer_data_type(key: str, value_hint: Optional[str]) -> str:
+    """Infer a primitive field type from the key and current string value."""
     if key.endswith("_TIME"):
         return "time"
     if value_hint is None:
@@ -2924,6 +2934,7 @@ def _infer_data_type(key: str, value_hint: Optional[str]) -> str:
 
 
 def _infer_ui_control(data_type: str, key: str) -> str:
+    """Map inferred data type/sensitivity to a frontend control hint."""
     if _is_sensitive_key(key):
         return "password"
     if data_type == "boolean":

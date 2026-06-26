@@ -244,6 +244,7 @@ class CommandDispatcher:
         error_holder: Dict[str, BaseException] = {}
 
         def _runner() -> None:
+            """Run sync dispatch in a worker when caller already owns an event loop."""
             try:
                 result_holder["response"] = self._dispatch_sync(message)
             except BaseException as exc:  # pragma: no cover
@@ -679,6 +680,7 @@ User: "analyze TSLA and NVDA using trend strategy"
         from src.services.name_to_code_resolver import resolve_name_to_code
 
         def _iter_candidates(raw_text: str) -> List[str]:
+            """Generate cleaned whole-text and token candidates for name lookup."""
             candidates: List[str] = []
             stripped = (raw_text or "").strip()
             if stripped:
@@ -700,6 +702,7 @@ User: "analyze TSLA and NVDA using trend strategy"
             return sorted(candidates, key=len, reverse=True)
 
         def _unique_partial_match(candidate: str) -> Optional[str]:
+            """Return the code for a unique Chinese-name substring match."""
             if not re.search(r'[\u4e00-\u9fff]', candidate):
                 return None
             matches = [

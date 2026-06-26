@@ -103,6 +103,7 @@ DEFAULT_DISPOSABLE_DOMAINS: frozenset[str] = frozenset(
 
 
 def _split_csv_env(raw: Optional[str]) -> tuple[str, ...]:
+    """解析逗号分隔域名配置，统一小写并过滤空项。"""
     if not raw:
         return ()
     return tuple(
@@ -255,6 +256,7 @@ def _record_blocked(
     user_agent: Optional[str],
     reason: str,
 ) -> None:
+    """记录一次注册拦截事件，detail 中保留拦截原因。"""
     write_audit_log(
         db,
         REGISTER_BLOCKED_ACTION,

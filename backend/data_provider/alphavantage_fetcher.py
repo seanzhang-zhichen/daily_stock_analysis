@@ -25,10 +25,13 @@ _AV_BASE_URL = "https://www.alphavantage.co/query"
 
 
 class AlphaVantageFetcher(BaseFetcher):
+    """AlphaVantage-backed US OHLCV and realtime quote fetcher."""
+
     name = "AlphaVantageFetcher"
     priority = 3
 
     def __init__(self):
+        """Load API key from config/env; missing key leaves fetcher effectively disabled."""
         from src.config import get_config
         config = get_config()
         self._api_key = getattr(config, 'alphavantage_api_key', None) or os.getenv('ALPHAVANTAGE_API_KEY')
@@ -36,9 +39,11 @@ class AlphaVantageFetcher(BaseFetcher):
             logger.debug("[AlphaVantage] API key not configured, fetcher disabled")
 
     def _is_us_stock(self, stock_code: str) -> bool:
+        """Return True when stock_code is supported by AlphaVantage US endpoints."""
         return is_us_stock_code(stock_code)
 
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """Fetch raw daily time-series rows from AlphaVantage."""
         if not self._api_key:
             raise DataFetchError("[AlphaVantage] API key not configured")
         if not self._is_us_stock(stock_code):
@@ -92,6 +97,7 @@ class AlphaVantageFetcher(BaseFetcher):
         return df.drop(columns=['date'])
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
+        """Normalize AlphaVantage daily rows into the project standard schema."""
         if df.empty:
             return df
 
@@ -113,6 +119,7 @@ class AlphaVantageFetcher(BaseFetcher):
         return df
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
+        """Fetch a realtime/global quote and convert it to UnifiedRealtimeQuote."""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 
@@ -158,6 +165,7 @@ class AlphaVantageFetcher(BaseFetcher):
         )
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
+        """Resolve US ticker display name through AlphaVantage symbol search."""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 

@@ -155,6 +155,7 @@ def _has_already_sent(
     expires_at: datetime,
     reminder_type: str,
 ) -> bool:
+    """检查同一用户/套餐/到期时间/提醒类型是否已发送过。"""
     return (
         db.query(AppPlanReminder.id)
         .filter(
@@ -205,6 +206,7 @@ def _format_expiry_local(expires_at: datetime) -> str:
 
 
 def _plan_display_name(db: Session, plan_code: str) -> str:
+    """读取套餐展示名；配置缺失时回退为 plan_code。"""
     plan = (
         db.query(AppPlan)
         .filter(AppPlan.code == plan_code, AppPlan.is_active.is_(True))
@@ -218,6 +220,7 @@ def _plan_display_name(db: Session, plan_code: str) -> str:
 def _build_reminder_email(
     *, plan_name: str, days_left: int, expires_at: datetime
 ) -> EmailMessageDTO:
+    """构建到期前提醒邮件模板。"""
     expiry_str = _format_expiry_local(expires_at)
     subject = f"[DSA] 您的 {plan_name} 套餐还有 {days_left} 天到期"
     body = (
@@ -234,6 +237,7 @@ def _build_reminder_email(
 
 
 def _build_downgrade_email(*, plan_name: str, expires_at: datetime) -> EmailMessageDTO:
+    """构建已自动降级通知邮件模板。"""
     expiry_str = _format_expiry_local(expires_at)
     subject = f"[DSA] 您的 {plan_name} 套餐已到期并降级为 Free"
     body = (
@@ -473,6 +477,7 @@ def _run_with_session(
     now: Optional[datetime],
     dry_run: bool,
 ) -> LifecycleSummary:
+    """在已打开的 Session 中执行提醒和降级扫描。"""
     now = now or datetime.utcnow()
     backend = email_backend or get_email_backend()
 

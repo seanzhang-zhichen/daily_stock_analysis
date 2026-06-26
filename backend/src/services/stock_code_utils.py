@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Shared stock code utilities.
-"""
+"""Shared stock-code parsing utilities for import and API input paths."""
 
 from __future__ import annotations
 
@@ -31,6 +29,7 @@ _SUFFIX_DIGIT_LENS: dict = {
 
 
 def _valid_exchange_code(exchange: str, base: str, digit_lens: tuple[int, ...]) -> bool:
+    """Validate exchange-specific digit length and Beijing exchange shape."""
     if not (base.isdigit() and len(base) in digit_lens):
         return False
     if exchange == "BJ":

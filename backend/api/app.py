@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-FastAPI 应用工厂模块
-===================================
+"""FastAPI application factory.
 
-职责：
-1. 创建和配置 FastAPI 应用实例
-2. 配置 CORS 中间件
-3. 注册路由和异常处理器
-4. 默认仅提供 API，按显式配置托管前端静态文件
+本模块集中创建 API 应用、注册中间件/路由、配置健康检查，并在显式开启时托管
+前端 SPA 构建产物。默认模块级 ``app`` 使用 API-only 模式，避免普通 Uvicorn
+启动意外依赖前端静态文件。
 
 使用方式：
     from api.app import create_app
@@ -49,6 +44,11 @@ _FRONTEND_INDEX_NO_CACHE_HEADERS = {
 
 
 def _preload_stock_search_cache() -> None:
+    """Warm stock-search cache in a background thread after app startup.
+
+    缓存预热只是性能优化，不应影响服务可用性；失败时记录 warning 后继续启动，
+    后续请求仍可走正常查询路径。
+    """
     try:
         from src.repositories.stock_index_repo import StockIndexRepository
 
@@ -59,6 +59,7 @@ def _preload_stock_search_cache() -> None:
 
 
 def _frontend_index_response(static_dir: Path) -> FileResponse:
+    """Return the SPA index.html with headers that avoid stale shell caching."""
     return FileResponse(
         static_dir / "index.html",
         headers=_FRONTEND_INDEX_NO_CACHE_HEADERS,
@@ -106,7 +107,12 @@ def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
 
 
 def _resolve_asset_path(assets_dir: Path, asset_path: str) -> Optional[Path]:
-    """Resolve a requested asset path while keeping it confined to assets_dir."""
+    """Resolve a requested asset path while keeping it confined to assets_dir.
+
+    这里显式拒绝绝对路径、NUL 字符、Windows 反斜杠和盘符写法，再用
+    ``resolve`` + ``is_relative_to`` 做最终边界检查，防止 SPA 静态文件服务
+    被路径穿越请求带出前端构建目录。
+    """
     decoded_path = unquote(asset_path)
     if not decoded_path or decoded_path.startswith(("/", "\\")):
         return None
@@ -125,7 +131,11 @@ def _resolve_asset_path(assets_dir: Path, asset_path: str) -> Optional[Path]:
 
 
 def _missing_asset_media_type(asset_path: str) -> str:
-    """Return a safe media type for a missing asset response."""
+    """Return a browser-safe media type for a missing asset response.
+
+    JS/CSS 资源缺失时返回对应类型，浏览器控制台会直接暴露资源加载失败；
+    其他类型统一用 text/plain，避免把任意扩展名映射成不必要的响应类型。
+    """
     content_type, _ = mimetypes.guess_type(asset_path)
     if content_type in _SAFE_MISSING_ASSET_MEDIA_TYPES:
         return content_type
@@ -143,6 +153,7 @@ def _init_sentry() -> None:
 
     未配置或 sentry-sdk 未安装时静默跳过，不影响主流程。
     """
+    # 监控能力保持 opt-in：没有 DSN 时完全不初始化，也不要求 sentry-sdk 存在。
     dsn = os.environ.get("SENTRY_DSN", "").strip()
     if not dsn:
         return
@@ -174,7 +185,10 @@ def _init_sentry() -> None:
 
 
 def _init_llm_observability() -> None:
-    """初始化 LLM 可观测回调（Langfuse 等，仅在相关 key 已配置时生效）。"""
+    """初始化 LLM 可观测回调（Langfuse 等，仅在相关 key 已配置时生效）。
+
+    可观测初始化失败不能阻断 API 主流程，因此这里吞掉异常并记录 warning。
+    """
     try:
         from src.llm.observability import setup_llm_observability
         setup_llm_observability()
@@ -184,7 +198,11 @@ def _init_llm_observability() -> None:
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    """Initialize and release shared services for the app lifecycle."""
+    """Initialize shared app services and release them on shutdown.
+
+    启动阶段会创建系统配置服务、确保股票索引种子数据存在，并异步预热搜索缓存。
+    shutdown 时清理 ``app.state``，避免测试或热重载场景复用到旧状态。
+    """
     app.state.system_config_service = SystemConfigService()
     from src.data.stock_index_sync import ensure_stock_index_seeded
 
@@ -200,24 +218,23 @@ async def app_lifespan(app: FastAPI):
 
 
 def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) -> FastAPI:
-    """
-    创建并配置 FastAPI 应用实例
-    
+    """Create and configure the FastAPI application instance.
+
     Args:
-        static_dir: 静态文件目录路径（可选，默认为项目根目录下的 static）
-        serve_frontend: 是否托管前端 SPA 静态文件
-        
+        static_dir: 前端构建产物目录；未传入时使用项目根目录下的 ``static``。
+        serve_frontend: 是否托管前端 SPA。为 ``False`` 时根路由只返回 API 状态。
+
     Returns:
-        配置完成的 FastAPI 应用实例
+        已注册中间件、路由、异常处理器和生命周期钩子的 FastAPI 应用。
     """
-    # 默认静态文件目录
+    # 默认指向打包/桌面端约定的 static 目录；是否实际托管由 serve_frontend 决定。
     if static_dir is None:
         static_dir = Path(__file__).resolve().parents[2] / "static"
 
     _init_sentry()
     _init_llm_observability()
 
-    # 创建 FastAPI 实例
+    # 创建 FastAPI 实例；生命周期钩子负责启动期数据准备和共享服务初始化。
     app = FastAPI(
         title="Daily Stock Analysis API",
         description=(
@@ -246,12 +263,12 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
         "http://127.0.0.1:3000",
     ]
     
-    # 从环境变量添加额外的允许来源
+    # 从环境变量追加部署侧允许的来源，保留默认本地开发端口。
     extra_origins = os.environ.get("CORS_ORIGINS", "")
     if extra_origins:
         allowed_origins.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
     
-    # 允许所有来源（开发/演示用）
+    # 允许所有来源（开发/演示用）。使用 "*" 时不能携带 credentials。
     allow_all_origins = os.environ.get("CORS_ALLOW_ALL", "").lower() == "true"
     allow_credentials = not allow_all_origins
     if allow_all_origins:
@@ -278,6 +295,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
     # 根路由和健康检查
     # ============================================================
     
+    # 只有显式开启且 index.html 存在时才进入前端托管模式。
     has_frontend = serve_frontend and static_dir.exists() and (static_dir / "index.html").exists()
     
     if not serve_frontend:
@@ -366,6 +384,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
             include_in_schema=False,
         )
         async def serve_asset(request: Request, asset_path: str):
+            """Serve built frontend assets with plain-text misses for browser clarity."""
             file_path = _resolve_asset_path(assets_dir, asset_path)
             if file_path is None:
                 return Response(
@@ -411,5 +430,5 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
     return app
 
 
-# 默认应用实例（供 uvicorn 直接使用）
+# 默认应用实例（供 uvicorn 直接使用）。WebUI/桌面端应调用 create_app(..., serve_frontend=True)。
 app = create_app(serve_frontend=False)

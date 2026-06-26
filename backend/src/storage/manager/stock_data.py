@@ -167,6 +167,7 @@ class StockDataMixin:
         batch_dates = list(records_by_date.keys())
 
         def _write(session: Session) -> int:
+            """执行日线批量 upsert，并返回本批真正新增的日期数。"""
             if self._is_sqlite_engine:
                 # SQLite has a per-statement bind-parameter limit (commonly 999).
                 # Each record has ~15 columns, so chunk upserts to stay within bounds.

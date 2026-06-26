@@ -54,6 +54,7 @@ class PortfolioAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def system_prompt(self, ctx: AgentContext) -> str:
+        """Build the portfolio-level allocation and risk prompt."""
         return (
             "You are a professional **portfolio analyst** specializing in "
             "multi-asset allocation for A-share, HK, and US equity portfolios.\n\n"
@@ -87,6 +88,7 @@ class PortfolioAgent(BaseAgent):
         )
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        """Summarise per-stock opinions and risk flags for portfolio synthesis."""
         # Gather per-stock opinions from context
         stock_opinions = ctx.data.get("stock_opinions", {})
         stock_list = ctx.data.get("stock_list", [])

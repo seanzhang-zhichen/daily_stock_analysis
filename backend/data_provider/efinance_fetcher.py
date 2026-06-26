@@ -279,6 +279,7 @@ class EfinanceFetcher(BaseFetcher):
         elapsed: float,
         is_etf: bool = False,
     ) -> Tuple[str, str]:
+        """Classify an Eastmoney history failure and build its diagnostic message."""
         category, detail = _classify_eastmoney_error(exc)
         instrument_type = "ETF" if is_etf else "stock"
         message = (

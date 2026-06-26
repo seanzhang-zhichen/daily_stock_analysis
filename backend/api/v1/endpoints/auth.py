@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Authentication endpoints for Web admin login."""
+"""Authentication endpoints for Web admin login.
+
+这些接口管理传统 Web 管理员认证：状态查询、启停密码登录、首次设置密码、登录、
+修改密码和登出。用户体系登录在 ``account.py`` 中维护；本模块只处理管理后台的
+会话 cookie 和 ``ADMIN_AUTH_ENABLED`` 运行时配置。
+"""
 
 from __future__ import annotations
 
@@ -70,7 +75,11 @@ class AuthSettingsRequest(BaseModel):
 
 
 def _cookie_params(request: Request) -> dict:
-    """Build cookie params including Secure based on request."""
+    """Build admin-session cookie parameters for the current request.
+
+    ``Secure`` 需要兼容两种部署：直连 HTTPS 时读取 request scheme，反代部署时在
+    ``TRUST_X_FORWARDED_FOR=true`` 下信任 ``X-Forwarded-Proto``。
+    """
     secure = False
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
         proto = request.headers.get("X-Forwarded-Proto", "").lower()
@@ -95,7 +104,11 @@ def _cookie_params(request: Request) -> dict:
 
 
 def _apply_auth_enabled(enabled: bool, request: Request | None = None) -> bool:
-    """Persist auth toggle to .env and reload runtime config."""
+    """Persist auth toggle to .env and reload runtime auth/config state.
+
+    优先复用应用生命周期里的 ``SystemConfigService``，失败时退回 ``ConfigManager``，
+    这样设置页和早期测试构造的裸请求都能更新认证开关。
+    """
     manager_applied = False
     if request is not None:
         try:
@@ -141,7 +154,7 @@ def _password_set_for_response(auth_enabled: bool) -> bool:
 
 
 def _set_session_cookie(response: Response, session_value: str, request: Request) -> None:
-    """Attach the admin session cookie to a response."""
+    """Attach the admin session cookie using deployment-aware parameters."""
     params = _cookie_params(request)
     response.set_cookie(
         key=COOKIE_NAME,
@@ -155,7 +168,7 @@ def _set_session_cookie(response: Response, session_value: str, request: Request
 
 
 def _get_auth_status_dict(request: Request | None = None) -> dict:
-    """Helper to build consistent auth status response body."""
+    """Build the shared auth-status response body."""
     auth_enabled = is_auth_enabled()
     logged_in = False
     if auth_enabled and request:
@@ -188,7 +201,7 @@ def _get_auth_status_dict(request: Request | None = None) -> dict:
     description="Returns whether auth is enabled and if the current request is logged in.",
 )
 async def auth_status(request: Request):
-    """Return authEnabled, loggedIn, passwordSet, passwordChangeable, setupState without requiring auth."""
+    """Return auth state without requiring an existing admin session."""
     return _get_auth_status_dict(request)
 
 
@@ -202,7 +215,12 @@ async def auth_status(request: Request):
     ),
 )
 async def auth_update_settings(request: Request, body: AuthSettingsRequest):
-    """Manage auth enablement from the settings page."""
+    """Enable/disable admin password auth from the settings page.
+
+    Re-enabling an existing password requires either a valid session cookie or the current password.
+    When the enabled flag changes, the session secret rotates so old cookies cannot survive the
+    security-mode transition.
+    """
     target_enabled = body.auth_enabled
     current_enabled = is_auth_enabled()
     stored_password_exists = has_stored_password()
@@ -360,7 +378,7 @@ async def auth_update_settings(request: Request, body: AuthSettingsRequest):
     description="Verify password and set session cookie. If password not set yet, accepts password+passwordConfirm.",
 )
 async def auth_login(request: Request, body: LoginRequest):
-    """Verify password or set initial password, set cookie on success. Returns 401 or 429 on failure."""
+    """Verify password or set the initial password, then issue a session cookie."""
     if not is_auth_enabled():
         return JSONResponse(
             status_code=400,
@@ -429,7 +447,7 @@ async def auth_login(request: Request, body: LoginRequest):
     description="Change password. Requires valid session.",
 )
 async def auth_change_password(body: ChangePasswordRequest):
-    """Change password. Requires login."""
+    """Change the admin password after validating the current password."""
     if not is_password_changeable():
         return JSONResponse(
             status_code=400,
@@ -466,7 +484,7 @@ async def auth_change_password(body: ChangePasswordRequest):
     description="Clear session cookie.",
 )
 async def auth_logout(request: Request):
-    """Clear session cookie."""
+    """Invalidate current admin sessions and clear the browser cookie."""
     if is_auth_enabled() and not rotate_session_secret():
         return JSONResponse(
             status_code=500,

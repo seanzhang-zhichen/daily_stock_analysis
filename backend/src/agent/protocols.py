@@ -102,6 +102,7 @@ class AgentContext:
         self.opinions.append(opinion)
 
     def add_risk_flag(self, category: str, description: str, severity: str = "medium") -> None:
+        """Append a structured risk flag with a capture timestamp."""
         self.risk_flags.append({
             "category": category,
             "description": description,
@@ -110,13 +111,16 @@ class AgentContext:
         })
 
     def get_data(self, key: str, default: Any = None) -> Any:
+        """Read a value from the shared data bag."""
         return self.data.get(key, default)
 
     def set_data(self, key: str, value: Any) -> None:
+        """Write a value into the shared data bag for downstream agents."""
         self.data[key] = value
 
     @property
     def has_risk_flags(self) -> bool:
+        """Return whether any agent has raised a risk flag."""
         return len(self.risk_flags) > 0
 
 
@@ -178,6 +182,7 @@ class StageResult:
 
     @property
     def success(self) -> bool:
+        """Return True only for completed stages."""
         return self.status == StageStatus.COMPLETED
 
 
@@ -224,6 +229,7 @@ class AgentRunStats:
         # RUNNING / PENDING are counted in total_stages but not in any sub-counter
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize aggregate run statistics for API/logging surfaces."""
         return {
             "total_stages": self.total_stages,
             "completed_stages": self.completed_stages,

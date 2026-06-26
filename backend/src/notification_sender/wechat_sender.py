@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 WECHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 
 class WechatSender:
+    """Send notifications through WeChat Work robot webhooks."""
     
     def __init__(self, config: Config):
         """

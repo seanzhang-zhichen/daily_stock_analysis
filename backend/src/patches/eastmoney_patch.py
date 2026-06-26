@@ -1,3 +1,5 @@
+"""Patch Eastmoney-bound requests with browser-like headers and cached NID cookies."""
+
 import hashlib
 import random
 import secrets
@@ -17,7 +19,10 @@ ua = UserAgent()
 
 
 class AuthCache:
+    """Thread-safe cache state for the short-lived Eastmoney NID token."""
+
     def __init__(self):
+        """Initialize empty token state and its expiry guard."""
         self.data = None
         self.expire_at = 0
         self.lock = threading.Lock()
@@ -28,13 +33,18 @@ _cache = AuthCache()
 
 
 class PatchSign:
+    """Track whether the global requests patch has already been installed."""
+
     def __init__(self):
+        """Initialize the patch marker as not installed."""
         self.patched = False
 
     def set_patch(self, patched):
+        """Update the global patch installation marker."""
         self.patched = patched
 
     def is_patched(self):
+        """Return whether the Eastmoney request patch is already active."""
         return self.patched
 
 
@@ -148,10 +158,12 @@ def _get_nid(user_agent):
 
 
 def eastmoney_patch():
+    """Install the idempotent Eastmoney request patch on ``requests.Session``."""
     if _patch_sign.is_patched():
         return
 
     def patched_request(self, method, url, **kwargs):
+        """Inject Eastmoney anti-bot headers/cookies before delegating requests."""
         # 排除非目标域名
         is_target = any(
             d in (url or "")

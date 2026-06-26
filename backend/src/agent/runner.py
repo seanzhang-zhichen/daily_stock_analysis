@@ -282,6 +282,7 @@ _try_parse_json = try_parse_json
 
 
 def _try_repair_json(text: str, repair_fn: Callable) -> Optional[Dict[str, Any]]:
+    """Repair malformed JSON text and return a dict when repair succeeds."""
     try:
         repaired = repair_fn(text)
         obj = json.loads(repaired)
@@ -311,6 +312,7 @@ def _build_timeout_result(
     models_used: List[str],
     messages: List[Dict[str, Any]],
 ) -> RunLoopResult:
+    """Build a standard failed result when the loop exhausts wall-clock budget."""
     elapsed = time.time() - start_time
     return RunLoopResult(
         success=False,
@@ -337,6 +339,7 @@ def _build_budget_guard_result(
     remaining_timeout_s: float,
     min_step_budget_s: float,
 ) -> RunLoopResult:
+    """Build a failed result when remaining time is too low for another LLM call."""
     elapsed = time.time() - start_time
     return RunLoopResult(
         success=False,
@@ -620,6 +623,7 @@ def _execute_tools(
     """
 
     def _exec_single(tc_item):
+        """Execute one tool call and return result text plus execution metadata."""
         t0 = time.time()
         cache_key = _build_tool_cache_key(tc_item.name, tc_item.arguments)
 

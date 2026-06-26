@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""平台运行时配置定义、读取和管理后台写入逻辑。
+
+配置优先级为数据库行 > 环境变量 > 代码默认值；这里集中维护类型、
+边界和序列化字段，避免各业务模块各自解析同一项配置。
+"""
 from __future__ import annotations
 
 import logging
@@ -18,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PlatformSettingDefinition:
+    """单个平台配置项的元数据和校验约束。"""
+
     key: str
     title: str
     description: str
@@ -258,10 +265,12 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def get_platform_setting_definitions() -> tuple[PlatformSettingDefinition, ...]:
+    """返回所有支持的配置定义，供管理后台渲染表单。"""
     return _PLATFORM_SETTING_DEFINITIONS
 
 
 def _get_definition(key: str) -> PlatformSettingDefinition:
+    """按 key 查找配置定义，不存在时抛校验错误。"""
     normalized = (key or "").strip().upper()
     definition = _DEFINITIONS_BY_KEY.get(normalized)
     if definition is None:
@@ -270,6 +279,7 @@ def _get_definition(key: str) -> PlatformSettingDefinition:
 
 
 def _get_row(db: Optional[Session], key: str) -> Optional[AppPlatformSetting]:
+    """读取数据库覆盖值；读取失败时回滚并降级到 env/default。"""
     if db is None:
         return None
     try:
@@ -287,10 +297,12 @@ def _get_row(db: Optional[Session], key: str) -> Optional[AppPlatformSetting]:
 
 
 def _env_value(definition: PlatformSettingDefinition) -> Optional[str]:
+    """读取配置项绑定的环境变量值。"""
     return os.getenv(definition.env_name or definition.key)
 
 
 def get_platform_setting_raw_value(db: Optional[Session], key: str) -> tuple[str, str]:
+    """返回原始字符串值及来源标记 db/env/default。"""
     definition = _get_definition(key)
     row = _get_row(db, definition.key)
     if row is not None and row.value is not None:
@@ -302,6 +314,7 @@ def get_platform_setting_raw_value(db: Optional[Session], key: str) -> tuple[str
 
 
 def get_platform_setting_value(db: Optional[Session], key: str) -> Any:
+    """返回按定义类型转换后的配置值。"""
     definition = _get_definition(key)
     raw_value, _ = get_platform_setting_raw_value(db, definition.key)
     if definition.value_type == "boolean":
@@ -318,6 +331,7 @@ def get_platform_setting_value(db: Optional[Session], key: str) -> Any:
 
 
 def _normalize_csv(value: str, *, lowercase: bool = False) -> str:
+    """规范化逗号/换行分隔配置，并保留输入顺序去重。"""
     items: list[str] = []
     seen: set[str] = set()
     for item in str(value or "").replace("\n", ",").split(","):
@@ -331,6 +345,7 @@ def _normalize_csv(value: str, *, lowercase: bool = False) -> str:
 
 
 def normalize_platform_setting_value(key: str, value: Any) -> str:
+    """校验并规范化管理后台提交的配置值，最终以字符串入库。"""
     definition = _get_definition(key)
     if definition.value_type == "boolean":
         if isinstance(value, bool):
@@ -366,6 +381,7 @@ def normalize_platform_setting_value(key: str, value: Any) -> str:
 
 
 def _typed_value(definition: PlatformSettingDefinition, raw_value: str) -> Any:
+    """把原始字符串转换成前端展示/API 使用的类型化值。"""
     if definition.value_type == "boolean":
         return parse_env_bool(raw_value, default=parse_env_bool(definition.default_value))
     if definition.value_type == "integer":
@@ -380,6 +396,7 @@ def _typed_value(definition: PlatformSettingDefinition, raw_value: str) -> Any:
 
 
 def serialize_platform_settings(db: Optional[Session]) -> list[dict[str, Any]]:
+    """序列化完整配置列表，并标明每项当前值来源。"""
     rows_by_key: dict[str, AppPlatformSetting] = {}
     if db is not None:
         try:
@@ -435,6 +452,7 @@ def upsert_platform_settings(
     *,
     admin_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
+    """批量写入平台配置并返回更新后的完整配置列表。"""
     now = datetime.utcnow()
     for item in items:
         key = str(item.get("key") or "").strip().upper()

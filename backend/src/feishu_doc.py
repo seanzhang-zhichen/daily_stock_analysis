@@ -1,5 +1,7 @@
 # feishu_doc.py
 # -*- coding: utf-8 -*-
+"""Feishu document integration helpers backed by the official lark-oapi SDK."""
+
 import logging
 import json
 import lark_oapi as lark
@@ -14,6 +16,7 @@ class FeishuDocManager:
     """飞书云文档管理器 (基于官方 SDK lark-oapi)"""
 
     def __init__(self):
+        """Load Feishu credentials and initialize the SDK client when configured."""
         self.config = get_config()
         self.app_id = self.config.feishu_app_id
         self.app_secret = self.config.feishu_app_secret

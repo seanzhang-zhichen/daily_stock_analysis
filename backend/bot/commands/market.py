@@ -33,18 +33,22 @@ class MarketCommand(BotCommand):
 
     @property
     def name(self) -> str:
+        """返回命令主名称，用于 `/market` 路由注册。"""
         return "market"
 
     @property
     def aliases(self) -> List[str]:
+        """返回大盘复盘命令的短别名和中文触发词。"""
         return ["m", "大盘", "复盘", "行情"]
 
     @property
     def description(self) -> str:
+        """返回帮助列表中展示的命令简述。"""
         return "大盘复盘分析"
 
     @property
     def usage(self) -> str:
+        """返回帮助详情中展示的参数格式。"""
         return "/market"
 
     def execute(self, message: BotMessage, args: List[str]) -> BotResponse:
@@ -82,18 +86,22 @@ class MarketCommand(BotCommand):
         )
 
     def _get_config(self):
+        """延迟读取运行配置，便于测试替换和减少导入副作用。"""
         from src.config import get_config
         return get_config()
 
     def _try_acquire_market_review_lock(self, config):
+        """尝试获取跨入口共享的大盘复盘运行锁。"""
         from src.core.market_review_lock import try_acquire_market_review_lock
         return try_acquire_market_review_lock(config)
 
     def _release_market_review_lock(self, lock_token: Optional[Any]) -> None:
+        """释放大盘复盘运行锁，忽略底层锁实现细节。"""
         from src.core.market_review_lock import release_market_review_lock
         release_market_review_lock(lock_token)
 
     def _compute_market_review_override_region(self, config) -> Optional[str]:
+        """根据当日开市市场计算本次大盘复盘的区域覆盖。"""
         if not getattr(config, "trading_day_check_enabled", True):
             return None
 

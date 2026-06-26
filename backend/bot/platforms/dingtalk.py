@@ -40,6 +40,7 @@ class DingtalkPlatform(BotPlatform):
     """
     
     def __init__(self):
+        """Load DingTalk app credentials from runtime configuration."""
         from src.config import get_config
         config = get_config()
         
@@ -48,6 +49,7 @@ class DingtalkPlatform(BotPlatform):
     
     @property
     def platform_name(self) -> str:
+        """返回平台标识名称，用于路由和会话隔离。"""
         return "dingtalk"
     
     def verify_request(self, headers: Dict[str, str], body: bytes) -> bool:

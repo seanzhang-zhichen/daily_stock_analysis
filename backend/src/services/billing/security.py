@@ -155,6 +155,7 @@ def record_sig_failure(provider: str) -> None:
 
 
 def _emit_sig_fail_alert(provider: str, count: int, window_secs: int) -> None:
+    """Emit a throttled admin alert after repeated callback signature failures."""
     subject = f"[DSA] 回调签名失败告警 provider={provider}"
     body = (
         f"[回调签名告警]\n"

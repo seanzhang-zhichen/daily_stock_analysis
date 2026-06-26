@@ -29,14 +29,17 @@ _frozen_target_date: contextvars.ContextVar[Optional[date]] = contextvars.Contex
 
 
 def set_frozen_target_date(d: date) -> contextvars.Token:
+    """Freeze the effective history end date for the current Agent context."""
     return _frozen_target_date.set(d)
 
 
 def get_frozen_target_date() -> Optional[date]:
+    """Return the context-local frozen target date, if one has been set."""
     return _frozen_target_date.get()
 
 
 def reset_frozen_target_date(token: contextvars.Token) -> None:
+    """Restore the previous frozen target date after a stock analysis finishes."""
     _frozen_target_date.reset(token)
 
 
@@ -48,6 +51,7 @@ _fetcher_lock = Lock()
 
 
 def _get_fetcher_manager():
+    """Return a lazily created DataFetcherManager used only for cache misses."""
     global _fetcher_singleton
     if _fetcher_singleton is None:
         with _fetcher_lock:
@@ -61,6 +65,7 @@ def _get_fetcher_manager():
 # DB-first history loader
 # ---------------------------------------------------------------------------
 def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
+    """Return DB lookup candidates plus the canonical normalized code."""
     from data_provider.base import canonical_stock_code, normalize_stock_code
 
     raw_code = str(stock_code or "").strip()
@@ -73,6 +78,7 @@ def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
 
 
 def _coerce_bar_date(value: Any) -> date:
+    """Coerce ORM/dataframe date-like values into ``date`` for comparisons."""
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -92,6 +98,7 @@ def _coerce_bar_date(value: Any) -> date:
 
 
 def _bar_date(bar: Any) -> date:
+    """Read a daily-bar date from ORM objects or dataframe-style row objects."""
     row_date = _coerce_bar_date(getattr(bar, "date", None))
     if row_date != date.min:
         return row_date
@@ -104,6 +111,7 @@ def _bar_date(bar: Any) -> date:
 
 
 def _select_best_bars(db, stock_code: str, start: date, end: date) -> Tuple[Optional[str], list]:
+    """Select the freshest cached bar set across compatible stock-code shapes."""
     candidates, normalized_code = _history_code_candidates(stock_code)
     best_code = None
     best_bars = []

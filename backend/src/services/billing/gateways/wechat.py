@@ -63,6 +63,7 @@ class WechatGateway(PaymentGateway):
         merchant_private_key_pem: str = "",
         notify_url: Optional[str] = None,
     ) -> None:
+        """Store WeChat Pay credentials, keys, and callback URL."""
         self.app_id = app_id
         self.mch_id = mch_id
         self.apiv3_key = apiv3_key.encode("utf-8") if isinstance(apiv3_key, str) else apiv3_key
@@ -74,6 +75,7 @@ class WechatGateway(PaymentGateway):
     # ── 内部: 平台证书加载 ─────────────────────────────────────────────────
 
     def _load_platform_public_key(self):  # type: ignore[no-untyped-def]
+        """Load the WeChat platform certificate/public-key PEM."""
         from cryptography import x509
         from cryptography.hazmat.primitives.serialization import (
             load_pem_public_key,
@@ -91,6 +93,7 @@ class WechatGateway(PaymentGateway):
     # ── 验签 ───────────────────────────────────────────────────────────────
 
     def verify_callback(self, headers: dict, body: bytes) -> CallbackResult:
+        """Verify, decrypt, and normalize a WeChat Pay V3 callback."""
         ts = (headers.get("Wechatpay-Timestamp") or headers.get("wechatpay-timestamp") or "").strip()
         nonce = (headers.get("Wechatpay-Nonce") or headers.get("wechatpay-nonce") or "").strip()
         sig_b64 = (headers.get("Wechatpay-Signature") or headers.get("wechatpay-signature") or "").strip()
@@ -438,6 +441,7 @@ def _parse_wechat_bill_csv(raw_bytes: bytes, date_str: str) -> List[ChannelSettl
     results: List[ChannelSettlement] = []
 
     def _strip(s: str) -> str:
+        """Strip WeChat bill CSV backtick prefixes and whitespace."""
         return s.lstrip("`").strip()
 
     reader = csv.reader(io.StringIO(content))

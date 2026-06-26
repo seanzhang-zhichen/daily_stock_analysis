@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-A股自选股智能分析系统 - 核心分析流水线
-===================================
+"""Core stock-analysis pipeline.
 
-职责：
-1. 管理整个分析流程
-2. 协调数据获取、存储、搜索、分析、通知等模块
-3. 实现并发控制和异常处理
-4. 提供股票分析的核心功能
+``StockAnalysisPipeline`` coordinates market data, technical analysis, optional
+search/Agent research, persistence, report generation, and notifications. Keep
+side-effect boundaries visible in this file: fetch/store/analyze/notify each
+call into dedicated services, while this module owns orchestration and fallback
+policy.
 """
 
 import logging
@@ -67,8 +64,12 @@ _SINGLE_STOCK_NOTIFY_LOCK_INIT_GUARD = threading.Lock()
 
 
 class StockAnalysisPipeline:
-    """
-    股票分析主流程调度器
+    """股票分析主流程调度器。
+
+    The pipeline is used by CLI, scheduled jobs, API background tasks, and Bot
+    entrypoints. Optional constructor values such as ``query_id``,
+    ``source_message``, and ``user_id`` carry request ownership across those
+    surfaces without changing the core analysis flow.
     
     职责：
     1. 管理整个分析流程
@@ -505,6 +506,7 @@ class StockAnalysisPipeline:
             llm_progress_state = {"last_progress": 64}
 
             def _on_llm_stream(chars_received: int) -> None:
+                """Update task progress as streamed LLM characters arrive."""
                 dynamic_progress = min(92, 64 + min(chars_received // 80, 28))
                 if dynamic_progress <= llm_progress_state["last_progress"]:
                     return
@@ -968,6 +970,7 @@ class StockAnalysisPipeline:
             return None
 
     def _is_deep_research_profile_requested(self) -> bool:
+        """Return whether pre-report Deep Research should run for stock profile."""
         is_available = getattr(self.config, "is_agent_available", None)
         if callable(is_available):
             return bool(is_available())
@@ -979,6 +982,13 @@ class StockAnalysisPipeline:
         stock_name: str,
         context: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
+        """Generate a detailed stock-profile section before the final report.
+
+        This is an optional enrichment path. If Agent mode is unavailable the
+        method returns ``None``; if Agent mode is requested but fails during
+        execution, the exception is propagated so the caller can decide whether
+        to continue with a lighter report.
+        """
         if not self._is_deep_research_profile_requested():
             return None
 
@@ -1060,6 +1070,7 @@ class StockAnalysisPipeline:
 
     @classmethod
     def _clean_stock_profile_report(cls, report: str) -> str:
+        """Strip LLM meta/follow-up lines from a stock profile body."""
         text = str(report or "").strip()
         if not text:
             return ""
@@ -1283,6 +1294,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _extract_advice_text_from_dict(raw_advice: dict) -> str:
+        """Pick the first usable advice text from a structured Agent payload."""
         for field in ("has_position", "no_position"):
             if isinstance(raw_advice.get(field), str):
                 text = raw_advice[field].strip()
@@ -1299,6 +1311,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _is_agent_placeholder_text(text: str) -> bool:
+        """Return whether Agent output is a placeholder rather than a real value."""
         if not text:
             return True
         return text.lower() in {"n/a", "na", "none", "null", "unknown", "tbd"} or text in {
@@ -1316,6 +1329,13 @@ class StockAnalysisPipeline:
         allow_dict: bool = False,
         expect_text: bool = False,
     ) -> bool:
+        """Validate whether an Agent dashboard field should be backfilled.
+
+        Agent providers may return top-level scalars, nested dashboard fields,
+        dictionaries for position-specific advice, or placeholder strings. This
+        helper centralizes those shape checks so fallback behavior stays
+        consistent across result fields.
+        """
         if scalar and isinstance(value, dict):
             if not allow_dict or not value:
                 return True
@@ -1338,6 +1358,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _trend_score_fallback(trend_result: Optional[TrendAnalysisResult]) -> Optional[int]:
+        """Use technical-analysis signal score when Agent score is missing."""
         if trend_result is None:
             return None
         try:
@@ -1351,6 +1372,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str = "zh",
     ) -> str:
+        """Return localized trend text from technical analysis as Agent fallback."""
         if trend_result is None:
             return ""
         trend_status = getattr(trend_result, "trend_status", None)
@@ -1364,6 +1386,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str = "zh",
     ) -> str:
+        """Return localized operation advice from technical-analysis signal."""
         if trend_result is None:
             return ""
         buy_signal = getattr(trend_result, "buy_signal", None)
@@ -1372,6 +1395,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _trend_decision_fallback(trend_result: Optional[TrendAnalysisResult]) -> Optional[str]:
+        """Map technical-analysis buy/sell enum names to dashboard decisions."""
         if trend_result is None:
             return None
         signal_name = getattr(getattr(trend_result, "buy_signal", None), "name", "").lower()
@@ -1386,6 +1410,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _mark_trend_fallback_source(result: AnalysisResult) -> None:
+        """Append a data-source marker when fields were filled from trend logic."""
         if "trend:fallback" in (result.data_sources or ""):
             return
         result.data_sources = (
@@ -1396,6 +1421,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _summary_fallback_from_result(result: AnalysisResult, report_language: str) -> str:
+        """Build a one-line summary from normalized trend/advice fields."""
         trend = (result.trend_prediction or "").strip()
         advice = (result.operation_advice or "").strip()
         if trend and advice:
@@ -1410,6 +1436,12 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> None:
+        """Backfill missing Agent dashboard fields from normalized result values.
+
+        The web UI expects a reasonably complete dashboard object. When the LLM
+        omits optional fields, technical-analysis fallback values keep the API
+        response useful without pretending they came from the Agent.
+        """
         if not isinstance(result.dashboard, dict):
             result.dashboard = {}
         dashboard = result.dashboard
@@ -1472,6 +1504,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> Any:
+        """Use the nearest technical support level as fallback stop-loss hint."""
         levels = getattr(trend_result, "support_levels", None) if trend_result else None
         if levels:
             return levels[0]
@@ -1483,6 +1516,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> None:
+        """Populate core ``AnalysisResult`` fields when Agent output is unusable."""
         if trend_result is None:
             result.sentiment_score = 50
             result.operation_advice = "Watch" if report_language == "en" else "观望"
@@ -2136,6 +2170,7 @@ class StockAnalysisPipeline:
                 }
 
                 def _get_md2img_hint() -> str:
+                    """Return an install hint for the configured markdown renderer."""
                     try:
                         engine = getattr(get_config(), "md2img_engine", "wkhtmltoimage")
                     except Exception:
@@ -2146,6 +2181,7 @@ class StockAnalysisPipeline:
                     )
 
                 def _send_channel_safely(channel_label: str, send_func: Callable[[], bool]) -> bool:
+                    """Send one channel and convert exceptions into a failed result."""
                     try:
                         return bool(send_func())
                     except Exception as e:
@@ -2176,6 +2212,7 @@ class StockAnalysisPipeline:
                 wechat_success = False
                 if NotificationChannel.WECHAT in channels:
                     def _send_wechat_report() -> bool:
+                        """Send Enterprise WeChat with its shorter dashboard payload."""
                         if report_type == ReportType.BRIEF:
                             dashboard_content = self.notifier.generate_brief_report(results)
                         else:
@@ -2218,6 +2255,7 @@ class StockAnalysisPipeline:
                         ) or non_wechat_success
                     elif channel == NotificationChannel.TELEGRAM:
                         def _send_telegram_report() -> bool:
+                            """Send Telegram as image when configured, otherwise text."""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2252,6 +2290,7 @@ class StockAnalysisPipeline:
                                     group_results=group_results,
                                     receivers=receivers,
                                 ) -> bool:
+                                    """Send one stock-specific email recipient group."""
                                     grp_report = self._generate_aggregate_report(group_results, report_type)
                                     subject = self._build_email_subject(group_results)
                                     grp_image_bytes = None
@@ -2285,6 +2324,7 @@ class StockAnalysisPipeline:
                                 ) or non_wechat_success
                         else:
                             def _send_email_report() -> bool:
+                                """Send the default aggregate email report."""
                                 subject = self._build_email_subject(results)
                                 use_image = self.notifier._should_use_image_for_channel(
                                     channel, image_bytes
@@ -2302,6 +2342,7 @@ class StockAnalysisPipeline:
                             ) or non_wechat_success
                     elif channel == NotificationChannel.CUSTOM:
                         def _send_custom_report() -> bool:
+                            """Send custom webhook content with image fallback support."""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2352,6 +2393,7 @@ class StockAnalysisPipeline:
                         ) or non_wechat_success
                     elif channel == NotificationChannel.SLACK:
                         def _send_slack_report() -> bool:
+                            """Send Slack message or file upload depending on credentials."""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2401,6 +2443,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _build_email_subject(results: List[AnalysisResult]) -> str:
+        """Build a concise email subject, including stock label for single reports."""
         date_str = datetime.now().strftime('%Y-%m-%d')
         if len(results) == 1:
             result = results[0]

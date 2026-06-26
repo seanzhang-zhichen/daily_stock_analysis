@@ -1,5 +1,9 @@
-﻿# -*- coding: utf-8 -*-
-"""Alert API endpoints (Issue #1202 P1 MVP)."""
+# -*- coding: utf-8 -*-
+"""Alert API endpoints (Issue #1202 P1 MVP).
+
+告警 endpoint 是 ``AlertService`` 的薄 HTTP 适配层：所有规则、触发记录和通知记录
+都按当前登录用户隔离；服务层异常在这里转换成统一的 ``ErrorResponse`` 结构。
+"""
 
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ router = APIRouter()
 
 
 def _bad_request(exc: Exception, *, error: str = "validation_error") -> HTTPException:
+    """Map validation/service-domain errors to HTTP 400."""
     return HTTPException(
         status_code=400,
         detail={"error": error, "message": str(exc)},
@@ -41,6 +46,7 @@ def _bad_request(exc: Exception, *, error: str = "validation_error") -> HTTPExce
 
 
 def _not_found(exc: Exception) -> HTTPException:
+    """Map missing alert resources to HTTP 404."""
     return HTTPException(
         status_code=404,
         detail={"error": "not_found", "message": str(exc)},
@@ -48,6 +54,7 @@ def _not_found(exc: Exception) -> HTTPException:
 
 
 def _internal_error(message: str, exc: Exception) -> HTTPException:
+    """Log unexpected alert failures and map them to HTTP 500."""
     logger.error("%s: %s", message, exc, exc_info=True)
     return HTTPException(
         status_code=500,
@@ -65,6 +72,7 @@ def create_rule(
     request: AlertRuleCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
+    """Create an alert rule owned by the current user."""
     service = AlertService()
     try:
         return AlertRuleItem(**service.create_rule(
@@ -95,6 +103,7 @@ def list_rules(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleListResponse:
+    """List alert rules with optional filters and pagination."""
     service = AlertService()
     try:
         return AlertRuleListResponse(
@@ -123,6 +132,7 @@ def get_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
+    """Return one alert rule if it belongs to the current user."""
     service = AlertService()
     try:
         return AlertRuleItem(**service.get_rule(
@@ -146,6 +156,7 @@ def update_rule(
     request: AlertRuleUpdateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
+    """Patch mutable fields on an existing alert rule."""
     service = AlertService()
     try:
         payload = request.model_dump(exclude_unset=True)
@@ -174,6 +185,7 @@ def delete_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertDeleteResponse:
+    """Delete one alert rule and report the deletion count."""
     service = AlertService()
     try:
         if not service.delete_rule(rule_id, user_id=current_user.id):
@@ -195,6 +207,7 @@ def enable_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
+    """Enable an alert rule without changing its other configuration."""
     service = AlertService()
     try:
         return AlertRuleItem(**service.enable_rule(
@@ -217,6 +230,7 @@ def disable_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
+    """Disable an alert rule without deleting historical trigger data."""
     service = AlertService()
     try:
         return AlertRuleItem(**service.enable_rule(
@@ -239,6 +253,7 @@ def test_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleTestResponse:
+    """Dry-run one alert rule against current market data."""
     service = AlertService()
     try:
         return AlertRuleTestResponse(**service.test_rule(
@@ -265,6 +280,7 @@ def list_triggers(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertTriggerListResponse:
+    """List historical alert trigger events for the current user."""
     service = AlertService()
     try:
         return AlertTriggerListResponse(
@@ -295,6 +311,7 @@ def list_notifications(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertNotificationListResponse:
+    """List notification delivery attempts produced by alert triggers."""
     service = AlertService()
     try:
         return AlertNotificationListResponse(
@@ -309,4 +326,3 @@ def list_notifications(
         )
     except Exception as exc:
         raise _internal_error("List alert notifications failed", exc)
-

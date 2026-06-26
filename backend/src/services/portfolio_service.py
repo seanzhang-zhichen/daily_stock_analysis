@@ -52,6 +52,7 @@ class PortfolioOversellError(ValueError):
         requested_quantity: float,
         available_quantity: float,
     ) -> None:
+        """Capture oversell context for API-friendly error messages."""
         self.symbol = symbol
         self.trade_date = trade_date
         self.requested_quantity = float(requested_quantity)
@@ -66,12 +67,16 @@ class PortfolioOversellError(ValueError):
 
 @dataclass
 class _AvgState:
+    """Mutable average-cost state while replaying one symbol position."""
+
     quantity: float = 0.0
     total_cost: float = 0.0
 
 
 @dataclass(frozen=True)
 class _ResolvedPositionPrice:
+    """Resolved valuation price plus provenance/staleness metadata."""
+
     price: float
     source: str
     price_date: Optional[date]
@@ -84,6 +89,7 @@ class PortfolioService:
     """Business logic for account CRUD, event writes, and snapshot replay."""
 
     def __init__(self, repo: Optional[PortfolioRepository] = None):
+        """Initialize the portfolio repository dependency."""
         self.repo = repo or PortfolioRepository()
 
     # ------------------------------------------------------------------
@@ -98,6 +104,7 @@ class PortfolioService:
         base_currency: str,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Create an active portfolio account."""
         name_norm = (name or "").strip()
         if not name_norm:
             raise ValueError("name is required")
@@ -117,6 +124,7 @@ class PortfolioService:
         include_inactive: bool = False,
         owner_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """List accounts, optionally scoped to one owner in To C mode."""
         owner_filter = self._normalize_owner_filter(owner_id)
         rows = self.repo.list_accounts(
             include_inactive=include_inactive,
@@ -180,6 +188,7 @@ class PortfolioService:
         *,
         owner_id: Optional[str] = None,
     ) -> bool:
+        """Deactivate an account after optional owner isolation check."""
         owner_filter = self._normalize_owner_filter(owner_id)
         if owner_filter is not None:
             existing = self.repo.get_account(account_id, include_inactive=True)
@@ -208,6 +217,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Record a buy/sell trade event after validation and oversell checks."""
         side_norm = (side or "").strip().lower()
         if side_norm not in VALID_SIDES:
             raise ValueError("side must be buy or sell")
@@ -272,6 +282,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Record an account-level cash inflow or outflow event."""
         direction_norm = (direction or "").strip().lower()
         if direction_norm not in VALID_CASH_DIRECTIONS:
             raise ValueError("direction must be in or out")
@@ -305,6 +316,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Record a corporate action that affects future snapshot replay."""
         action_type_norm = (action_type or "").strip().lower()
         if action_type_norm not in VALID_CORPORATE_ACTIONS:
             raise ValueError("action_type must be cash_dividend or split_adjustment")
@@ -337,6 +349,7 @@ class PortfolioService:
             return {"id": int(row.id)}
 
     def delete_trade_event(self, trade_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        """Delete one trade event after optional owner isolation check."""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_trade_account_id(trade_id)
@@ -349,6 +362,7 @@ class PortfolioService:
             return self.repo.delete_trade_in_session(session=session, trade_id=trade_id)
 
     def delete_cash_ledger_event(self, entry_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        """Delete one cash-ledger event after optional owner isolation check."""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_cash_ledger_account_id(entry_id)
@@ -361,6 +375,7 @@ class PortfolioService:
             return self.repo.delete_cash_ledger_in_session(session=session, entry_id=entry_id)
 
     def delete_corporate_action_event(self, action_id: int, *, owner_id_check: Optional[str] = None) -> bool:
+        """Delete one corporate-action event after optional owner isolation check."""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_corporate_action_account_id(action_id)
@@ -384,6 +399,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """List trade events with date/symbol/side filters."""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -431,6 +447,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """List cash-ledger events with date/direction filters."""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -472,6 +489,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """List corporate actions with date/symbol/type filters."""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -519,6 +537,11 @@ class PortfolioService:
         cost_method: str = "fifo",
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Replay account events into a current/historical portfolio snapshot.
+
+        Each per-account snapshot is persisted back into cache tables so risk
+        reports and later reads can reuse replayed positions/lots.
+        """
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
         owner_filter = self._normalize_owner_filter(owner_id)
@@ -694,6 +717,7 @@ class PortfolioService:
         dedup_hash: Optional[str],
         session: Optional[Any] = None,
     ) -> None:
+        """Reject duplicate broker trade ids or CSV content hashes."""
         if trade_uid and self._has_trade_uid(account_id=account_id, trade_uid=trade_uid, session=session):
             raise PortfolioConflictError(f"Duplicate trade_uid for account_id={account_id}: {trade_uid}")
         if dedup_hash and self._has_trade_dedup_hash(account_id=account_id, dedup_hash=dedup_hash, session=session):
@@ -710,6 +734,7 @@ class PortfolioService:
         quantity: float,
         session: Optional[Any] = None,
     ) -> None:
+        """Ensure a sell order does not exceed holdings up to the trade date."""
         key = (
             self._normalize_symbol_for_position(symbol),
             self._normalize_market(market),
@@ -737,6 +762,7 @@ class PortfolioService:
         as_of_date: date,
         session: Optional[Any] = None,
     ) -> float:
+        """Replay historical trades/actions just far enough to compute holdings."""
         if session is None:
             trades = self.repo.list_trades(account_id, as_of=as_of_date)
             corporate_actions = self.repo.list_corporate_actions(account_id, as_of=as_of_date)
@@ -809,6 +835,7 @@ class PortfolioService:
         return quantity_held
 
     def _replay_account(self, *, account: Any, as_of_date: date, cost_method: str) -> Dict[str, Any]:
+        """Replay one account's cash, trades, and corporate actions to a snapshot."""
         trades = self.repo.list_trades(account.id, as_of=as_of_date)
         cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)
         corporate_actions = self.repo.list_corporate_actions(account.id, as_of=as_of_date)
@@ -1028,6 +1055,7 @@ class PortfolioService:
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
         avg_state: Dict[Tuple[str, str, str], _AvgState],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool]:
+        """Build public positions and cache rows from replayed cost states."""
         position_rows: List[Dict[str, Any]] = []
         lot_rows: List[Dict[str, Any]] = []
         market_value_base = 0.0
@@ -1125,6 +1153,7 @@ class PortfolioService:
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
 
     def _resolve_position_price(self, *, symbol: str, as_of_date: date) -> _ResolvedPositionPrice:
+        """Resolve valuation price using historical close first, realtime for today."""
         today = date.today()
 
         close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
@@ -1161,6 +1190,7 @@ class PortfolioService:
 
     @staticmethod
     def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
+        """Fetch realtime price for current-day portfolio valuation."""
         try:
             from data_provider.base import DataFetcherManager
 
@@ -1187,10 +1217,12 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_symbol_for_storage(symbol: str) -> str:
+        """Canonicalize symbols before persisting portfolio events."""
         return canonical_stock_code(symbol)
 
     @staticmethod
     def _normalize_symbol_for_position(symbol: str) -> str:
+        """Canonicalize symbols for position grouping and valuation lookup."""
         if not (symbol or "").strip():
             return ""
 
@@ -1231,6 +1263,7 @@ class PortfolioService:
 
     @classmethod
     def _build_symbol_filter_values(cls, symbol: str) -> List[str]:
+        """Build compatible symbol variants for querying legacy stored events."""
         original = (symbol or "").strip().upper()
         normalized = cls._normalize_symbol(original)
         if not normalized:
@@ -1240,6 +1273,7 @@ class PortfolioService:
         values: List[str] = []
 
         def _add(value: Optional[str]) -> None:
+            """Append one non-empty variant while preserving insertion order."""
             candidate = (value or "").strip().upper()
             if candidate and candidate not in seen:
                 seen.add(candidate)
@@ -1303,6 +1337,7 @@ class PortfolioService:
         symbol: str,
         trade_date: Optional[date] = None,
     ) -> float:
+        """Consume FIFO lots and return realized cost basis for a sell."""
         remaining = quantity
         cost_basis = 0.0
         while remaining > EPS:
@@ -1329,6 +1364,7 @@ class PortfolioService:
         symbol: str,
         trade_date: Optional[date] = None,
     ) -> float:
+        """Consume average-cost state and return realized cost basis for a sell."""
         if state.quantity + EPS < quantity:
             raise PortfolioOversellError(
                 symbol=symbol,
@@ -1360,6 +1396,7 @@ class PortfolioService:
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
         avg_state: Dict[Tuple[str, str, str], _AvgState],
     ) -> float:
+        """Return currently held quantity for one symbol/market/currency key."""
         if cost_method == "fifo":
             return sum(float(lot["remaining_quantity"]) for lot in fifo_lots.get(key, []))
         return float(avg_state.get(key, _AvgState()).quantity)
@@ -1372,6 +1409,7 @@ class PortfolioService:
         to_currency: str,
         as_of_date: date,
     ) -> Tuple[float, bool, str]:
+        """Convert amount to another currency using cached direct/inverse FX rates."""
         from_norm = self._normalize_currency(from_currency)
         to_norm = self._normalize_currency(to_currency)
         if abs(amount) <= EPS:
@@ -1566,6 +1604,7 @@ class PortfolioService:
         *,
         owner_id: Optional[str] = None,
     ) -> Any:
+        """Return an active account or raise without leaking cross-owner existence."""
         account = self.repo.get_account(account_id, include_inactive=False)
         if account is None or not self._check_account_owner(account, owner_id):
             # 越权与不存在统一抛出, 避免泄露存在性。
@@ -1579,6 +1618,7 @@ class PortfolioService:
         account_id: int,
         owner_id: Optional[str] = None,
     ) -> Any:
+        """Session-bound variant of ``_require_active_account`` for write locks."""
         account = self.repo.get_account_in_session(
             session=session,
             account_id=account_id,
@@ -1589,6 +1629,7 @@ class PortfolioService:
         return account
 
     def _has_trade_uid(self, *, account_id: int, trade_uid: str, session: Optional[Any] = None) -> bool:
+        """Check broker trade-id uniqueness in or outside a write session."""
         if session is None:
             return self.repo.has_trade_uid(account_id, trade_uid)
         return self.repo.has_trade_uid_in_session(session=session, account_id=account_id, trade_uid=trade_uid)
@@ -1600,6 +1641,7 @@ class PortfolioService:
         dedup_hash: str,
         session: Optional[Any] = None,
     ) -> bool:
+        """Check CSV/content-hash uniqueness in or outside a write session."""
         if session is None:
             return self.repo.has_trade_dedup_hash(account_id, dedup_hash)
         return self.repo.has_trade_dedup_hash_in_session(
@@ -1610,6 +1652,7 @@ class PortfolioService:
 
     @staticmethod
     def _account_to_dict(row: Any) -> Dict[str, Any]:
+        """Serialize an account ORM row for API responses."""
         return {
             "id": row.id,
             "owner_id": row.owner_id,
@@ -1624,6 +1667,7 @@ class PortfolioService:
 
     @staticmethod
     def _trade_row_to_dict(row: Any) -> Dict[str, Any]:
+        """Serialize a trade event row for API responses."""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1643,6 +1687,7 @@ class PortfolioService:
 
     @staticmethod
     def _cash_ledger_row_to_dict(row: Any) -> Dict[str, Any]:
+        """Serialize a cash ledger row for API responses."""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1656,6 +1701,7 @@ class PortfolioService:
 
     @staticmethod
     def _corporate_action_row_to_dict(row: Any) -> Dict[str, Any]:
+        """Serialize a corporate action row for API responses."""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1674,6 +1720,7 @@ class PortfolioService:
 
     @staticmethod
     def _validate_paging(*, page: int, page_size: int) -> Tuple[int, int]:
+        """Validate list endpoint pagination bounds."""
         if page < 1:
             raise ValueError("page must be >= 1")
         if page_size < 1 or page_size > 100:
@@ -1682,6 +1729,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_market(value: str) -> str:
+        """Normalize and validate supported market identifiers."""
         market = (value or "").strip().lower()
         if market not in VALID_MARKETS:
             raise ValueError("market must be one of: cn, hk, us")
@@ -1689,6 +1737,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_currency(value: str) -> str:
+        """Normalize currency codes to uppercase."""
         currency = (value or "").strip().upper()
         if not currency:
             raise ValueError("currency is required")
@@ -1696,6 +1745,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_cost_method(value: str) -> str:
+        """Normalize and validate supported cost methods."""
         method = (value or "").strip().lower()
         if method not in VALID_COST_METHODS:
             raise ValueError("cost_method must be fifo or avg")
@@ -1703,6 +1753,7 @@ class PortfolioService:
 
     @staticmethod
     def _default_currency_for_market(market: str) -> str:
+        """Return default settlement currency for a supported market."""
         if market == "hk":
             return "HKD"
         if market == "us":

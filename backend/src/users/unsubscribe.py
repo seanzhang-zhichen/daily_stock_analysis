@@ -54,10 +54,12 @@ def _load_signing_key() -> bytes:
 
 
 def _b64url_encode(data: bytes) -> str:
+    """生成无 padding 的 URL-safe base64 字符串。"""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 def _b64url_decode(value: str) -> bytes:
+    """解码无 padding 的 URL-safe base64 字符串。"""
     padding = 4 - (len(value) % 4)
     if padding and padding < 4:
         value = value + ("=" * padding)
@@ -81,6 +83,8 @@ def build_unsubscribe_token(
 
 @dataclass(frozen=True)
 class UnsubscribeClaim:
+    """退订 token 校验成功后得到的声明。"""
+
     user_id: int
     action: str
     issued_at: int
@@ -138,6 +142,7 @@ def get_public_base_url() -> str:
 
 
 def get_frontend_public_base_url() -> str:
+    """Return the public frontend base URL without a trailing slash."""
     raw = (os.getenv("USER_FRONTEND_BASE_URL") or "").strip()
     if raw:
         return raw.rstrip("/")

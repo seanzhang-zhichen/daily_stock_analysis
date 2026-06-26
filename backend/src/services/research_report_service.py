@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Service helpers for operator-authored paid research reports."""
+"""Service helpers for operator-authored paid research reports.
+
+These helpers are intentionally transaction-neutral: callers own the SQLAlchemy
+session commit/rollback. The functions normalize API payloads, enforce purchase
+idempotency, and serialize user-specific unlock/reaction state.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ RESEARCH_RELATED_TYPE = "research_report"
 
 
 def _tags_to_json(tags: Optional[list[str]]) -> Optional[str]:
+    """Normalize bounded tag lists into the storage JSON string."""
     if tags is None:
         return None
     normalized = [str(tag).strip()[:32] for tag in tags if str(tag).strip()]
@@ -31,6 +37,7 @@ def _tags_to_json(tags: Optional[list[str]]) -> Optional[str]:
 
 
 def _tags_from_json(value: Optional[str]) -> list[str]:
+    """Decode stored tag JSON defensively for API output."""
     if not value:
         return []
     try:
@@ -43,6 +50,7 @@ def _tags_from_json(value: Optional[str]) -> list[str]:
 
 
 def user_has_unlocked(db: Session, report: AppResearchReport, user: Optional[AppUser]) -> bool:
+    """Return whether a user may see the paid full report content."""
     if int(report.price_credits or 0) <= 0:
         return True
     if user is None:
@@ -59,6 +67,7 @@ def user_has_unlocked(db: Session, report: AppResearchReport, user: Optional[App
 
 
 def get_reaction_counts(db: Session, report_id: int) -> dict[str, int]:
+    """Count visible like/dislike reactions for one report."""
     rows = (
         db.query(AppResearchReportReaction.reaction, func.count(AppResearchReportReaction.id))
         .filter(AppResearchReportReaction.report_id == int(report_id))
@@ -75,6 +84,7 @@ def get_reaction_counts(db: Session, report_id: int) -> dict[str, int]:
 
 
 def get_user_reaction(db: Session, report_id: int, user: Optional[AppUser]) -> Optional[str]:
+    """Return the current user's reaction, if any."""
     if user is None:
         return None
     row = (
@@ -89,6 +99,7 @@ def get_user_reaction(db: Session, report_id: int, user: Optional[AppUser]) -> O
 
 
 def count_visible_comments(db: Session, report_id: int) -> int:
+    """Count comments that should be visible in the public report detail."""
     return (
         db.query(AppResearchReportComment)
         .filter(
@@ -106,6 +117,7 @@ def serialize_report(
     user: Optional[AppUser] = None,
     include_full: bool = False,
 ) -> dict:
+    """Serialize report metadata with user-specific unlock and reaction fields."""
     unlocked = user_has_unlocked(db, report, user)
     reactions = get_reaction_counts(db, int(report.id))
     payload = {
@@ -145,6 +157,7 @@ def create_report(
     tags: Optional[list[str]] = None,
     cover_image_url: Optional[str] = None,
 ) -> AppResearchReport:
+    """Create a draft research report authored by an operator/admin user."""
     report = AppResearchReport(
         title=title.strip(),
         summary=summary.strip(),
@@ -175,6 +188,7 @@ def update_report(
     tags: Optional[list[str]] = None,
     cover_image_url: Optional[str] = None,
 ) -> AppResearchReport:
+    """Apply partial edits to an existing research report."""
     if title is not None:
         report.title = title.strip()
     if summary is not None:
@@ -197,6 +211,7 @@ def update_report(
 
 
 def publish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
+    """Publish a report and set its first published timestamp."""
     report.is_published = True
     report.published_at = report.published_at or datetime.now()
     db.add(report)
@@ -205,6 +220,7 @@ def publish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
 
 
 def unpublish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
+    """Hide a report from public listing without deleting purchase history."""
     report.is_published = False
     db.add(report)
     db.flush()
@@ -212,6 +228,7 @@ def unpublish_report(db: Session, report: AppResearchReport) -> AppResearchRepor
 
 
 def purchase_report(db: Session, *, report: AppResearchReport, user: AppUser) -> AppResearchReportPurchase:
+    """Unlock a paid report once, consuming credits with an idempotency key."""
     existing = (
         db.query(AppResearchReportPurchase)
         .filter(
@@ -254,6 +271,7 @@ def set_reaction(
     user: AppUser,
     reaction: Optional[str],
 ) -> Optional[AppResearchReportReaction]:
+    """Create, update, or clear the user's like/dislike reaction."""
     row = (
         db.query(AppResearchReportReaction)
         .filter(
@@ -289,6 +307,7 @@ def add_comment(
     user: AppUser,
     content: str,
 ) -> AppResearchReportComment:
+    """Add a visible user comment to a research report."""
     comment = AppResearchReportComment(
         report_id=int(report.id),
         user_id=int(user.id),
@@ -301,6 +320,7 @@ def add_comment(
 
 
 def serialize_comment(comment: AppResearchReportComment, user: Optional[AppUser] = None) -> dict:
+    """Serialize one research report comment for API responses."""
     return {
         "id": int(comment.id),
         "reportId": int(comment.report_id),

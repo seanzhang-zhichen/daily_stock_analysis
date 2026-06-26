@@ -34,6 +34,7 @@ _ALLOWED_TEMPERATURE_PATTERNS = (
 
 
 def _collect_error_text(value: Any, seen: Optional[set] = None) -> List[str]:
+    """Flatten nested exception payloads into text fragments for classification."""
     if seen is None:
         seen = set()
     if value is None:
@@ -60,10 +61,12 @@ def _collect_error_text(value: Any, seen: Optional[set] = None) -> List[str]:
 
 
 def _normalized_error_text(error: BaseException) -> str:
+    """Return lowercase searchable text collected from an exception object."""
     return " ".join(chunk for chunk in _collect_error_text(error) if chunk).lower()
 
 
 def _parse_allowed_temperature(text: str) -> Optional[float]:
+    """Extract a provider-mandated temperature value from an error message."""
     for segment in re.split(r"(?<!\d)\.(?!\d)|[!?;\n]+", text):
         if "only" not in segment:
             continue

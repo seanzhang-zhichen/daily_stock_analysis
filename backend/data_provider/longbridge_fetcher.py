@@ -213,11 +213,13 @@ def _longbridge_config_kwargs() -> Dict[str, Any]:
 
 
 def _is_us_code(stock_code: str) -> bool:
+    """Return True for US stock or index codes LongBridge can quote."""
     normalized = stock_code.strip().upper()
     return is_us_stock_code(normalized) or is_us_index_code(normalized)
 
 
 def _is_hk_code(stock_code: str) -> bool:
+    """Return True for common Hong Kong code forms such as HK00700 or 0700.HK."""
     normalized = (stock_code or "").strip().upper()
     if normalized.startswith("HK"):
         digits = normalized[2:]
@@ -279,6 +281,7 @@ class LongbridgeFetcher(BaseFetcher):
     _CONNECTION_ERRORS = ("client is closed", "context closed", "connection closed")
 
     def __init__(self):
+        """Initialise lazy quote context, availability state and static-info cache."""
         self._ctx = None
         self._config = None
         self._ctx_lock = threading.Lock()
@@ -289,6 +292,7 @@ class LongbridgeFetcher(BaseFetcher):
         self._static_cache_lock = threading.Lock()
 
     def _is_connection_error(self, exc: Exception) -> bool:
+        """Return True for LongBridge SDK connection-lifecycle errors."""
         msg = str(exc).lower()
         return any(s in msg for s in self._CONNECTION_ERRORS)
 
@@ -299,6 +303,7 @@ class LongbridgeFetcher(BaseFetcher):
             self._config = None
 
     def _mark_connection_cooldown(self, exc: Exception) -> None:
+        """Reset context and suppress reconnect attempts during cooldown."""
         cooldown_seconds = _connection_cooldown_seconds()
         self._invalidate_ctx()
         if cooldown_seconds <= 0:

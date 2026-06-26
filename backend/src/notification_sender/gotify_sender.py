@@ -47,14 +47,17 @@ class GotifySender:
     """Send Markdown text notifications through Gotify's message API."""
 
     def __init__(self, config: Config):
+        """Store Gotify endpoint, token and TLS verification options."""
         self._gotify_url = getattr(config, "gotify_url", None)
         self._gotify_token = getattr(config, "gotify_token", None)
         self._webhook_verify_ssl = getattr(config, "webhook_verify_ssl", True)
 
     def _is_gotify_configured(self) -> bool:
+        """Return whether Gotify URL and app token are both configured."""
         return bool((self._gotify_url or "").strip() and (self._gotify_token or "").strip())
 
     def _resolve_gotify_endpoint(self) -> Optional[str]:
+        """Resolve the configured Gotify server URL to its message endpoint."""
         return resolve_gotify_message_endpoint(self._gotify_url)
 
     def send_to_gotify(

@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class TechnicalAgent(BaseAgent):
+    """Run technical-analysis tools and return a structured trend opinion."""
+
     agent_name = "technical"
     max_steps = 6
     tool_names = [
@@ -35,6 +37,7 @@ class TechnicalAgent(BaseAgent):
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
+        """Build the technical-analysis prompt with optional skill guidance."""
         skills = ""
         if self.skill_instructions:
             skills = f"\n## Active Trading Skills\n\n{self.skill_instructions}\n"
@@ -76,6 +79,7 @@ Return **only** a JSON object (no markdown fences):
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        """Ask the LLM to fetch missing market data and emit JSON analysis."""
         parts = [f"Perform technical analysis on stock **{ctx.stock_code}**"]
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
@@ -100,4 +104,3 @@ Return **only** a JSON object (no markdown fences):
             },
             raw_data=parsed,
         )
-

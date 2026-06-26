@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Portfolio CSV import service with extensible parser registry."""
+"""Portfolio CSV import service with extensible parser registry.
+
+Broker CSV files are normalized into ``PortfolioService.record_trade`` inputs.
+The parser registry is shared across service instances so custom parser specs
+registered by one API path are visible to subsequent imports in the process.
+"""
 
 from __future__ import annotations
 
@@ -88,6 +93,7 @@ class PortfolioImportService:
         portfolio_service: Optional[PortfolioService] = None,
         repo: Optional[PortfolioRepository] = None,
     ):
+        """Initialize parser registry and portfolio persistence dependencies."""
         self.portfolio_service = portfolio_service or PortfolioService()
         self.repo = repo or PortfolioRepository()
         self._parser_registry = self.__class__._shared_parser_registry
@@ -97,6 +103,7 @@ class PortfolioImportService:
             self.__class__._shared_registry_initialized = True
 
     def _init_default_parsers(self) -> None:
+        """Register built-in broker parser specs once per process."""
         for spec in DEFAULT_PARSER_SPECS:
             self.register_parser(spec)
 
@@ -146,6 +153,7 @@ class PortfolioImportService:
         broker: str,
         content: bytes,
     ) -> Dict[str, Any]:
+        """Parse broker CSV bytes into normalized trade records without writing DB."""
         broker_norm = self._normalize_broker(broker)
         parser_spec = self._parser_registry[broker_norm]
         df = self._read_csv(content)
@@ -187,6 +195,7 @@ class PortfolioImportService:
         records: List[Dict[str, Any]],
         dry_run: bool = False,
     ) -> Dict[str, Any]:
+        """Commit parsed trade records with trade-id and content-hash dedupe."""
         broker_norm = self._normalize_broker(broker)
 
         inserted_count = 0
@@ -270,6 +279,7 @@ class PortfolioImportService:
         }
 
     def _normalize_broker(self, value: str) -> str:
+        """Resolve broker aliases to the canonical parser id."""
         broker = (value or "").strip().lower()
         broker = self._broker_alias_map.get(broker, broker)
         if broker not in self._parser_registry:
@@ -279,6 +289,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _read_csv(content: bytes) -> pd.DataFrame:
+        """Read uploaded CSV bytes using common Chinese broker encodings."""
         for encoding in ("utf-8-sig", "gbk", "gb18030"):
             try:
                 return pd.read_csv(
@@ -297,6 +308,7 @@ class PortfolioImportService:
         row: Any,
         parser_spec: CsvParserSpec,
     ) -> Optional[Dict[str, Any]]:
+        """Normalize one CSV row; return None for rows missing required fields."""
         broker_hints = parser_spec.column_hints
 
         trade_date_raw = self._pick(
@@ -381,6 +393,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _pick(row: Any, *candidates: str) -> Any:
+        """Return the first non-empty cell among candidate column names."""
         for name in candidates:
             if name in row.index:
                 value = row.get(name)
@@ -390,6 +403,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _parse_float(value: Any) -> Optional[float]:
+        """Parse broker numeric text, accepting comma-separated values."""
         if value is None:
             return None
         text = str(value).strip().replace(",", "")
@@ -402,6 +416,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _parse_date(value: Any) -> Optional[date]:
+        """Parse broker date/time text into a Python date."""
         if value is None:
             return None
         text = str(value).strip()
@@ -414,6 +429,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _normalize_side(value: Any) -> Optional[str]:
+        """Map broker buy/sell labels into canonical ``buy``/``sell`` values."""
         text = str(value or "").strip().lower()
         if not text:
             return None
@@ -432,6 +448,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _build_dedup_hash(record: Dict[str, Any]) -> str:
+        """Build a stable row hash for idempotent imports without broker trade ids."""
         payload = "|".join(
             [
                 str(record.get("trade_date") or ""),

@@ -416,10 +416,12 @@ def get_no_data_text(language: Optional[str]) -> str:
 
 
 def _normalize_lookup_key(value: Any) -> str:
+    """Normalize free-form lookup keys for strategy and label translation maps."""
     return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
 def _iter_lookup_candidates(value: Any) -> list[str]:
+    """Yield whole and delimiter-split candidates for localized value lookup."""
     raw_text = str(value or "").strip()
     if not raw_text:
         return []
@@ -433,6 +435,7 @@ def _iter_lookup_candidates(value: Any) -> list[str]:
 
 
 def _canonicalize_lookup_value(value: Any, canonical_map: Dict[str, str]) -> Optional[str]:
+    """Resolve a free-form value to its canonical map key when possible."""
     for candidate in _iter_lookup_candidates(value):
         canonical = canonical_map.get(_normalize_lookup_key(candidate))
         if canonical:
@@ -441,6 +444,7 @@ def _canonicalize_lookup_value(value: Any, canonical_map: Dict[str, str]) -> Opt
 
 
 def _first_non_negated_position(text: str, token: str) -> Optional[int]:
+    """Find the first token occurrence not covered by a nearby negation phrase."""
     if not text or not token:
         return None
 
@@ -487,6 +491,7 @@ def _first_non_negated_position(text: str, token: str) -> Optional[int]:
 
 
 def _is_placeholder_stock_name(value: Any, code: Any = None) -> bool:
+    """Return whether a stock name is empty, generic or just repeats the code."""
     text = str(value or "").strip()
     if not text:
         return True
@@ -511,6 +516,7 @@ def _translate_from_map(
     canonical_map: Dict[str, str],
     translations: Dict[str, Dict[str, str]],
 ) -> str:
+    """Translate a mapped value for the requested report language."""
     normalized_language = normalize_report_language(language)
     raw_text = str(value or "").strip()
     if not raw_text:

@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
-
 """
 ===================================
 股票代码与名称映射
@@ -8,6 +6,8 @@ from __future__ import annotations
 
 Shared stock code -> name mapping, used by analyzer, data_provider, and name_to_code_resolver.
 """
+
+from __future__ import annotations
 
 # Stock code -> name mapping (common stocks)
 STOCK_NAME_MAP = {

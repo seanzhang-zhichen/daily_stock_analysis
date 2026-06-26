@@ -294,6 +294,7 @@ class CircuitBreaker:
         cooldown_seconds: float = 300.0,  # 冷却时间（秒），默认5分钟
         half_open_max_calls: int = 1      # 半开状态最大尝试次数
     ):
+        """初始化熔断阈值、冷却时间和各数据源状态表。"""
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         self.half_open_max_calls = half_open_max_calls

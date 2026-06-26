@@ -40,6 +40,7 @@ def _is_truthy_env(var_name: str, default: str = "true") -> bool:
 
 
 def _safe_mtime(path: Path) -> float:
+    """Return a file mtime or zero when the path cannot be inspected."""
     try:
         return path.stat().st_mtime
     except OSError:
@@ -47,6 +48,7 @@ def _safe_mtime(path: Path) -> float:
 
 
 def _tree_latest_mtime(root: Path) -> float:
+    """Return latest file mtime under a tree, falling back to root mtime on errors."""
     if not root.exists():
         return 0.0
     latest = 0.0
@@ -61,6 +63,7 @@ def _tree_latest_mtime(root: Path) -> float:
 
 
 def _max_mtime(paths: Iterable[Path]) -> float:
+    """Return the newest mtime across a path iterable."""
     latest = 0.0
     for path in paths:
         latest = max(latest, _safe_mtime(path))
@@ -68,6 +71,7 @@ def _max_mtime(paths: Iterable[Path]) -> float:
 
 
 def _resolve_artifact_index(frontend_dir: Path) -> Path:
+    """Resolve the preferred frontend artifact index path for this repository."""
     # Prefer static/index.html because it is the configured output path in this repo.
     static_index = (frontend_dir / ".." / ".." / "static" / "index.html").resolve()
     dist_index = frontend_dir / "dist" / "index.html"
@@ -82,6 +86,7 @@ def _resolve_artifact_index(frontend_dir: Path) -> Path:
 
 
 def _needs_dependency_install(frontend_dir: Path, package_json: Path, lock_file: Path, force_build: bool) -> bool:
+    """Return whether npm dependencies are missing or older than package inputs."""
     node_modules_dir = frontend_dir / "node_modules"
     install_marker = node_modules_dir / ".package-lock.json"
     deps_marker_mtime = _safe_mtime(install_marker) if install_marker.exists() else _safe_mtime(node_modules_dir)
@@ -90,6 +95,7 @@ def _needs_dependency_install(frontend_dir: Path, package_json: Path, lock_file:
 
 
 def _collect_build_inputs_latest_mtime(frontend_dir: Path) -> float:
+    """Return newest mtime among frontend build configuration and source inputs."""
     latest = _max_mtime(frontend_dir / filename for filename in _BUILD_INPUT_FILES)
     for dirname in _BUILD_INPUT_DIRS:
         latest = max(latest, _tree_latest_mtime(frontend_dir / dirname))
@@ -97,6 +103,7 @@ def _collect_build_inputs_latest_mtime(frontend_dir: Path) -> float:
 
 
 def _needs_frontend_build(frontend_dir: Path, force_build: bool) -> tuple[bool, Path]:
+    """Return whether frontend artifacts should be rebuilt and the target index."""
     artifact_index = _resolve_artifact_index(frontend_dir)
     inputs_latest_mtime = _collect_build_inputs_latest_mtime(frontend_dir)
     artifact_mtime = _safe_mtime(artifact_index)
@@ -105,6 +112,7 @@ def _needs_frontend_build(frontend_dir: Path, force_build: bool) -> tuple[bool, 
 
 
 def _run_frontend_commands(commands: Sequence[Sequence[str]], frontend_dir: Path) -> bool:
+    """Run npm commands in order and report success without raising to callers."""
     try:
         for command in commands:
             logger.info("执行前端命令: %s", " ".join(command))
@@ -122,6 +130,7 @@ def _run_frontend_commands(commands: Sequence[Sequence[str]], frontend_dir: Path
 
 
 def _manual_build_command(frontend_dir: Path) -> str:
+    """Return the shell command users can run to build frontend assets manually."""
     lock_file = frontend_dir / "package-lock.json"
     install_cmd = "npm ci" if lock_file.exists() else "npm install"
     return f'cd "{frontend_dir}" && {install_cmd} && npm run build'

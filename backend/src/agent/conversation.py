@@ -66,6 +66,7 @@ class ConversationManager:
     """Manages multiple conversation sessions with TTL."""
     
     def __init__(self, ttl_minutes: int = 30):
+        """Create an in-memory session cache with a fixed inactivity TTL."""
         self._sessions: Dict[str, ConversationSession] = {}
         self.ttl = timedelta(minutes=ttl_minutes)
         self._lock = threading.RLock()

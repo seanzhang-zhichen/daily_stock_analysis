@@ -574,14 +574,17 @@ class DataFetcherManager:
             self._stock_name_cache_lock = RLock()
 
     def _get_fetchers_snapshot(self) -> List[BaseFetcher]:
+        """Return a stable copy of registered fetchers under the manager lock."""
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
             return list(getattr(self, "_fetchers", []))
 
     def _refresh_fetcher_indexes_locked(self) -> None:
+        """Rebuild the name-to-fetcher index while the fetcher lock is held."""
         self._fetchers_by_name = {fetcher.name: fetcher for fetcher in self._fetchers}
 
     def _get_fetcher_by_name(self, fetcher_name: str, capability: str = "") -> Optional[BaseFetcher]:
+        """Look up an available fetcher by name, refreshing stale indexes if needed."""
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
             fetcher = self._fetchers_by_name.get(fetcher_name)
@@ -596,6 +599,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _call_availability_probe(fetcher: BaseFetcher, probe_name: str, capability: str) -> Optional[bool]:
+        """Call one optional availability probe and normalize failures to False."""
         probe = getattr(fetcher, probe_name, None)
         if not callable(probe):
             return None
@@ -617,6 +621,7 @@ class DataFetcherManager:
 
     @classmethod
     def _is_fetcher_available(cls, fetcher: BaseFetcher, capability: str = "") -> bool:
+        """Return whether a fetcher can currently serve the requested capability."""
         for probe_name in ("is_available_for_request", "is_available", "_is_available"):
             result = cls._call_availability_probe(fetcher, probe_name, capability)
             if result is not None:
@@ -624,6 +629,7 @@ class DataFetcherManager:
         return True
 
     def _get_fetcher_call_lock(self, fetcher: BaseFetcher) -> RLock:
+        """Return the per-fetcher lock used to serialize mutable client access."""
         self._ensure_concurrency_guards()
         fetcher_id = id(fetcher)
         with self._fetcher_call_locks_lock:
@@ -692,11 +698,13 @@ class DataFetcherManager:
         return kept
 
     def _get_cached_stock_name(self, stock_code: str) -> Optional[str]:
+        """Read the in-memory stock name cache under its lock."""
         self._ensure_concurrency_guards()
         with self._stock_name_cache_lock:
             return self._stock_name_cache.get(stock_code)
 
     def _cache_stock_name(self, stock_code: str, name: Optional[str]) -> Optional[str]:
+        """Store a resolved stock name and return it for call-site chaining."""
         if name is None:
             return None
         self._ensure_concurrency_guards()
@@ -767,6 +775,7 @@ class DataFetcherManager:
                 logger.debug("[TickFlowFetcher] 关闭管理器资源失败: %s", exc)
 
     def __del__(self) -> None:
+        """Release manager-owned resources during best-effort object finalization."""
         try:
             self.close()
         except Exception:
@@ -1872,6 +1881,7 @@ class DataFetcherManager:
             return None, f"{task_name} timeout worker pool exhausted", int(timeout_value * 1000)
 
         def runner() -> None:
+            """Run the timeout-wrapped task and always release the worker slot."""
             try:
                 result_holder["value"] = task()
             except Exception as exc:
@@ -1931,6 +1941,7 @@ class DataFetcherManager:
         return None, last_error, total_cost_ms
 
     def _get_fundamental_config(self):
+        """Load runtime configuration lazily to keep imports side-effect light."""
         from src.config import get_config
         return get_config()
 
@@ -1975,6 +1986,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _block_status(payload: Dict[str, Any], available: bool = True) -> str:
+        """Infer a coarse block status from payload presence and support flag."""
         if not available:
             return "not_supported"
         if not payload:
@@ -1988,6 +2000,7 @@ class DataFetcherManager:
         source_chain: Optional[List[Dict[str, Any]]] = None,
         errors: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        """Wrap a fundamental payload in the common block contract."""
         return {
             "status": status,
             "coverage": {"status": status},
@@ -1998,6 +2011,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _has_meaningful_payload(payload: Any) -> bool:
+        """Return whether a nested payload contains any non-empty business value."""
         if payload is None:
             return False
         if isinstance(payload, str):
@@ -2030,6 +2044,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _infer_block_status(payload: Any, fallback_status: str) -> str:
+        """Promote meaningful payloads to ok, otherwise preserve explicit fallbacks."""
         if DataFetcherManager._has_meaningful_payload(payload):
             return "ok"
         if fallback_status in ("failed", "partial", "not_supported"):
@@ -2038,6 +2053,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _should_cache_fundamental_context(context: Any) -> bool:
+        """Cache only successful or partially useful fundamental contexts."""
         if not isinstance(context, dict):
             return False
         status = str(context.get("status", "")).strip().lower()
@@ -2060,6 +2076,7 @@ class DataFetcherManager:
         return False
 
     def _build_market_not_supported(self, market: str, reason: str) -> Dict[str, Any]:
+        """Build a full fundamental context for markets outside pipeline support."""
         blocks = {
             "valuation": self._build_fundamental_block(
                 "partial" if market == "etf" else "not_supported",
@@ -2208,6 +2225,7 @@ class DataFetcherManager:
         start_ts = time.time()
 
         def _consume_budget(consumed_ms: int) -> None:
+            """Subtract a completed stage duration from the remaining stage budget."""
             nonlocal remaining_seconds
             remaining_seconds = max(0.0, remaining_seconds - consumed_ms / 1000.0)
 
@@ -2586,6 +2604,7 @@ class DataFetcherManager:
             )
 
         def task() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], str]:
+            """Fetch board rankings through the fallback-aware helper."""
             return self._get_sector_rankings_with_meta(5)
 
         rankings, err, cost_ms = self._run_with_retry(task, timeout, "boards")

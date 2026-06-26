@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramSender:
+    """Send text and image notifications through the Telegram Bot API."""
     
     def __init__(self, config: Config):
         """
@@ -310,6 +311,7 @@ class TelegramSender:
         _link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
         _links = []
         def _save_link(m):
+            """Temporarily replace Markdown links while escaping nearby text."""
             _links.append(m.group(0))
             return f"{_link_placeholder}{len(_links) - 1}"
         result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _save_link, result)

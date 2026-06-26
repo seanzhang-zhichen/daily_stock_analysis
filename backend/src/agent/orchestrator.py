@@ -89,6 +89,7 @@ class AgentOrchestrator:
         skill_manager=None,
         config=None,
     ):
+        """Wire shared dependencies and build the selected multi-agent pipeline."""
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions
@@ -1037,6 +1038,7 @@ class AgentOrchestrator:
         levels: Dict[str, Any] = {}
 
         def absorb(source: Any) -> None:
+            """Merge normalized price levels from one possible source."""
             if not isinstance(source, dict):
                 return
             for key, value in source.items():
@@ -1076,6 +1078,7 @@ class AgentOrchestrator:
             }
 
         def _bias_label(bias):
+            """Map MA bias percentage into a compact Chinese display label."""
             if not isinstance(bias, (int, float)):
                 return ""
             if bias > 5:
@@ -1136,9 +1139,11 @@ class AgentOrchestrator:
         ctx: AgentContext,
         intelligence: Dict[str, Any],
     ) -> List[str]:
+        """Collect risk alerts from dashboard payload, intel/risk opinions and context."""
         alerts: List[str] = []
 
         def absorb(values: Any) -> None:
+            """Append unique alert descriptions from string/dict list values."""
             if not isinstance(values, list):
                 return
             for item in values:
@@ -1168,9 +1173,11 @@ class AgentOrchestrator:
         ctx: AgentContext,
         intelligence: Dict[str, Any],
     ) -> List[str]:
+        """Collect unique positive catalysts from dashboard and intel opinion payloads."""
         catalysts: List[str] = []
 
         def absorb(values: Any) -> None:
+            """Append unique catalyst text from a list payload."""
             if not isinstance(values, list):
                 return
             for item in values:
@@ -1186,12 +1193,14 @@ class AgentOrchestrator:
 
     @staticmethod
     def _latest_opinion(ctx: AgentContext, names: set[str]) -> Optional[Any]:
+        """Return the newest opinion whose agent_name is in names."""
         for opinion in reversed(ctx.opinions):
             if opinion.agent_name in names:
                 return opinion
         return None
 
     def _select_base_opinion(self, ctx: AgentContext) -> Optional[Any]:
+        """Choose the best opinion to anchor fallback dashboard fields."""
         preferred_groups = (
             {"decision"},
             {"skill_consensus", "strategy_consensus"},
@@ -1213,6 +1222,7 @@ class AgentOrchestrator:
         *,
         note: str,
     ) -> Dict[str, Any]:
+        """Tag a fallback dashboard so callers can see it was partially degraded."""
         tagged = dict(dashboard)
         summary = _first_non_empty_text(tagged.get("analysis_summary"))
         prefix = "[降级结果] "
@@ -1470,6 +1480,7 @@ def _adjust_operation_advice(advice: str, signal: str) -> str:
 
 
 def _signal_to_operation(signal: str) -> str:
+    """Map canonical decision signal to a Chinese operation label."""
     mapping = {
         "buy": "买入",
         "hold": "观望",
@@ -1479,6 +1490,7 @@ def _signal_to_operation(signal: str) -> str:
 
 
 def _signal_to_signal_type(signal: str) -> str:
+    """Map canonical decision signal to the dashboard signal badge text."""
     mapping = {
         "buy": "🟢买入信号",
         "hold": "⚪观望信号",
@@ -1488,6 +1500,7 @@ def _signal_to_signal_type(signal: str) -> str:
 
 
 def _default_position_advice(signal: str) -> Dict[str, str]:
+    """Return fallback position advice for empty dashboard payloads."""
     mapping = {
         "buy": {
             "no_position": "可结合支撑位分批试仓，避免一次性追高。",
@@ -1506,6 +1519,7 @@ def _default_position_advice(signal: str) -> Dict[str, str]:
 
 
 def _default_position_size(signal: str) -> str:
+    """Return fallback position-size text for the battle plan."""
     mapping = {
         "buy": "轻仓试仓",
         "hold": "控制仓位",
@@ -1515,12 +1529,14 @@ def _default_position_size(signal: str) -> str:
 
 
 def _normalize_operation_advice_value(value: Any, signal: str) -> str:
+    """Use explicit operation advice when present, otherwise derive from signal."""
     if isinstance(value, str) and value.strip():
         return value.strip()
     return _signal_to_operation(signal)
 
 
 def _confidence_label(confidence: float) -> str:
+    """Convert numeric confidence into the report's 高/中/低 label."""
     if confidence >= 0.75:
         return "高"
     if confidence >= 0.45:
@@ -1529,6 +1545,7 @@ def _confidence_label(confidence: float) -> str:
 
 
 def _estimate_sentiment_score(signal: str, confidence: float) -> int:
+    """Estimate a 0-100 sentiment score from canonical signal and confidence."""
     confidence = max(0.0, min(1.0, float(confidence)))
     bands = {
         "buy": (65, 79),
@@ -1540,6 +1557,7 @@ def _estimate_sentiment_score(signal: str, confidence: float) -> int:
 
 
 def _coerce_level_value(value: Any) -> Any:
+    """Normalize numeric price levels while preserving meaningful non-numeric text."""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -1554,6 +1572,7 @@ def _coerce_level_value(value: Any) -> Any:
 
 
 def _pick_first_level(*values: Any) -> Any:
+    """Return the first value that can be normalized as a level."""
     for value in values:
         normalized = _coerce_level_value(value)
         if normalized is not None:
@@ -1562,6 +1581,7 @@ def _pick_first_level(*values: Any) -> Any:
 
 
 def _level_values_equal(left: Any, right: Any) -> bool:
+    """Compare two level values after normalization."""
     left_normalized = _coerce_level_value(left)
     right_normalized = _coerce_level_value(right)
     return (
@@ -1572,6 +1592,7 @@ def _level_values_equal(left: Any, right: Any) -> bool:
 
 
 def _first_non_empty_text(*values: Any) -> str:
+    """Return the first non-empty string from a set of fallback values."""
     for value in values:
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -1579,6 +1600,7 @@ def _first_non_empty_text(*values: Any) -> str:
 
 
 def _truncate_text(text: Any, limit: int) -> str:
+    """Trim text to a display limit and append an ellipsis when needed."""
     value = str(text or "").strip()
     if len(value) <= limit:
         return value
@@ -1586,6 +1608,7 @@ def _truncate_text(text: Any, limit: int) -> str:
 
 
 def _extract_latest_news_title(intelligence: Dict[str, Any]) -> str:
+    """Extract a concise latest-news title from intelligence payloads."""
     key_news = intelligence.get("key_news")
     if isinstance(key_news, list):
         for item in key_news:

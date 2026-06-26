@@ -50,6 +50,7 @@ class NewsMixin:
         current_query_id = (query_ctx.get("query_id") or "").strip()
 
         def _write(session: Session) -> int:
+            """写入新闻结果并在同一事务内完成 URL 去重/更新。"""
             local_saved_count = 0
 
             for item in response.results:
@@ -168,6 +169,7 @@ class NewsMixin:
 
         try:
             def _write(session: Session) -> int:
+                """写入基本面快照；失败由外层 fail-open 逻辑吞掉。"""
                 session.add(
                     FundamentalSnapshot(
                         query_id=query_id,

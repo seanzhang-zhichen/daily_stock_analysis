@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-交易日历模块 (Issue #373)
-===================================
+"""Trading-calendar helpers for CN/HK/US markets.
 
-职责：
-1. 按市场（A股/港股/美股）判断当日是否为交易日
-2. 按市场时区取“今日”日期，避免服务器 UTC 导致日期错误
-3. 支持 per-stock 过滤：只分析当日开市市场的股票
-
-依赖：exchange-calendars（可选，不可用时 fail-open）
+The module resolves market region from stock code, checks whether a market is
+open, and computes the latest reusable trading date in the market's local
+timezone. ``exchange-calendars`` is optional; when unavailable or failing, all
+checks fail open so scheduled analysis is not blocked by calendar dependency
+problems.
 """
 
 import logging
@@ -19,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-# Exchange-calendars availability
+# Exchange-calendars availability; absence disables strict calendar filtering.
 _XCALS_AVAILABLE = False
 try:
     import exchange_calendars as xcals
@@ -30,10 +26,10 @@ except ImportError:
         "Run: pip install exchange-calendars"
     )
 
-# Market -> exchange code (exchange-calendars)
+# Market -> exchange code used by exchange-calendars.
 MARKET_EXCHANGE = {"cn": "XSHG", "hk": "XHKG", "us": "XNYS"}
 
-# Market -> IANA timezone for "today"
+# Market -> IANA timezone for interpreting "today" and session close.
 MARKET_TIMEZONE = {
     "cn": "Asia/Shanghai",
     "hk": "Asia/Hong_Kong",
@@ -58,7 +54,7 @@ def get_market_for_stock(code: str) -> Optional[str]:
         return "us"
     if is_hk_stock_code(code):
         return "hk"
-    # A-share: 6-digit numeric
+    # A-share: 6-digit numeric codes after US/HK checks.
     if code.isdigit() and len(code) == 6:
         return "cn"
     return None
@@ -205,7 +201,7 @@ def compute_effective_region(
         config_region = "cn"
     if config_region in ("cn", "hk", "us"):
         return config_region if config_region in open_markets else ""
-    # both: return only the markets that are actually open today
+    # both: return only the markets that are actually open today.
     parts = [m for m in ("cn", "hk", "us") if m in open_markets]
     if not parts:
         return ""

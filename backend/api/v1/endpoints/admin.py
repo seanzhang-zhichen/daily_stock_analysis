@@ -21,6 +21,9 @@
 - ``POST /admin/grant-plan``: 手动开通套餐 (§11.10 兜底 / KOL / 客服补单)
 - ``GET /admin/plans`` / ``PUT /admin/plans/{plan_code}``: 套餐与每日用量配置
 - ``GET /admin/stats``: 简单聚合指标
+
+后台 endpoint 直接面向运营人员，负责用户管理、订单/退款/发票处理、套餐配置、
+平台开关、审计日志和聚合指标。业务动作仍委托 users/billing 服务层完成。
 """
 
 from __future__ import annotations
@@ -73,20 +76,28 @@ _svc = OrderService()
 
 
 class ApproveRefundRequest(BaseModel):
+    """管理员审核通过退款时可选的三方退款单号。"""
+
     model_config = {"populate_by_name": True}
     provider_refund_no: Optional[str] = Field(default=None, alias="providerRefundNo")
 
 
 class RejectRefundRequest(BaseModel):
+    """管理员拒绝退款时填写的备注。"""
+
     note: Optional[str] = Field(default=None)
 
 
 class IssueInvoiceRequest(BaseModel):
+    """管理员标记发票已开具时可选的发票访问链接。"""
+
     model_config = {"populate_by_name": True}
     issued_url: Optional[str] = Field(default=None, alias="issuedUrl")
 
 
 class GrantPlanRequest(BaseModel):
+    """管理员手动为用户开通套餐的请求体。"""
+
     model_config = {"populate_by_name": True}
     user_email: Optional[str] = Field(default=None, alias="userEmail")
     user_id: Optional[int] = Field(default=None, alias="userId")
@@ -96,6 +107,8 @@ class GrantPlanRequest(BaseModel):
 
 
 class UpsertPlanRequest(BaseModel):
+    """管理员创建或更新套餐配置的请求体。"""
+
     model_config = {"populate_by_name": True}
     name: str = Field(..., min_length=1, max_length=64)
     daily_analysis_limit: int = Field(..., alias="dailyAnalysisLimit", ge=0)
@@ -108,15 +121,21 @@ class UpsertPlanRequest(BaseModel):
 
 
 class PlatformSettingUpdate(BaseModel):
+    """单项运营平台配置更新。"""
+
     key: str = Field(..., min_length=1, max_length=64)
     value: Any
 
 
 class PlatformSettingsUpdateRequest(BaseModel):
+    """批量保存运营平台配置的请求体。"""
+
     settings: list[PlatformSettingUpdate] = Field(default_factory=list)
 
 
 class AdjustCreditsRequest(BaseModel):
+    """管理员手动调整用户积分的请求体。"""
+
     delta: int
     note: Optional[str] = Field(default=None, max_length=255)
 
@@ -159,6 +178,7 @@ def _notify_refund_result(refund: AppRefund, user: Optional[AppUser], *, approve
 
 
 def _serialize_admin_user(user: AppUser) -> dict:
+    """Serialize user rows for admin tables without exposing password/session data."""
     return {
         "id": int(user.id),
         "email": user.email,
@@ -176,6 +196,7 @@ def _serialize_admin_user(user: AppUser) -> dict:
 
 
 def _normalize_plan_code(plan_code: str) -> str:
+    """Normalize and validate plan code input for admin plan management."""
     code = (plan_code or "").strip().lower()
     if not code or len(code) > 32:
         raise HTTPException(status_code=422, detail="套餐代码不合法")
@@ -189,6 +210,7 @@ def _normalize_plan_code(plan_code: str) -> str:
 
 @router.get("/me", summary="(admin) 当前 admin 信息 + 心跳")
 async def admin_me(current_admin: AppUser = Depends(get_admin_user)):
+    """Return current admin identity for console heartbeat checks."""
     return {"admin": _serialize_admin_user(current_admin)}
 
 
@@ -204,6 +226,7 @@ async def admin_list_users(
     is_admin: Optional[bool] = Query(default=None, alias="isAdmin"),
     limit: int = Query(default=100, ge=1, le=500),
 ):
+    """List users with optional email, plan and admin-status filters."""
     q = db.query(AppUser)
     if email_like:
         q = q.filter(AppUser.email.ilike(f"%{email_like.strip()}%"))
@@ -222,6 +245,7 @@ async def admin_adjust_user_credits(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
+    """Adjust a user's credit balance and write an audit entry."""
     user = db.query(AppUser).filter(AppUser.id == int(user_id)).first()
     if user is None:
         raise HTTPException(status_code=404, detail="目标用户不存在")
@@ -281,6 +305,7 @@ async def admin_list_orders(
     provider: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
+    """List orders for admin review using optional status/user/provider filters."""
     orders = _svc.list_orders_admin(
         db,
         status=status,
@@ -297,6 +322,7 @@ async def admin_get_order(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
+    """Return one order by order number or 404 when absent."""
     order = _svc.get_order(db, order_no)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -313,6 +339,7 @@ async def admin_list_refunds(
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
+    """List refund requests for admin processing."""
     refunds = _svc.list_refunds_admin(db, status=status, limit=limit)
     return {"refunds": [serialize_refund(r) for r in refunds], "count": len(refunds)}
 
@@ -324,6 +351,7 @@ async def admin_approve_refund(
     current_admin: AppUser = Depends(get_admin_user),
     body: ApproveRefundRequest = Body(default=ApproveRefundRequest()),
 ):
+    """Approve a refund, audit the action and notify the user best-effort."""
     refund = _svc.get_refund(db, refund_no)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款单不存在")
@@ -354,6 +382,7 @@ async def admin_reject_refund(
     current_admin: AppUser = Depends(get_admin_user),
     body: RejectRefundRequest = Body(default=RejectRefundRequest()),
 ):
+    """Reject a refund, audit the action and notify the user best-effort."""
     refund = _svc.get_refund(db, refund_no)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款单不存在")
@@ -382,6 +411,7 @@ async def admin_list_invoices(
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
+    """List invoice applications for admin processing."""
     invoices = _svc.list_invoices_admin(db, status=status, limit=limit)
     return {"invoices": [serialize_invoice(i) for i in invoices], "count": len(invoices)}
 
@@ -393,6 +423,7 @@ async def admin_issue_invoice(
     current_admin: AppUser = Depends(get_admin_user),
     body: IssueInvoiceRequest = Body(default=IssueInvoiceRequest()),
 ):
+    """Mark an invoice application as issued and record the audit trail."""
     invoice = _svc.get_invoice(db, invoice_no)
     if invoice is None:
         raise HTTPException(status_code=404, detail="发票申请不存在")
@@ -417,6 +448,7 @@ async def admin_reject_invoice(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
+    """Reject an invoice application and record the audit trail."""
     invoice = _svc.get_invoice(db, invoice_no)
     if invoice is None:
         raise HTTPException(status_code=404, detail="发票申请不存在")
@@ -441,6 +473,7 @@ async def admin_grant_plan(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
+    """Grant or extend a plan for a user identified by email or id."""
     user: Optional[AppUser] = None
     user_email = (body.user_email or "").strip().lower()
     if user_email:
@@ -496,6 +529,7 @@ async def admin_list_plans(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
+    """Return all plan catalog rows including inactive admin-managed plans."""
     plans = list_plan_catalog(
         db,
         include_inactive=True,
@@ -511,6 +545,7 @@ async def admin_upsert_plan(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
+    """Create or update one plan row while preserving free-plan safeguards."""
     code = _normalize_plan_code(plan_code)
     row = db.query(AppPlan).filter(AppPlan.code == code).first()
     if row is None:
@@ -564,6 +599,7 @@ async def admin_list_platform_settings(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
+    """Return serialized platform-level To-C operation settings."""
     settings = serialize_platform_settings(db)
     return {"settings": settings, "count": len(settings)}
 
@@ -574,6 +610,7 @@ async def admin_update_platform_settings(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
+    """Bulk upsert platform settings and audit changed keys."""
     if not body.settings:
         raise HTTPException(status_code=422, detail="settings 不能为空")
     payload = [{"key": item.key, "value": item.value} for item in body.settings]
@@ -607,6 +644,7 @@ async def admin_audit_logs(
     admin_id: Optional[int] = Query(default=None, alias="adminId"),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
+    """List audit log rows with optional action/user/admin filters."""
     q = db.query(AppAuditLog)
     if action:
         q = q.filter(AppAuditLog.action == action)

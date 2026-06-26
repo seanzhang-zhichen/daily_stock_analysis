@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""LLM usage tracking endpoint."""
+"""LLM usage summary and growth-event endpoints.
+
+用量汇总接口读取后端记录的 LLM 调用统计；增长埋点接口接收前端关键事件并尽力写库。
+埋点写入失败只记录 warning，不影响用户主流程。
+"""
 
 from __future__ import annotations
 
@@ -23,13 +27,14 @@ from src.auth import get_client_ip
 
 logger = logging.getLogger(__name__)
 
-_CST = timezone(timedelta(hours=8))  # Beijing time (UTC+8)
+# Usage periods are product-facing Beijing-calendar windows, not UTC windows.
+_CST = timezone(timedelta(hours=8))
 
 router = APIRouter()
 
 _VALID_PERIODS = {"today", "month", "all"}
 
-# 限制允许上报的事件名（防止垃圾数据）
+# 限制允许上报的事件名，防止任意前端/第三方请求污染埋点表。
 _ALLOWED_EVENTS = {
     "page.view",
     "user.register",
@@ -45,7 +50,11 @@ _ALLOWED_EVENTS = {
 
 
 def _date_range(period: str):
-    """Return (from_dt, to_dt) as naive datetimes in Beijing time (UTC+8)."""
+    """Return naive Beijing-local datetime bounds for the requested period.
+
+    存储层当前按 naive datetime 查询，因此这里先按 UTC+8 计算业务窗口，再移除
+    tzinfo，保证“今天/月初”与产品展示口径一致。
+    """
     now = datetime.now(tz=_CST).replace(tzinfo=None)  # naive, Beijing local
     if period == "today":
         from_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -66,6 +75,7 @@ def get_usage_summary(
     period: str = Query("month", description="'today' | 'month' | 'all'"),
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> UsageSummaryResponse:
+    """Return aggregated LLM usage for today, current month, or all time."""
     if period not in _VALID_PERIODS:
         period = "month"
 
@@ -88,6 +98,11 @@ def get_usage_summary(
 
 
 class GrowthEventRequest(BaseModel):
+    """Frontend growth-event payload.
+
+    ``sessionId`` 使用别名兼容前端 camelCase；未登录用户也可以上报匿名事件。
+    """
+
     event: str = Field(..., max_length=64, description="事件名（见 _ALLOWED_EVENTS）")
     props: Optional[Dict[str, Any]] = Field(default=None, description="附加属性 JSON（可选）")
     session_id: Optional[str] = Field(default=None, alias="sessionId", max_length=128)
@@ -110,11 +125,12 @@ async def record_growth_event(
     request: Request,
     db: Session = Depends(get_db),
 ) -> None:
-    # 静默忽略白名单外的事件（防止垃圾数据）
+    """Record a whitelisted growth event and silently ignore invalid events."""
+    # 静默忽略白名单外的事件，保持上报端简单，不让埋点错误打扰用户体验。
     if body.event not in _ALLOWED_EVENTS:
         return
 
-    # 尽量解析 user_id（非强制）
+    # 尽量解析 user_id；匿名、过期 cookie 或 DB 查询异常都不阻断埋点写入。
     user_id: Optional[int] = None
     try:
         cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
@@ -128,6 +144,7 @@ async def record_growth_event(
     props_json: Optional[str] = None
     if body.props:
         try:
+            # props 存为 JSON 字符串，避免埋点表 schema 随事件属性频繁变化。
             props_json = json.dumps(body.props, ensure_ascii=False)
         except (TypeError, ValueError):
             props_json = None

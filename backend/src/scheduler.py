@@ -32,6 +32,7 @@ class GracefulShutdown:
     """
 
     def __init__(self):
+        """Register process signal handlers and initialize shutdown state."""
         self.shutdown_requested = False
         self._lock = threading.Lock()
 
@@ -233,6 +234,7 @@ class Scheduler:
             return False
 
         def _runner() -> None:
+            """Execute a scheduled task and always clear its running thread marker."""
             try:
                 logger.info("后台任务开始执行: %s", entry["name"])
                 entry["task"]()
@@ -348,6 +350,7 @@ if __name__ == "__main__":
     )
 
     def test_task():
+        """Simple smoke task used when running this module directly."""
         print(f"任务执行中... {datetime.now()}")
         time.sleep(2)
         print("任务完成!")

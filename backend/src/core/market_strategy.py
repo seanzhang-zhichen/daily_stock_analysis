@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Market strategy blueprints for CN/HK/US daily market recap."""
+"""Market strategy blueprints for CN/HK/US daily market recap.
+
+The blueprints are static prompt/report fragments shared by the market review
+analyzer. Keep region-specific trading logic here so the analyzer can focus on
+data collection and LLM orchestration rather than prompt wording.
+"""
 
 from dataclasses import dataclass
 from typing import List
@@ -7,7 +12,12 @@ from typing import List
 
 @dataclass(frozen=True)
 class StrategyDimension:
-    """Single strategy dimension used by market recap prompts."""
+    """Single strategy dimension used by market recap prompts.
+
+    ``checkpoints`` are intentionally short. They are injected into prompts as
+    concrete review anchors, so verbose prose here tends to dilute the final
+    market recap instructions.
+    """
 
     name: str
     objective: str
@@ -16,7 +26,12 @@ class StrategyDimension:
 
 @dataclass(frozen=True)
 class MarketStrategyBlueprint:
-    """Region specific market strategy blueprint."""
+    """Region specific market strategy blueprint.
+
+    The same object renders both prompt instructions and fallback markdown.
+    This keeps the LLM path and non-LLM/template path aligned when strategy
+    wording changes.
+    """
 
     region: str
     title: str
@@ -164,7 +179,11 @@ HK_BLUEPRINT = MarketStrategyBlueprint(
 
 
 def get_market_strategy_blueprint(region: str) -> MarketStrategyBlueprint:
-    """Return strategy blueprint by market region."""
+    """Return strategy blueprint by market region.
+
+    Unknown regions fall back to A-share semantics because the historic default
+    for market review is ``cn``.
+    """
     if region == "us":
         return US_BLUEPRINT
     if region == "hk":

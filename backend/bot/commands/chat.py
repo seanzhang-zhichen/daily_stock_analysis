@@ -54,18 +54,22 @@ class ChatCommand(BotCommand):
     
     @property
     def name(self) -> str:
+        """Return the primary command name used by the dispatcher."""
         return "chat"
         
     @property
     def description(self) -> str:
+        """Return the short help-list description."""
         return "与 AI 助手进行自由对话 (需开启 Agent 模式)"
         
     @property
     def usage(self) -> str:
+        """Return the argument pattern shown in command help."""
         return "/chat <问题>"
         
     @property
     def aliases(self) -> list[str]:
+        """Return short aliases for free-form Agent chat."""
         return ["c", "问"]
 
     def validate_args(self, args: List[str]) -> Optional[str]:

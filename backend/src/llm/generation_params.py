@@ -178,10 +178,12 @@ def resolve_litellm_thinking_enabled(
 
 
 def _model_parts(model: str) -> List[str]:
+    """Split provider/model aliases into lowercase family-identifying tokens."""
     return [part for part in re.split(r"[/:\s]+", (model or "").lower()) if part]
 
 
 def _matches_model_family(model: str, family: str) -> bool:
+    """Return whether a model token equals or is prefixed by the given family."""
     return any(part == family or part.startswith(f"{family}-") for part in _model_parts(model))
 
 
@@ -269,6 +271,7 @@ def normalize_litellm_temperature(
 
 
 def _redact_recovery_cache_value(param_name: str, value: Any) -> Any:
+    """Redact secrets while preserving stable non-secret cache fingerprints."""
     if param_name.strip().lower() in _SECRET_CACHE_FIELD_NAMES:
         return "<set>" if value else "<empty>"
     if isinstance(value, Mapping):
@@ -282,6 +285,7 @@ def _redact_recovery_cache_value(param_name: str, value: Any) -> Any:
 
 
 def _stable_recovery_cache_json(value: Mapping[str, Any]) -> str:
+    """Serialize routing parameters deterministically for recovery cache keys."""
     redacted = {
         key: _redact_recovery_cache_value(key, val)
         for key, val in sorted(value.items())
@@ -290,6 +294,7 @@ def _stable_recovery_cache_json(value: Mapping[str, Any]) -> str:
 
 
 def _filter_litellm_routing_params(params: Mapping[str, Any]) -> Dict[str, Any]:
+    """Keep only LiteLLM routing and endpoint parameters relevant to recovery scope."""
     return {
         key: params[key]
         for key in _LITELLM_ROUTING_PARAM_KEYS
@@ -298,6 +303,7 @@ def _filter_litellm_routing_params(params: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _request_endpoint_cache_scope(request_overrides: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Build an endpoint cache scope from request-level routing overrides."""
     if not isinstance(request_overrides, Mapping):
         return None
     routing_params = _filter_litellm_routing_params(request_overrides)
@@ -310,6 +316,7 @@ def _model_list_endpoint_cache_scope(
     model: str,
     model_list: Optional[List[Dict[str, Any]]],
 ) -> Optional[str]:
+    """Build an endpoint cache scope from matching LiteLLM router entries."""
     entries = _resolve_litellm_model_list_entries(model, model_list)
     if not entries:
         return "default"
@@ -335,6 +342,7 @@ def _recovery_cache_key(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
+    """Build the cache key for learned generation-parameter recovery."""
     wire_model = resolve_litellm_wire_model(model, model_list).strip().lower()
     thinking_enabled = resolve_litellm_thinking_enabled(
         model,

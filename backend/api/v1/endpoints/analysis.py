@@ -1,19 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-股票分析接口
-===================================
+"""Stock analysis and market-review endpoints.
 
-职责：
-1. 提供 POST /api/v1/analysis/analyze 触发分析接口
-2. 提供 GET /api/v1/analysis/status/{task_id} 查询任务状态接口
-3. 提供 GET /api/v1/analysis/tasks 获取任务列表接口
-4. 提供 GET /api/v1/analysis/tasks/stream SSE 实时推送接口
-
-特性：
-- 异步任务队列：分析任务异步执行，不阻塞请求
-- 防重复提交：相同股票代码正在分析时返回 409
-- SSE 实时推送：任务状态变化实时通知前端
+本模块覆盖单股/批量分析触发、同步分析响应、异步任务受理、任务状态查询、SSE 任务流
+以及大盘复盘后台任务。endpoint 层负责输入归一化、配额/积分扣减与失败返还、重复任务
+映射、报告 schema 组装和用户隔离；实际分析流程由任务队列、AnalyzerService 与核心复盘
+模块执行。
 """
 
 import asyncio
@@ -99,6 +90,7 @@ _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
 
 
 def _current_user_id_or_none(current_user: Any) -> Optional[int]:
+    """Extract a numeric user id from AppUser-like objects."""
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
@@ -109,6 +101,7 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
 
 
 def _db_user(db: Session, current_user: AppUser) -> AppUser:
+    """Reload the current user from DB when possible for fresh quota/credit state."""
     user_id = _current_user_id_or_none(current_user)
     if user_id is None or not hasattr(db, "query"):
         return current_user
@@ -120,10 +113,12 @@ def _db_user(db: Session, current_user: AppUser) -> AppUser:
 
 
 def _market_review_lock_path(config: Config) -> Path:
+    """Return the filesystem lock path used to serialize market-review runs."""
     return market_review_lock_path(config)
 
 
 def _compute_market_review_override_region(config: Config) -> Optional[str]:
+    """Apply trading-calendar filtering to the configured market-review region."""
     if not getattr(config, "trading_day_check_enabled", True):
         return None
 
@@ -144,6 +139,7 @@ def _compute_market_review_override_region(config: Config) -> Optional[str]:
 
 
 def _build_market_review_runtime(config: Config, source_message: Optional[Any] = None) -> tuple[Any, Any, Any]:
+    """Build notifier/analyzer/search-service runtime dependencies."""
     return _runtime_build_market_review_runtime(config, source_message)
 
 
@@ -178,6 +174,7 @@ def _run_market_review_background(
 
 
 def _invalid_analysis_input_error() -> HTTPException:
+    """Return the shared 400 response for unsupported free-text analysis input."""
     return HTTPException(
         status_code=400,
         detail={
@@ -252,29 +249,7 @@ def trigger_analysis(
         db: Session = Depends(get_db),
         current_user: AppUser = Depends(get_current_user),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
-    """
-    触发股票分析
-    
-    启动 AI 智能分析任务，支持单只或多只股票批量分析
-    
-    流程：
-    1. 校验请求参数
-    2. 异步模式：检查重复 -> 提交任务队列 -> 返回 202
-    3. 同步模式：直接执行分析 -> 返回 200
-    
-    Args:
-        request: 分析请求参数
-        config: 配置依赖
-        
-    Returns:
-        AnalysisResultResponse: 分析结果（同步模式）
-        TaskAccepted | BatchTaskAcceptedResponse: 任务已接受（异步模式，返回 202）
-        
-    Raises:
-        HTTPException: 400 - 请求参数错误
-        HTTPException: 409 - 股票正在分析中
-        HTTPException: 500 - 分析失败
-    """
+    """Trigger sync or async stock analysis after input/quota normalization."""
     current_user_id = _current_user_id_or_none(current_user)
     if current_user_id is not None:
         current_user = _db_user(db, current_user)
@@ -762,16 +737,7 @@ def get_task_list(
     limit: int = Query(20, description="返回数量限制", ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskListResponse:
-    """
-    获取分析任务列表
-    
-    Args:
-        status: 状态筛选（可选）
-        limit: 返回数量限制
-        
-    Returns:
-        TaskListResponse: 任务列表响应
-    """
+    """Return current user's in-memory analysis task queue snapshot."""
     task_queue = get_task_queue()
     current_user_id = _current_user_id_or_none(current_user)
     
@@ -846,6 +812,7 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
     current_user_id = _current_user_id_or_none(current_user)
 
     async def event_generator():
+        """Yield task lifecycle events and heartbeat frames for one SSE client."""
         task_queue = get_task_queue()
         event_queue: asyncio.Queue = asyncio.Queue()
         
@@ -889,16 +856,7 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
 
 
 def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
-    """
-    格式化 SSE 事件
-    
-    Args:
-        event_type: 事件类型
-        data: 事件数据
-        
-    Returns:
-        SSE 格式字符串
-    """
+    """Format one Server-Sent Event frame with UTF-8 JSON payload."""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -920,20 +878,7 @@ def get_analysis_status(
     task_id: str,
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskStatus:
-    """
-    查询分析任务状态
-    
-    优先从任务队列查询，如果不存在则从数据库查询历史记录
-    
-    Args:
-        task_id: 任务 ID
-        
-    Returns:
-        TaskStatus: 任务状态信息
-        
-    Raises:
-        HTTPException: 404 - 任务不存在
-    """
+    """Return task status from memory first, then persisted history fallback."""
     current_user_id = _current_user_id_or_none(current_user)
     # 1. 先从任务队列查询
     task_queue = get_task_queue()
@@ -1103,8 +1048,10 @@ def _load_sync_fundamental_sources(
     query_id: str,
     stock_code: str,
 ) -> tuple[Optional[Any], Optional[Dict[str, Any]], list[Dict[str, Any]]]:
-    """
-    Load context_snapshot and fallback fundamental snapshot for sync analyze response.
+    """Load optional context/fundamental/price details for sync analyze response.
+
+    这些补充信息只用于丰富同步响应的结构化报告；读取失败时 fail-open，避免分析已经
+    成功但附加历史/基本面读取异常导致整个接口失败。
     """
     try:
         from src.storage import DatabaseManager
@@ -1139,6 +1086,7 @@ def _load_sync_fundamental_sources(
 
 
 def _stringify_report_strategy_value(value: Any) -> Optional[str]:
+    """Convert strategy point values to the string shape expected by history schema."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -1155,19 +1103,11 @@ def _build_analysis_report(
         fallback_fundamental_payload: Optional[Dict[str, Any]] = None,
         price_history: Optional[list[Dict[str, Any]]] = None,
 ) -> AnalysisReport:
-    """
-    构建符合 API 规范的分析报告
-    
-    Args:
-        report_data: 原始报告数据
-        query_id: 查询 ID
-        stock_code: 股票代码
-        stock_name: 股票名称
-        context_snapshot: 上下文快照（可选）
-        fallback_fundamental_payload: 基本面快照 payload（可选）
-        
-    Returns:
-        AnalysisReport: 结构化的分析报告
+    """Build the public structured analysis report response.
+
+    原始分析结果可能来自同步执行、历史记录或不同版本的报告生成器；这里统一补齐
+    meta/summary/strategy/details，并从 context/fallback 中提取财务、分红、板块和
+    价格历史字段，保证前端消费的报告结构稳定。
     """
     meta_data = report_data.get("meta", {})
     summary_data = report_data.get("summary", {})

@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-全局异常处理中间件
-===================================
+"""Global API error handling helpers.
 
-职责：
-1. 捕获未处理的异常
-2. 统一错误响应格式
-3. 记录错误日志
+这里同时提供 Starlette middleware 和 FastAPI exception handlers。middleware
+兜住调用链中未被 handler 捕获的异常；exception handlers 负责把常见异常转成
+前端统一消费的 ``{"error", "message", "detail"}`` 响应结构。
 """
 
 import logging
@@ -22,33 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):
-    """
-    全局异常处理中间件
-    
-    捕获所有未处理的异常，返回统一格式的错误响应
-    """
+    """Catch unhandled request exceptions and return a normalized 500 body."""
     
     async def dispatch(
         self, 
         request: Request, 
         call_next: Callable
     ) -> Response:
-        """
-        处理请求，捕获异常
-        
-        Args:
-            request: 请求对象
-            call_next: 下一个处理器
-            
-        Returns:
-            Response: 响应对象
-        """
+        """Run the next handler and convert unexpected exceptions to JSON."""
         try:
             response = await call_next(request)
             return response
             
         except Exception as e:
-            # 记录错误日志
+            # 记录完整上下文，避免生产环境响应体隐藏细节后日志也缺少定位信息。
             logger.error(
                 f"未处理的异常: {e}\n"
                 f"请求路径: {request.url.path}\n"
@@ -56,7 +39,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 f"堆栈: {traceback.format_exc()}"
             )
             
-            # 返回统一格式的错误响应
+            # 响应体保持稳定结构，detail 只在 DEBUG 日志级别下暴露异常文本。
             return JSONResponse(
                 status_code=500,
                 content={
@@ -68,27 +51,20 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
 
 
 def add_error_handlers(app) -> None:
-    """
-    添加全局异常处理器
-    
-    为 FastAPI 应用添加各类异常的处理器
-    
-    Args:
-        app: FastAPI 应用实例
-    """
+    """Attach exception handlers that keep API error payloads consistent."""
     from fastapi import HTTPException
     from fastapi.exceptions import RequestValidationError
     
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        """处理 HTTP 异常"""
-        # 如果 detail 已经是 ErrorResponse 格式的 dict，直接使用
+        """Handle explicit HTTPException raised by endpoints/dependencies."""
+        # endpoint 可直接传入标准错误 dict；此处保留原样，避免二次包装破坏字段。
         if isinstance(exc.detail, dict) and "error" in exc.detail and "message" in exc.detail:
             return JSONResponse(
                 status_code=exc.status_code,
                 content=exc.detail
             )
-        # 否则将 detail 包装成 ErrorResponse 格式
+        # 兼容 FastAPI 默认字符串 detail，转换为统一响应格式。
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -100,7 +76,7 @@ def add_error_handlers(app) -> None:
     
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        """处理请求验证异常"""
+        """Handle request validation errors from FastAPI/Pydantic."""
         return JSONResponse(
             status_code=422,
             content={
@@ -112,7 +88,7 @@ def add_error_handlers(app) -> None:
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        """处理通用异常"""
+        """Handle any remaining exception not matched by a narrower handler."""
         logger.error(
             f"未处理的异常: {exc}\n"
             f"请求路径: {request.url.path}\n"

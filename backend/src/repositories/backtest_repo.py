@@ -24,6 +24,7 @@ class BacktestRepository:
     """DB access layer for backtesting."""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """Use an injected manager in tests or the process-wide singleton in runtime."""
         self.db = db_manager or DatabaseManager.get_instance()
 
     def get_candidates(
@@ -69,11 +70,13 @@ class BacktestRepository:
             return list(rows)
 
     def save_result(self, result: BacktestResult) -> None:
+        """Persist a single backtest result row."""
         with self.db.get_session() as session:
             session.add(result)
             session.commit()
 
     def save_results_batch(self, results: List[BacktestResult], *, replace_existing: bool = False) -> int:
+        """Persist a batch, optionally replacing matching engine/window evaluations first."""
         if not results:
             return 0
 
@@ -116,6 +119,7 @@ class BacktestRepository:
         limit: int,
         user_id: Optional[int] = None,
     ) -> Tuple[List[Tuple[BacktestResult, Optional[str], Optional[str], Optional[datetime]]], int]:
+        """Return backtest result rows joined with analysis display fields for API pages."""
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -192,6 +196,7 @@ class BacktestRepository:
         limit: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> List[BacktestResult]:
+        """Return matching result rows for summary calculation or export paths."""
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -270,6 +275,7 @@ class BacktestRepository:
         eval_window_days: Optional[int] = None,
         engine_version: str,
     ) -> Optional[BacktestSummary]:
+        """Fetch the newest summary for a scope/code/window/engine tuple."""
         with self.db.get_session() as session:
             conditions = [
                 BacktestSummary.scope == scope,
@@ -289,6 +295,7 @@ class BacktestRepository:
 
     @staticmethod
     def parse_analysis_date_from_snapshot(context_snapshot: Optional[str]) -> Optional[date]:
+        """Extract the original analysis date from stored context JSON when present."""
         if not context_snapshot:
             return None
 
@@ -355,6 +362,7 @@ class BacktestRepository:
         analysis_date_to: Optional[date],
         days: Optional[int],
     ) -> List[object]:
+        """Build SQLAlchemy filters shared by list/count/window queries."""
         conditions = []
         if code:
             conditions.append(BacktestResult.code == code)

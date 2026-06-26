@@ -244,6 +244,7 @@ def _build_realtime_failure_message(
     elapsed: float,
     error_type: str,
 ) -> str:
+    """Build a structured realtime quote failure message for logs and callers."""
     return (
         f"{source_name} 实时行情接口失败: endpoint={endpoint}, stock_code={stock_code}, "
         f"symbol={symbol}, category={category}, error_type={error_type}, "
@@ -1756,6 +1757,7 @@ class AkshareFetcher(BaseFetcher):
         import akshare as ak
 
         def _get_rank_top_n(df: pd.DataFrame, change_col: str, industry_name: str, n: int) -> Tuple[list, list]:
+            """Return top and bottom sector rankings after coercing change values."""
             df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
             df = df.dropna(subset=[change_col])
 
@@ -2021,6 +2023,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
+        """Convert numeric-like AkShare values to float, returning None on failure."""
         try:
             if pd.isna(value):
                 return None
@@ -2030,6 +2033,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _safe_int(value: Any) -> int:
+        """Convert numeric-like AkShare values to int, defaulting invalid values to zero."""
         try:
             if pd.isna(value):
                 return 0
@@ -2039,6 +2043,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _find_first_column(df: pd.DataFrame, candidates: Tuple[str, ...]) -> Optional[str]:
+        """Find the first exact column-name match from the candidate list."""
         columns = [str(col) for col in df.columns]
         for candidate in candidates:
             if candidate in columns:
@@ -2047,6 +2052,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _find_column_containing(df: pd.DataFrame, keywords: Tuple[str, ...]) -> Optional[str]:
+        """Find the first dataframe column whose name contains all keywords."""
         for col in df.columns:
             col_text = str(col)
             if all(keyword in col_text for keyword in keywords):

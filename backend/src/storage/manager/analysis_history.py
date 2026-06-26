@@ -45,6 +45,7 @@ class AnalysisHistoryMixin:
 
         try:
             def _write(session: Session) -> int:
+                """写入回调：由 _run_write_transaction 负责提交和 SQLite 重试。"""
                 session.add(
                     AnalysisHistory(
                         user_id=user_id,
