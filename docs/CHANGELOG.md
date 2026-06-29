@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增 A 股全量日线行情同步任务，支持 `python backend/main.py --sync-daily-quotes --market cn` 手动同步，并可通过 `DAILY_QUOTE_SYNC_ENABLED` 在定时任务触发时先同步 `stock_daily`。
 - [改进] Web 移除首次自选股引导页，登录和邮箱验证成功后默认进入首页，旧 `/onboarding` 链接兼容重定向到首页，自选股改由 `/watchlist` 和账户页维护。
 - [改进] 后端日志系统改为由 Loguru 统一管理控制台与文件 sink，并保留标准库 `logging.getLogger()` 兼容桥接。
 - [修复] 桌面端 Web 布局隐藏移动端导航悬浮按钮，避免侧边栏已展示时左上角仍出现重复菜单入口。

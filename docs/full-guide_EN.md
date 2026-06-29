@@ -592,6 +592,27 @@ crontab -e
 >
 > When the built-in scheduler is started via `python backend/main.py --schedule`, `python backend/main.py --serve --schedule`, or an equivalent local mode, saving a new `SCHEDULE_TIME` from the WebUI will rebind the daily job on the next scheduler poll without restarting the process. The previous trigger time is removed instead of being kept alongside the new one.
 
+### Full Daily Quote Sync
+
+To maintain a full A-share daily OHLCV cache after market close, enable:
+
+```env
+SCHEDULE_ENABLED=true
+DAILY_QUOTE_SYNC_ENABLED=true
+DAILY_QUOTE_SYNC_MARKETS=cn
+DAILY_QUOTE_SYNC_MAX_WORKERS=3
+DAILY_QUOTE_SYNC_LOOKBACK_DAYS=30
+```
+
+You can also run one sync without triggering AI analysis:
+
+```bash
+python backend/main.py --sync-daily-quotes --market cn
+python backend/main.py --sync-daily-quotes --market cn --sync-date 2026-06-26
+```
+
+The sync enumerates active A-share stocks from the stock index, writes daily bars into `stock_daily` by `(code, date)`, and skips stocks that already have the target trading date. The first version supports `cn`; HK/US full-market ranges should be defined before later expansion. `DAILY_QUOTE_SYNC_LIMIT=0` means no limit; set a positive value for small-batch debugging.
+
 ---
 
 ## Notification Channel Configuration

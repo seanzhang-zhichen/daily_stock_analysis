@@ -792,6 +792,11 @@ class Config:
     # 实时行情开关（关闭后使用历史收盘价进行分析）
     enable_realtime_quote: bool = True
     # 盘中实时技术面：启用时用实时价计算 MA/多头排列（Issue #234）；关闭则用昨日收盘
+    daily_quote_sync_enabled: bool = False
+    daily_quote_sync_markets: List[str] = field(default_factory=lambda: ["cn"])
+    daily_quote_sync_max_workers: int = 3
+    daily_quote_sync_lookback_days: int = 30
+    daily_quote_sync_limit: int = 0
     enable_realtime_technical_indicators: bool = True
     # 筹码分布开关（该接口不稳定，云端部署建议关闭）
     enable_chip_distribution: bool = True
@@ -1428,6 +1433,30 @@ class Config:
                 os.getenv('MARKET_REVIEW_COLOR_SCHEME', 'green_up')
             ),
             trading_day_check_enabled=os.getenv('TRADING_DAY_CHECK_ENABLED', 'true').lower() != 'false',
+            daily_quote_sync_enabled=parse_env_bool(os.getenv('DAILY_QUOTE_SYNC_ENABLED'), False),
+            daily_quote_sync_markets=[
+                m.strip().lower()
+                for m in os.getenv('DAILY_QUOTE_SYNC_MARKETS', 'cn').split(',')
+                if m.strip()
+            ],
+            daily_quote_sync_max_workers=parse_env_int(
+                os.getenv('DAILY_QUOTE_SYNC_MAX_WORKERS'),
+                3,
+                field_name='DAILY_QUOTE_SYNC_MAX_WORKERS',
+                minimum=1,
+            ),
+            daily_quote_sync_lookback_days=parse_env_int(
+                os.getenv('DAILY_QUOTE_SYNC_LOOKBACK_DAYS'),
+                30,
+                field_name='DAILY_QUOTE_SYNC_LOOKBACK_DAYS',
+                minimum=1,
+            ),
+            daily_quote_sync_limit=parse_env_int(
+                os.getenv('DAILY_QUOTE_SYNC_LIMIT'),
+                0,
+                field_name='DAILY_QUOTE_SYNC_LIMIT',
+                minimum=0,
+            ),
             webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
             webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
             webui_port=parse_env_int(os.getenv('WEBUI_PORT'), 8000, field_name='WEBUI_PORT', minimum=1, maximum=65535),

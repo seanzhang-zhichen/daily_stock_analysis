@@ -675,6 +675,27 @@ python backend/main.py --schedule --no-run-immediately
 docker run -e SCHEDULE_ENABLED=true -e SCHEDULE_RUN_IMMEDIATELY=false ...
 ```
 
+#### 全量日线行情同步
+
+如需每天收盘后维护完整 A 股日线库，可开启：
+
+```env
+SCHEDULE_ENABLED=true
+DAILY_QUOTE_SYNC_ENABLED=true
+DAILY_QUOTE_SYNC_MARKETS=cn
+DAILY_QUOTE_SYNC_MAX_WORKERS=3
+DAILY_QUOTE_SYNC_LOOKBACK_DAYS=30
+```
+
+也可以手动只跑一次同步，不触发 AI 分析：
+
+```bash
+python backend/main.py --sync-daily-quotes --market cn
+python backend/main.py --sync-daily-quotes --market cn --sync-date 2026-06-26
+```
+
+同步任务会从股票索引枚举 active 的 A 股股票，按 `(code, date)` 写入 `stock_daily`，已存在目标交易日数据的股票会跳过。当前版本先支持 A 股 `cn`，港股和美股全量范围需单独定义后再扩展。`DAILY_QUOTE_SYNC_LIMIT=0` 表示不限制；设置为正整数可用于调试小批量同步。
+
 > 兼容说明：如果运行时显式传入 `RUN_IMMEDIATELY`，但没有单独传 `SCHEDULE_RUN_IMMEDIATELY`，内置调度模式会继续继承前者，避免被 `.env` 中持久化的 `SCHEDULE_RUN_IMMEDIATELY` 旧值反向覆盖。
 
 #### 交易日判断（Issue #373）

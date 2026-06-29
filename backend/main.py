@@ -48,7 +48,7 @@ import logging
 import sys
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from data_provider.base import canonical_stock_code
 from src.config import get_config, Config
@@ -317,6 +317,33 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        '--sync-daily-quotes',
+        action='store_true',
+        help='仅同步全量日线行情（目前支持 A 股 cn）'
+    )
+
+    parser.add_argument(
+        '--market',
+        type=str,
+        default=None,
+        help='全量日线行情同步市场，逗号分隔；默认 cn'
+    )
+
+    parser.add_argument(
+        '--sync-date',
+        type=str,
+        default=None,
+        help='全量日线行情同步目标交易日，格式 YYYY-MM-DD'
+    )
+
+    parser.add_argument(
+        '--sync-limit',
+        type=int,
+        default=None,
+        help='全量日线行情同步最大股票数，主要用于调试'
+    )
+
+    parser.add_argument(
         '--webui',
         action='store_true',
         help='启动 Web 管理界面'
@@ -452,6 +479,34 @@ def _run_market_review_with_shared_lock(
         return run_market_review_func(**kwargs)
     finally:
         release_market_review_lock(lock_token)
+
+
+def _parse_sync_target_date(raw_value: Optional[str]) -> Optional[date]:
+    """Parse optional --sync-date in YYYY-MM-DD format."""
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(f"--sync-date must use YYYY-MM-DD format: {raw_value!r}") from exc
+
+
+def run_daily_quote_sync(config: Config, args: argparse.Namespace):
+    """Run full-market daily quote sync once and return stats."""
+    from src.services.daily_quote_sync_service import DailyQuoteSyncService
+
+    raw_markets = getattr(args, "market", None) or ",".join(
+        getattr(config, "daily_quote_sync_markets", ["cn"]) or ["cn"]
+    )
+    markets = [m.strip() for m in raw_markets.split(",") if m.strip()]
+    return DailyQuoteSyncService(config=config).run(
+        markets=markets,
+        target_date=_parse_sync_target_date(getattr(args, "sync_date", None)),
+        max_workers=getattr(args, "workers", None),
+        limit=getattr(args, "sync_limit", None),
+        force_run=getattr(args, "force_run", False),
+    )
 
 
 def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) -> None:
@@ -1100,6 +1155,12 @@ def main() -> int:
 
     try:
         # 模式0: 回测
+        if getattr(args, 'sync_daily_quotes', False):
+            logger.info("模式: 全量日线行情同步")
+            stats = run_daily_quote_sync(config, args)
+            logger.info("全量日线行情同步完成: %s", stats.to_dict())
+            return 0
+
         if getattr(args, 'backtest', False):
             logger.info("模式: 回测")
             from src.services.backtest_service import BacktestService
@@ -1171,6 +1232,12 @@ def main() -> int:
             def scheduled_task():
                 """Run scheduled analysis and account lifecycle jobs with fresh config."""
                 runtime_config = _reload_runtime_config()
+                if getattr(runtime_config, 'daily_quote_sync_enabled', False):
+                    try:
+                        stats = run_daily_quote_sync(runtime_config, args)
+                        logger.info("定时全量日线行情同步完成: %s", stats.to_dict())
+                    except Exception as exc:
+                        logger.exception("定时全量日线行情同步失败，继续执行后续定时任务: %s", exc)
                 run_full_analysis(runtime_config, args, scheduled_stock_codes)
                 run_per_user_scheduled_analysis(runtime_config, args)
                 run_plan_lifecycle_task(runtime_config, args)
