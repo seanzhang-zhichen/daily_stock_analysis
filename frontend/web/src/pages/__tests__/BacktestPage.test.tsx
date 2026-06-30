@@ -94,7 +94,7 @@ describe('BacktestPage', () => {
 
     expect(filterInput).toHaveClass('ui-input');
     expect(windowInput).toHaveClass('ui-input');
-    expect(screen.getByLabelText('强制重算')).toBeChecked();
+    expect(screen.getByLabelText('强制重算')).not.toBeChecked();
 
     expect(await screen.findByText('命中')).toBeInTheDocument();
     expect(screen.getByText('已完成')).toBeInTheDocument();
@@ -153,8 +153,6 @@ describe('BacktestPage', () => {
     await waitFor(() => {
       expect(mockRun).toHaveBeenCalledWith({
         code: 'TSLA',
-        force: true,
-        minAgeDays: 0,
         evalWindowDays: 15,
       });
     });
@@ -177,6 +175,22 @@ describe('BacktestPage', () => {
 
     expect(await screen.findByText('已处理：')).toBeInTheDocument();
     expect(screen.getByText('已保存：')).toBeInTheDocument();
+  });
+
+  it('sends force options only when force rerun is enabled', async () => {
+    render(<BacktestPage />);
+
+    await screen.findByPlaceholderText('输入股票代码，可留空查看全部');
+    fireEvent.click(screen.getByLabelText('强制重算'));
+    fireEvent.click(screen.getByRole('button', { name: '开始验证' }));
+
+    await waitFor(() => {
+      expect(mockRun).toHaveBeenCalledWith({
+        force: true,
+        minAgeDays: 0,
+        evalWindowDays: 10,
+      });
+    });
   });
 
   it('switches to next-day validation when the eval window is 1', async () => {

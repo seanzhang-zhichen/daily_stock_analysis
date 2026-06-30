@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] Web 回测页默认不再开启强制重算，点击「开始验证」时优先复用已有回测结果，只有用户手动勾选后才重新计算已完成条目。
 - [新功能] 新增 A 股全量日线行情同步任务，支持 `python backend/main.py --sync-daily-quotes --market cn` 手动同步，并可通过 `DAILY_QUOTE_SYNC_ENABLED` 在定时任务触发时先同步 `stock_daily`。
 - [改进] Web 移除首次自选股引导页，登录和邮箱验证成功后默认进入首页，旧 `/onboarding` 链接兼容重定向到首页，自选股改由 `/watchlist` 和账户页维护。
 - [改进] 后端日志系统改为由 Loguru 统一管理控制台与文件 sink，并保留标准库 `logging.getLogger()` 兼容桥接。
@@ -115,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] To C 模式下普通用户不再显示或访问系统设置页，系统配置 API 收紧为平台管理员权限，避免将部署级配置暴露给 C 端用户。
 - [改进] To C 模式下普通用户首页报告不再展示数据追溯、原始分析结果、分析快照和分析模型等内部诊断信息，管理员与未启用用户模式的内部部署仍保留排障视图。
 - [改进] Web 回测页面文案中文化，将筛选、验证周期、次日验证、强制重算、结果表格、指标卡和空状态改为面向 C 端用户更易理解的历史验证表达。
-- [改进] Web 回测页面默认开启强制重算，并将强制重算与开始验证操作区固定到顶部筛选栏右侧。
+- [改进] Web 回测页面将强制重算与开始验证操作区固定到顶部筛选栏右侧。
 - [改进] Web 前端主题入口收敛到右上角 `ThemeToggle`，移除侧边栏底部主题切换入口，并将默认主题从深色改为跟随系统。
 - [文档] 新增并更新 `docs/web-frontend-redesign-plan.md`，明确 Web 前端本次按删除式完整重构推进：旧页面结构、旧组件视觉语义、旧样式体系和旧布局方式均视为废弃对象，补充重构后全局、标准内容页、工作台、首页、问股、持仓、回测、响应式、阅读与数据排版方案，并新增信息架构、交互状态、数据可视化、可访问性、性能与删除式重构完成定义；`docs/INDEX.md` 同步增加入口。
 - [改进] Web 前端重构 Phase 1 继续推进：`SidebarNav`、`QuotaIndicator`、`Drawer`、`ConfirmDialog`、`Tooltip`、`RenewalBanner`、`ThemeToggle` 迁移到新 `ui-*` 全局视觉类，减少全局组件对旧 `nav-*`、`cyan`、`elevated` 等旧视觉细节的直接依赖；`docs/web-frontend-redesign-plan.md` 同步更新进度与验证记录。

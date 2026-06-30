@@ -554,7 +554,7 @@ const BacktestPage: React.FC = () => {
   const [analysisDateFrom, setAnalysisDateFrom] = useState(defaultDates.from);
   const [analysisDateTo, setAnalysisDateTo] = useState(defaultDates.to);
   const [evalDays, setEvalDays] = useState(DEFAULT_EVAL_DAYS);
-  const [forceRerun, setForceRerun] = useState(true);
+  const [forceRerun, setForceRerun] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<BacktestRunResponse | null>(null);
   const [runError, setRunError] = useState<ParsedApiError | null>(null);
