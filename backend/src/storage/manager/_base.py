@@ -129,6 +129,7 @@ class _DatabaseManagerBase:
 
         self._seed_builtin_app_plans()
         self._seed_builtin_credit_packages()
+        self._bootstrap_super_admin()
 
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
@@ -275,6 +276,19 @@ class _DatabaseManagerBase:
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             logger.warning("初始化基础积分包配置失败（非致命）: %s", exc)
+        finally:
+            session.close()
+
+    def _bootstrap_super_admin(self) -> None:
+        """Apply optional SUPER_ADMIN_* bootstrap environment settings."""
+        from src.users.bootstrap_admin import bootstrap_super_admin_from_env
+
+        session = self._SessionLocal()
+        try:
+            bootstrap_super_admin_from_env(session)
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            logger.warning("超级管理员环境变量引导失败（非致命）: %s", exc)
         finally:
             session.close()
 

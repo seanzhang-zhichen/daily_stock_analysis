@@ -115,6 +115,8 @@
 - `api.deps.get_optional_current_user`：仅作为 `get_current_user` 和公开账号类接口内部复用的解析 helper，不应用于普通业务接口放行。
 - `api.deps.get_admin_user`：`/api/v1/admin/*` 与 `/api/v1/system/config*` 管理接口专用依赖，要求登录且 `is_admin=True`，否则 401/403。`scripts/grant_admin.py` 提供命令行授予 / 撤销 admin 角色。
 
+平台超级管理员也可以通过 `.env` 引导：配置 `SUPER_ADMIN_EMAIL` 与 `SUPER_ADMIN_PASSWORD` 后，数据库初始化完成时会自动创建缺失账号，或将已有同邮箱账号激活、标记邮箱已验证并授予 `is_admin=True`。已有账号默认不覆盖密码；如需每次启动强制同步密码，额外设置 `SUPER_ADMIN_SYNC_PASSWORD=true`。
+
 ## 6. 前端入口
 
 - `/login`：邮箱+密码登录。

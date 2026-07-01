@@ -602,6 +602,8 @@ pending → issued
 
 管理员是 `app_users.is_admin = true` 的普通用户，使用同一套 Session。
 
+首次部署可通过 `.env` 配置 `SUPER_ADMIN_EMAIL` 与 `SUPER_ADMIN_PASSWORD` 引导超级管理员。启动后系统会创建缺失账号，或将已有同邮箱账号激活、标记邮箱已验证并授予 `is_admin=True`；已有账号默认不覆盖密码，只有 `SUPER_ADMIN_SYNC_PASSWORD=true` 时才会按 `.env` 同步密码。
+
 ### 管理员可操作
 
 - 用户列表与详情
@@ -701,6 +703,9 @@ To C 运营配置优先从 `app_platform_settings` 读取，并可在运营后�
 | `USER_REGISTER_EMAIL_DAILY_MAX` | 3 | 邮箱注册频率限制 |
 | `USER_EMAIL_MX_CHECK_ENABLED` | false | 是否检查邮箱 MX |
 | `USER_FRONTEND_BASE_URL` | `http://localhost:5200` | 注册验证邮件前端链接 |
+| `SUPER_ADMIN_EMAIL` | 空 | 启动时引导平台超级管理员的邮箱 |
+| `SUPER_ADMIN_PASSWORD` | 空 | 创建缺失超级管理员账号时使用的初始密码 |
+| `SUPER_ADMIN_SYNC_PASSWORD` | false | 是否每次启动都把已有超级管理员密码同步为 `.env` 配置 |
 | `PAYMENT_ENABLED` | false | 是否启用真实支付 |
 | `ORDER_EXPIRE_MINUTES` | 15 | 新订单支付超时时间 |
 | `WECHAT_PAY_*` | 空 | 微信支付配置 |

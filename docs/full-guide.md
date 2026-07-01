@@ -379,6 +379,9 @@ daily_stock_analysis/
 |--------|------|--------|
 | `STOCK_LIST` | 自选股代码（逗号分隔） | - |
 | `ADMIN_AUTH_ENABLED` | Web 登录：设为 `true` 启用密码保护；首次访问在网页设置初始密码，可在「系统设置 > 修改密码」修改；忘记密码执行 `python -m src.auth reset_password`。Web 的 `.env` 备份导入导出仅在开启该开关后可用（桌面端不受此限制）。 | `false` |
+| `SUPER_ADMIN_EMAIL` | 平台超级管理员 bootstrap 邮箱；配置后启动时会确保该 To C 用户存在、激活、邮箱已验证且 `app_users.is_admin=true`。 | 空 |
+| `SUPER_ADMIN_PASSWORD` | 创建缺失的超级管理员账号时使用的初始密码；已有账号默认不会被覆盖。 | 空 |
+| `SUPER_ADMIN_SYNC_PASSWORD` | 设为 `true` 时每次启动都会把已有超级管理员账号密码同步为 `SUPER_ADMIN_PASSWORD`；默认 `false`，避免旧 `.env` 意外覆盖人工改密。 | `false` |
 | `TRUST_X_FORWARDED_FOR` | 单层可信反向代理部署时设为 `true`，取 `X-Forwarded-For` 最右值作为真实客户端 IP（用于登录限流等）；直连公网时保持 `false` 防伪造。多级代理/CDN 场景下限流 key 可能退化为边缘代理 IP，需额外评估 | `false` |
 | `MAX_WORKERS` | 并发线程数 | `3` |
 | `MARKET_REVIEW_ENABLED` | 启用大盘复盘 | `true` |
