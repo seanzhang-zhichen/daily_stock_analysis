@@ -655,7 +655,7 @@ python backend/main.py --schedule
 python backend/main.py --schedule --no-run-immediately
 ```
 
-> 说明：定时模式每次触发前都会重新读取当前保存的 `STOCK_LIST`。如果同时传入 `--stocks`，该参数不会锁定后续计划执行的股票列表；需要临时只跑指定股票时，请使用非定时的单次运行命令。
+> 说明：定时模式只会处理开启「每日推送」且自选股非空的用户，分析范围来自每个用户在 Web 端维护的自选股列表，不再使用全局 `STOCK_LIST`。如果同时传入 `--stocks`，该参数会被忽略；需要临时只跑指定股票时，请使用非定时的单次运行命令。
 >
 > 从 `python backend/main.py --schedule`、`python backend/main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
 

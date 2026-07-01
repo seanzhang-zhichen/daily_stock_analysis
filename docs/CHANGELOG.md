@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 - [新功能] 支持通过 `.env` 配置 `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` 引导平台超级管理员，启动时自动创建或激活同邮箱 To C 用户并授予 `is_admin=True`；`SUPER_ADMIN_SYNC_PASSWORD=true` 时可强制同步已有账号密码。
+- [修复] 内置每日定时任务不再执行全局 `STOCK_LIST` 分析，改为仅处理开启每日推送且自选股非空的用户，避免空自选股用户仍收到示例股票分析。
 - [修复] 补充 `pydantic-settings` 运行时依赖，避免 LiteLLM 初始化 Langfuse OTEL logger 时因缺少 `pydantic_settings` 输出非阻断错误。
 - [文档] 将 Docker Compose 部署命令统一改为 `docker compose`，兼容仅支持 Compose V2 插件的服务器环境。
 - [文档] 收敛 `docs/` 文档结构，移除英文/繁中镜像和过期规划长文，合并产品路线说明并精简文档中心入口。

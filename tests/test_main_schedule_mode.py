@@ -96,7 +96,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
         defaults.update(overrides)
         return _DummyConfig(**defaults)
 
-    def test_schedule_mode_ignores_cli_stock_snapshot(self) -> None:
+    def test_schedule_mode_runs_only_per_user_watchlists(self) -> None:
         args = self._make_args(schedule=True, stocks="600519,000001")
         config = self._make_config(schedule_enabled=False)
         scheduled_call = {}
@@ -122,6 +122,9 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("backend.main._build_schedule_time_provider", return_value=lambda: "18:00"), \
              patch("backend.main.setup_logging"), \
              patch("backend.main.run_full_analysis") as run_full_analysis, \
+             patch("backend.main.run_per_user_scheduled_analysis") as run_per_user_scheduled_analysis, \
+             patch("backend.main.run_plan_lifecycle_task") as run_plan_lifecycle_task, \
+             patch("backend.main.run_account_lifecycle_task") as run_account_lifecycle_task, \
              patch("backend.main.logger.warning") as warning_log, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
@@ -136,9 +139,13 @@ class MainScheduleModeTestCase(unittest.TestCase):
                 "resolved_schedule_time": "18:00",
             },
         )
-        run_full_analysis.assert_called_once_with(config, args, None)
+        run_full_analysis.assert_not_called()
+        run_per_user_scheduled_analysis.assert_called_once_with(config, args)
+        run_plan_lifecycle_task.assert_called_once_with(config, args)
+        run_account_lifecycle_task.assert_called_once_with(config, args)
         warning_log.assert_any_call(
-            "定时模式下检测到 --stocks 参数；计划执行将忽略启动时股票快照，并在每次运行前重新读取最新的 STOCK_LIST。"
+            "定时模式下检测到 --stocks 参数；每日定时分析仅处理开启每日推送的用户自选股，"
+            "不会使用启动时股票快照或全局 STOCK_LIST。"
         )
 
     def test_schedule_mode_reload_uses_latest_runtime_config(self) -> None:
@@ -166,6 +173,9 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("backend.main._build_schedule_time_provider", return_value=lambda: "09:30"), \
              patch("backend.main.setup_logging"), \
              patch("backend.main.run_full_analysis") as run_full_analysis, \
+             patch("backend.main.run_per_user_scheduled_analysis") as run_per_user_scheduled_analysis, \
+             patch("backend.main.run_plan_lifecycle_task") as run_plan_lifecycle_task, \
+             patch("backend.main.run_account_lifecycle_task") as run_account_lifecycle_task, \
              patch("src.scheduler.run_with_schedule", side_effect=fake_run_with_schedule):
             exit_code = main.main()
 
@@ -174,7 +184,10 @@ class MainScheduleModeTestCase(unittest.TestCase):
             scheduled_call,
             {"schedule_time": "18:00", "resolved_schedule_time": "09:30"},
         )
-        run_full_analysis.assert_called_once_with(runtime_config, args, None)
+        run_full_analysis.assert_not_called()
+        run_per_user_scheduled_analysis.assert_called_once_with(runtime_config, args)
+        run_plan_lifecycle_task.assert_called_once_with(runtime_config, args)
+        run_account_lifecycle_task.assert_called_once_with(runtime_config, args)
 
     def test_schedule_mode_registers_event_monitor_background_task(self) -> None:
         args = self._make_args(schedule=True)

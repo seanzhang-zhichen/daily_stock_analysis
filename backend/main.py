@@ -711,7 +711,7 @@ def run_full_analysis(
     """
     执行完整的分析流程（个股 + 大盘复盘）
 
-    这是定时任务调用的主函数
+    用于手动运行和兼容全局分析入口；每日定时任务只处理用户自选股。
     """
     # Import pipeline modules outside the broad try/except so that import-time
     # failures propagate to the caller instead of being silently swallowed.
@@ -719,7 +719,7 @@ def run_full_analysis(
     from src.core.pipeline import StockAnalysisPipeline
 
     try:
-        # Issue #529: Hot-reload STOCK_LIST from .env on each scheduled run
+        # Hot-reload STOCK_LIST when this global analysis entry has no explicit stocks.
         if stock_codes is None:
             config.refresh_stock_list()
 
@@ -982,13 +982,13 @@ def start_bot_stream_clients(config: Config) -> None:
             logger.error(f"[Main] Failed to start Feishu Stream client: {exc}")
 
 
-def _resolve_scheduled_stock_codes(stock_codes: Optional[List[str]]) -> Optional[List[str]]:
-    """Scheduled runs should always read the latest persisted watchlist."""
+def _warn_scheduled_stock_codes_ignored(stock_codes: Optional[List[str]]) -> None:
+    """Scheduled runs use per-user watchlists, not global stock snapshots."""
     if stock_codes is not None:
         logger.warning(
-            "定时模式下检测到 --stocks 参数；计划执行将忽略启动时股票快照，并在每次运行前重新读取最新的 STOCK_LIST。"
+            "定时模式下检测到 --stocks 参数；每日定时分析仅处理开启每日推送的用户自选股，"
+            "不会使用启动时股票快照或全局 STOCK_LIST。"
         )
-    return None
 
 
 def _reload_runtime_config() -> Config:
@@ -1226,7 +1226,7 @@ def main() -> int:
             logger.info(f"启动时立即执行: {should_run_immediately}")
 
             from src.scheduler import run_with_schedule
-            scheduled_stock_codes = _resolve_scheduled_stock_codes(stock_codes)
+            _warn_scheduled_stock_codes_ignored(stock_codes)
             schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
 
             def scheduled_task():
@@ -1238,7 +1238,6 @@ def main() -> int:
                         logger.info("定时全量日线行情同步完成: %s", stats.to_dict())
                     except Exception as exc:
                         logger.exception("定时全量日线行情同步失败，继续执行后续定时任务: %s", exc)
-                run_full_analysis(runtime_config, args, scheduled_stock_codes)
                 run_per_user_scheduled_analysis(runtime_config, args)
                 run_plan_lifecycle_task(runtime_config, args)
                 run_account_lifecycle_task(runtime_config, args)
