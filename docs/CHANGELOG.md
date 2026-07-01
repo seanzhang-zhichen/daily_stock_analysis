@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 补充 `pydantic-settings` 运行时依赖，避免 LiteLLM 初始化 Langfuse OTEL logger 时因缺少 `pydantic_settings` 输出非阻断错误。
 - [文档] 将 Docker Compose 部署命令统一改为 `docker compose`，兼容仅支持 Compose V2 插件的服务器环境。
 - [文档] 收敛 `docs/` 文档结构，移除英文/繁中镜像和过期规划长文，合并产品路线说明并精简文档中心入口。
 - [改进] Docker entrypoint 在启动应用主进程前执行 `alembic upgrade head`，并用 `/app/data/.dsa-startup-migration.lock` 串行化多容器启动期迁移，避免定时任务首次触发时才暴露 schema 问题。
