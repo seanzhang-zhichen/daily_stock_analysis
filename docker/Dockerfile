@@ -91,7 +91,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     || python -c "import sys; sys.exit(0)"
 
 # 启动入口先修复 bind mount 目录权限，再降权为 dsa 执行应用；
-# 文档化 docker-compose exec 命令需显式使用 -u dsa，避免手动进程写入 root-owned 文件。
+# 文档化 docker compose exec 命令需显式使用 -u dsa，避免手动进程写入 root-owned 文件。
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # 默认命令（可被覆盖）

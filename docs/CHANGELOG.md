@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [文档] 将 Docker Compose 部署命令统一改为 `docker compose`，兼容仅支持 Compose V2 插件的服务器环境。
+- [文档] 收敛 `docs/` 文档结构，移除英文/繁中镜像和过期规划长文，合并产品路线说明并精简文档中心入口。
 - [改进] Docker entrypoint 在启动应用主进程前执行 `alembic upgrade head`，并用 `/app/data/.dsa-startup-migration.lock` 串行化多容器启动期迁移，避免定时任务首次触发时才暴露 schema 问题。
 - [新功能] 新增 `/api/v1/stock-selection` 选股模块，提供可注册策略框架与近新高策略，默认筛选 120 日高点 85% 以内且高点位于近 15 个交易日内的股票，并按波动率和涨幅排序。
 - [新功能] Web 新增 `/stock-selection` 策略选股页面，支持近新高策略参数配置、指定股票池/市场筛选、运行诊断和候选结果表。

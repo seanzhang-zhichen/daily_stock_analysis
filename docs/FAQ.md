@@ -102,7 +102,7 @@
    - 如需让调度开关立刻接管当前容器，请重启容器，并确保以 schedule 模式启动
 3. **Docker 手工改 `.env` 后**：修改后仍建议重启容器
    ```bash
-   docker-compose down && docker-compose up -d
+   docker compose down && docker compose up -d
    ```
 4. **GitHub Actions**：`.env` 文件不生效，必须在 Secrets/Variables 中配置
 5. 检查是否有多个 `.env` 文件（如 `.env.local`）导致覆盖
@@ -313,7 +313,7 @@ OPENAI_MODEL=deepseek-v4-flash
      - 119.29.29.29
      - 8.8.8.8
    ```
-   然后执行 `docker-compose down` 和 `docker-compose up -d --force-recreate` 重新创建容器。
+   然后执行 `docker compose down` 和 `docker compose up -d --force-recreate` 重新创建容器。
 
 2. **改用 host 网络模式**：若上述仍无效，可在 `server` 服务下添加 `network_mode: host`，并移除 `ports` 映射。使用 host 模式时，`ports` 无效，**端口由 `command` 中的 `--port` 指定**。若宿主机默认端口已占用，可修改为其他端口（如 `.env` 中设置 `API_PORT=8080`），访问对应 `http://localhost:8080`。
 

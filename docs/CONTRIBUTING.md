@@ -100,13 +100,13 @@ npm run build
 
 ## 📋 优先贡献方向
 
-查看 [Roadmap](README.md#-roadmap) 了解当前需要的功能：
+查看 [产品路线与维护边界](product-roadmap.md) 了解当前需要的功能：
 
 - 🔔 新通知渠道（钉钉、飞书、Telegram）
 - 🤖 新 AI 模型支持（GPT-4、Claude）
 - 📊 新数据源接入
 - 🐛 Bug 修复和性能优化
-- 📖 文档完善和翻译
+- 📖 文档完善
 
 ## ❓ 问题解答
 

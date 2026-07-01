@@ -337,7 +337,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         _mock_parse_yaml,
     ) -> None:
         """When process env explicitly sets a WEBUI-mutable key to a value
-        that differs from .env (e.g. via docker-compose ``environment:``),
+        that differs from .env (e.g. via Docker Compose ``environment:``),
         the process env must win because ``_capture_bootstrap_runtime_env_overrides``
         runs before dotenv loads and the mismatch proves an intentional override.
         """

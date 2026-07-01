@@ -25,9 +25,12 @@ curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
 # CentOS
-sudo yum install -y docker docker-compose
+sudo yum install -y docker
 sudo systemctl start docker
 sudo systemctl enable docker
+
+# 确认服务器支持 Docker Compose V2
+docker compose version
 ```
 
 ### 2. 准备配置文件
@@ -55,13 +58,13 @@ DOCKER_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 ```bash
 # 构建并启动（同时包含定时分析和 Web 界面服务）
-docker-compose -f ./docker/docker-compose.yml up -d
+docker compose -f ./docker/docker-compose.yml up -d
 
 # 查看日志
-docker-compose -f ./docker/docker-compose.yml logs -f
+docker compose -f ./docker/docker-compose.yml logs -f
 
 # 查看运行状态
-docker-compose -f ./docker/docker-compose.yml ps
+docker compose -f ./docker/docker-compose.yml ps
 ```
 
 启动成功后，在浏览器输入 `http://服务器公网IP:8000` 即可打开 Web 管理界面。如果打不开，记得先在云服务器控制台的「安全组」里放行 8000 端口。
@@ -72,21 +75,21 @@ docker-compose -f ./docker/docker-compose.yml ps
 
 ```bash
 # 停止服务
-docker-compose -f ./docker/docker-compose.yml down
+docker compose -f ./docker/docker-compose.yml down
 
 # 重启服务
-docker-compose -f ./docker/docker-compose.yml restart
+docker compose -f ./docker/docker-compose.yml restart
 
 # 更新代码后重新部署
 git pull
-docker-compose -f ./docker/docker-compose.yml build --no-cache
-docker-compose -f ./docker/docker-compose.yml up -d
+docker compose -f ./docker/docker-compose.yml build --no-cache
+docker compose -f ./docker/docker-compose.yml up -d
 
 # 进入容器调试
-docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer bash
+docker compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer bash
 
 # 手动执行一次分析
-docker-compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python backend/main.py --no-notify
+docker compose -f ./docker/docker-compose.yml exec -u dsa stock-analyzer python backend/main.py --no-notify
 ```
 
 ### 5. 数据持久化
@@ -259,7 +262,7 @@ os.environ["https_proxy"] = "http://your-proxy:port"
 
 ```bash
 # Docker 方式
-docker-compose -f ./docker/docker-compose.yml logs -f --tail=100
+docker compose -f ./docker/docker-compose.yml logs -f --tail=100
 
 # 直接部署
 tail -f /opt/stock-analyzer/logs/stock_analysis_*.log
@@ -293,7 +296,7 @@ find /opt/stock-analyzer/reports -mtime +30 -delete
 
 ```bash
 # 清理缓存重新构建
-docker-compose -f ./docker/docker-compose.yml build --no-cache
+docker compose -f ./docker/docker-compose.yml build --no-cache
 ```
 
 ### 2. API 访问超时
@@ -337,9 +340,9 @@ deploy:
 
 - **Docker 部署**：执行以下命令重新构建镜像（确保前端已正确打包进镜像）：
   ```bash
-  docker-compose -f ./docker/docker-compose.yml down
-  docker-compose -f ./docker/docker-compose.yml build --no-cache
-  docker-compose -f ./docker/docker-compose.yml up -d
+  docker compose -f ./docker/docker-compose.yml down
+  docker compose -f ./docker/docker-compose.yml build --no-cache
+  docker compose -f ./docker/docker-compose.yml up -d
   ```
   构建完成后刷新浏览器缓存（`Ctrl+Shift+R`）再访问。
 
@@ -372,8 +375,8 @@ exec /usr/local/bin/docker-entrypoint.sh: no such file or directory
 ```bash
 git checkout -- docker/entrypoint.sh docker/Dockerfile
 git ls-files --eol docker/entrypoint.sh docker/Dockerfile
-docker-compose -f ./docker/docker-compose.yml build --no-cache
-docker-compose -f ./docker/docker-compose.yml up -d
+docker compose -f ./docker/docker-compose.yml build --no-cache
+docker compose -f ./docker/docker-compose.yml up -d
 ```
 
 `git ls-files --eol` 中 `docker/entrypoint.sh` 应显示 `w/lf`。如果仍为 `w/crlf`，请先将该文件转换为 LF 后再重新构建镜像。
@@ -397,7 +400,7 @@ command: ["python", "backend/main.py", "--serve-only", "--host", "0.0.0.0", "--p
 修改后重建容器：
 
 ```bash
-docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
+docker compose -f ./docker/docker-compose.yml up -d --force-recreate server
 ```
 
 ### 9. Docker 中 MySQL 不能使用 `localhost`
@@ -434,8 +437,8 @@ Can't connect to MySQL server on 'localhost'
 改完 `.env` 后重启服务：
 
 ```bash
-docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
-docker-compose -f ./docker/docker-compose.yml logs -f server
+docker compose -f ./docker/docker-compose.yml up -d --force-recreate server
+docker compose -f ./docker/docker-compose.yml logs -f server
 ```
 
 ---
@@ -454,7 +457,7 @@ mkdir -p /opt/stock-analyzer
 cd /opt/stock-analyzer
 git clone <your-repo-url> .
 tar -xzvf stock-analyzer-backup.tar.gz
-docker-compose -f ./docker/docker-compose.yml up -d
+docker compose -f ./docker/docker-compose.yml up -d
 ```
 
 ---
