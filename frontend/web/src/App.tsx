@@ -31,6 +31,7 @@ import {
   loadRiskDisclosurePage,
   loadSettingsPage,
   loadStockDetailPage,
+  loadStockSelectionPage,
   loadTasksPage,
   loadTermsPage,
   loadUsagePage,
@@ -47,6 +48,7 @@ const LoginPage = lazy(loadLoginPage);
 const NotFoundPage = lazy(loadNotFoundPage);
 const ChatPage = lazy(loadChatPage);
 const TasksPage = lazy(loadTasksPage);
+const StockSelectionPage = lazy(loadStockSelectionPage);
 const PortfolioPage = lazy(loadPortfolioPage);
 const UserAuthPage = lazy(loadUserAuthPage);
 const ForgotPasswordPage = lazy(loadForgotPasswordPage);
@@ -144,6 +146,7 @@ const AppContent: React.FC = () => {
             <Route path="/" element={<HomePage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/stock-selection" element={<StockSelectionPage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route

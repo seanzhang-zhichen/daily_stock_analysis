@@ -2,6 +2,7 @@ const pageLoaders = {
   home: () => import('../pages/HomePage'),
   chat: () => import('../pages/ChatPage'),
   tasks: () => import('../pages/TasksPage'),
+  stockSelection: () => import('../pages/StockSelectionPage'),
   portfolio: () => import('../pages/PortfolioPage'),
   backtest: () => import('../pages/BacktestPage'),
   settings: () => import('../pages/SettingsPage'),
@@ -31,6 +32,7 @@ const pageLoaders = {
 export const loadHomePage = pageLoaders.home;
 export const loadChatPage = pageLoaders.chat;
 export const loadTasksPage = pageLoaders.tasks;
+export const loadStockSelectionPage = pageLoaders.stockSelection;
 export const loadPortfolioPage = pageLoaders.portfolio;
 export const loadBacktestPage = pageLoaders.backtest;
 export const loadSettingsPage = pageLoaders.settings;
@@ -60,6 +62,7 @@ const preloadByPath: Record<string, () => Promise<unknown>> = {
   '/': pageLoaders.home,
   '/chat': pageLoaders.chat,
   '/tasks': pageLoaders.tasks,
+  '/stock-selection': pageLoaders.stockSelection,
   '/portfolio': pageLoaders.portfolio,
   '/backtest': pageLoaders.backtest,
   '/settings': pageLoaders.settings,

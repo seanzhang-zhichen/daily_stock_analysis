@@ -6,16 +6,18 @@
 函数保持薄而明确，也便于测试时替换依赖。
 """
 
-from typing import Generator, Optional
+from typing import TYPE_CHECKING, Generator, Optional
 
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.storage import AppUser, DatabaseManager
 from src.config import get_config, Config
-from src.services.system_config_service import SystemConfigService
 from src.users.config import SESSION_COOKIE_NAME
 from src.users.sessions import resolve_session
+
+if TYPE_CHECKING:
+    from src.services.system_config_service import SystemConfigService
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -94,7 +96,7 @@ def get_admin_user(request: Request) -> AppUser:
     return user
 
 
-def get_system_config_service(request: Request) -> SystemConfigService:
+def get_system_config_service(request: Request) -> "SystemConfigService":
     """Get the app-lifecycle shared SystemConfigService instance.
 
     ``api.app.app_lifespan`` normally creates this service once and stores it
@@ -103,6 +105,8 @@ def get_system_config_service(request: Request) -> SystemConfigService:
     """
     service = getattr(request.app.state, "system_config_service", None)
     if service is None:
+        from src.services.system_config_service import SystemConfigService
+
         service = SystemConfigService()
         request.app.state.system_config_service = service
     return service

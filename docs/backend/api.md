@@ -15,6 +15,7 @@
    - [Agent — AI 对话与研究](#agent--ai-对话与研究)
    - [History — 分析历史](#history--分析历史)
    - [Stocks — 股票数据](#stocks--股票数据)
+   - [Stock Selection — 选股](#stock-selection--选股)
    - [Backtest — 回测](#backtest--回测)
    - [Portfolio — 投资组合](#portfolio--投资组合)
    - [Alerts — 价格预警](#alerts--价格预警)
@@ -282,6 +283,43 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | POST | `/import` | 需登录 | 批量导入股票代码 |
 
 **搜索接口（`/stocks/search`）** 为公开 IP 限速接口，前端股票搜索框使用此接口。返回结果包含 `canonicalCode`、`displayCode`、`nameZh`、`market`。
+
+---
+
+### Stock Selection — 选股
+
+**前缀：** `/api/v1/stock-selection`
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | `/strategies` | 需登录 | 查询当前可用选股策略及默认参数 |
+| POST | `/run` | 需登录 | 执行选股策略，默认策略为 `near_new_high` |
+
+当前内置 `near_new_high`（近新高）策略：在指定窗口内默认筛选“当前收盘价不低于 120 个交易日最高价 85%，且该最高价出现在近 15 个交易日内”的股票，并按波动率、窗口涨幅和综合分排序。接口优先使用已有 `stock_daily` 缓存，不足时沿用现有历史行情加载器的数据源 fallback，不新增数据库 schema。
+
+请求示例：
+
+```json
+{
+  "strategy": "near_new_high",
+  "markets": ["cn"],
+  "limit": 50,
+  "lookback_days": 120,
+  "min_high_position": 0.85,
+  "recent_high_days": 15,
+  "sort_by": "volatility_then_return"
+}
+```
+
+如需只筛选指定股票池，可传入 `stock_codes`：
+
+```json
+{
+  "strategy": "new_high",
+  "stock_codes": ["600519", "000001"],
+  "limit": 20
+}
+```
 
 ---
 

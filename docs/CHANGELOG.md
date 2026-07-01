@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增 `/api/v1/stock-selection` 选股模块，提供可注册策略框架与近新高策略，默认筛选 120 日高点 85% 以内且高点位于近 15 个交易日内的股票，并按波动率和涨幅排序。
+- [新功能] Web 新增 `/stock-selection` 策略选股页面，支持近新高策略参数配置、指定股票池/市场筛选、运行诊断和候选结果表。
 - [修复] Web 回测页默认不再开启强制重算，点击「开始验证」时优先复用已有回测结果，只有用户手动勾选后才重新计算已完成条目。
 - [新功能] 新增 A 股全量日线行情同步任务，支持 `python backend/main.py --sync-daily-quotes --market cn` 手动同步，并可通过 `DAILY_QUOTE_SYNC_ENABLED` 在定时任务触发时先同步 `stock_daily`。
 - [改进] Web 移除首次自选股引导页，登录和邮箱验证成功后默认进入首页，旧 `/onboarding` 链接兼容重定向到首页，自选股改由 `/watchlist` 和账户页维护。

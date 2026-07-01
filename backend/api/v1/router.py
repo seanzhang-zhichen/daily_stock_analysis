@@ -22,6 +22,7 @@ from api.v1.endpoints import (
     notices,
     portfolio,
     research_reports,
+    stock_selection,
     stocks,
     system_config,
     usage,
@@ -64,6 +65,12 @@ router.include_router(
     stocks.router,
     prefix="/stocks",
     tags=["Stocks"]
+)
+
+router.include_router(
+    stock_selection.router,
+    prefix="/stock-selection",
+    tags=["StockSelection"]
 )
 
 router.include_router(
