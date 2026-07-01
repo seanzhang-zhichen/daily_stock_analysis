@@ -302,13 +302,13 @@ docker-compose -f ./docker/docker-compose.yml build --no-cache
 
 ### 3. 版本升级后数据库 schema 未更新
 
-服务启动时会自动运行 `alembic upgrade head`。若为首次从不含 Alembic 的旧版本升级，需在启动前手动打一次基线标记：
+Docker 镜像启动应用主进程前会先运行 `alembic upgrade head`；直接使用 `python backend/main.py ...` 启动时，后端会在首次初始化数据库连接时兜底执行同一迁移。若为首次从不含 Alembic 的旧版本升级，需在启动前手动打一次基线标记：
 
 ```bash
 alembic stamp b0bc3c721ef0
 ```
 
-之后正常启动即可，后续迁移均自动执行。
+之后正常启动即可，后续迁移均自动执行。Docker Compose 同时启动 `analyzer` 和 `server` 时，entrypoint 会用 `/app/data/.dsa-startup-migration.lock` 串行化启动期迁移，避免两个容器同时升级 schema。
 
 ### 4. 数据库锁定
 

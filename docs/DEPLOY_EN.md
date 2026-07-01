@@ -288,14 +288,26 @@ docker-compose -f ./docker/docker-compose.yml build --no-cache
 
 Check proxy configuration, ensure server can access Gemini API.
 
-### 3. Database locked
+### 3. Database schema was not upgraded after an update
+
+The Docker image runs `alembic upgrade head` before starting the application process. For direct `python backend/main.py ...` deployments, the backend still runs the same migration when the database manager is first initialized.
+
+If this is the first upgrade from an older version that did not use Alembic, stamp the existing database baseline before starting:
+
+```bash
+alembic stamp b0bc3c721ef0
+```
+
+After that, start normally and future migrations will run automatically. When Docker Compose starts both `analyzer` and `server`, the entrypoint serializes startup migrations with `/app/data/.dsa-startup-migration.lock` so both containers do not upgrade the schema at the same time.
+
+### 4. Database locked
 
 ```bash
 # Stop service then delete lock file
 rm /opt/stock-analyzer/data/*.lock
 ```
 
-### 4. Insufficient memory
+### 5. Insufficient memory
 
 Adjust memory limits in `docker-compose.yml`:
 ```yaml
@@ -305,7 +317,7 @@ deploy:
       memory: 1G
 ```
 
-### 5. Docker reports `docker-entrypoint.sh: no such file or directory`
+### 6. Docker reports `docker-entrypoint.sh: no such file or directory`
 
 **Symptom**:
 
@@ -326,7 +338,7 @@ docker-compose -f ./docker/docker-compose.yml up -d
 
 `docker/entrypoint.sh` should show `w/lf` in `git ls-files --eol`. If it still shows `w/crlf`, convert the file to LF before rebuilding the image.
 
-### 6. Docker reports `/app/main.py` does not exist
+### 7. Docker reports `/app/main.py` does not exist
 
 **Symptom**:
 
@@ -348,7 +360,7 @@ Then recreate the container:
 docker-compose -f ./docker/docker-compose.yml up -d --force-recreate server
 ```
 
-### 7. MySQL in Docker cannot use `localhost`
+### 8. MySQL in Docker cannot use `localhost`
 
 **Symptom**:
 

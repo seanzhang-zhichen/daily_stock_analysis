@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] Docker entrypoint 在启动应用主进程前执行 `alembic upgrade head`，并用 `/app/data/.dsa-startup-migration.lock` 串行化多容器启动期迁移，避免定时任务首次触发时才暴露 schema 问题。
 - [新功能] 新增 `/api/v1/stock-selection` 选股模块，提供可注册策略框架与近新高策略，默认筛选 120 日高点 85% 以内且高点位于近 15 个交易日内的股票，并按波动率和涨幅排序。
 - [新功能] Web 新增 `/stock-selection` 策略选股页面，支持近新高策略参数配置、指定股票池/市场筛选、运行诊断和候选结果表。
 - [修复] Web 回测页默认不再开启强制重算，点击「开始验证」时优先复用已有回测结果，只有用户手动勾选后才重新计算已完成条目。

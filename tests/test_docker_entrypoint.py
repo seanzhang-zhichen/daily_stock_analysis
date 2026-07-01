@@ -28,6 +28,8 @@ def test_docker_entrypoint_repairs_ownership_and_user_permissions() -> None:
     assert "directory_needs_repair" in entrypoint
     assert "has_unwritable_mount_path" in entrypoint
     assert "can_write_dir_as_app_user" in entrypoint
+    assert "run_startup_migrations" in entrypoint
+    assert "alembic upgrade head" in entrypoint
     assert "DATABASE_FILE" in entrypoint
     assert re.search(r"\bchown\s+-R\b", entrypoint)
     assert re.search(r"\bchmod\s+-R\s+u\+rwX\b", entrypoint)
@@ -90,6 +92,17 @@ def _prepare_fake_entrypoint_tools(tmp_path: Path, find_body: str) -> tuple[Path
         'esac\n'
         'exec "$@"\n',
     )
+    _write_fake_command(
+        fakebin,
+        "alembic",
+        'printf "alembic %s\\n" "$*" >> "$FAKE_LOG_DIR/invocations.log"\n',
+    )
+    _write_fake_command(
+        fakebin,
+        "python",
+        'printf "python %s\\n" "$*" >> "$FAKE_LOG_DIR/invocations.log"\n',
+    )
+    _write_fake_command(fakebin, "true", "exit 0\n")
 
     return fakebin, log_dir
 
@@ -157,3 +170,57 @@ def test_docker_entrypoint_skips_owner_chmod_when_chown_fails(tmp_path: Path) ->
     assert not (log_dir / "chmod.log").exists()
     assert "skipping owner-only chmod" in result.stderr
     assert "still not writable by dsa" in result.stderr
+
+
+def test_docker_entrypoint_runs_migrations_before_main_process(tmp_path: Path) -> None:
+    fakebin, log_dir = _prepare_fake_entrypoint_tools(tmp_path, "exit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["FAKE_LOG_DIR"] = str(log_dir)
+    env["GOSU_WRITE_EXIT"] = "0"
+
+    subprocess.run(
+        [
+            "sh",
+            str(REPO_ROOT / "docker" / "entrypoint.sh"),
+            "python",
+            "backend/main.py",
+            "--schedule",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    invocations = (log_dir / "invocations.log").read_text(encoding="utf-8").splitlines()
+    assert invocations == [
+        "alembic upgrade head",
+        "python backend/main.py --schedule",
+    ]
+
+
+def test_docker_entrypoint_does_not_wrap_alembic_maintenance_command(tmp_path: Path) -> None:
+    fakebin, log_dir = _prepare_fake_entrypoint_tools(tmp_path, "exit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["FAKE_LOG_DIR"] = str(log_dir)
+    env["GOSU_WRITE_EXIT"] = "0"
+
+    subprocess.run(
+        [
+            "sh",
+            str(REPO_ROOT / "docker" / "entrypoint.sh"),
+            "alembic",
+            "current",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    invocations = (log_dir / "invocations.log").read_text(encoding="utf-8").splitlines()
+    assert invocations == ["alembic current"]
