@@ -33,7 +33,7 @@ export type AdminGrantSubscription = {
 };
 
 export type AdminPlan = BillingPlan & {
-  source?: 'default' | 'db';
+  source?: 'db';
   isPersisted?: boolean;
   allowedModels?: string[];
 };

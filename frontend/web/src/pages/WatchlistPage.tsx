@@ -373,7 +373,7 @@ const WatchlistPage: React.FC = () => {
                 已达到当前套餐自选股上限（{maxStocks} 只）。
                 {!plan?.isPro && (
                   <Link to="/billing" className="ml-1 underline hover:text-amber-200">
-                    升级 Pro 解锁更多
+                    升级套餐解锁更多
                   </Link>
                 )}
               </div>

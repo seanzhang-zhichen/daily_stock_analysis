@@ -30,12 +30,6 @@ import { cn } from '../utils/cn';
 
 type FormError = ParsedApiError | string | null;
 
-const PLAN_HIGHLIGHTS: Record<string, string> = {
-  free: '快速体验 AI 自选股分析的核心能力。',
-  pro: '面向重度用户, 解锁更多自选股 / 高级模型 / Webhook 推送。',
-  pro_yearly: 'Pro 年付, 折扣力度最大, 适合长期使用。',
-};
-
 const formatPrice = (priceCents: number, currency: string): string => {
   if (priceCents <= 0) {
     return '联系客服';
@@ -53,6 +47,18 @@ const formatDate = (value?: string | null): string => {
   } catch {
     return value;
   }
+};
+
+const describePlan = (plan: BillingPlan): string => {
+  const capabilities = [
+    plan.dailyAnalysisLimit > 0 ? `每日 ${plan.dailyAnalysisLimit} 次分析` : '不限量分析',
+    plan.dailyAgentLimit > 0 ? `每日 ${plan.dailyAgentLimit} 次 Agent 问股` : '不限量 Agent 问股',
+    plan.maxStocks > 0 ? `${plan.maxStocks} 只自选股` : '不限自选股',
+  ];
+  if (plan.canWebhook) {
+    capabilities.push('Webhook 推送');
+  }
+  return capabilities.join(' / ');
 };
 
 const CreditPackageCard: React.FC<{
@@ -135,13 +141,13 @@ const PlanCard: React.FC<{
         {formatPrice(plan.priceCents, plan.currency)}
         {plan.priceCents > 0 ? (
           <span className="ml-1 text-sm font-normal text-secondary-text">
-            / {plan.code === 'pro_yearly' ? '年' : '月'}
+            / 月
           </span>
         ) : null}
       </div>
 
       <p className="text-sm text-secondary-text">
-        {PLAN_HIGHLIGHTS[plan.code] ?? '—'}
+        {describePlan(plan)}
       </p>
 
       <ul className="space-y-1.5 text-sm">
@@ -310,7 +316,7 @@ const BillingPage: React.FC = () => {
   }
 
   const plans = plansResponse?.plans ?? [];
-  const recommendedCode = plans.find((p) => p.code === 'pro')?.code ?? plans[0]?.code;
+  const recommendedCode = plans.find((p) => p.code !== 'free' && p.priceCents > 0)?.code ?? null;
   const creditBalance = userMode?.credits?.balance ?? userMode?.user?.creditBalance ?? 0;
 
   return (
@@ -321,7 +327,7 @@ const BillingPage: React.FC = () => {
         </p>
         <h1 className="text-2xl font-semibold text-foreground">会员中心</h1>
         <p className="text-sm text-secondary-text">
-          升级到 Pro 解锁更多自选股、高级模型与 Webhook 推送。
+          可用套餐由平台管理员配置，升级后按当前套餐权益获得更多分析、问股和推送能力。
         </p>
       </div>
 
@@ -334,7 +340,7 @@ const BillingPage: React.FC = () => {
                 {subscription.plan.name}
                 {subscription.plan.isPro ? (
                   <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-purple-400/40 bg-purple-500/10 px-2 py-0.5 text-xs text-purple-300">
-                    Pro
+                    付费
                   </span>
                 ) : null}
               </p>

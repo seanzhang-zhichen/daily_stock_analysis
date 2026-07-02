@@ -252,7 +252,7 @@ class AppPlan(Base):
     __tablename__ = 'app_plans'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String(32), nullable=False, unique=True, index=True)  # free / pro / pro_yearly
+    code = Column(String(32), nullable=False, unique=True, index=True)
     name = Column(String(64), nullable=False)
     daily_analysis_limit = Column(Integer, nullable=False, default=5)
     daily_agent_limit = Column(Integer, nullable=False, default=5)
@@ -344,9 +344,9 @@ class AppUserNotificationPref(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, unique=True, index=True)
-    daily_push_enabled = Column(Boolean, nullable=False, default=False)  # 每日定时推送开关（Pro 专属）
-    email_enabled = Column(Boolean, nullable=False, default=True)  # 邮件推送开关（Pro 专属）
-    webhook_url = Column(String(1024))  # Pro 专属自定义 Webhook
+    daily_push_enabled = Column(Boolean, nullable=False, default=False)  # 每日定时推送开关（付费套餐权益）
+    email_enabled = Column(Boolean, nullable=False, default=True)  # 邮件推送开关（付费套餐权益）
+    webhook_url = Column(String(1024))  # 付费套餐自定义 Webhook
     webhook_type = Column(String(32))  # feishu / wecom / discord / telegram / generic
     created_at = Column(DateTime, default=datetime.now, nullable=False)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)

@@ -249,7 +249,7 @@ const HelpPage: React.FC = () => {
                 <Bell className="h-4 w-4 text-primary" /> 每日推送在哪里配置？
               </h2>
               <p className="text-sm leading-6 text-secondary-text">
-                登录后进入账户页，在「我的自选股」维护关注列表，在「通知偏好」开启每日推送或配置 Pro Webhook。
+                登录后进入账户页，在「我的自选股」维护关注列表，在「通知偏好」开启每日推送或配置付费套餐 Webhook。
               </p>
             </section>
             <section className="space-y-2">

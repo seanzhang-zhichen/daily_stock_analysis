@@ -68,14 +68,14 @@ def update_prefs(
 
     - ``webhook_url`` / ``webhook_type`` 仅当 ``can_webhook=True`` 时才被写入；
       否则将被忽略（避免免费档绕过套餐限制）。
-    - ``clear_webhook=True`` 可删除 Webhook 配置，无需 Pro 权限。
+    - ``clear_webhook=True`` 可删除 Webhook 配置，无需付费套餐权限。
     """
     if webhook_url is not None and not can_webhook:
-        raise UserError(UserErrorCode.PERMISSION_DENIED, "Webhook 通知需要 Pro 套餐")
+        raise UserError(UserErrorCode.PERMISSION_DENIED, "Webhook 通知需要付费套餐")
     if email_enabled is True and not can_email_notifications:
-        raise UserError(UserErrorCode.PERMISSION_DENIED, "邮件通知需要 Pro 套餐")
+        raise UserError(UserErrorCode.PERMISSION_DENIED, "邮件通知需要付费套餐")
     if daily_push_enabled is True and not can_email_notifications:
-        raise UserError(UserErrorCode.PERMISSION_DENIED, "每日推送需要 Pro 套餐")
+        raise UserError(UserErrorCode.PERMISSION_DENIED, "每日推送需要付费套餐")
 
     if webhook_type is not None and webhook_type not in ALLOWED_WEBHOOK_TYPES:
         raise UserError(

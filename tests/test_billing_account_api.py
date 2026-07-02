@@ -4,7 +4,7 @@
 覆盖:
 - ``/api/v1/billing/plans``: 返回数据库中的套餐目录。
 - ``/api/v1/billing/subscription``: 未登录返回 401; 登录后返回当前 plan + 历史。
-- ``/api/v1/account/redeem``: 兑换码合法 -> 升级到 Pro; 重复使用 -> 失败。
+- ``/api/v1/account/redeem``: 兑换码合法 -> 升级到付费套餐; 重复使用 -> 失败。
 - ``/api/v1/account/model-preference``: 用户只能在套餐允许的平台模型中选择偏好。
 
 测试用 SQLite + monkeypatched env 启用 To C 模式, 不依赖 LLM 运行时。
@@ -163,17 +163,19 @@ class _BaseApi(unittest.TestCase):
     def _seed_pro_plan(self) -> AppPlan:
         session = self.db_manager.get_session()
         try:
-            plan = AppPlan(
-                code="pro",
-                name="Pro",
-                daily_analysis_limit=50,
-                daily_agent_limit=50,
-                max_stocks=30,
-                allowed_models='["openai/gpt-4o-mini","openai/gpt-4o"]',
-                can_webhook=True,
-                price_cents=2900,
-            )
+            plan = session.query(AppPlan).filter(AppPlan.code == "pro").first()
+            if plan is None:
+                plan = AppPlan(code="pro")
             session.add(plan)
+            plan.name = "Pro"
+            plan.daily_analysis_limit = 50
+            plan.daily_agent_limit = 50
+            plan.max_stocks = 30
+            plan.allowed_models = '["openai/gpt-4o-mini","openai/gpt-4o"]'
+            plan.can_webhook = True
+            plan.price_cents = 2900
+            plan.currency = "CNY"
+            plan.is_active = True
             session.commit()
             session.refresh(plan)
             return plan
@@ -182,7 +184,7 @@ class _BaseApi(unittest.TestCase):
 
 
 class TestBillingPlans(_BaseApi):
-    def test_plans_anonymous_returns_seeded_free_plan(self):
+    def test_plans_anonymous_returns_configured_free_plan(self):
         res = self.client.get("/api/v1/billing/plans")
         self.assertEqual(res.status_code, 200)
         body = res.json()
@@ -322,6 +324,33 @@ class TestCreditPurchases(_BaseApi):
 
 
 class TestAdminPlanConfig(_BaseApi):
+    def test_admin_can_create_paid_plan(self):
+        admin = self._create_user(email="admin@example.com", is_admin=True)
+        self._login(admin)
+
+        res = self.client.put("/api/v1/admin/plans/pro", json={
+            "name": "Pro 会员",
+            "dailyAnalysisLimit": 50,
+            "dailyAgentLimit": 50,
+            "maxStocks": 30,
+            "canWebhook": True,
+            "priceCents": 3900,
+            "currency": "CNY",
+            "isActive": True,
+        })
+
+        self.assertEqual(res.status_code, 200, res.text)
+        plan = res.json()["plan"]
+        self.assertEqual(plan["code"], "pro")
+        self.assertEqual(plan["dailyAnalysisLimit"], 50)
+        self.assertTrue(plan["canWebhook"])
+        self.assertEqual(plan["priceCents"], 3900)
+
+        plans_res = self.client.get("/api/v1/billing/plans")
+        self.assertEqual(plans_res.status_code, 200)
+        codes = {p["code"] for p in plans_res.json()["plans"]}
+        self.assertIn("pro", codes)
+
     def test_admin_can_update_free_plan_limits(self):
         admin = self._create_user(email="admin@example.com", is_admin=True)
         self._login(admin)

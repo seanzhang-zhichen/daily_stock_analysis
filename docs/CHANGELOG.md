@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 运营后台「套餐与用量」支持新增付费套餐；会员中心和手动开通页均改为读取后端当前套餐目录，不再假设固定付费套餐代码。
 - [新功能] 支持通过 `.env` 配置 `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` 引导平台超级管理员，启动时自动创建或激活同邮箱 To C 用户并授予 `is_admin=True`；`SUPER_ADMIN_SYNC_PASSWORD=true` 时可强制同步已有账号密码。
 - [修复] 内置每日定时任务不再执行全局 `STOCK_LIST` 分析，改为仅处理开启每日推送且自选股非空的用户，避免空自选股用户仍收到示例股票分析。
 - [修复] 补充 `pydantic-settings` 运行时依赖，避免 LiteLLM 初始化 Langfuse OTEL logger 时因缺少 `pydantic_settings` 输出非阻断错误。
@@ -88,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 更新本地前后端启动说明，明确 `--serve-only` 仅启动 FastAPI API、Web 前端开发服务器使用 `frontend/web` 的 `npm run dev` 运行在 5200 端口，生产/本地一体化 WebUI 使用 `--webui-only` 托管构建产物。
 - [chore] 收敛项目目录边界：Web 前端位于 `frontend/web/`，桌面端位于 `frontend/desktop/`，后端真实代码位于 `backend/`；移除根目录 `main.py` / `server.py` / `webui.py` 与 `src` / `api` / `data_provider` / `bot` 兼容 shim，并同步更新 CI、Docker 与相关文档。
 - [文档] 同步 To C、产品规划与中英文完整指南文档：补充 `USER_FRONTEND_BASE_URL`、公开股票搜索接口与股票索引表说明，校正模型偏好和 `allowed_models` 运营配置状态，并修复完整指南中的项目结构与 Docker Compose 示例。
-- [文档] 基于当前前后端实现更新 `docs/to-c-user-stories.md`，校准注册登录、首次引导、分析任务隔离与配额返还、Agent 会话与模型路由、Pro 推送、支付 mock / 人工兜底、售后合规入口和管理员权限等用户故事验收口径。
+- [文档] 基于当前前后端实现更新 `docs/to-c-user-stories.md`，校准注册登录、首次引导、分析任务隔离与配额返还、Agent 会话与模型路由、付费套餐推送、支付 mock / 人工兜底、售后合规入口和管理员权限等用户故事验收口径。
 - [文档] 进一步校准 `docs/to-c-user-stories.md` 的实现边界：修正系统配置 API 路径，明确 Agent 仅生成请求扣配额、`chat/send` 当前走全局通知链路、模型分档依赖 `allowed_models` 运营配置，并补充发票反馈、管理员访问和后续故事池说明。
 - [改进] `python backend/main.py --serve-only` 与 `backend.server:app` 默认只启动 FastAPI 后端服务，不再准备或托管 WebUI 前端静态资源，避免 API 启动阶段处理 npm 安装、前端构建或 SPA 路由；需要 WebUI 一体化启动时使用 `--webui-only` / `--webui`。
 - [新功能] 运营后台新增「注册与合规」配置页，支持通过数据库管理公开注册、邀请码、注册风控、协议版本、支付开关与订单超时时间等 To C 运营配置，支付密钥/证书仍保留在部署环境变量中。
@@ -96,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 运营后台手动开通套餐改为按用户邮箱录入并提交，后端 `/api/v1/admin/grant-plan` 支持 `userEmail` 精确查找用户，同时保留 `userId` 兼容旧调用。
 - [修复] 账户设置模型偏好改为复用运行时模型路由候选列表，`LLM_CHANNELS` 中同一渠道配置多个模型时用户可在账户页选择其中任一可用模型。
 - [改进] 股票自动补全索引与前端静态目录完全解耦：源文件迁至 `backend/src/data/resources/stocks.index.json`，通过 Alembic 新增 `stock_index`/`stock_index_meta` 表和同步脚本写入数据库，前端改为调用公开限流的 `/api/v1/stocks/search`，后端运行时不再读取 `frontend/web/public` 或 `static` 下的股票索引。
-- [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非 Pro 用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
+- [修复] 补齐 To C 用户任务与配额闭环：支付回调路径加入认证白名单；分析任务列表、状态查询与 SSE 按当前用户过滤；异步分析后台失败使用独立 session 返还分析配额；Agent 非流式 chat/research 返回 `success=false` 时返还 Agent 配额；公开注册关闭时 `/register` 展示阻止页；登录后自选股为空进入 `/onboarding`，邮箱验证成功页登录入口携带引导跳转；每日推送调度跳过已非付费用户；同步修正 FastAPI 204 响应声明兼容性并补充相关回归测试与 To C 文档说明。
 - [新功能] 运营后台新增「套餐与用量」配置：平台管理员可在 `/admin` 配置免费档和会员套餐的每日分析次数、Agent 次数、自选股上限、价格与上架状态，并继续支持为指定用户手动开通会员；套餐权益以 `app_plans` 记录为运行期来源。
 - [新功能] 个股分析报告新增 Deep Research「股票基本情况」内容块，Deep Research 在正式报告生成前阻塞执行并注入 LLM / Agent 上下文，最终以其结果作为权威 `stock_profile` 写入 `raw_result.stock_profile`，并在同步结果、异步任务状态、历史详情、Markdown 报告和 Web 报告页展示。
 - [改进] Deep Research 规划改为模型在上限内自适应收敛，新增 `AGENT_DEEP_RESEARCH_MAX_SUB_QUESTIONS` 和 `AGENT_DEEP_RESEARCH_SUB_QUESTION_STEPS` 控制子问题数量与单问题 ReAct/tool 步数上限。
@@ -108,10 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [chore] 完整移除 BYOK（Bring Your Own Key）功能：删除 `src/users/byok.py`、`AppUserByokCredential` ORM 模型、`app_user_byok_credentials` 表（通过 Alembic migration `20260522_add_user_preferred_model` 完成 DROP TABLE）及 `can_byok` 计划字段；移除 `/api/v1/account/api-keys` 端点和前端 `ApiKeysPage`；`AccountPage` 改为展示用户模型偏好选择卡（`/api/v1/account/model-preference`）；`QuotaExceededDialog` 和 `QuotaIndicator` 移除 BYOK 相关引导；移除 `DATA_ENCRYPTION_KEY` / `USER_BYOK_FALLBACK_KEY` 环境变量；退订 token 签名密钥回退链由 `UNSUBSCRIBE_SIGNING_KEY → DATA_ENCRYPTION_KEY → ADMIN_API_SECRET` 简化为 `UNSUBSCRIBE_SIGNING_KEY → ADMIN_API_SECRET`；`src/storage/__init__.py`、`src/storage/models/__init__.py`、`src/users/__init__.py` 清除 BYOK 相关导出；所有文档（`to-c-mode.md`、`to-c-product-plan.md`、`to-c-user-stories.md`、`to-c-product-wireframes.md`、`web-frontend-redesign-plan.md`、`INDEX.md`、`INDEX_EN.md`）同步更新。
 - [文档] 新增 `docs/to-c-user-stories.md`，基于当前 To C 多用户、配额、通知、支付、合规与运营后台实现整理核心用户故事、验收口径和实现映射，并在中英文文档索引与产品规划中补充入口。
 - [文档] 基于当前 To C 多用户、支付、通知和前端页面实现更新 `docs/to-c-mode.md`、`docs/to-c-product-wireframes.md` 与 `docs/to-c-product-plan.md`，修正页面状态、API 列表、数据表、已落地能力与剩余缺口说明。
-- [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要 Pro 套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
+- [改进] 明确系统通知（验证码、安全提醒等）对所有用户免费，仅 AI 分析报告自动推送（邮件每日推送、邮件通知开关、Webhook/钉钉等）需要付费套餐；更新前端账户页通知偏好区域相关描述文案，「邮件通知」说明不再错误包含「系统通知」字样，升级提示也改为「AI 分析报告邮件推送」。
 - [改进] Web 报告资讯卡片标题统一为「相关资讯」，移除右上角刷新入口，并移除资讯条目右侧「跳转」按钮内的箭头图标。
 - [改进] Web 报告相关资讯外链入口文案由「跳转」调整为「查看原文」。
-- [改进] 将「邮件通知」和「每日推送」改为 Pro 专属权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到 Pro 套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。
+- [改进] 将「邮件通知」和「每日推送」改为付费套餐权益：`update_prefs` 服务层对免费档开启 `email_enabled=True` / `daily_push_enabled=True` 返回 `PERMISSION_DENIED`；后端调度 `run_per_user_scheduled_analysis` 增加 `plan.is_pro` 前置检查；前端账户页免费用户两个开关置灰并展示「需升级到付费套餐」引导链接；`to-c-mode.md` API 说明同步更新；新增 `tests/test_notification_prefs.py` 覆盖权限校验逻辑（8 条）。
 - [修复] 修复 Web 问股页面的三横线历史对话按钮在桌面布局（md 及以上宽度）下被 ui-icon-button 自定义样式覆盖而无法隐藏的问题，通过将按钮包裹在 md:hidden 响应式容器中实现正确隐藏。
 - [修复] 修复首页股票分析提交后依赖 SSE 才显示任务队列的问题，提交成功返回任务 ID 后立即在前端队列中展示等待中的分析任务，并将按钮加载文案改为“提交中”。
 - [修复] 修复首页输入股票中文名后直接点击「分析」会把中文名原样提交给后端、依赖后端在线名称解析甚至超时的问题，按钮提交前会优先用前端股票索引解析为真实股票代码。
@@ -150,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] Phase 5 退款前端入口：`OrdersPage` paid 订单新增「申请退款」按钮 + 内联弹窗（退款原因 textarea + 提交/取消），调用 `billingApi.requestRefund`，提交成功后原位展示「退款已提交」状态标签。
 - [新功能] Phase 5 退款邮件回执：运营在 `/admin` 审核退款后（通过或拒绝），`api/v1/endpoints/admin.py` 自动向用户发送审核结果邮件（`src/users/email.get_email_backend`），失败仅记日志不影响主流程。
 - [新功能] Phase 6 SQLite 备份脚本：新增 `scripts/backup_db.py`，使用 SQLite 在线热备份 API，支持时间戳命名、gzip 压缩、可配置保留份数（默认 7）、外部上传钩子 `BACKUP_UPLOAD_SCRIPT` 和 dry-run 模式；可直接 `python scripts/backup_db.py --dry-run` 验证配置。
-- [文档] `docs/to-c-product-plan.md` 更新 Phase 5/6 进度：退款后收回 Pro 权益、退款邮件回执、OrdersPage 退款入口、备份脚本均标记为已落地。
+- [文档] `docs/to-c-product-plan.md` 更新 Phase 5/6 进度：退款后收回付费套餐权益、退款邮件回执、OrdersPage 退款入口、备份脚本均标记为已落地。
 - [新功能] Phase 6 公告中心：新增 `AppNotice` ORM 表（`app_notices`，含 `notice_type`/`is_pinned`/`is_published`/`target_plan`/`expires_at`）；新增 `api/v1/endpoints/notices.py` 提供公开列表 `GET /api/v1/notices`、近期公告数 `GET /api/v1/notices/unread-count`、管理员 CRUD + publish/unpublish 接口，两个公开端点已加入 `AuthMiddleware` 白名单；前端新增 `/notices` 页面（置顶/普通分区展示、加载更多）、侧边栏「公告」导航项（Bell 图标，含近 30 天发布数角标）、Admin `/admin` 新增「公告管理」标签页（创建草稿 + 发布/下架 + 删除）。
 - [新功能] Phase 6 Sentry 错误监控：`requirements.txt` 追加 `sentry-sdk[fastapi]>=2.0.0`；`api/app.py` 新增 `_init_sentry()` 函数，读取 `SENTRY_DSN`/`SENTRY_ENVIRONMENT`/`SENTRY_TRACES_SAMPLE_RATE` 环境变量，接入 `FastApiIntegration` + `SqlalchemyIntegration`；`SENTRY_DSN` 留空时完全不初始化，不影响主流程；`.env.example` 补充相关字段说明。
 - [改进] Phase 6 注册防刷：`registration_guard.py` + `config.py` 新增邮箱域名 DNS 宽松 MX 校验（`check_mx_domain`，基于 `socket.getaddrinfo`，网络故障时 fail-open 放行）；由 `USER_EMAIL_MX_CHECK_ENABLED=true` 开关控制（默认关闭）；`service.py` 向 `RegistrationGuardConfig` 透传 `mx_check_enabled`；`.env.example` 补充说明。
@@ -176,9 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 新增 To C 多用户体系骨架：默认启用 `app_users` / `app_user_sessions` / `app_user_email_verifications` / `app_user_usage_counters` 等表，新增 `/api/v1/account/*` 邮箱密码注册/登录/找回密码 endpoint，前端 `/register` `/forgot-password` 路由及 `UserAuthPage` / `ForgotPasswordPage` 页面。
 - [新功能] 新增 `src/users/quota.py` 配额服务骨架（`try_consume` / `refund` / `get_quota_snapshot`），按 user+date+kind 做行级计数；`/api/v1/account/status` 同步返回当日 analysis / agent 用量供前端顶栏渲染。
 - [新功能] Phase 2 商业化骨架落地：新增 `src/users/quota_guard.py` (`enforce_quota` / `refund_quota` / `quota_exceeded_payload`) 把 plan 解析与配额扣减串成一行调用，并接入 `/api/v1/analysis/analyze`、`/api/v1/agent/chat`、`/api/v1/agent/chat/stream`、`/api/v1/agent/research`：超额返回 402 `quota_exceeded` 结构化负载，业务失败 / 队列重复 / SSE error 时自动 refund。
-- [新功能] 新增 `/api/v1/billing/plans` (公开) 与 `/api/v1/billing/subscription` (登录后) endpoint：套餐目录优先取 `app_plans`，表为空时回退到内置 free + pro + pro_yearly 兜底目录；订阅查询返回当前 plan + 历史订阅记录。
+- [新功能] 新增 `/api/v1/billing/plans` (公开) 与 `/api/v1/billing/subscription` (登录后) endpoint：套餐目录读取 `app_plans`；订阅查询返回当前 plan + 历史订阅记录。
 - [新功能] 新增 `/api/v1/account/redeem` 兑换码 endpoint；`/api/v1/account/status` 现在同步返回 `plan` 解析快照（`canWebhook` / `expiresAt`），免费档限额改由 plan 渲染而非裸 env。
-- [新功能] 前端新增 `/account` `/billing` 页面、侧边栏 `QuotaIndicator` 配额条、全局 `QuotaExceededDialog` 监听 axios interceptor 派发的 `dsa:quota-exceeded` 事件并提供「升级 Pro」/「关闭」引导。
+- [新功能] 前端新增 `/account` `/billing` 页面、侧边栏 `QuotaIndicator` 配额条、全局 `QuotaExceededDialog` 监听 axios interceptor 派发的 `dsa:quota-exceeded` 事件并提供「升级套餐」/「关闭」引导。
 - [修复] 修复 `api/v1/router.py` 引用未导入的 `account` 模块导致多用户 API 启动失败的 bug；同步更新 `api/v1/endpoints/__init__.py` 的导入清单与 `api/middlewares/auth.py` `EXEMPT_PATHS`，让 `/api/v1/billing/plans` 在未登录态可见。
 - [测试] 新增 `tests/test_users_service.py`（31 条）和 `tests/test_users_quota.py`（12 条）覆盖密码哈希、session 生命周期、注册/登录/邮箱验证/密码重置/改密、配额扣减/回补/隔离等核心路径。
 - [测试] 新增 `tests/test_users_quota_guard.py` 覆盖 quota_guard 的未登录调用错误、扣减、超额、不限额、refund 与 payload 字段语义；新增 `tests/test_billing_account_api.py` 覆盖 billing 套餐目录 / 订阅查询、兑换码升级等核心路径。
@@ -188,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 前端新增 `/account/orders`（订单列表 + 取消 + 退款弹窗）与 `/account/invoices`（申请发票 + 历史记录）页面，路由已接入 `App.tsx`；`BillingPage` 底部新增订单 / 发票快捷入口，套餐卡片区替换静态说明为支付通道未启用提示条。
 - [文档] 新增 `docs/to-c-product-wireframes.md` 输出登录/注册、找回密码、账户设置、会员中心、顶栏配额条、超额引导和首次引导等关键页面线框；本次将 §3–§7 标记为「已落地」。
 - [文档] `docs/INDEX.md` 新增「To C / 多用户」专题分组，统一归档产品规划、关键页面线框与 Phase 1 骨架文档。
-- [新功能] Phase 3 调度与通知 To C 化：新增 `app_user_watchlists` 与 `app_user_notification_prefs` 表，提供 per-user 自选股列表（含 `plan.max_stocks` 上限检查）和通知偏好（每日推送开关、邮件开关、Pro Webhook）；新增 `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) endpoint；调度器在全局分析完成后执行 `run_per_user_scheduled_analysis`，按用户分桶运行分析并发送个人报告邮件，单用户失败不影响其他用户。
+- [新功能] Phase 3 调度与通知 To C 化：新增 `app_user_watchlists` 与 `app_user_notification_prefs` 表，提供 per-user 自选股列表（含 `plan.max_stocks` 上限检查）和通知偏好（每日推送开关、邮件开关、付费套餐 Webhook）；新增 `/api/v1/account/watchlist` (GET/POST/PUT/DELETE) 与 `/api/v1/account/notification-prefs` (GET/PATCH) endpoint；调度器在全局分析完成后执行 `run_per_user_scheduled_analysis`，按用户分桶运行分析并发送个人报告邮件，单用户失败不影响其他用户。
 - [修复] 抽出 LiteLLM 生成参数适配层，对严格 temperature 模型按请求临时固定或省略参数，避免 GPT-5 / o 系列与 Kimi K2.6 拒绝默认温度请求。
 - [改进] LiteLLM 参数错误支持一次请求内自动修正重试，并在成功后进程内缓存策略，降低新模型参数兼容问题的人工配置成本。
 - [文档] 补充 Issue #1316 参数自愈改动的外部兼容依据、运行时配置清理边界与回滚证据；并在 `tests/test_system_config_service.py` 增加清理路径下 `LLM_TEMPERATURE` 保持不变的回归用例。
@@ -211,7 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [测试] 新增 `tests/test_model_router.py`（14 条）覆盖 `ModelRoute.uses_byok`、`_filter_allowed_models`、`as_litellm_kwargs`、`resolve_model_route` 的无用户/BYOK/套餐过滤路径，以及 `LLMToolAdapter` 的 `user_id` 存储与路由回退。
 - [新功能] 前端新增 `/verify-email` 页面（`VerifyEmailPage`），自动读取 URL `?token=` 参数完成邮箱验证，展示加载/成功/失败三态并引导前往登录；已加入路由并列入公开路径白名单。
 - [新功能] 前端新增 `/onboarding` 首次引导页（`OnboardingPage`），注册成功后自动跳转，引导用户添加 1–3 只自选股（调用 `/api/v1/account/watchlist` API），通过进度条显示填写状态，完成后进入主页。
-- [新功能] `AccountPage` 新增「我的自选股」卡片（`WATCHLIST`）和「通知偏好」卡片（`NOTIFICATIONS`）：自选股支持 `StockAutocomplete` 搜索添加与逐条删除，实时显示 `plan.maxStocks` 上限；通知偏好提供每日推送和邮件通知开关（即时保存），Pro 用户可配置 Webhook（飞书/企业微信/钉钉/Discord/Telegram/自定义）并支持清除。
+- [新功能] `AccountPage` 新增「我的自选股」卡片（`WATCHLIST`）和「通知偏好」卡片（`NOTIFICATIONS`）：自选股支持 `StockAutocomplete` 搜索添加与逐条删除，实时显示 `plan.maxStocks` 上限；通知偏好提供每日推送和邮件通知开关（即时保存），付费用户可配置 Webhook（飞书/企业微信/钉钉/Discord/Telegram/自定义）并支持清除。
 - [改进] `api/account.ts` 新增 `WatchlistItem`、`WatchlistResponse`、`NotificationPrefs`、`NotificationPrefsResponse` 类型以及 `getWatchlist` / `addWatchlistStock` / `setWatchlist` / `removeWatchlistStock` / `getNotificationPrefs` / `updateNotificationPrefs` 六个 API 方法。
 - [新功能] 协议三件套与注册同意：新增 `/legal/terms` `/legal/privacy` `/legal/risk-disclosure` 静态页面（共享 `LegalPageLayout`），未登录可访问；注册表单新增协议勾选框，后端 `register_user` 增加 `terms_agreed` / `terms_version` 必填校验；`app_users` 新增 `terms_version` `is_admin` 字段，新增 `app_user_consents` 表记录协议版本/IP/UA；`/api/v1/account/status` 与登录/注册响应同步返回 `termsVersion` / `needsReacceptTerms` / `isAdmin` 字段；`src/users/consents.py` 集中维护当前协议版本 `CURRENT_TERMS_VERSION` 与 `needs_reaccept` 判断。
 - [新功能] 前端 `/billing` 下单流程：新增 `PaymentDialog` 组件支持创建订单 → 拉起支付 → 二维码展示 + 每 2s 轮询订单状态（最多 15min）→ 成功后自动刷新订阅；后端 `/orders/{order_no}/pay` 在 `PAYMENT_MOCK_ENABLED` 时返回 mock 二维码 URL，新增 `/orders/{order_no}/mock-pay` 仅供 mock 模式手动模拟成功；`BillingPage` 套餐卡片新增「升级」按钮、底部新增订单/发票/协议入口；登录态用户可在无真实支付通道时通过 mock 完成端到端验证。

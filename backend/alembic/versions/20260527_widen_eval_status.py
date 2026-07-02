@@ -18,20 +18,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        'backtest_results',
-        'eval_status',
-        existing_type=sa.String(length=16),
-        type_=sa.String(length=32),
-        existing_nullable=False,
-    )
+    with op.batch_alter_table("backtest_results") as batch_op:
+        batch_op.alter_column(
+            "eval_status",
+            existing_type=sa.String(length=16),
+            type_=sa.String(length=32),
+            existing_nullable=False,
+        )
 
 
 def downgrade() -> None:
-    op.alter_column(
-        'backtest_results',
-        'eval_status',
-        existing_type=sa.String(length=32),
-        type_=sa.String(length=16),
-        existing_nullable=False,
-    )
+    with op.batch_alter_table("backtest_results") as batch_op:
+        batch_op.alter_column(
+            "eval_status",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=16),
+            existing_nullable=False,
+        )

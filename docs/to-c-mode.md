@@ -72,7 +72,7 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/plans` | 列出当前可见套餐目录；当 `app_plans` 表为空时回退到内置 `free` + `pro` + `pro_yearly` 兜底目录。 |
+| GET | `/plans` | 列出当前可见套餐目录；套餐记录来自 `app_plans`，由运营后台「套餐与用量」维护。 |
 | GET | `/subscription` | 查询当前用户的订阅状态 + 历史记录，要求登录。 |
 | GET | `/orders` | 查询当前用户订单列表。 |
 | POST | `/orders` | 创建支付订单。 |
@@ -99,7 +99,7 @@
 - `app_user_usage_counters`：按用户 + 日期 + kind 的用量计数。
 - `app_plans` / `app_subscriptions` / `app_redeem_codes`：套餐、订阅和兑换码。
 - `app_user_watchlists`：用户自选股（Phase 3），上限由 `plan.max_stocks` 控制。
-- `app_user_notification_prefs`：用户通知偏好（Phase 3），含每日推送开关、邮件开关、Pro Webhook。
+- `app_user_notification_prefs`：用户通知偏好（Phase 3），含每日推送开关、邮件开关、付费套餐 Webhook。
 - `app_orders` / `app_payment_events` / `app_refunds` / `app_invoices`：订单、支付回调流水、退款、发票（Phase 5）。
 - `app_user_consents`：用户同意协议记录（版本 / IP / UA / 场景，Phase 5/6）。`app_users` 包含 `is_admin` 与 `terms_version` 列；schema 变更统一通过 Alembic migration 管理。
 - `app_reconciliation_diffs` / `app_reconciliation_reports`：每日对账脚本输出的差异明细与汇总（Phase 5）。
@@ -155,7 +155,7 @@
 **已落地能力**：
 - **账号与隔离**：邮箱注册 / 登录 / 验证 / 找回密码、业务 API 强制 `dsa_user_session`、历史 / 分析 / 投资组合 / 告警 / Agent 会话按用户隔离。
 - **套餐与配额**：`quota_guard` 已接入分析与 Agent；超额返回 402 `quota_exceeded`，前端全局弹出升级引导。
-- **自选股与通知**：`app_user_watchlists`、`app_user_notification_prefs`、`/watchlist`、账户页通知偏好、HTML 邮件、一键退订和 Pro Webhook 已上线；免费档不能开启 AI 分析报告邮件推送。
+- **自选股与通知**：`app_user_watchlists`、`app_user_notification_prefs`、`/watchlist`、账户页通知偏好、HTML 邮件、一键退订和付费套餐 Webhook 已上线；免费档不能开启 AI 分析报告邮件推送。
 - **模型路由**：`src/users/model_router.py` 已接入 `GeminiAnalyzer` 与 `LLMToolAdapter`；用户只能从管理员配置的模型中选择首选模型，运行时在 `plan.allowed_models` 非空时过滤平台模型，空列表表示不额外限制。
 - **支付与商业化**：订单、支付、退款、发票、微信 / 支付宝下单与退款 gateway、支付回调验签、IP 白名单、签名失败告警、真实账单拉取与对账脚本均已接入；mock 支付仍可用于本地联调。
 - **运营与合规**：协议三件套、注册同意落库、运营后台、公告中心、帮助中心、Sentry、增长埋点、账号注销、个人数据导出、续费提醒与 SQLite 备份脚本已上线。

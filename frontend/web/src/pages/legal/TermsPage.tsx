@@ -41,7 +41,7 @@ const TermsPage: React.FC = () => {
 
       <h2 className="mt-8 text-base font-semibold">3. 套餐与计费</h2>
       <ul className="list-disc space-y-1 pl-5">
-        <li>免费档与付费档（Pro 月付 / Pro 年付）的功能差异以《会员中心》页面为准。</li>
+        <li>免费档与付费档的功能差异以《会员中心》页面和运营后台当前配置为准。</li>
         <li>付费款项一经支付即立即生效，由系统按订单快照价格冻结结算，后续涨价不影响已下单订单。</li>
         <li>第一版暂不支持自动续费 / 连续包月，所有续费均需用户主动下单。</li>
         <li>限时折扣或首单优惠的具体细则以活动页面公告为准。</li>

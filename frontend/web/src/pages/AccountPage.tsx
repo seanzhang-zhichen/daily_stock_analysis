@@ -654,7 +654,7 @@ const AccountPage: React.FC = () => {
           <Link to="/billing">
             <Button variant="primary">
               <CreditCard className="h-4 w-4" />
-              {plan?.isPro ? '管理订阅' : '升级到 Pro'}
+              {plan?.isPro ? '管理订阅' : '升级套餐'}
             </Button>
           </Link>
           <Link to="/billing?from=credit">
@@ -911,7 +911,7 @@ const AccountPage: React.FC = () => {
                   to="/billing"
                   className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
                 >
-                  <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                  <Lock className="h-3.5 w-3.5" /> 升级套餐
                 </Link>
               )}
             </div>
@@ -946,7 +946,7 @@ const AccountPage: React.FC = () => {
                   to="/billing"
                   className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
                 >
-                  <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                  <Lock className="h-3.5 w-3.5" /> 升级套餐
                 </Link>
               )}
             </div>
@@ -1017,7 +1017,7 @@ const AccountPage: React.FC = () => {
                         to="/billing"
                         className="flex shrink-0 items-center gap-1 text-xs text-purple-400 hover:text-purple-300"
                       >
-                        <Lock className="h-3.5 w-3.5" /> 升级 Pro
+                        <Lock className="h-3.5 w-3.5" /> 升级套餐
                       </Link>
                     )}
                   </div>

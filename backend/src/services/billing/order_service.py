@@ -227,7 +227,7 @@ class OrderService:
             order_no=gen_order_no(),
             user_id=user.id,
             plan_code=plan_code,
-            grant_days=30 if "yearly" not in plan_code else 365,
+            grant_days=30,
             amount_cents=max(0, amount - discount),
             original_amount_cents=amount,
             discount_cents=discount,

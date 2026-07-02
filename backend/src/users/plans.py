@@ -99,7 +99,7 @@ def serialize_plan_row(row: AppPlan, *, include_allowed_models: bool = False, so
 
 def _sort_plan_payloads(plans: List[dict]) -> List[dict]:
     """按产品展示顺序排序套餐，未知套餐排在后面。"""
-    order = {"free": 0, "pro": 1, "pro_yearly": 2}
+    order = {"free": 0}
     return sorted(
         plans,
         key=lambda p: (

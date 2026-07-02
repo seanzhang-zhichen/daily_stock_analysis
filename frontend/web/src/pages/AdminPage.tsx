@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
+  PlusCircle,
   Settings,
   Pin,
   RotateCcw,
@@ -650,6 +651,17 @@ type PlanDraft = {
   isActive: boolean;
 };
 
+const emptyPlanDraft = (): PlanDraft => ({
+  name: '',
+  dailyAnalysisLimit: '',
+  dailyAgentLimit: '',
+  maxStocks: '',
+  canWebhook: false,
+  priceCents: '',
+  currency: 'CNY',
+  isActive: true,
+});
+
 const planToDraft = (plan: AdminPlan): PlanDraft => ({
   name: plan.name,
   dailyAnalysisLimit: String(plan.dailyAnalysisLimit),
@@ -672,6 +684,8 @@ const parseNonNegativeInt = (value: string, label: string): number => {
 const PlanConfigTab: React.FC = () => {
   const [plans, setPlans] = useState<AdminPlan[]>([]);
   const [drafts, setDrafts] = useState<Record<string, PlanDraft>>({});
+  const [newPlanCode, setNewPlanCode] = useState('');
+  const [newPlanDraft, setNewPlanDraft] = useState<PlanDraft>(() => emptyPlanDraft());
   const [loading, setLoading] = useState(false);
   const [savingCode, setSavingCode] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -736,8 +750,138 @@ const PlanConfigTab: React.FC = () => {
     }
   };
 
+  const handleCreate = async () => {
+    setError(null);
+    setInfo(null);
+    const code = newPlanCode.trim().toLowerCase();
+    if (!code) {
+      setError(getParsedApiError(new Error('套餐代码不能为空')));
+      return;
+    }
+    if (plans.some((plan) => plan.code === code)) {
+      setError(getParsedApiError(new Error('套餐代码已存在')));
+      return;
+    }
+    setSavingCode(code);
+    try {
+      const payload = {
+        name: newPlanDraft.name.trim(),
+        dailyAnalysisLimit: parseNonNegativeInt(newPlanDraft.dailyAnalysisLimit, '每日分析次数'),
+        dailyAgentLimit: parseNonNegativeInt(newPlanDraft.dailyAgentLimit, '每日 Agent 次数'),
+        maxStocks: parseNonNegativeInt(newPlanDraft.maxStocks, '自选股上限'),
+        canWebhook: newPlanDraft.canWebhook,
+        priceCents: parseNonNegativeInt(newPlanDraft.priceCents, '价格分'),
+        currency: (newPlanDraft.currency || 'CNY').trim().toUpperCase(),
+        isActive: newPlanDraft.isActive,
+      };
+      if (!payload.name) {
+        throw new Error('套餐名称不能为空');
+      }
+      const res = await adminApi.updatePlan(code, payload);
+      await refresh();
+      setNewPlanCode('');
+      setNewPlanDraft(emptyPlanDraft());
+      setInfo(`已新增 ${res.plan.name} 套餐。`);
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setSavingCode(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      <Card title="新增套餐" subtitle="CREATE PLAN">
+        <div className="grid gap-3 xl:grid-cols-[minmax(8rem,0.7fr)_minmax(10rem,1fr)_repeat(4,minmax(7rem,0.7fr))_auto] xl:items-end">
+          <Input
+            id="new-plan-code"
+            label="套餐代码"
+            placeholder="vip"
+            value={newPlanCode}
+            onChange={(e) => setNewPlanCode(e.target.value)}
+            disabled={Boolean(savingCode)}
+          />
+          <Input
+            id="new-plan-name"
+            label="套餐名称"
+            placeholder="会员套餐"
+            value={newPlanDraft.name}
+            onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, name: e.target.value }))}
+            disabled={Boolean(savingCode)}
+          />
+          <Input
+            id="new-plan-analysis"
+            type="number"
+            label="每日分析"
+            value={newPlanDraft.dailyAnalysisLimit}
+            onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, dailyAnalysisLimit: e.target.value }))}
+            disabled={Boolean(savingCode)}
+          />
+          <Input
+            id="new-plan-agent"
+            type="number"
+            label="每日 Agent"
+            value={newPlanDraft.dailyAgentLimit}
+            onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, dailyAgentLimit: e.target.value }))}
+            disabled={Boolean(savingCode)}
+          />
+          <Input
+            id="new-plan-stocks"
+            type="number"
+            label="自选股"
+            value={newPlanDraft.maxStocks}
+            onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, maxStocks: e.target.value }))}
+            disabled={Boolean(savingCode)}
+          />
+          <Input
+            id="new-plan-price"
+            type="number"
+            label="价格（分）"
+            value={newPlanDraft.priceCents}
+            onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, priceCents: e.target.value }))}
+            disabled={Boolean(savingCode)}
+          />
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => void handleCreate()}
+            isLoading={savingCode === newPlanCode.trim().toLowerCase()}
+          >
+            <PlusCircle className="h-4 w-4" /> 新增
+          </Button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-secondary-text">
+          <div className="w-32">
+            <Input
+              id="new-plan-currency"
+              label="币种"
+              value={newPlanDraft.currency}
+              onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, currency: e.target.value }))}
+              disabled={Boolean(savingCode)}
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 pt-6">
+            <input
+              type="checkbox"
+              checked={newPlanDraft.canWebhook}
+              onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, canWebhook: e.target.checked }))}
+              disabled={Boolean(savingCode)}
+              className="accent-primary"
+            />
+            Webhook
+          </label>
+          <label className="inline-flex items-center gap-2 pt-6">
+            <input
+              type="checkbox"
+              checked={newPlanDraft.isActive}
+              onChange={(e) => setNewPlanDraft((prev) => ({ ...prev, isActive: e.target.checked }))}
+              disabled={Boolean(savingCode)}
+              className="accent-primary"
+            />
+            上架
+          </label>
+        </div>
+      </Card>
       <Card title="套餐与每日用量" subtitle={`PLANS (${plans.length})`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-secondary-text">
@@ -767,7 +911,7 @@ const PlanConfigTab: React.FC = () => {
                       plan.isPersisted ? 'bg-primary/10 text-primary' : 'bg-secondary-text/10 text-secondary-text'
                     )}
                   >
-                    {plan.isPersisted ? '已配置' : '默认'}
+                    {plan.isPersisted ? '已配置' : '未保存'}
                   </span>
                 </div>
                 <div className="grid gap-3">
@@ -1036,7 +1180,7 @@ const PlatformSettingsTab: React.FC = () => {
 
 const GrantPlanTab: React.FC = () => {
   const [userEmail, setUserEmail] = useState('');
-  const [planCode, setPlanCode] = useState('pro');
+  const [planCode, setPlanCode] = useState('');
   const [grantDays, setGrantDays] = useState('30');
   const [note, setNote] = useState('');
   const [plans, setPlans] = useState<AdminPlan[]>([]);
@@ -1051,7 +1195,11 @@ const GrantPlanTab: React.FC = () => {
         const options = res.plans.filter((plan) => plan.code !== 'free' && plan.isActive);
         setPlans(options);
         setPlanCode((current) => (
-          options.length > 0 && !options.some((plan) => plan.code === current) ? options[0].code : current
+          options.length === 0
+            ? ''
+            : options.some((plan) => plan.code === current)
+              ? current
+              : options[0].code
         ));
       } catch (err) {
         setError(getParsedApiError(err));
@@ -1067,6 +1215,10 @@ const GrantPlanTab: React.FC = () => {
     const days = parseInt(grantDays, 10);
     if (!email || !email.includes('@')) {
       setError(getParsedApiError(new Error('请输入用户注册邮箱')));
+      return;
+    }
+    if (plans.length === 0) {
+      setError(getParsedApiError(new Error('请先在「套餐与用量」中启用至少一个付费套餐')));
       return;
     }
     if (!planCode.trim()) {
@@ -1119,10 +1271,10 @@ const GrantPlanTab: React.FC = () => {
             id="grant-plan-code"
             value={planCode}
             onChange={(e) => setPlanCode(e.target.value)}
-            disabled={submitting}
+            disabled={submitting || plans.length === 0}
             className="rounded-md border border-border/60 bg-card px-3 py-2 text-sm text-foreground"
           >
-            {plans.length === 0 ? <option value={planCode}>{planCode}</option> : null}
+            {plans.length === 0 ? <option value="">暂无可开通套餐</option> : null}
             {plans.map((plan) => (
               <option key={plan.code} value={plan.code}>
                 {plan.name} ({plan.code})
@@ -1150,7 +1302,13 @@ const GrantPlanTab: React.FC = () => {
         />
       </div>
       <div className="mt-4">
-        <Button type="button" variant="primary" onClick={handleSubmit} isLoading={submitting}>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={handleSubmit}
+          isLoading={submitting}
+          disabled={plans.length === 0}
+        >
           <CheckCircle2 className="h-4 w-4" /> 立即开通
         </Button>
       </div>

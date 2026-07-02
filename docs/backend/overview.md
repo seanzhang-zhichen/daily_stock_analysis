@@ -473,7 +473,7 @@ ReAct 循环（Reasoning + Acting），最多 `AGENT_MAX_STEPS_DEFAULT`（默认
 | 档位 | 每日分析次数 | 每日 Agent 次数 | 自选股上限 |
 |------|-----------------|---------------------|------------|
 | free | 由 `AppPlan` 表配置 | 同上 | 同上 |
-| pro/pro_yearly | 由 `AppPlan` 表配置 | 同上 | 同上 |
+| 付费套餐 | 由 `AppPlan` 表配置 | 同上 | 同上 |
 
 `resolve_user_plan(db, user)` — 核心函数，读取 `AppUser.plan_code + plan_expires_at`，套餐过期自动降级为 free（内存态，不写库）。
 
@@ -578,7 +578,7 @@ Bot 请求通过 Webhook 回调到 `/api/v1/bot/*` 端点，经 `BotHandler` 分
 - `GracefulShutdown` 捕获 SIGTERM/SIGINT，等待当前任务完成后退出
 - 时间可在运行期通过 `SystemConfigService` 动态修改（`SCHEDULE_TIME` 环境变量）
 
-To C 模式下，调度器还会对所有 Pro 用户执行每日推送分析（`daily_push_enabled=true`）。
+To C 模式下，调度器还会对所有已开通付费套餐且启用每日推送的用户执行每日推送分析（`daily_push_enabled=true`）。
 
 ---
 

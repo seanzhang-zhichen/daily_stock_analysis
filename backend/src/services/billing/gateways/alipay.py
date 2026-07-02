@@ -300,7 +300,7 @@ class AlipayGateway(PaymentGateway):
         biz: dict = {
             "out_trade_no": order.order_no,
             "total_amount": f"{(order.amount_cents or 0) / 100:.2f}",
-            "subject": f"DSA Pro 订阅 - {getattr(order, 'plan_code', '')}",
+            "subject": f"DSA 会员订阅 - {getattr(order, 'plan_code', '')}",
         }
         data = self._call_openapi("alipay.trade.precreate", biz)
         qr_code = data.get("qr_code") or ""

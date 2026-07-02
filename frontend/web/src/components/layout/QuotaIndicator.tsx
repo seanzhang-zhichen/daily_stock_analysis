@@ -104,7 +104,7 @@ export const QuotaIndicator: React.FC<QuotaIndicatorProps> = ({
           agentRemaining,
           agentLimit
         )}`,
-        hint: '今日已用完 · 升级 Pro',
+        hint: '今日已用完 · 升级套餐',
         analysisRemaining,
         analysisLimit,
         agentRemaining,

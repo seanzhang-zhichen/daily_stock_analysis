@@ -314,8 +314,12 @@ class _BillingSvcBase(unittest.TestCase):
         os.environ["PAYMENT_ENABLED"] = "true"  # 让 factory 进入 build 分支(测试 override 还是优先)
         self._temp_dir = tempfile.TemporaryDirectory()
         self._db_path = os.path.join(self._temp_dir.name, "billing.db")
-        self._saved_env = {k: os.environ.get(k) for k in ["DATABASE_PATH", "USER_EMAIL_BACKEND"]}
+        self._saved_env = {
+            k: os.environ.get(k)
+            for k in ["DATABASE_PATH", "DATABASE_URL", "USER_EMAIL_BACKEND"]
+        }
         os.environ["DATABASE_PATH"] = self._db_path
+        os.environ["DATABASE_URL"] = ""
         # 邮件后端: 默认 logging, 这里再保险设一下
         os.environ.pop("USER_EMAIL_BACKEND", None)
 
@@ -343,11 +347,18 @@ class _BillingSvcBase(unittest.TestCase):
         from src.storage import AppPlan
         session = self.db_manager.get_session()
         try:
-            session.add(AppPlan(
-                code="pro", name="Pro", daily_analysis_limit=50,
-                daily_agent_limit=50, max_stocks=30,
-                can_webhook=True, price_cents=3900,
-            ))
+            plan = session.query(AppPlan).filter(AppPlan.code == "pro").first()
+            if plan is None:
+                plan = AppPlan(code="pro")
+            session.add(plan)
+            plan.name = "Pro"
+            plan.daily_analysis_limit = 50
+            plan.daily_agent_limit = 50
+            plan.max_stocks = 30
+            plan.can_webhook = True
+            plan.price_cents = 3900
+            plan.currency = "CNY"
+            plan.is_active = True
             session.commit()
         finally:
             session.close()

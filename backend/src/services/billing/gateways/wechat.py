@@ -316,7 +316,7 @@ class WechatGateway(PaymentGateway):
             {
                 "appid": self.app_id,
                 "mchid": self.mch_id,
-                "description": f"DSA Pro 订阅 - {getattr(order, 'plan_code', '')}",
+                "description": f"DSA 会员订阅 - {getattr(order, 'plan_code', '')}",
                 "out_trade_no": order.order_no,
                 "notify_url": notify,
                 "amount": {"total": order.amount_cents, "currency": "CNY"},

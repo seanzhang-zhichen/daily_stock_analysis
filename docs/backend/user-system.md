@@ -142,7 +142,7 @@ API endpoint：
 
 | 字段 | 说明 |
 |------|------|
-| `code` | 套餐代码，如 `free` / `pro` / `pro_yearly` |
+| `code` | 套餐代码，如 `free` 或运营后台创建的付费套餐代码 |
 | `name` | 展示名称 |
 | `daily_analysis_limit` | 每日分析次数 |
 | `daily_agent_limit` | 每日 Agent 次数 |
@@ -448,7 +448,7 @@ UNIQUE(user_id, stock_code)
 |------|------|
 | `daily_push_enabled` | 是否启用每日自动推送 |
 | `email_enabled` | 是否启用邮件 |
-| `webhook_url` | 用户自定义 Webhook（Pro 权益） |
+| `webhook_url` | 用户自定义 Webhook（付费套餐权益） |
 | `webhook_type` | feishu / wecom / discord / telegram / generic |
 
 接口：
@@ -459,7 +459,7 @@ PUT /api/v1/account/notification-prefs
 GET /api/v1/account/notification-prefs/unsubscribe
 ```
 
-Pro 用户可开启每日推送和自定义 Webhook，免费用户通常只能使用基础能力。
+已开通付费套餐的用户可开启每日推送和自定义 Webhook，免费用户通常只能使用基础能力。
 
 ---
 
@@ -737,7 +737,7 @@ SSE /analysis/tasks/stream 等待完成
 AnalysisHistory 落库
 ```
 
-### 链路二：用户购买 Pro
+### 链路二：用户购买付费套餐
 
 ```text
 GET /billing/plans
@@ -773,7 +773,7 @@ AgentExecutor / AgentOrchestrator
 返回回答
 ```
 
-### 链路四：每日 Pro 用户自动推送
+### 链路四：付费用户每日自动推送
 
 ```text
 Scheduler 到点
@@ -782,7 +782,7 @@ Scheduler 到点
   ↓
 resolve_user_plan
   ↓
-跳过非 Pro 或已过期用户
+跳过非付费套餐或已过期用户
   ↓
 读取用户 watchlist
   ↓

@@ -127,7 +127,7 @@ class _DatabaseManagerBase:
         else:
             self._run_alembic_upgrade()
 
-        self._seed_builtin_app_plans()
+        self._ensure_free_app_plan()
         self._seed_builtin_credit_packages()
         self._bootstrap_super_admin()
 
@@ -198,7 +198,7 @@ class _DatabaseManagerBase:
             logger.error("Alembic upgrade 失败，数据库初始化中止: %s", exc)
             raise
 
-    def _seed_builtin_app_plans(self) -> None:
+    def _ensure_free_app_plan(self) -> None:
         """确保数据库至少存在 free 套餐，避免空库启动后配额查询失败。"""
         session = self._SessionLocal()
         try:
