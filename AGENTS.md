@@ -7,10 +7,10 @@
 ## 1. 硬规则
 
 - 遵循现有目录边界：
-  - 后端真实代码优先放在 `backend/`；根目录 `src/`、`data_provider/`、`api/`、`bot/` 仅作为兼容 shim
+  - 后端代码放在 `backend/`，不要在根目录新增平行的 `src/`、`data_provider/`、`api/`、`bot/` 兼容实现
   - Web 前端改动在 `frontend/web/`
   - 桌面端改动在 `frontend/desktop/`
-  - 部署与流水线改动在 `scripts/`、`.github/workflows/`、`docker/`
+  - 部署与自动化改动在 `scripts/`、`docker/`；若恢复 GitHub Actions，则工作流放在 `.github/workflows/`
 - 未经明确确认，不执行 `git commit`、`git tag`、`git push`。
 - commit message 使用英文，不添加 `Co-Authored-By`。
 - 不写死密钥、账号、路径、模型名、端口或环境差异逻辑。
@@ -34,15 +34,15 @@
 ## 2. AI 协作资产治理
 
 - `AGENTS.md` 是仓库内 AI 协作规则的唯一真源。
-- `CLAUDE.md` 必须是指向 `AGENTS.md` 的软链接，用于兼容 Claude 生态。
-- `.github/copilot-instructions.md` 与 `.github/instructions/*.instructions.md` 是 GitHub Copilot / Coding Agent 的镜像或分层补充；若与本文件冲突，以 `AGENTS.md` 为准。
-- 仓库协作 skill 存放在 `.claude/skills/`，分析产物存放在 `.claude/reviews/`；前者可以入库，后者默认视为本地产物。
+- `CLAUDE.md` 在 Git 索引中必须是指向 `AGENTS.md` 的软链接，用于兼容 Claude 生态；Windows `core.symlinks=false` 检出为内容仅含 `AGENTS.md` 的普通文件时也视为有效工作树表示。
+- 当前仓库未维护 `.github` 指令镜像；未来新增时若与本文件冲突，以 `AGENTS.md` 为准。
+- 当前仓库未维护 `.claude/skills/` 协作 skill；本地分析产物可放在忽略的 `.claude/` 下，但不得作为规则真源。
 - 根目录 `SKILL.md` 与 `docs/openclaw-skill-integration.md` 属于产品或外部集成说明，不是仓库协作规则真源。
 - 若未来新增 `.agents/skills/` 或其他 agent 专用目录，必须先明确单一真源，再通过脚本或镜像同步；禁止手工长期维护多份同义内容。
 - 修改 AI 协作治理资产时，执行：
 
 ```bash
-python scripts/check_ai_assets.py
+uv run --locked python scripts/check_ai_assets.py
 ```
 
 ## 3. 仓库速览
@@ -50,11 +50,10 @@ python scripts/check_ai_assets.py
 - 项目定位：股票智能分析系统，覆盖 A 股、港股、美股。
 - 主流程：抓取数据 -> 技术分析/新闻检索 -> LLM 分析 -> 生成报告 -> 通知推送。
 - 关键入口：
-  - `main.py`：兼容分析任务入口（真实实现在 `backend/main.py`）
-  - `server.py`：兼容 FastAPI 服务入口（真实实现在 `backend/server.py`）
+  - `backend/main.py`：分析、调度和服务启动入口
+  - `backend/server.py`：FastAPI ASGI 入口
   - `frontend/web/`：Web 前端
   - `frontend/desktop/`：Electron 桌面端
-  - `.github/workflows/`：CI、发布、每日任务
 - 核心职责：
   - `backend/src/core/`：主流程编排
   - `backend/src/services/`：业务服务层
@@ -65,7 +64,6 @@ python scripts/check_ai_assets.py
   - `backend/api/`：FastAPI API
   - `backend/bot/`：机器人接入
   - `scripts/`：本地脚本
-  - `.github/scripts/`：GitHub 自动化脚本
   - `tests/`：pytest 测试
   - `docs/`：文档与说明
 
@@ -74,26 +72,33 @@ python scripts/check_ai_assets.py
 ### 运行应用
 
 ```bash
-python backend/main.py
-python backend/main.py --debug
-python backend/main.py --dry-run
-python backend/main.py --stocks 600519,hk00700,AAPL
-python backend/main.py --market-review
-python backend/main.py --schedule
-python backend/main.py --serve
-python backend/main.py --serve-only
-uvicorn backend.backend.server:app --reload --host 0.0.0.0 --port 8000
+uv sync --locked
+uv run --locked python backend/main.py
+uv run --locked python backend/main.py --debug
+uv run --locked python backend/main.py --dry-run
+uv run --locked python backend/main.py --stocks 600519,hk00700,AAPL
+uv run --locked python backend/main.py --market-review
+uv run --locked python backend/main.py --schedule
+uv run --locked python backend/main.py --serve
+uv run --locked python backend/main.py --serve-only
+uv run --locked uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 后端验证
 
 ```bash
-pip install -r requirements.txt
-pip install flake8 pytest
+uv sync --locked
 ./scripts/ci_gate.sh
-python -m pytest -m "not network"
-python -m py_compile <changed_python_files>
+uv run --locked python -m pytest -m "not network"
+uv run --locked python -m py_compile <changed_python_files>
 ```
+
+### Python 依赖管理
+
+- 使用 `uv` 作为唯一 Python 包管理器；`pyproject.toml` 是依赖声明真源，`uv.lock` 是跨环境锁文件。
+- 新增、升级或删除依赖使用 `uv add`、`uv remove`、`uv lock --upgrade-package <package>` 等命令，并同时提交 `pyproject.toml` 与 `uv.lock`。
+- 不新增或手工维护 `requirements.txt`，不直接使用 `pip install` 改变项目环境。
+- 本地、CI 与生产部署默认使用 `--locked` 校验 `pyproject.toml` 和 `uv.lock` 一致；生产安装使用 `uv sync --locked --no-dev`。只有明确需要忽略项目声明、完全以现有锁文件为准的受控场景才使用 `--frozen`。
 
 ### Web / Desktop
 
@@ -137,25 +142,14 @@ gh run view <run_id> --log-failed
 
 ### CI 覆盖原则
 
-当前仓库 CI 主要包含：
-
-| 检查项 | 来源 | 说明 | 是否阻断 |
-| --- | --- | --- | --- |
-| `ai-governance` | `.github/workflows/ci.yml` | 校验 `AGENTS.md` / `CLAUDE.md` / `.github` 指令 / `.claude/skills` 关系 | 是 |
-| `backend-gate` | `.github/workflows/ci.yml` | 执行 `./scripts/ci_gate.sh` | 是 |
-| `docker-build` | `.github/workflows/ci.yml` | Docker 构建与关键模块导入 smoke | 是 |
-| `web-gate` | `.github/workflows/ci.yml` | 前端改动时执行 `npm run lint` + `npm run build` | 是（触发时） |
-| `network-smoke` | `.github/workflows/network-smoke.yml` | `pytest -m network` + `scripts/test.sh quick` | 否，观测项 |
-| `pr-review` | `.github/workflows/pr-review.yml` | PR 静态检查 + AI 审查 + 自动标签 | 否，辅助项 |
-
-若 PR 上已有对应 CI 结果，可直接引用 CI 结论；若 CI 未覆盖改动面，或本地与 CI 环境差异较大，需要补充说明本地验证与缺口。
+当前检出版本未包含 `.github/workflows/`，因此不能假定 GitHub Actions 已覆盖改动。以本节本地验证矩阵为最低标准；若目标 PR 上实际存在远端 CI 结果，可引用其结论，并补充远端未覆盖的改动面。
 
 ### 按改动面执行
 
 - Python 后端改动：
-  - 后端真实代码优先放在 `backend/`；根目录 `src/`、`data_provider/`、`api/`、`bot/` 仅作为兼容 shim
-  - 优先执行：`./scripts/ci_gate.sh`
-  - 最低要求：`python -m py_compile <changed_python_files>`
+  - 后端代码放在 `backend/`，根目录不维护兼容 shim
+  - 优先执行：`uv sync --locked && ./scripts/ci_gate.sh`
+  - 最低要求：`uv run --locked python -m py_compile <changed_python_files>`
   - 若影响 API、任务编排、报告生成、通知发送、数据源 fallback、认证、调度，交付说明中要写明是否覆盖了对应路径。
 
 - Web 前端改动：
@@ -174,10 +168,10 @@ gh run view <run_id> --log-failed
   - 若涉及登录、Cookie、会话、轮询状态、字段增删或枚举变化，必须明确写出兼容性影响。
 
 - 文档与治理文件改动：
-  - 适用范围：`README.md`、`docs/**`、`AGENTS.md`、`.github/copilot-instructions.md`、`.github/instructions/**`、`.claude/skills/**`
+  - 适用范围：`README.md`、`docs/**`、`AGENTS.md`、`CLAUDE.md`，以及未来可能新增的 `.github/**`、`.claude/skills/**`
   - 不强制代码测试。
   - 需确认命令、配置项、文件名、工作流名称与实际仓库一致。
-  - 改动 AI 协作治理资产时，执行 `python scripts/check_ai_assets.py`。
+  - 改动 AI 协作治理资产时，执行 `uv run --locked python scripts/check_ai_assets.py`。
 
 - 工作流 / 脚本 / Docker 改动：
   - 适用范围：`.github/**`、`scripts/**`、`docker/**`
@@ -215,19 +209,14 @@ gh run view <run_id> --log-failed
 
 ## 8. Issue / PR / Skill 工作流
 
-- 仓库内已有以下 skill，可优先复用：
-  - `.claude/skills/analyze-issue/SKILL.md`
-  - `.claude/skills/analyze-pr/SKILL.md`
-  - `.claude/skills/fix-issue/SKILL.md`
-- 如果任务明确是 issue 分析、PR 审查、issue 修复，优先按对应 skill 执行，并将产物保存到 `.claude/reviews/`。
-- skill 中的命令、模板、验证顺序和交付结构必须与 `AGENTS.md` 保持一致。
-- skill 默认优先读取 CI / 工作流证据，再决定是否补本地验证。
-- skill 不得默认执行 `git pull`、`git push`、`git tag`、`gh pr create` 等会改变远端或当前分支状态的操作；这些操作必须要求用户确认。
+- 当前仓库未内置 issue / PR 协作 skill；若未来新增，其命令、模板、验证顺序和交付结构必须与 `AGENTS.md` 保持一致。
+- issue 分析、PR 审查、issue 修复默认优先读取可用的 CI / 工作流证据，再决定是否补本地验证；本地分析产物可保存到忽略的 `.claude/reviews/`。
+- 协作流程不得默认执行 `git pull`、`git push`、`git tag`、`gh pr create` 等会改变远端或当前分支状态的操作；这些操作必须要求用户确认。
 - PR 审查默认顺序：
   1. 必要性
   2. 关联性
   3. 标题建议（`<类型>: <修改内容>`，且不含工具/agent 前缀；不作为硬性阻断项）
-  4. 描述完整性（对照 `.github/PULL_REQUEST_TEMPLATE.md`）
+  4. 描述完整性（若仓库存在 PR 模板则对照模板）
   5. 验证证据
   6. 实现正确性
   7. 合入判定
@@ -252,41 +241,41 @@ gh run view <run_id> --log-failed
 
 ```bash
 # 生成增量迁移（修改 ORM model 后执行）
-alembic revision --autogenerate -m "描述变更内容"
+uv run --locked alembic revision --autogenerate -m "描述变更内容"
 
 # 应用所有 pending 迁移
-alembic upgrade head
+uv run --locked alembic upgrade head
 
 # 回滚一步
-alembic downgrade -1
+uv run --locked alembic downgrade -1
 
 # 查看当前版本
-alembic current
+uv run --locked alembic current
 
 # 查看历史
-alembic history
+uv run --locked alembic history
 
 # 为已有数据库打基线标记（引入 Alembic 前的存量库，只需运行一次）
-alembic stamp 8f3a2b1c9d0e
+uv run --locked alembic stamp b0bc3c721ef0
 ```
 
 ### 工作流程
 
 1. 修改 `backend/src/storage/models/` 下的 ORM 模型
-2. 运行 `alembic revision --autogenerate -m "..."` 生成迁移文件
+2. 运行 `uv run --locked alembic revision --autogenerate -m "..."` 生成迁移文件
 3. **人工 review** 生成的 `backend/alembic/versions/` 文件，确认 DDL 正确
 4. 提交迁移文件与模型变更到同一 PR
-5. 生产部署时 `alembic upgrade head`（或由 `DatabaseManager` 启动时自动执行）
+5. 生产部署时 `uv run --locked alembic upgrade head`（或由 `DatabaseManager` 启动时自动执行）
 
 ### 存量数据库升级（首次引入 Alembic）
 
 对使用 `create_all` 创建的已有数据库，只需打一次基线标记，不需要重新建表：
 
 ```bash
-alembic stamp b0bc3c721ef0
+uv run --locked alembic stamp b0bc3c721ef0
 ```
 
-之后正常 `alembic upgrade head` 即可应用后续增量迁移。
+之后正常 `uv run --locked alembic upgrade head` 即可应用后续增量迁移。
 
 ### 禁止事项
 

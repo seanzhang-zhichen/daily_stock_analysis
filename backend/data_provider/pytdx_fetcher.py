@@ -180,7 +180,7 @@ class PytdxFetcher(BaseFetcher):
             from pytdx.hq import TdxHq_API
             return TdxHq_API
         except ImportError:
-            logger.warning("pytdx 未安装，请运行: pip install pytdx")
+            logger.warning("pytdx 未安装，请运行: uv sync --locked")
             return None
     
     @contextmanager

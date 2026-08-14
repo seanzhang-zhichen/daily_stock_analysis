@@ -21,7 +21,7 @@ function resolveBackendCommand() {
     return `"${windowsVenvPython}" backend/main.py --webui-only --host 127.0.0.1 --port 8000`;
   }
 
-  return 'python backend/main.py --webui-only --host 127.0.0.1 --port 8000';
+  return 'uv run --locked python backend/main.py --webui-only --host 127.0.0.1 --port 8000';
 }
 
 export default defineConfig({

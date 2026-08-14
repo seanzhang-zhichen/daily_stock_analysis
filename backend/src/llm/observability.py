@@ -93,7 +93,7 @@ def _setup_langfuse() -> None:
     except ImportError:
         logger.warning(
             "LANGFUSE_SECRET_KEY 已配置，但 langfuse 包未安装。"
-            "请执行 pip install langfuse 后重启。"
+            "请执行 uv sync --locked 后重启。"
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Langfuse init failed: %s", exc)

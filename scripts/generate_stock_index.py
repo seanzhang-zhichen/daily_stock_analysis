@@ -32,7 +32,7 @@ try:
 except ImportError:
     PYPINYIN_AVAILABLE = False
     print("[Warning] pypinyin not available, pinyin fields will be empty")
-    print("[Info] Install with: pip install pypinyin")
+    print("[Info] Sync dependencies with: uv sync --locked")
 
 
 def normalize_name_for_pinyin(name: str) -> str:

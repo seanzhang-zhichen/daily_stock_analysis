@@ -21,14 +21,12 @@ daily_stock_analysis/
 ├── docs/                # 项目文档
 ├── tests/               # pytest 测试
 ├── scripts/             # 本地脚本
-├── alembic.ini          # Alembic 配置
-└── .github/workflows/   # GitHub Actions
+└── alembic.ini          # Alembic 配置
 ```
 
 ## 📑 目录
 
 - [项目结构](#项目结构)
-- [GitHub Actions 详细配置](#github-actions-详细配置)
 - [环境变量完整列表](#环境变量完整列表)
 - [Docker 部署](#docker-部署)
 - [本地运行详细配置](#本地运行详细配置)
@@ -41,180 +39,13 @@ daily_stock_analysis/
 
 ---
 
-## GitHub Actions 详细配置
-
-### 1. Fork 本仓库
-
-点击右上角 `Fork` 按钮
-
-### 2. 配置 Secrets
-
-进入你 Fork 的仓库 → `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
-
-<div align="center">
-  <img src="assets/secret_config.png" alt="GitHub Secrets 配置示意图" width="600">
-</div>
-
-#### AI 模型配置（至少配置一个）
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/?share_code=QFBC0FYC) API Key，一 Key 同时启用大模型和中文优化联网搜索，含本项目免费额度 | 推荐 |
-| `AIHUBMIX_KEY` | [AIHubMix](https://aihubmix.com/?aff=CfMq) API Key，一 Key 切换使用全系模型，本项目可享 10% 优惠 | 推荐 |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) 获取免费 Key | 可选 |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API Key | 可选 |
-| `OPENAI_API_KEY` | OpenAI 兼容 API Key（支持 DeepSeek、通义千问等） | 可选 |
-| `OPENAI_BASE_URL` | OpenAI 兼容 API 地址（如 `https://api.deepseek.com`） | 可选 |
-| `OPENAI_MODEL` | 模型名称（如 `gemini-3.1-pro-preview`、`deepseek-v4-flash`、`gpt-5.5`） | 可选 |
-
-> *注：以上模型 Key / 渠道至少配置一个；推荐优先从 Anspire 或 AIHubMix 这类一 Key 多模型服务开始。
-
-#### 通知渠道配置（可同时配置多个，全部推送）
-
-> 通知渠道、minimal/advanced key 分层、Actions 映射、`--check-notify` 诊断、Web 一键测试和本地 / Docker / GitHub Actions / Desktop 场景说明详见 [通知专题文档](notifications.md)。
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `WECHAT_WEBHOOK_URL` | 企业微信 Webhook URL | 可选 |
-| `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 可选 |
-| `FEISHU_WEBHOOK_SECRET` | 飞书 Webhook 签名密钥（开启“签名校验”时必填） | 可选 |
-| `FEISHU_WEBHOOK_KEYWORD` | 飞书 Webhook 关键词（开启“关键词”时必填） | 可选 |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（@BotFather 获取） | 可选 |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 可选 |
-| `TELEGRAM_MESSAGE_THREAD_ID` | Telegram Topic ID (用于发送到子话题) | 可选 |
-| `DISCORD_WEBHOOK_URL` | Discord Webhook URL（[创建方法](https://support.discord.com/hc/en-us/articles/228383668)） | 可选 |
-| `DISCORD_BOT_TOKEN` | Discord Bot Token（与 Webhook 二选一） | 可选 |
-| `DISCORD_MAIN_CHANNEL_ID` | Discord Channel ID（使用 Bot 时需要） | 可选 |
-| `DISCORD_INTERACTIONS_PUBLIC_KEY` | Discord Public Key（仅入站 Interaction/Webhook 回调验签时需要） | 可选 |
-| `SLACK_BOT_TOKEN` | Slack Bot Token（推荐，支持图片上传；同时配置时优先于 Webhook） | 可选 |
-| `SLACK_CHANNEL_ID` | Slack Channel ID（使用 Bot 时需要） | 可选 |
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL（仅文本，不支持图片） | 可选 |
-| `EMAIL_SENDER` | 发件人邮箱（如 `xxx@qq.com`） | 可选 |
-| `EMAIL_PASSWORD` | 邮箱授权码（非登录密码） | 可选 |
-| `EMAIL_RECEIVERS` | 收件人邮箱（多个用逗号分隔，留空则发给自己） | 可选 |
-| `EMAIL_SENDER_NAME` | 发件人显示名称（默认：daily_stock_analysis股票分析助手） | 可选 |
-| `PUSHPLUS_TOKEN` | PushPlus Token（[获取地址](https://www.pushplus.plus)，国内推送服务） | 可选 |
-| `SERVERCHAN3_SENDKEY` | Server酱³ Sendkey（[获取地址](https://sc3.ft07.com/)，手机APP推送服务） | 可选 |
-| `ASTRBOT_URL` | AstrBot Webhook URL | 可选 |
-| `ASTRBOT_TOKEN` | AstrBot Bearer Token（可选） | 可选 |
-| `NTFY_URL` | ntfy 完整 topic endpoint，必须包含 topic path，例如 `https://ntfy.sh/my-topic` | 可选 |
-| `NTFY_TOKEN` | ntfy Bearer Token（可选） | 可选 |
-| `GOTIFY_URL` | Gotify server base URL，不包含 `/message`；系统会自动拼接 `/message` | 可选 |
-| `GOTIFY_TOKEN` | Gotify application token，通过 `X-Gotify-Key` Header 发送 | 可选 |
-| `CUSTOM_WEBHOOK_URLS` | 自定义 Webhook（支持钉钉等，多个用逗号分隔） | 可选 |
-| `CUSTOM_WEBHOOK_BEARER_TOKEN` | 自定义 Webhook 的 Bearer Token（用于需要认证的 Webhook） | 可选 |
-| `CUSTOM_WEBHOOK_BODY_TEMPLATE` | 自定义 Webhook JSON body 模板，适配 AstrBot、NapCat、自建服务等特殊 payload | 可选 |
-| `WEBHOOK_VERIFY_SSL` | 读取该配置的 webhook-style HTTPS 通知请求证书校验（默认 true）。设为 false 可支持自签名证书。警告：关闭有严重安全风险（MITM），仅限可信内网 | 可选 |
-
-> *注：至少配置一个渠道，配置多个则同时推送
->
-> 当前默认 `daily_analysis.yml` 只显式映射固定 Secret / Variable 名称，不会自动把 `STOCK_GROUP_1`、`EMAIL_GROUP_1` 这类任意编号变量导入运行环境。所以分组邮箱功能目前不适用于仓库自带默认 GitHub Actions workflow；它适用于本地 `.env`、Docker，或你自行显式扩展过 `env:` 映射的运行环境。Actions 已显式映射 `CUSTOM_WEBHOOK_BODY_TEMPLATE`、`WEBHOOK_VERIFY_SSL`、`FEISHU_WEBHOOK_SECRET`、`FEISHU_WEBHOOK_KEYWORD`、`PUSHPLUS_TOPIC`、`NTFY_URL`、`NTFY_TOKEN`、`GOTIFY_URL`、`GOTIFY_TOKEN`、P3 通知路由键以及 P4 通知降噪键；`MARKDOWN_TO_IMAGE_CHANNELS` 和 `MERGE_EMAIL_NOTIFICATION` 仍作为行为开关不在默认 workflow 中自动映射。
-
-#### 推送行为配置
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `SINGLE_STOCK_NOTIFY` | 单股推送模式：设为 `true` 则每分析完一只股票立即推送 | 可选 |
-| `REPORT_TYPE` | 报告类型：`simple`(精简)、`full`(完整)、`brief`(3-5句概括)，Docker环境推荐设为 `full` | 可选 |
-| `REPORT_LANGUAGE` | 报告输出语言：`zh`(默认中文) / `en`(英文)；会同步影响 Prompt、模板、通知 fallback 与 Web 报告页固定文案。仓库自带 `daily_analysis.yml` 已显式映射该变量，直接在 Actions Secrets/Variables 中配置即可生效 | 可选 |
-| `REPORT_SUMMARY_ONLY` | 仅分析结果摘要：设为 `true` 时只推送汇总，不含个股详情；多股时适合快速浏览（默认 false，Issue #262） | 可选 |
-| `REPORT_SHOW_LLM_MODEL` | 通知报告底部是否显示本次分析使用的 LLM 模型名称，默认 `true`；设为 `false` 可隐藏运行时模型信息。该变量仅调整展示，不影响 provider/model/Base URL、LiteLLM 路由或运行时模型保存/迁移/清理语义。 | 可选 |
-| `REPORT_TEMPLATES_DIR` | Jinja2 模板目录（相对项目根，默认 `templates`） | 可选 |
-| `REPORT_RENDERER_ENABLED` | 启用 Jinja2 模板渲染（默认 `false`，保证零回归） | 可选 |
-| `REPORT_INTEGRITY_ENABLED` | 启用报告完整性校验，缺失必填字段时重试或占位补全（默认 `true`） | 可选 |
-| `REPORT_INTEGRITY_RETRY` | 完整性校验重试次数（默认 `1`，`0` 表示仅占位不重试） | 可选 |
-| `REPORT_HISTORY_COMPARE_N` | 历史信号对比条数，`0` 关闭（默认），`>0` 启用 | 可选 |
-| `ANALYSIS_DELAY` | 个股分析和大盘分析之间的延迟（秒），避免API限流，如 `10` | 可选 |
-| `MERGE_EMAIL_NOTIFICATION` | 个股与大盘复盘合并推送（默认 false），减少邮件数量、降低垃圾邮件风险；与 `SINGLE_STOCK_NOTIFY` 互斥（单股模式下合并不生效） | 可选 |
-| `MARKDOWN_TO_IMAGE_CHANNELS` | 将 Markdown 转为图片发送的渠道（用逗号分隔）：telegram,wechat,custom,email,slack；单股推送需同时配置且安装转图工具 | 可选 |
-| `NOTIFICATION_REPORT_CHANNELS` | report 路由渠道（单股推送、聚合日报、大盘复盘、合并推送等）；留空表示所有已配置渠道 | 可选 |
-| `NOTIFICATION_ALERT_CHANNELS` | alert 路由渠道（EventMonitor 告警）；留空表示所有已配置渠道 | 可选 |
-| `NOTIFICATION_SYSTEM_ERROR_CHANNELS` | system_error 预留路由渠道；当前不新增自动系统错误生产者，留空表示所有已配置渠道 | 可选 |
-| `NOTIFICATION_DEDUP_TTL_SECONDS` | 通知去重 TTL 秒数，`0` 关闭；同一稳定去重 key 在 TTL 内只发送一次 | 可选 |
-| `NOTIFICATION_COOLDOWN_SECONDS` | 通知冷却秒数，`0` 关闭；同一冷却 key 在窗口内限频 | 可选 |
-| `NOTIFICATION_QUIET_HOURS` | 通知静默时段，格式 `HH:MM-HH:MM`，支持跨午夜；留空关闭 | 可选 |
-| `NOTIFICATION_TIMEZONE` | 静默时段使用的 IANA 时区，如 `Asia/Shanghai`；留空跟随 `TZ` 或系统本地时区 | 可选 |
-| `NOTIFICATION_MIN_SEVERITY` | 最低通知级别：`info`、`warning`、`error`、`critical`；留空保持现状 | 可选 |
-| `NOTIFICATION_DAILY_DIGEST_ENABLED` | 每日摘要预留开关；当前不会发送摘要或持久化摘要内容 | 可选 |
-| `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
-| `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认，需 wkhtmltopdf）或 `markdown-to-file`（emoji 更好，需 `npm i -g markdown-to-file`） | 可选 |
-| `PREFETCH_REALTIME_QUOTES` | 设为 `false` 可禁用实时行情预取，避免 efinance/akshare_em 全市场拉取（默认 true） | 可选 |
-
-> 兼容性说明：`REPORT_SHOW_LLM_MODEL` 维持默认 `true` 的原始展示语义，关闭时只影响底部模型文案输出。该配置不会变更 provider/model/Base URL、LiteLLM 路由、模型保存、迁移或清理语义；回退方式为恢复或删除该变量，并设为 `true`。
-
-#### 其他配置
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | ✅ |
-| `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) 针对中文内容特别优化；同一 Key 可用于搜索与 Anspire 大模型网关的兜底示例（是否可用以控制台与账号权限为准） | 推荐 |
-| `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis) 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
-| `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 可选 |
-| `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
-| `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/) API（隐私优先，美股优化，多个key用逗号分隔） | 可选 |
-| `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimax.io/) Coding Plan Web Search（结构化搜索结果） | 可选 |
-| `SEARXNG_BASE_URLS` | SearXNG 自建实例（无配额兜底，需在 settings.yml 启用 format: json）；留空时默认自动发现公共实例 | 可选 |
-| `SEARXNG_PUBLIC_INSTANCES_ENABLED` | 是否在 `SEARXNG_BASE_URLS` 为空时自动从 `searx.space` 获取公共实例（默认 `true`） | 可选 |
-| `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
-| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key（美股/港股量比、换手率、PE 兜底） | 可选 |
-| `LONGBRIDGE_APP_SECRET` | Longbridge App Secret | 可选 |
-| `LONGBRIDGE_ACCESS_TOKEN` | Longbridge Access Token | 可选 |
-| `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` | 长桥 `static_info` 进程内缓存秒数（默认 86400，0=不缓存） | 可选 |
-| `LONGBRIDGE_CONNECTION_COOLDOWN_SECONDS` | 长桥连接关闭类异常后的冷却秒数（默认 15；冷却期内临时跳过 Longbridge，避免频繁重连） | 可选 |
-| `LONGBRIDGE_HTTP_URL` | HTTP 接口地址（默认 `https://openapi.longbridge.com`） | 可选 |
-| `LONGBRIDGE_QUOTE_WS_URL` | 行情 WebSocket 地址（默认 `wss://openapi-quote.longbridge.com/v2`） | 可选 |
-| `LONGBRIDGE_TRADE_WS_URL` | 交易 WebSocket 地址（默认 `wss://openapi-trade.longbridge.com/v2`） | 可选 |
-| `LONGBRIDGE_REGION` | 覆盖接入点；SDK 会按网络自动选择，默认 `hk`，若判断不正确可设置（如 `cn`、`hk`） | 可选 |
-| `LONGBRIDGE_ENABLE_OVERNIGHT` | 是否开启夜盘行情 `true` / `false`，默认 `false` | 可选 |
-| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | K 线推送模式：`realtime` 或 `confirmed`（默认 `realtime`） | 可选 |
-| `LONGBRIDGE_PRINT_QUOTE_PACKAGES` | 连接时是否打印行情包（未设置时默认 `false`；设为 `1`/`true`/`yes` 开启） | 可选 |
-| `ENABLE_CHIP_DISTRIBUTION` | 启用筹码分布（Actions 默认 false；需筹码数据时在 Variables 中设为 true，接口可能不稳定） | 可选 |
-
-> **GitHub Actions：** 仓库自带 `daily_analysis.yml` 已把上表中的 `LONGBRIDGE_*` 映射到任务环境。若未在 **Settings → Secrets and variables → Actions** 中配置 `LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`，CI 内不会调用长桥（日志中一般看不到 `[Longbridge]` 相关行情行）。可选接入点变量（如 `LONGBRIDGE_REGION`）可放在 **Variables** 或 **Secrets**。
-
-> **Longbridge 运行时行为：** 未配置凭据时不会实例化 Longbridge 这个可选 fetcher；若运行时遇到 `client is closed`、`context closed`、`connection closed` 等连接关闭类异常，会进入冷却期（默认 15 秒，可用 `LONGBRIDGE_CONNECTION_COOLDOWN_SECONDS` 调整），冷却期内美股/港股的实时与日线请求会自动跳过 Longbridge，退回 YFinance / AkShare 等兜底链路。
-
-> 补充说明
-- TUSHARE_TOKEN，当此参数配置后，但不具备港股日线接口权限时，也会出现港股数据查询不出来或者错误的情况，和老版本提示不支持港股效果相同
-
-#### ✅ 最小配置示例
-
-如果你想快速开始，最少需要配置以下项：
-
-1. **AI 模型**：`ANSPIRE_API_KEYS`（一 Key 同时启用大模型和搜索）、`AIHUBMIX_KEY`（[AIHubmix](https://aihubmix.com/?aff=CfMq)，一 Key 多模型）、`GEMINI_API_KEY` 或 `OPENAI_API_KEY`
-2. **通知渠道**：至少配置一个，如 `WECHAT_WEBHOOK_URL` 或 `EMAIL_SENDER` + `EMAIL_PASSWORD`
-3. **股票列表**：`STOCK_LIST`（必填）
-4. **搜索 API**：`ANSPIRE_API_KEYS` 或 `SERPAPI_API_KEYS`（推荐，用于新闻与舆情搜索）
-
-> 💡 配置完以上 4 项即可开始使用！
-
-### 3. 启用 Actions
-
-1. 进入你 Fork 的仓库
-2. 点击顶部的 `Actions` 标签
-3. 如果看到提示，点击 `I understand my workflows, go ahead and enable them`
-
-### 4. 手动测试
-
-1. 进入 `Actions` 标签
-2. 左侧选择 `每日股票分析` workflow
-3. 点击右侧的 `Run workflow` 按钮
-4. 选择运行模式
-5. 点击绿色的 `Run workflow` 确认
-
-### 5. 完成！
-
-默认每个工作日 **18:00（北京时间）** 自动执行。
-
----
-
 ## 环境变量完整列表
 
 ### AI 模型配置
 
-> 完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)（三层配置、渠道模式、Vision、Agent、排错）；常用服务商预设、Actions 变量对照和错误排障见 [LLM 服务商配置指南](llm-providers.md)。
-> 兼容性说明（Issue #1306）：本次改动只复用已有历史写入链路展示大盘复盘结果，不修改模型名、provider、Base URL、`LiteLLM` 清理/兼容语义。回退路径为回滚本版本。兼容验证来源见 `requirements.txt`（`litellm` 版本约束）、`docs/LLM_CONFIG_GUIDE*.md`，以及回归用例 `tests/test_analysis_api_contract.py`、`tests/test_analysis_history.py`、`tests/test_market_review.py`；官方源参考：[LiteLLM OpenAI-compatible](https://docs.litellm.ai/docs/providers/openai_compatible)、[OpenAI Chat Completion API](https://platform.openai.com/docs/api-reference/chat)。
-> 本节仅同步模型/渠道配置清单，不额外引入新的外部 provider / Base URL 兼容约定；兼容语义以当前仓库 `requirements.txt` 依赖约束和相关测试为准，历史回退路径见上述两份文档中“回退/恢复”说明。
+> 完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)（三层配置、渠道模式、Vision、Agent、排错）；常用服务商预设和错误排障见 [LLM 服务商配置指南](llm-providers.md)。
+> 兼容性说明（Issue #1306）：本次改动只复用已有历史写入链路展示大盘复盘结果，不修改模型名、provider、Base URL、`LiteLLM` 清理/兼容语义。回退路径为回滚本版本。兼容验证来源见 `pyproject.toml`（`litellm` 版本约束）、`docs/LLM_CONFIG_GUIDE*.md`，以及回归用例 `tests/test_analysis_api_contract.py`、`tests/test_analysis_history.py`、`tests/test_market_review.py`；官方源参考：[LiteLLM OpenAI-compatible](https://docs.litellm.ai/docs/providers/openai_compatible)、[OpenAI Chat Completion API](https://platform.openai.com/docs/api-reference/chat)。
+> 本节仅同步模型/渠道配置清单，不额外引入新的外部 provider / Base URL 兼容约定；兼容语义以当前仓库 `pyproject.toml` 依赖约束和相关测试为准，历史回退路径见上述两份文档中“回退/恢复”说明。
 
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|:----:|
@@ -288,7 +119,7 @@ daily_stock_analysis/
 | `NOTIFICATION_MIN_SEVERITY` | 最低通知级别：info, warning, error, critical；留空保持现状 | 可选 |
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | 每日摘要预留开关；当前不会发送摘要 | 可选 |
 
-> 说明：默认 `daily_analysis` GitHub Actions workflow 只映射固定变量名，不会自动导入任意编号的 `STOCK_GROUP_N` / `EMAIL_GROUP_N`。因此分组邮箱目前仅在本地 `.env`、Docker 或其他已显式注入这些环境变量的运行环境中生效；若你要在自己的 GitHub Actions 中使用，需在 workflow 的 job `env:` 中逐组显式映射。
+> 说明：`STOCK_GROUP_N` / `EMAIL_GROUP_N` 需要在服务器的 `.env` 或容器环境中逐组显式配置。
 
 #### 飞书云文档配置（可选，解决消息截断问题）
 
@@ -300,7 +131,7 @@ daily_stock_analysis/
 
 > 飞书云文档配置步骤：
 > 1. 在 [飞书开发者后台](https://open.feishu.cn/app) 创建应用
-> 2. 配置 GitHub Secrets
+> 2. 在服务器 `.env` 中配置飞书应用凭证
 > 3. 创建群组并添加应用机器人
 > 4. 在云盘文件夹中添加群组为协作者（可管理权限）
 >
@@ -338,7 +169,7 @@ daily_stock_analysis/
 | `LONGBRIDGE_*`（可选） | 见官方 [环境变量](https://open.longbridge.com/zh-CN/docs/getting-started#环境变量)；另有 `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` 与 `LONGBRIDGE_CONNECTION_COOLDOWN_SECONDS` | - | 可选 |
 | `ENABLE_REALTIME_QUOTE` | 启用实时行情（关闭后使用历史收盘价分析） | `true` | 可选 |
 | `ENABLE_REALTIME_TECHNICAL_INDICATORS` | 盘中实时技术面：启用时用实时价计算 MA5/MA10/MA20 与多头排列（Issue #234）；关闭则用昨日收盘 | `true` | 可选 |
-| `ENABLE_CHIP_DISTRIBUTION` | 启用筹码分布分析（该接口不稳定，云端部署建议关闭）。GitHub Actions 用户需在 Repository Variables 中设置 `ENABLE_CHIP_DISTRIBUTION=true` 方可启用；workflow 默认关闭。 | `true` | 可选 |
+| `ENABLE_CHIP_DISTRIBUTION` | 启用筹码分布分析（该接口不稳定，服务器部署可按需关闭） | `true` | 可选 |
 | `ENABLE_EASTMONEY_PATCH` | 东财接口补丁：东财接口频繁失败（如 RemoteDisconnected、连接被关闭）时建议设为 `true`，注入 NID 令牌与随机 User-Agent 以降低被限流概率 | `false` | 可选 |
 | `REALTIME_SOURCE_PRIORITY` | 实时行情数据源优先级（逗号分隔），如 `tencent,akshare_sina,efinance,akshare_em` | 见 .env.example | 可选 |
 | `ENABLE_FUNDAMENTAL_PIPELINE` | 基本面聚合总开关；关闭时仅返回 `not_supported` 块，不改变原分析链路 | `true` | 可选 |
@@ -378,7 +209,7 @@ daily_stock_analysis/
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `STOCK_LIST` | 自选股代码（逗号分隔） | - |
-| `ADMIN_AUTH_ENABLED` | Web 登录：设为 `true` 启用密码保护；首次访问在网页设置初始密码，可在「系统设置 > 修改密码」修改；忘记密码执行 `python -m src.auth reset_password`。Web 的 `.env` 备份导入导出仅在开启该开关后可用（桌面端不受此限制）。 | `false` |
+| `ADMIN_AUTH_ENABLED` | Web 登录：设为 `true` 启用密码保护；首次访问在网页设置初始密码，可在「系统设置 > 修改密码」修改；忘记密码执行 `uv run --locked python -m src.auth reset_password`。Web 的 `.env` 备份导入导出仅在开启该开关后可用（桌面端不受此限制）。 | `false` |
 | `SUPER_ADMIN_EMAIL` | 平台超级管理员 bootstrap 邮箱；配置后启动时会确保该 To C 用户存在、激活、邮箱已验证且 `app_users.is_admin=true`。 | 空 |
 | `SUPER_ADMIN_PASSWORD` | 创建缺失的超级管理员账号时使用的初始密码；已有账号默认不会被覆盖。 | 空 |
 | `SUPER_ADMIN_SYNC_PASSWORD` | 设为 `true` 时每次启动都会把已有超级管理员账号密码同步为 `SUPER_ADMIN_PASSWORD`；默认 `false`，避免旧 `.env` 意外覆盖人工改密。 | `false` |
@@ -444,7 +275,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   zhulinsen/daily_stock_analysis:latest \
-  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
+  uv run --locked --no-dev python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 
 # 定时任务模式
 docker run -d \
@@ -558,7 +389,7 @@ docker run -d \
   -v "$(pwd)/reports:/app/reports" \
   -v "$(pwd)/.env:/app/.env" \
   stock-analysis \
-  python backend/main.py --serve-only --host 0.0.0.0 --port 8000
+  uv run --locked --no-dev python backend/main.py --serve-only --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -567,79 +398,43 @@ docker run -d \
 
 ### 安装依赖
 
-```bash
-# Python 3.10+ 推荐
-pip install -r requirements.txt
+先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)：
 
-# 或使用 conda
-conda create -n stock python=3.10
-conda activate stock
-pip install -r requirements.txt
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**智能导入依赖**：`pypinyin`（名称→代码拼音匹配）和 `openpyxl`（Excel .xlsx 解析）已包含在 `requirements.txt` 中，执行上述 `pip install -r requirements.txt` 时会自动安装。若使用智能导入（图片/CSV/Excel/剪贴板）功能，请确保依赖已正确安装；缺失时可能报 `ModuleNotFoundError`。
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+```bash
+# 创建项目 .venv 并安装锁定依赖
+uv sync --locked
+```
+
+**智能导入依赖**：`pypinyin`（名称→代码拼音匹配）和 `openpyxl`（Excel .xlsx 解析）已声明在 `pyproject.toml` 并锁定于 `uv.lock`，执行上述 `uv sync --locked` 时会自动安装。若使用智能导入（图片/CSV/Excel/剪贴板）功能，请确保依赖已正确安装；缺失时可能报 `ModuleNotFoundError`。
 
 ### 命令行参数
 
 ```bash
-python backend/main.py                        # 完整分析（个股 + 大盘复盘）
-python backend/main.py --market-review        # 仅大盘复盘
-python backend/main.py --no-market-review     # 仅个股分析
-python backend/main.py --stocks 600519,300750 # 指定股票
-python backend/main.py --dry-run              # 仅获取数据，不 AI 分析
-python backend/main.py --no-notify            # 不发送推送
-python backend/main.py --schedule             # 定时任务模式
-python backend/main.py --force-run            # 非交易日也强制执行（Issue #373）
-python backend/main.py --debug                # 调试模式（详细日志）
-python backend/main.py --workers 5            # 指定并发数
+uv run --locked python backend/main.py                        # 完整分析（个股 + 大盘复盘）
+uv run --locked python backend/main.py --market-review        # 仅大盘复盘
+uv run --locked python backend/main.py --no-market-review     # 仅个股分析
+uv run --locked python backend/main.py --stocks 600519,300750 # 指定股票
+uv run --locked python backend/main.py --dry-run              # 仅获取数据，不 AI 分析
+uv run --locked python backend/main.py --no-notify            # 不发送推送
+uv run --locked python backend/main.py --schedule             # 定时任务模式
+uv run --locked python backend/main.py --force-run            # 非交易日也强制执行（Issue #373）
+uv run --locked python backend/main.py --debug                # 调试模式（详细日志）
+uv run --locked python backend/main.py --workers 5            # 指定并发数
 ```
 
 ---
 
 ## 定时任务配置
-
-### GitHub Actions 定时
-
-编辑 `.github/workflows/daily_analysis.yml`:
-
-```yaml
-schedule:
-  # UTC 时间，北京时间 = UTC + 8
-  - cron: '0 10 * * 1-5'   # 周一到周五 18:00（北京时间）
-```
-
-常用时间对照：
-
-| 北京时间 | UTC cron 表达式 |
-|---------|----------------|
-| 09:30 | `'30 1 * * 1-5'` |
-| 12:00 | `'0 4 * * 1-5'` |
-| 15:00 | `'0 7 * * 1-5'` |
-| 18:00 | `'0 10 * * 1-5'` |
-| 21:00 | `'0 13 * * 1-5'` |
-
-#### GitHub Actions 非交易日手动运行（Issue #461 / #466）
-
-`daily_analysis.yml` 支持两种控制方式：
-
-- `TRADING_DAY_CHECK_ENABLED`：仓库级配置（`Settings → Secrets and variables → Actions`），默认 `true`
-- `workflow_dispatch.force_run`：手动触发时的单次开关，默认 `false`
-
-推荐优先级理解：
-
-| 配置组合 | 非交易日行为 |
-|---------|-------------|
-| `TRADING_DAY_CHECK_ENABLED=true` + `force_run=false` | 跳过执行（默认行为） |
-| `TRADING_DAY_CHECK_ENABLED=true` + `force_run=true` | 本次强制执行 |
-| `TRADING_DAY_CHECK_ENABLED=false` + `force_run=false` | 始终执行（定时和手动都不检查交易日） |
-| `TRADING_DAY_CHECK_ENABLED=false` + `force_run=true` | 始终执行 |
-
-手动触发步骤：
-
-1. 打开 `Actions → 每日股票分析 → Run workflow`
-2. 选择 `mode`（`full` / `market-only` / `stocks-only`）
-3. 若当天是非交易日且希望仍执行，将 `force_run` 设为 `true`
-4. 点击 `Run workflow`
 
 ### 本地定时任务
 
@@ -649,15 +444,15 @@ schedule:
 
 ```bash
 # 启动定时模式（启动时立即执行一次，随后每天 18:00 执行）
-python backend/main.py --schedule
+uv run --locked python backend/main.py --schedule
 
 # 启动定时模式（启动时不执行，仅等待下次定时触发）
-python backend/main.py --schedule --no-run-immediately
+uv run --locked python backend/main.py --schedule --no-run-immediately
 ```
 
 > 说明：定时模式只会处理开启「每日推送」且自选股非空的用户，分析范围来自每个用户在 Web 端维护的自选股列表，不再使用全局 `STOCK_LIST`。如果同时传入 `--stocks`，该参数会被忽略；需要临时只跑指定股票时，请使用非定时的单次运行命令。
 >
-> 从 `python backend/main.py --schedule`、`python backend/main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
+> 从 `uv run --locked python backend/main.py --schedule`、`uv run --locked python backend/main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
 
 #### 环境变量方式
 
@@ -693,8 +488,8 @@ DAILY_QUOTE_SYNC_LOOKBACK_DAYS=30
 也可以手动只跑一次同步，不触发 AI 分析：
 
 ```bash
-python backend/main.py --sync-daily-quotes --market cn
-python backend/main.py --sync-daily-quotes --market cn --sync-date 2026-06-26
+uv run --locked python backend/main.py --sync-daily-quotes --market cn
+uv run --locked python backend/main.py --sync-daily-quotes --market cn --sync-date 2026-06-26
 ```
 
 同步任务会从股票索引枚举 active 的 A 股股票，按 `(code, date)` 写入 `stock_daily`，已存在目标交易日数据的股票会跳过。当前版本先支持 A 股 `cn`，港股和美股全量范围需单独定义后再扩展。`DAILY_QUOTE_SYNC_LIMIT=0` 表示不限制；设置为正整数可用于调试小批量同步。
@@ -719,7 +514,7 @@ python backend/main.py --sync-daily-quotes --market cn --sync-date 2026-06-26
 
 ```bash
 crontab -e
-# 添加：0 18 * * 1-5 cd /path/to/project && python backend/main.py
+# 添加：0 18 * * 1-5 cd /path/to/project && uv run --locked --no-dev python backend/main.py
 ```
 
 ---
@@ -754,7 +549,7 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/your_hook_token
    - **无额外安全设置**：仅填 `FEISHU_WEBHOOK_URL` 即可。
    - **开启了「签名校验」**：把飞书显示的 secret 填到 `FEISHU_WEBHOOK_SECRET`。两端必须同时启用或同时不填，否则飞书返回签名校验失败。
    - **开启了「关键词」**：把同一个关键词填到 `FEISHU_WEBHOOK_KEYWORD`；系统会自动在每条消息前补上，无需手动修改报告模板。
-   - **开启了 IP 白名单**：确保当前运行环境的出口 IP 在白名单中（本地/Docker/GitHub Actions 出口 IP 各不相同）。
+   - **开启了 IP 白名单**：确保当前服务器或容器的出口 IP 在白名单中。
 4. `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 是飞书应用 / Stream Bot / 云文档模式专用，不会触发群 Webhook 推送，不要用它们替代 `FEISHU_WEBHOOK_URL`。
 
 **常见失败原因：**
@@ -788,7 +583,7 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/your_hook_token
 **股票分组发往不同邮箱**（Issue #268，可选）：
 配置 `STOCK_GROUP_N` 与 `EMAIL_GROUP_N` 可实现不同股票组的报告发送到不同邮箱，例如多人共享分析时互不干扰。`STOCK_LIST` 仍决定本次实际分析的股票集合，`STOCK_GROUP_N` 应写成 `STOCK_LIST` 的子集；它只影响邮件收件人，不会改变 Telegram、企业微信、Webhook 等其他渠道收到的完整报告。大盘复盘会发往所有配置的邮箱。
 
-> GitHub Actions 限制：截至 2026-03-29，仓库自带 `daily_analysis.yml` 不会自动导入任意编号的 `STOCK_GROUP_N` / `EMAIL_GROUP_N`。因此如果你只在仓库 Secrets / Variables 中新增这些变量，而没有修改 workflow 显式映射，它们不会进入运行进程，看起来就像“分组配置不生效”。
+> 服务器部署时，请在 `.env` 或容器环境中逐组配置 `STOCK_GROUP_N` / `EMAIL_GROUP_N`，并在修改后重启进程或容器。
 
 ```bash
 STOCK_LIST=600519,300750,002594,AAPL
@@ -943,7 +738,7 @@ PUSHOVER_API_TOKEN=your_api_token
 
 **依赖安装**：
 
-1. **imgkit**：已包含在 `requirements.txt`，执行 `pip install -r requirements.txt` 时会自动安装
+1. **imgkit**：已声明在 `pyproject.toml`，执行 `uv sync --locked` 时会自动安装
 2. **wkhtmltopdf**（默认引擎）：系统级依赖，需手动安装：
    - **macOS**：`brew install wkhtmltopdf`
    - **Debian/Ubuntu**：`apt install wkhtmltopdf`
@@ -1056,13 +851,13 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-sonnet-4-6,openai/gpt-5.4-mini
 > ⚠️ `LITELLM_MODEL` 必须包含 provider 前缀（如 `gemini/`、`anthropic/`、`openai/`），
 > 否则系统无法识别应使用哪组 API Key。旧格式的 `GEMINI_MODEL`（无前缀）仅用于未配置 `LITELLM_MODEL` 时的自动推断。
 
-**依赖说明**：`requirements.txt` 中保留 `openai>=1.0.0`，因 LiteLLM 内部依赖 OpenAI SDK 作为统一接口；显式保留可确保版本兼容性，用户无需单独配置。
+**依赖说明**：`pyproject.toml` 中保留 `openai>=1.0.0`，因 LiteLLM 内部依赖 OpenAI SDK 作为统一接口；显式保留可确保版本兼容性，用户无需单独配置。
 
 **视觉模型（图片提取股票代码）**：详见 [LLM 配置指南 - Vision](LLM_CONFIG_GUIDE.md#41-vision-模型图片识别股票代码)。
 
 从图片提取股票代码（如 `/api/v1/stocks/extract-from-image`）使用统一视觉模型接入，底层采用 LiteLLM Vision 与 OpenAI `image_url` 格式，支持 Gemini、Claude、OpenAI、DeepSeek 等 Vision-capable 模型。返回 `items`（code、name、confidence）。
 
-**智能导入**：除图片外，还支持 CSV/Excel 文件及剪贴板粘贴（`/api/v1/stocks/parse-import`），自动解析代码/名称列，名称→代码解析支持本地映射、拼音匹配及 AkShare 在线 fallback。依赖 `pypinyin`（拼音匹配）和 `openpyxl`（Excel 解析），已包含在 `requirements.txt` 中。
+**智能导入**：除图片外，还支持 CSV/Excel 文件及剪贴板粘贴（`/api/v1/stocks/parse-import`），自动解析代码/名称列，名称→代码解析支持本地映射、拼音匹配及 AkShare 在线 fallback。依赖 `pypinyin`（拼音匹配）和 `openpyxl`（Excel 解析），已声明在 `pyproject.toml` 中。
 
 - **AkShare 名称解析缓存**：名称→代码解析使用 AkShare 在线 fallback 时，结果缓存 1 小时（TTL），避免频繁请求；首次调用或缓存过期后会自动刷新。
 - **CSV/Excel 列名**：支持 `code`、`股票代码`、`代码`、`name`、`股票名称`、`名称` 等（不区分大小写）；无表头时默认第 1 列为代码、第 2 列为名称。
@@ -1076,7 +871,7 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-sonnet-4-6,openai/gpt-5.4-mini
 ### 调试模式
 
 ```bash
-python backend/main.py --debug
+uv run --locked python backend/main.py --debug
 ```
 
 日志文件位置：
@@ -1169,13 +964,13 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 
 | 场景 | 命令 | 访问地址 | 说明 |
 |------|------|------|------|
-| 开发后端 API | `python backend/main.py --serve-only` | `http://127.0.0.1:8000` | 仅启动 FastAPI，不安装、构建或托管前端 |
+| 开发后端 API | `uv run --locked python backend/main.py --serve-only` | `http://127.0.0.1:8000` | 仅启动 FastAPI，不安装、构建或托管前端 |
 | 开发前端 | `cd frontend/web && npm ci && npm run dev` | `http://localhost:5200` | Vite 开发服务器，`/api/*` 代理到 `127.0.0.1:8000` |
-| 一体化 WebUI | `python backend/main.py --webui-only` | `http://127.0.0.1:8000` | 按需准备并托管 `static/` 前端资源，不执行分析 |
-| 一体化 WebUI + 分析 | `python backend/main.py --webui` | `http://127.0.0.1:8000` | 托管 WebUI，并在启动后执行一次完整分析 |
-| API + 分析 | `python backend/main.py --serve` | `http://127.0.0.1:8000` | 仅启动 API，并执行一次完整分析 |
+| 一体化 WebUI | `uv run --locked python backend/main.py --webui-only` | `http://127.0.0.1:8000` | 按需准备并托管 `static/` 前端资源，不执行分析 |
+| 一体化 WebUI + 分析 | `uv run --locked python backend/main.py --webui` | `http://127.0.0.1:8000` | 托管 WebUI，并在启动后执行一次完整分析 |
+| API + 分析 | `uv run --locked python backend/main.py --serve` | `http://127.0.0.1:8000` | 仅启动 API，并执行一次完整分析 |
 
-如果希望手动控制前端构建，可先执行 `cd frontend/web && npm ci && npm run build`，构建产物会输出到项目根目录 `static/`，再运行 `python backend/main.py --webui-only`。
+如果希望手动控制前端构建，可先执行 `cd frontend/web && npm ci && npm run build`，构建产物会输出到项目根目录 `static/`，再运行 `uv run --locked python backend/main.py --webui-only`。
 
 ### 功能特性
 
@@ -1219,7 +1014,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 
 > 兼容性审计证据：
 > - 官方来源：LiteLLM OpenAI-compatible provider 文档 <https://docs.litellm.ai/docs/providers/openai_compatible>；OpenAI Chat API 文档 <https://platform.openai.com/docs/api-reference/chat/create>；DeepSeek API 文档 <https://api-docs.deepseek.com/>。
-> - 依赖版本：项目约束为 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `requirements.txt`），以上兼容语义回归测试在该版本窗口内执行。
+> - 依赖版本：项目约束为 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `pyproject.toml`），以上兼容语义回归测试在该版本窗口内执行。
 > - 可复核测试：
 >   - `tests/test_llm_channel_config.py`（配置源优先级与 provider/base url 映射）
 >   - `tests/test_market_review_runtime.py`（`build_market_review_runtime` 复用装配路径）
@@ -1277,7 +1072,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results?page=1&limit=20"
 修改默认端口或允许局域网访问：
 
 ```bash
-python backend/main.py --serve-only --host 0.0.0.0 --port 8888
+uv run --locked python backend/main.py --serve-only --host 0.0.0.0 --port 8888
 ```
 
 ### 支持的股票代码格式
@@ -1295,7 +1090,6 @@ python backend/main.py --serve-only --host 0.0.0.0 --port 8888
 - 浏览器访问：`http://127.0.0.1:8000`（或您配置的端口）
 - 在云服务器上部署后，不知道浏览器该输入什么地址？请看 [云服务器 Web 界面访问指南](deploy-webui-cloud.md)
 - 分析完成后自动推送通知到配置的渠道
-- 此功能在 GitHub Actions 环境中会自动禁用
 - 另见 [openclaw Skill 集成指南](openclaw-skill-integration.md)
 
 ---
@@ -1310,11 +1104,6 @@ A: AkShare 使用爬虫机制，可能被临时限流。系统已配置重试机
 
 ### Q: 如何添加自选股？
 A: 修改 `STOCK_LIST` 环境变量，多个代码用逗号分隔。
-
-### Q: GitHub Actions 没有执行？
-A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是 UTC 时间）。
-
----
 
 更多问题请 [提交 Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
 

@@ -26,12 +26,13 @@
 
 ## 整体目录结构
 
+Python 依赖声明 `pyproject.toml` 与锁文件 `uv.lock` 位于仓库根目录；后端目录结构如下：
+
 ```
 backend/
 ├── main.py                    # CLI / 调度入口，懒加载 StockAnalysisPipeline
 ├── server.py                  # 兼容 shim，创建 FastAPI app 供 uvicorn 使用
 ├── webui.py                   # WebUI 快捷入口
-├── requirements.txt           # 后端 Python 依赖
 ├── alembic/                   # 数据库迁移管理
 │   ├── env.py
 │   ├── versions/              # 每次 schema 变更的迁移脚本
@@ -85,14 +86,14 @@ backend/
 ### 方式一：CLI 分析任务
 
 ```bash
-python backend/main.py                          # 执行当日自选股分析
-python backend/main.py --debug                 # 调试模式（更详细日志）
-python backend/main.py --dry-run               # 仅拉数据，不调 LLM
-python backend/main.py --stocks 600519,hk00700 # 指定股票
-python backend/main.py --market-review         # 大盘复盘模式
-python backend/main.py --schedule              # 启动定时调度（每日 18:00）
-python backend/main.py --serve                 # 启动 API 服务 + 定时任务
-python backend/main.py --serve-only            # 仅启动 API 服务
+uv run --locked python backend/main.py                          # 执行当日自选股分析
+uv run --locked python backend/main.py --debug                 # 调试模式（更详细日志）
+uv run --locked python backend/main.py --dry-run               # 仅拉数据，不调 LLM
+uv run --locked python backend/main.py --stocks 600519,hk00700 # 指定股票
+uv run --locked python backend/main.py --market-review         # 大盘复盘模式
+uv run --locked python backend/main.py --schedule              # 启动定时调度（每日 18:00）
+uv run --locked python backend/main.py --serve                 # 启动 API 服务 + 定时任务
+uv run --locked python backend/main.py --serve-only            # 仅启动 API 服务
 ```
 
 `main.py` 对 `StockAnalysisPipeline` 使用懒加载描述符（`_LazyPipelineDescriptor`），保证在 API / bot 路径下不触发不必要的初始化。
@@ -100,7 +101,7 @@ python backend/main.py --serve-only            # 仅启动 API 服务
 ### 方式二：直接用 uvicorn
 
 ```bash
-uvicorn backend.backend.server:app --reload --host 0.0.0.0 --port 8000
+uv run --locked uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 `server.py` 调用 `api.app.create_app(serve_frontend=False)` 获得不托管前端的纯 API 实例。
@@ -612,13 +613,13 @@ To C 模式下，调度器还会对所有已开通付费套餐且启用每日推
 
 ```bash
 # 生成新的迁移脚本
-alembic revision --autogenerate -m "描述"
+uv run --locked alembic revision --autogenerate -m "描述"
 
 # 应用迁移
-alembic upgrade head
+uv run --locked alembic upgrade head
 
 # 查看当前版本
-alembic current
+uv run --locked alembic current
 ```
 
 **已有迁移版本：**

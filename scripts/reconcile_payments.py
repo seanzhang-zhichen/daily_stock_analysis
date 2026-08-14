@@ -23,7 +23,7 @@
 定时任务示例 (W6 上线后):
 
     # crontab UTC+8 每日 02:00 跑昨日对账
-    0 2 * * * cd /opt/dsa && /opt/dsa/venv/bin/python scripts/reconcile_payments.py --commit
+    0 2 * * * cd /opt/dsa && uv run --locked --no-dev python scripts/reconcile_payments.py --commit
 """
 
 from __future__ import annotations

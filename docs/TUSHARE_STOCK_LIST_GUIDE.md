@@ -19,7 +19,7 @@ TUSHARE_TOKEN=你的tushare_token
 ### 2. 运行脚本
 
 ```bash
-python3 scripts/fetch_tushare_stock_list.py
+uv run --locked python scripts/fetch_tushare_stock_list.py
 ```
 
 ### 3. 查看输出
@@ -103,8 +103,8 @@ print(stock[['name', 'industry', 'list_date']])
 
 ```bash
 # 将 Tushare CSV 数据生成为前端自动补全索引
-python3 scripts/generate_index_from_csv.py --test  # 先测试
-python3 scripts/generate_index_from_csv.py         # 确认后生成
+uv run --locked python scripts/generate_index_from_csv.py --test  # 先测试
+uv run --locked python scripts/generate_index_from_csv.py         # 确认后生成
 ```
 
 ## 注意事项

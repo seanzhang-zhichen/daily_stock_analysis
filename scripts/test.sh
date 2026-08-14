@@ -63,20 +63,25 @@ header() {
     echo ""
 }
 
-# 检查Python环境
+# 通过 uv 锁定环境运行 Python 命令
+uv_run() {
+    uv run --locked "$@"
+}
+
+# 检查 Python/uv 环境
 check_python() {
-    if ! command -v python3 &> /dev/null; then
-        error "Python3 未安装"
+    if ! command -v uv &> /dev/null; then
+        error "uv 未安装"
         exit 1
     fi
-    info "Python版本: $(python3 --version)"
+    info "Python版本: $(uv_run python --version)"
 }
 
 # 检查依赖
 check_deps() {
     info "检查依赖..."
-    python3 -c "import yfinance" 2>/dev/null || { warn "yfinance 未安装，美股测试可能失败"; }
-    python3 -c "import akshare" 2>/dev/null || { warn "akshare 未安装，A股/港股测试可能失败"; }
+    uv_run python -c "import yfinance" 2>/dev/null || { warn "yfinance 未安装，美股测试可能失败"; }
+    uv_run python -c "import akshare" 2>/dev/null || { warn "akshare 未安装，A股/港股测试可能失败"; }
     success "依赖检查完成"
 }
 
@@ -86,7 +91,7 @@ check_deps() {
 test_market() {
     header "测试场景: 大盘复盘"
     info "运行大盘复盘分析..."
-    python3 main.py --market-review "$@"
+    uv_run python backend/main.py --market-review "$@"
     success "大盘复盘测试完成"
 }
 
@@ -94,7 +99,7 @@ test_market() {
 test_a_stock() {
     header "测试场景: A股分析"
     info "分析A股: 600519(茅台), 000001(平安银行)"
-    python3 main.py --stocks 600519,000001  --no-market-review "$@"
+    uv_run python backend/main.py --stocks 600519,000001 --no-market-review "$@"
     success "A股分析测试完成"
 }
 
@@ -102,7 +107,7 @@ test_a_stock() {
 test_etf() {
     header "测试场景: ETF分析"
     info "分析ETF: 563230(卫星ETF)"
-    python3 main.py --stocks 563230,512400 --no-market-review "$@"
+    uv_run python backend/main.py --stocks 563230,512400 --no-market-review "$@"
     success "ETF分析测试完成"
 }
 
@@ -110,7 +115,7 @@ test_etf() {
 test_hk_stock() {
     header "测试场景: 港股分析"
     info "分析港股: hk00700(腾讯), hk09988(阿里)"
-    python3 main.py --stocks hk00700,hk09988 --no-market-review "$@"
+    uv_run python backend/main.py --stocks hk00700,hk09988 --no-market-review "$@"
     success "港股分析测试完成"
 }
 
@@ -119,7 +124,7 @@ test_us_stock() {
     header "测试场景: 美股分析"
     info "分析美股: AAPL(苹果), TSLA(特斯拉)"
     # 允许透传参数，默认不带 --no-notify
-    python3 main.py --stocks AAPL --no-market-review "$@"
+    uv_run python backend/main.py --stocks AAPL --no-market-review "$@"
     success "美股分析测试完成"
 }
 
@@ -127,7 +132,7 @@ test_us_stock() {
 test_mixed() {
     header "测试场景: 混合市场分析"
     info "分析混合市场: 600519(A股), hk00700(港股), AAPL(美股)"
-    python3 main.py --stocks 600519,hk00700,AAPL --no-market-review
+    uv_run python backend/main.py --stocks 600519,hk00700,AAPL --no-market-review
     success "混合市场测试完成"
 }
 
@@ -135,7 +140,7 @@ test_mixed() {
 test_single() {
     header "测试场景: 单股推送模式"
     info "测试单股推送模式..."
-    python3 main.py --stocks 600519 --single-notify --no-market-review
+    uv_run python backend/main.py --stocks 600519 --single-notify --no-market-review
     success "单股推送模式测试完成"
 }
 
@@ -143,7 +148,7 @@ test_single() {
 test_dry_run() {
     header "测试场景: Dry-Run 模式"
     info "仅获取数据，不进行AI分析..."
-    python3 main.py --stocks 600519,AAPL --dry-run --no-notify
+    uv_run python backend/main.py --stocks 600519,AAPL --dry-run --no-notify
     success "Dry-Run 测试完成"
 }
 
@@ -151,7 +156,7 @@ test_dry_run() {
 test_full() {
     header "测试场景: 完整流程"
     info "运行完整分析流程（个股+大盘）..."
-    python3 main.py --stocks 600519 --no-notify
+    uv_run python backend/main.py --stocks 600519 --no-notify
     success "完整流程测试完成"
 }
 
@@ -159,7 +164,7 @@ test_full() {
 test_quick() {
     header "测试场景: 快速测试"
     info "单只股票快速测试..."
-    python3 main.py --stocks 600519 --no-market-review --no-notify "$@"
+    uv_run python backend/main.py --stocks 600519 --no-market-review --no-notify "$@"
     success "快速测试完成"
 }
 
@@ -168,9 +173,9 @@ test_code_recognition() {
     header "测试场景: 代码识别"
     info "测试股票代码识别逻辑..."
 
-    python3 << 'PYTEST'
+    uv_run python << 'PYTEST'
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, 'backend')
 from data_provider.akshare_fetcher import _is_hk_code, _is_us_code
 
 test_cases = [
@@ -209,9 +214,9 @@ test_yfinance_convert() {
     header "测试场景: YFinance 代码转换"
     info "测试YFinance代码转换逻辑..."
 
-    python3 << 'PYTEST'
+    uv_run python << 'PYTEST'
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, 'backend')
 from data_provider.yfinance_fetcher import YfinanceFetcher
 
 fetcher = YfinanceFetcher()
@@ -249,7 +254,7 @@ test_syntax() {
     header "测试场景: Python 语法检查"
     info "检查所有Python文件语法..."
 
-    python3 -m py_compile main.py backend/src/config.py backend/src/notification.py \
+    uv_run python -m py_compile backend/main.py backend/src/config.py backend/src/notification.py \
         backend/data_provider/akshare_fetcher.py \
         backend/data_provider/yfinance_fetcher.py \
         backend/bot/commands/analyze.py
@@ -262,12 +267,8 @@ test_flake8() {
     header "测试场景: Flake8 静态检查"
     info "运行 Flake8 检查严重错误..."
 
-    if command -v flake8 &> /dev/null; then
-        flake8 main.py backend/src/config.py backend/src/notification.py --select=F821,E999 --max-line-length=120
-        success "Flake8 检查通过"
-    else
-        warn "Flake8 未安装，跳过检查"
-    fi
+    uv_run flake8 backend/main.py backend/src/config.py backend/src/notification.py --select=F821,E999 --max-line-length=120
+    success "Flake8 检查通过"
 }
 
 # 运行所有测试

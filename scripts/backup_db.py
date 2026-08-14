@@ -24,7 +24,7 @@
 
 定时任务示例 (crontab UTC+8 每日 03:00)::
 
-    0 3 * * * cd /opt/dsa && /opt/dsa/venv/bin/python scripts/backup_db.py \
+    0 3 * * * cd /opt/dsa && uv run --locked --no-dev python scripts/backup_db.py \
         --backup-dir /var/backups/dsa --retain 7 --compress >> /var/log/dsa_backup.log 2>&1
 """
 

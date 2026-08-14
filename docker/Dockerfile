@@ -20,13 +20,18 @@ FROM python:3.11-slim-bookworm
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 ARG APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.19 /uv /uvx /bin/
 
 # 设置工作目录
 WORKDIR /app
 
 # 设置时区为上海
 ENV TZ=Asia/Shanghai
+ENV PATH="/app/.venv/bin:$PATH" \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 安装系统依赖（wkhtmltopdf 含 wkhtmltoimage，用于 Markdown 转图片 Issue #289）
@@ -53,12 +58,12 @@ RUN sed -i \
 RUN groupadd -g 1000 dsa && \
     useradd -u 1000 -g dsa -m dsa
 
-# Copy dependency files
-COPY requirements.txt ./
-COPY backend/requirements.txt ./backend/requirements.txt
+# Copy dependency files first to keep dependency installation cacheable.
+COPY pyproject.toml uv.lock ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project
 
 # Copy application code
 COPY alembic.ini ./

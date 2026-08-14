@@ -10,8 +10,20 @@
 |------|------|------|
 | Python | 3.10+ | 后端运行时 |
 | Node.js | 20.19+ 或 22.12+（推荐 22 LTS） | 前端构建与开发服务器，Vite 7 要求 |
-| pip | 最新即可 | Python 包管理 |
+| uv | 0.11+ | Python 版本、依赖与命令管理 |
 | npm | 随 Node.js 附带 | 前端包管理 |
+
+尚未安装 uv 时，请按[官方安装说明](https://docs.astral.sh/uv/getting-started/installation/)执行：
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 ---
 
@@ -42,7 +54,7 @@ cp .env.example .env
 ### 3. 安装后端依赖
 
 ```bash
-pip install -r requirements.txt
+uv sync --locked
 ```
 
 ### 4. 数据库初始化
@@ -52,7 +64,7 @@ pip install -r requirements.txt
 **从旧版本升级**（首次引入 Alembic 前已有数据库）：在启动服务前运行一次：
 
 ```bash
-alembic stamp b0bc3c721ef0
+uv run --locked alembic stamp b0bc3c721ef0
 ```
 
 此后每次服务启动都会自动执行 `alembic upgrade head`，应用所有新增迁移。
@@ -68,7 +80,7 @@ alembic stamp b0bc3c721ef0
 **终端 1 - 启动后端（仅 API 服务，端口 8000）**
 
 ```bash
-python backend/main.py --serve-only
+uv run --locked python backend/main.py --serve-only
 ```
 
 `--serve-only` 只启动 FastAPI API，不会安装、构建或托管 Web 前端静态资源。
@@ -76,7 +88,7 @@ python backend/main.py --serve-only
 或用 uvicorn 带热重载：
 
 ```bash
-uvicorn backend.backend.server:app --reload --host 127.0.0.1 --port 8000
+uv run --locked uvicorn backend.server:app --reload --host 127.0.0.1 --port 8000
 ```
 
 **终端 2 - 启动前端开发服务器（端口 5200）**
@@ -117,7 +129,7 @@ cd ../..
 **步骤 2 - 启动 WebUI 服务（同时托管前端静态文件）**
 
 ```bash
-python backend/main.py --webui-only
+uv run --locked python backend/main.py --webui-only
 ```
 
 **访问地址**
@@ -137,22 +149,22 @@ python backend/main.py --webui-only
 
 ```bash
 # 查看当前数据库版本
-alembic current
+uv run --locked alembic current
 
 # 手动应用所有待执行迁移
-alembic upgrade head
+uv run --locked alembic upgrade head
 
 # 回滚一步
-alembic downgrade -1
+uv run --locked alembic downgrade -1
 
 # 查看迁移历史
-alembic history
+uv run --locked alembic history
 
 # 为存量库打基线标记（从旧版升级，只需运行一次）
-alembic stamp b0bc3c721ef0
+uv run --locked alembic stamp b0bc3c721ef0
 
 # 新增 schema 变更后生成迁移文件（修改 ORM model 后执行）
-alembic revision --autogenerate -m "describe_change"
+uv run --locked alembic revision --autogenerate -m "describe_change"
 ```
 
 > 服务启动时会自动对文件型 SQLite 和网络数据库执行 `alembic upgrade head`，通常无需手动触发。
@@ -161,31 +173,31 @@ alembic revision --autogenerate -m "describe_change"
 
 ```bash
 # 仅启动 API 服务（不执行分析）
-python backend/main.py --serve-only
+uv run --locked python backend/main.py --serve-only
 
 # 仅启动 WebUI 服务（不执行分析，会按需准备并托管前端静态资源）
-python backend/main.py --webui-only
+uv run --locked python backend/main.py --webui-only
 
 # 启动 WebUI 服务 + 立即执行一次分析
-python backend/main.py --webui
+uv run --locked python backend/main.py --webui
 
 # 启动 API 服务 + 立即执行一次分析
-python backend/main.py --serve
+uv run --locked python backend/main.py --serve
 
 # 启动 API 服务 + 定时任务
-python backend/main.py --serve --schedule
+uv run --locked python backend/main.py --serve --schedule
 
 # 直接执行一次分析（不启动 API）
-python backend/main.py
+uv run --locked python backend/main.py
 
 # 调试模式（输出更多日志）
-python backend/main.py --debug
+uv run --locked python backend/main.py --debug
 
 # 干跑模式（不实际调用 AI，用于测试流程）
-python backend/main.py --dry-run
+uv run --locked python backend/main.py --dry-run
 
 # 仅分析指定股票
-python backend/main.py --stocks 600519,hk00700,AAPL
+uv run --locked python backend/main.py --stocks 600519,hk00700,AAPL
 ```
 
 ### 前端
@@ -213,7 +225,7 @@ npm run lint
 **Q：后端启动报 `ModuleNotFoundError`**
 
 ```bash
-pip install -r requirements.txt
+uv sync --locked
 ```
 
 **Q：前端 `npm ci` 报错**
@@ -246,6 +258,6 @@ ls static/
 
 - [完整配置与部署指南](full-guide.md) - 所有环境变量、数据源、通知等配置
 - [LLM 配置指南](LLM_CONFIG_GUIDE.md) - 大模型渠道配置
-- [部署指南](DEPLOY.md) - Docker / 服务器 / GitHub Actions 部署
+- [部署指南](DEPLOY.md) - Docker / 服务器部署
 - [桌面端打包说明](desktop-package.md) - Electron 桌面端构建
 - [AGENTS.md §9 数据库迁移](../AGENTS.md) - Alembic 工作流与规范

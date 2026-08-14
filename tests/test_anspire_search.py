@@ -13,11 +13,11 @@ Anspire Search 搜索引擎测试套件
 ```bash
 # Windows PowerShell
 $env:ANSPIRE_API_KEYS="your_test_api_key"
-python -m pytest tests/test_anspire_search.py -v
+uv run --locked python -m pytest tests/test_anspire_search.py -v
 
 # Linux/Mac
 export ANSPIRE_API_KEYS="your_test_api_key"
-python -m pytest tests/test_anspire_search.py -v
+uv run --locked python -m pytest tests/test_anspire_search.py -v
 ```
 """
 

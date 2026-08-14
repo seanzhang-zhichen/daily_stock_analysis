@@ -183,7 +183,7 @@ FEISHU_APP_SECRET=...
 
 ### 5. 飞书侧配置了 IP 白名单
 
-如果你在云服务器、Docker、GitHub Actions 上跑，出口 IP 可能和本地不同。
+如果你在云服务器或 Docker 中运行，出口 IP 可能和本地不同。
 
 检查：
 - 飞书机器人是否启用了 IP 白名单

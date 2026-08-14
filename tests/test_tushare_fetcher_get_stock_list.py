@@ -7,9 +7,9 @@ in minimal CI environments without network calls.
 
 Run (repo root):
 
-- With pytest: ``python3 -m pytest tests/test_tushare_fetcher_get_stock_list.py``
-  (install once: ``pip install -r requirements-dev.txt`` or ``pip install pytest``)
-- Without pytest: ``python3 tests/test_tushare_fetcher_get_stock_list.py``
+- With pytest: ``uv run --locked python -m pytest tests/test_tushare_fetcher_get_stock_list.py``
+  (install once with ``uv sync --locked``)
+- Without pytest: ``uv run --locked python tests/test_tushare_fetcher_get_stock_list.py``
 """
 
 import importlib.util

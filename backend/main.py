@@ -11,9 +11,9 @@ A股自选股智能分析系统 - 主调度程序
 4. 提供命令行入口
 
 使用方式：
-    python backend/main.py              # 正常运行
-    python backend/main.py --debug      # 调试模式
-    python backend/main.py --dry-run    # 仅获取数据不分析
+    uv run --locked python backend/main.py              # 正常运行
+    uv run --locked python backend/main.py --debug      # 调试模式
+    uv run --locked python backend/main.py --dry-run    # 仅获取数据不分析
 
 交易理念（已融入分析）：
 - 严进策略：不追高，乖离率 > 5% 不买入
@@ -231,15 +231,15 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例:
-  python backend/main.py                    # 正常运行
-  python backend/main.py --debug            # 调试模式
-  python backend/main.py --dry-run          # 仅获取数据，不进行 AI 分析
-  python backend/main.py --stocks 600519,000001  # 指定分析特定股票
-  python backend/main.py --no-notify        # 不发送推送通知
-  python backend/main.py --check-notify     # 检查通知配置，不发送通知
-  python backend/main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
-  python backend/main.py --schedule         # 启用定时任务模式
-  python backend/main.py --market-review    # 仅运行大盘复盘
+  uv run --locked python backend/main.py                    # 正常运行
+  uv run --locked python backend/main.py --debug            # 调试模式
+  uv run --locked python backend/main.py --dry-run          # 仅获取数据，不进行 AI 分析
+  uv run --locked python backend/main.py --stocks 600519,000001  # 指定分析特定股票
+  uv run --locked python backend/main.py --no-notify        # 不发送推送通知
+  uv run --locked python backend/main.py --check-notify     # 检查通知配置，不发送通知
+  uv run --locked python backend/main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
+  uv run --locked python backend/main.py --schedule         # 启用定时任务模式
+  uv run --locked python backend/main.py --market-review    # 仅运行大盘复盘
         '''
     )
 
@@ -962,7 +962,7 @@ def start_bot_stream_clients(config: Config) -> None:
                     logger.warning("[Main] Dingtalk Stream client failed to start.")
             else:
                 logger.warning("[Main] Dingtalk Stream enabled but SDK is missing.")
-                logger.warning("[Main] Run: pip install dingtalk-stream")
+                logger.warning("[Main] Run: uv sync --locked")
         except Exception as exc:
             logger.error(f"[Main] Failed to start Dingtalk Stream client: {exc}")
 
@@ -977,7 +977,7 @@ def start_bot_stream_clients(config: Config) -> None:
                     logger.warning("[Main] Feishu Stream client failed to start.")
             else:
                 logger.warning("[Main] Feishu Stream enabled but SDK is missing.")
-                logger.warning("[Main] Run: pip install lark-oapi")
+                logger.warning("[Main] Run: uv sync --locked")
         except Exception as exc:
             logger.error(f"[Main] Failed to start Feishu Stream client: {exc}")
 

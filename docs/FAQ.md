@@ -70,27 +70,7 @@
 
 ## ⚙️ 配置相关
 
-### Q5: GitHub Actions 运行失败，提示找不到环境变量？
-
-**现象**：Actions 日志显示 `GEMINI_API_KEY` 或 `STOCK_LIST` 未定义
-
-**原因**：GitHub 区分 `Secrets`（加密）和 `Variables`（普通变量），配置位置不对会导致读取失败。
-
-**解决方案**：
-1. 进入仓库 `Settings` → `Secrets and variables` → `Actions`
-2. **Secrets**（点击 `New repository secret`）：存放敏感信息
-   - `GEMINI_API_KEY`
-   - `OPENAI_API_KEY`
-   - `TELEGRAM_BOT_TOKEN`
-   - 各类 Webhook URL
-3. **Variables**（点击 `Variables` 标签）：存放非敏感配置
-   - `STOCK_LIST`
-   - `GEMINI_MODEL`
-   - `REPORT_TYPE`
-
----
-
-### Q6: 修改 .env 文件后配置没有生效？
+### Q5: 修改 .env 文件后配置没有生效？
 
 **解决方案**：
 1. 确保 `.env` 文件位于项目根目录
@@ -104,12 +84,12 @@
    ```bash
    docker compose down && docker compose up -d
    ```
-4. **GitHub Actions**：`.env` 文件不生效，必须在 Secrets/Variables 中配置
+4. **Docker/进程管理器**：确认部署配置没有用旧环境变量覆盖 `.env`，修改后重建容器或重启进程
 5. 检查是否有多个 `.env` 文件（如 `.env.local`）导致覆盖
 
 ---
 
-### Q7: 如何配置代理访问 Gemini/OpenAI API？
+### Q6: 如何配置代理访问 Gemini/OpenAI API？
 
 **解决方案**：
 
@@ -120,7 +100,7 @@ PROXY_HOST=127.0.0.1
 PROXY_PORT=10809
 ```
 
-> ⚠️ 注意：代理配置仅对本地运行生效，GitHub Actions 环境无需配置代理。
+> ⚠️ 注意：服务器部署时需确认容器或服务进程能访问代理地址；容器内的 `127.0.0.1` 指向容器自身。
 
 ---
 
@@ -134,7 +114,7 @@ PROXY_PORT=10809
 
 **Q: check_env 输出“未配置可用 AI 模型”怎么办？**
 
-默认先选一种服务商并填写对应 API Key；如果需要固定主模型，再补 `LITELLM_MODEL=provider/model`；如果要多模型切换，再配置 `LLM_CHANNELS` 或高级模型路由 YAML。运行 `python scripts/check_env.py --config` 校验配置，`python scripts/check_env.py --llm` 实际调用 API 测试。
+默认先选一种服务商并填写对应 API Key；如果需要固定主模型，再补 `LITELLM_MODEL=provider/model`；如果要多模型切换，再配置 `LLM_CHANNELS` 或高级模型路由 YAML。运行 `uv run --locked python scripts/check_env.py --config` 校验配置，`uv run --locked python scripts/check_env.py --llm` 实际调用 API 测试。
 
 **Q: 如何同时使用多个模型（如 AIHubmix + DeepSeek + Gemini）？**
 
@@ -148,7 +128,7 @@ PROXY_PORT=10809
 
 ## 📱 推送相关
 
-### Q8: 机器人推送失败，提示消息过长？
+### Q7: 机器人推送失败，提示消息过长？
 
 **现象**：分析成功但未收到推送，日志显示 400 错误或 `Message too long`
 
@@ -164,7 +144,7 @@ PROXY_PORT=10809
 
 ---
 
-### Q9: Telegram 推送收不到消息？
+### Q8: Telegram 推送收不到消息？
 
 **解决方案**：
 1. 确认 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 都已配置
@@ -177,7 +157,7 @@ PROXY_PORT=10809
 
 ---
 
-### Q10: 企业微信 Markdown 格式显示不正常？
+### Q9: 企业微信 Markdown 格式显示不正常？
 
 **解决方案**：
 1. 企业微信对 Markdown 支持有限，可尝试设置：
@@ -190,7 +170,7 @@ PROXY_PORT=10809
 
 ## 🤖 AI 模型相关
 
-### Q11: Gemini API 返回 429 错误（请求过多）？
+### Q10: Gemini API 返回 429 错误（请求过多）？
 
 **现象**：日志显示 `Resource has been exhausted` 或 `429 Too Many Requests`
 
@@ -206,7 +186,7 @@ PROXY_PORT=10809
 
 ---
 
-### Q12: 如何使用 DeepSeek 等国产模型？
+### Q11: 如何使用 DeepSeek 等国产模型？
 
 **配置方法**：
 
@@ -225,7 +205,7 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ---
 
-### Q12b: 如何使用 Ollama 本地模型？
+### Q11b: 如何使用 Ollama 本地模型？
 
 **配置方法**：使用 `OLLAMA_API_BASE` + `LITELLM_MODEL`，或渠道模式（`LLM_CHANNELS=ollama` + `LLM_OLLAMA_BASE_URL` + `LLM_OLLAMA_MODELS`）。
 
@@ -233,7 +213,7 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ---
 
-### Q12c: 运行时报 `OllamaException / APIConnectionError`（All LLM models failed）怎么办？
+### Q11c: 运行时报 `OllamaException / APIConnectionError`（All LLM models failed）怎么办？
 
 **症状**：日志出现 `litellm.APIConnectionError: OllamaException` 或 `Analysis failed: All LLM models failed (tried 1 model(s))`。
 
@@ -272,7 +252,7 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ## 🐳 Docker 相关
 
-### Q13: Docker 容器启动后立即退出？
+### Q12: Docker 容器启动后立即退出？
 
 **解决方案**：
 1. 查看容器日志：
@@ -286,7 +266,7 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ---
 
-### Q14: Docker 中 API 服务无法访问？
+### Q13: Docker 中 API 服务无法访问？
 
 **解决方案**：
 1. 确保启动命令包含 `--host 0.0.0.0`（不能是 127.0.0.1）
@@ -298,7 +278,7 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ---
 
-### Q14.1: Docker 中网络/DNS 解析失败（如 api.tushare.pro、searchapi.eastmoney.com 无法解析）？
+### Q13.1: Docker 中网络/DNS 解析失败（如 api.tushare.pro、searchapi.eastmoney.com 无法解析）？
 
 **现象**：日志显示 `Temporary failure in name resolution` 或 `NameResolutionError`，股票数据 API 和大模型 API 均无法访问。
 
@@ -321,19 +301,19 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ---
 
-### Q14.2: Docker 安装时，软件版本号写在哪个文件里？
+### Q13.2: Docker 安装时，软件版本号写在哪个文件里？
 
 **结论**：对 Docker 用户来说，**最权威的版本不是某个 Python 源文件常量，而是你实际使用的镜像 tag**。
 
 **为什么**：
-1. 仓库的 Docker 发布由 `.github/workflows/docker-publish.yml` 触发，只有推送 `v*.*.*` 形式的 Git tag（例如 `v3.12.0`）时才会生成对应发布镜像。
-2. 这意味着 Docker 镜像版本本质上跟随 **GitHub Release / Git tag**，而不是写死在 `main.py`、`server.py` 或其他后端源码里。
+1. Docker 镜像版本由部署时选用的镜像 tag 决定，例如 `v3.12.0`；自建镜像应使用明确的自定义 tag 或 Git commit 标识。
+2. 这意味着 Docker 镜像版本不应依赖 `main.py`、`server.py` 或其他后端源码里的常量。
 3. `frontend/web/package.json` 里的 `version` 当前是占位值 `0.0.0`，WebUI “版本信息”卡片更适合用来确认静态资源是否已重建，不应当作 Docker 发布版本。
 4. 桌面端版本是单独维护的，写在 `frontend/desktop/package.json` 的 `version` 字段；它只代表 Electron 桌面端，不代表 Docker 镜像版本。
 
 **怎么查当前 Docker 版本**：
 1. **先看部署命令或 Compose 文件里的镜像 tag**：例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`，其中 `v3.12.0` 就是当前部署版本。
-2. **如果你拉的是 `latest`**：请回看当时的 `docker pull` / `docker-compose.yml` / 部署脚本，或对照 [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) 确认对应发布记录。
+2. **如果你拉的是 `latest`**：请回看当时的 `docker pull`、Compose 文件或服务器部署脚本，确认实际拉取时间和镜像摘要。
 3. **如果只是想确认前端是否更新到新构建**：可以打开 WebUI 的“系统设置”页查看 `构建标识` / `构建时间`；这能帮助确认静态资源是否刷新，但不等同于 Docker 镜像发布版本。
 
 **建议**：如果你想避免重复更新，部署时尽量固定使用明确的版本 tag（如 `v3.12.0`），不要长期依赖 `latest`。
@@ -342,43 +322,22 @@ OPENAI_MODEL=deepseek-v4-flash
 
 ## 🔧 其他问题
 
-### Q15: 如何只运行大盘复盘，不分析个股？
+### Q14: 如何只运行大盘复盘，不分析个股？
 
 **方法**：
 ```bash
 # 本地运行
-python backend/main.py --market-only
+uv run --locked python backend/main.py --market-review
 
-# GitHub Actions
-# 手动触发时选择 mode: market-only
 ```
 
 ---
 
-### Q16: 分析结果中买入/观望/卖出数量统计不对？
+### Q15: 分析结果中买入/观望/卖出数量统计不对？
 
 **原因**：早期版本使用正则匹配统计，可能与实际建议不一致。
 
 **解决方案**：已在最新版本中修复，AI 模型现在会直接输出 `decision_type` 字段用于准确统计。
-
----
-
-### Q17: 为什么周末在 GitHub Actions 手动触发仍显示“非交易日跳过”？
-
-**现象**：已经配置了 `TRADING_DAY_CHECK_ENABLED` 或希望手动运行，但日志仍提示“今日所有相关市场均为非交易日，跳过执行”。
-
-**解决方案**：
-1. 打开 `Actions → 每日股票分析 → Run workflow`
-2. 手动触发时将 `force_run` 设为 `true`（单次强制运行）
-3. 如果希望长期关闭交易日检查，在 `Settings → Secrets and variables → Actions` 中设置：
-   ```bash
-   TRADING_DAY_CHECK_ENABLED=false
-   ```
-
-**规则说明**：
-- `TRADING_DAY_CHECK_ENABLED=true` 且 `force_run=false`：非交易日跳过（默认）
-- `force_run=true`：本次即使非交易日也执行
-- `TRADING_DAY_CHECK_ENABLED=false`：定时和手动都不做交易日检查
 
 ---
 

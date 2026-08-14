@@ -79,8 +79,8 @@ class Scheduler:
             import schedule
             self.schedule = schedule
         except ImportError:
-            logger.error("schedule 库未安装，请执行: pip install schedule")
-            raise ImportError("请安装 schedule 库: pip install schedule")
+            logger.error("schedule 库未安装，请执行: uv sync --locked")
+            raise ImportError("请同步项目依赖: uv sync --locked")
 
         self.schedule_time = schedule_time
         self._schedule_time_provider = schedule_time_provider

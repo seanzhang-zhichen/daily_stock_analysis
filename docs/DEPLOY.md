@@ -45,14 +45,15 @@ cp .env.example .env
 vim .env  # 填入真实的 API Key 等配置
 ```
 
-如果 Docker 构建时下载 npm / apt / pip 依赖较慢，默认 Compose 构建参数已使用国内镜像源；也可以在 `.env` 中覆盖：
+如果 Docker 构建时下载 npm / apt 依赖较慢，默认 Compose 构建参数已使用国内镜像源；也可以在 `.env` 中覆盖：
 
 ```env
 DOCKER_NPM_REGISTRY=https://registry.npmmirror.com
 DOCKER_APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 DOCKER_APT_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
-DOCKER_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ```
+
+Python 包下载地址由已提交的 `uv.lock` 固定。不要在 `uv sync --locked` 时覆盖 `UV_DEFAULT_INDEX`，否则 uv 会把索引来源变化视为需要重新锁定并终止构建。
 
 ### 3. 一键启动
 
@@ -112,20 +113,20 @@ Docker 镜像启动入口会自动创建并修复 `./data`、`./logs`、`./repor
 ### 1. 安装 Python 环境
 
 ```bash
-# 安装 Python 3.10+
+# 安装 Python 3.10+ 与 curl
 sudo apt update
-sudo apt install -y python3.10 python3.10-venv python3-pip
+sudo apt install -y python3.10 curl
 
-# 创建虚拟环境
-python3.10 -m venv /opt/stock-analyzer/venv
-source /opt/stock-analyzer/venv/bin/activate
+# 安装 uv（也可使用发行版提供的 uv 包）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### 2. 安装依赖
 
 ```bash
 cd /opt/stock-analyzer
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv sync --locked --no-dev
 ```
 
 ### 3. 配置环境变量
@@ -139,19 +140,19 @@ vim .env  # 填入配置
 
 ```bash
 # 单次运行
-python backend/main.py
+uv run --locked --no-dev python backend/main.py
 
 # 定时任务模式（前台运行）
-python backend/main.py --schedule
+uv run --locked --no-dev python backend/main.py --schedule
 
 # 后台运行（使用 nohup）
-nohup python backend/main.py --schedule > /dev/null 2>&1 &
+nohup uv run --locked --no-dev python backend/main.py --schedule > /dev/null 2>&1 &
 
 # 启动 Web 管理界面（云服务器需先在 .env 中设置 WEBUI_HOST=0.0.0.0）
-python backend/main.py --webui-only
+uv run --locked --no-dev python backend/main.py --webui-only
 
 # 启动 Web 界面（启动时执行一次分析；需每日定时请加 --schedule 或设 SCHEDULE_ENABLED=true）
-python backend/main.py --webui
+uv run --locked --no-dev python backend/main.py --webui
 ```
 
 > 不知道怎么访问？→ [云服务器 Web 界面访问指南](deploy-webui-cloud.md)
@@ -178,8 +179,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/stock-analyzer
-Environment="PATH=/opt/stock-analyzer/venv/bin"
-ExecStart=/opt/stock-analyzer/venv/bin/python backend/main.py --schedule
+Environment="PATH=/opt/stock-analyzer/.venv/bin"
+ExecStart=/opt/stock-analyzer/.venv/bin/python backend/main.py --schedule
 Restart=always
 RestartSec=30
 
@@ -305,10 +306,10 @@ docker compose -f ./docker/docker-compose.yml build --no-cache
 
 ### 3. 版本升级后数据库 schema 未更新
 
-Docker 镜像启动应用主进程前会先运行 `alembic upgrade head`；直接使用 `python backend/main.py ...` 启动时，后端会在首次初始化数据库连接时兜底执行同一迁移。若为首次从不含 Alembic 的旧版本升级，需在启动前手动打一次基线标记：
+Docker 镜像启动应用主进程前会先运行 `alembic upgrade head`；直接使用 `uv run --locked --no-dev python backend/main.py ...` 启动时，后端会在首次初始化数据库连接时兜底执行同一迁移。若为首次从不含 Alembic 的旧版本升级，需在启动前手动打一次基线标记：
 
 ```bash
-alembic stamp b0bc3c721ef0
+uv run --locked --no-dev alembic stamp b0bc3c721ef0
 ```
 
 之后正常启动即可，后续迁移均自动执行。Docker Compose 同时启动 `analyzer` 和 `server` 时，entrypoint 会用 `/app/data/.dsa-startup-migration.lock` 串行化启动期迁移，避免两个容器同时升级 schema。
@@ -346,7 +347,7 @@ deploy:
   ```
   构建完成后刷新浏览器缓存（`Ctrl+Shift+R`）再访问。
 
-- **直接部署（pip + python）**：先构建前端，再启动服务：
+- **直接部署（uv + Python）**：先构建前端，再启动服务：
   ```bash
   # 安装 Node.js 18+（推荐 20+，如尚未安装）
   # 构建前端
@@ -355,7 +356,7 @@ deploy:
   npm run build
   cd ../..
   # 启动服务
-  python backend/main.py --webui-only
+  uv run --locked --no-dev python backend/main.py --webui-only
   ```
 
 **验证**：用浏览器开发者工具（F12 → Network）检查是否有 `/assets/index-*.js` 和 `/assets/index-*.css` 的 404 错误；如有，说明资源缺失，按上述步骤重新构建即可。
@@ -459,144 +460,6 @@ git clone <your-repo-url> .
 tar -xzvf stock-analyzer-backup.tar.gz
 docker compose -f ./docker/docker-compose.yml up -d
 ```
-
----
-
-## ☁️ 方案四：GitHub Actions 部署（免服务器）
-
-**最简单的方案！** 无需服务器，利用 GitHub 免费计算资源。
-
-### 优势
-- ✅ **完全免费**（每月 2000 分钟）
-- ✅ **无需服务器**
-- ✅ **自动定时执行**
-- ✅ **零维护成本**
-
-### 限制
-- ⚠️ 无状态（每次运行是新环境）
-- ⚠️ 定时可能有几分钟延迟
-- ⚠️ 无法提供 HTTP API
-
-### 部署步骤
-
-#### 1. 创建 GitHub 仓库
-
-```bash
-# 初始化 git（如果还没有）
-cd /path/to/daily_stock_analysis
-git init
-git add .
-git commit -m "Initial commit"
-
-# 创建 GitHub 仓库并推送
-# 在 GitHub 网页上创建新仓库后：
-git remote add origin https://github.com/你的用户名/daily_stock_analysis.git
-git branch -M main
-git push -u origin main
-```
-
-#### 2. 配置 Secrets（重要！）
-
-打开仓库页面 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
-
-添加以下 Secrets：
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|------|
-| `ANSPIRE_API_KEYS` | Anspire Open API Key（一 Key 启用大模型与搜索） | 推荐 |
-| `AIHUBMIX_KEY` | AIHubMix API Key（一 Key 多模型） | 推荐 |
-| `ANTHROPIC_API_KEY` | Anthropic API Key | 可选 |
-| `GEMINI_API_KEY` | Gemini AI API Key | 可选 |
-| `OPENAI_API_KEY` | OpenAI 兼容 API Key | 可选 |
-| `WECHAT_WEBHOOK_URL` | 企业微信机器人 Webhook | 可选* |
-| `FEISHU_WEBHOOK_URL` | 飞书机器人 Webhook | 可选* |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | 可选* |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 可选* |
-| `TELEGRAM_MESSAGE_THREAD_ID` | Telegram Topic ID | 可选* |
-| `EMAIL_SENDER` | 发件人邮箱 | 可选* |
-| `EMAIL_PASSWORD` | 邮箱授权码 | 可选* |
-| `SERVERCHAN3_SENDKEY` | Server酱³ Sendkey | 可选* |
-| `CUSTOM_WEBHOOK_URLS` | 自定义 Webhook（多个逗号分隔） | 可选* |
-| `STOCK_LIST` | 自选股列表，如 `600519,300750` | ✅ |
-| `SERPAPI_API_KEYS` | SerpAPI Key | 推荐 |
-| `TAVILY_API_KEYS` | Tavily 搜索 API Key | 可选 |
-| `BOCHA_API_KEYS` | 博查搜索 API Key | 可选 |
-| `BRAVE_API_KEYS` | Brave Search API Key | 可选 |
-| `MINIMAX_API_KEYS` | MiniMax Coding Plan Web Search | 可选 |
-| `SEARXNG_BASE_URLS` | SearXNG 自建实例（无配额兜底，需在 settings.yml 启用 format: json）；留空时默认自动发现公共实例 | 可选 |
-| `SEARXNG_PUBLIC_INSTANCES_ENABLED` | 是否在 `SEARXNG_BASE_URLS` 为空时自动从 `searx.space` 获取公共实例（默认 `true`） | 可选 |
-| `TUSHARE_TOKEN` | Tushare Token | 可选 |
-| `GEMINI_MODEL` | 模型名称（默认 gemini-2.0-flash） | 可选 |
-
-> *注：通知渠道至少配置一个，支持多渠道同时推送
-
-#### 3. 验证 Workflow 文件
-
-确保 `.github/workflows/daily_analysis.yml` 文件存在且已提交：
-
-```bash
-git add .github/workflows/daily_analysis.yml
-git commit -m "Add GitHub Actions workflow"
-git push
-```
-
-#### 4. 手动测试运行
-
-1. 打开仓库页面 → **Actions** 标签
-2. 选择 **"每日股票分析"** workflow
-3. 点击 **"Run workflow"** 按钮
-4. 选择运行模式：
-   - `full` - 完整分析（股票+大盘）
-   - `market-only` - 仅大盘复盘
-   - `stocks-only` - 仅股票分析
-5. 点击绿色 **"Run workflow"** 按钮
-
-#### 5. 查看执行日志
-
-- Actions 页面可以看到运行历史
-- 点击具体的运行记录查看详细日志
-- 分析报告会作为 Artifact 保存 30 天
-
-### 定时说明
-
-默认配置：**周一到周五，北京时间 18:00** 自动执行
-
-修改时间：编辑 `.github/workflows/daily_analysis.yml` 中的 cron 表达式：
-
-```yaml
-schedule:
-  - cron: '0 10 * * 1-5'  # UTC 时间，+8 = 北京时间
-```
-
-常用 cron 示例：
-| 表达式 | 说明 |
-|--------|------|
-| `'0 10 * * 1-5'` | 周一到周五 18:00（北京时间） |
-| `'30 7 * * 1-5'` | 周一到周五 15:30（北京时间） |
-| `'0 10 * * *'` | 每天 18:00（北京时间） |
-| `'0 2 * * 1-5'` | 周一到周五 10:00（北京时间） |
-
-### 修改自选股
-
-方法一：修改仓库 Secret `STOCK_LIST`
-
-方法二：直接修改代码后推送：
-```bash
-# 修改 .env.example 或在代码中设置默认值
-git commit -am "Update stock list"
-git push
-```
-
-### 常见问题
-
-**Q: 为什么定时任务没有执行？**
-A: GitHub Actions 定时任务可能有 5-15 分钟延迟，且仅在仓库有活动时才触发。长时间无 commit 可能导致 workflow 被禁用。
-
-**Q: 如何查看历史报告？**
-A: Actions → 选择运行记录 → Artifacts → 下载 `analysis-reports-xxx`
-
-**Q: 免费额度够用吗？**
-A: 每次运行约 2-5 分钟，一个月 22 个工作日 = 44-110 分钟，远低于 2000 分钟限制。
 
 ---
 

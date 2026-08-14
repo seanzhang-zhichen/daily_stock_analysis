@@ -34,7 +34,7 @@ try:
 except ImportError:
     PYPINYIN_AVAILABLE = False
     print("[Warning] pypinyin not available, pinyin fields will be empty")
-    print("[Info] Install with: pip install pypinyin")
+    print("[Info] Sync dependencies with: uv sync --locked")
 
 
 def load_csv_data(csv_path: Path) -> List[Dict[str, Any]]:
@@ -590,7 +590,7 @@ def main():
     # 生成拼音提示
     if not PYPINYIN_AVAILABLE:
         print("\n[提示] 安装 pypinyin 可获得拼音搜索功能：")
-        print("       pip install pypinyin")
+        print("       uv sync --locked")
 
     print("\n[2/5] 生成索引数据...")
     index = build_stock_index(stocks)

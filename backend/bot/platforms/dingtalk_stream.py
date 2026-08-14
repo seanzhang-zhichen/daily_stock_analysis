@@ -13,7 +13,7 @@
 - 更简单的接入方式
 
 依赖：
-pip install dingtalk-stream
+uv sync --locked
 
 钉钉 Stream SDK：
 https://github.com/open-dingtalk/dingtalk-stream-sdk-python
@@ -36,7 +36,7 @@ try:
 except ImportError:
     DINGTALK_STREAM_AVAILABLE = False
     logger.warning("[DingTalk Stream] dingtalk-stream SDK 未安装，Stream 模式不可用")
-    logger.warning("[DingTalk Stream] 请运行: pip install dingtalk-stream")
+    logger.warning("[DingTalk Stream] 请运行: uv sync --locked")
 
 from bot.models import BotMessage, BotResponse, ChatType
 
@@ -219,7 +219,7 @@ class DingtalkStreamClient:
         if not DINGTALK_STREAM_AVAILABLE:
             raise ImportError(
                 "dingtalk-stream SDK 未安装。\n"
-                "请运行: pip install dingtalk-stream"
+                "请运行: uv sync --locked"
             )
 
         from src.config import get_config

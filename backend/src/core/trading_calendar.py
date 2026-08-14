@@ -23,7 +23,7 @@ try:
 except ImportError:
     logger.warning(
         "exchange-calendars not installed; trading day check disabled. "
-        "Run: pip install exchange-calendars"
+        "Run: uv sync --locked"
     )
 
 # Market -> exchange code used by exchange-calendars.

@@ -10,9 +10,9 @@
 这样桌面端/服务端/API-only 三类启动语义不会互相混淆。
 
 启动示例：
-    uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000
-    python backend/main.py --serve-only      # 仅启动 API 服务
-    python backend/main.py --serve           # API 服务 + 执行分析
+    uv run --locked uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000
+    uv run --locked python backend/main.py --serve-only      # 仅启动 API 服务
+    uv run --locked python backend/main.py --serve           # API 服务 + 执行分析
 """
 
 import logging

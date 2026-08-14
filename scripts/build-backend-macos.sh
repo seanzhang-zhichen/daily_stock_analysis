@@ -8,17 +8,22 @@ log() {
   echo "$1"
 }
 
-PYTHON_BIN="${PYTHON_BIN:-}"
-if [[ -z "${PYTHON_BIN}" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-  else
-    PYTHON_BIN="python"
-  fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/."
+  exit 1
 fi
 
-if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-  echo "Python not found. Please install Python 3.10+ and retry."
+sync_args=(sync --locked --project "${ROOT_DIR}")
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  sync_args+=(--python "${PYTHON_BIN}")
+fi
+
+log "Syncing Python dependencies with uv..."
+uv "${sync_args[@]}"
+PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "uv did not create the expected interpreter: ${PYTHON_BIN}"
   exit 1
 fi
 
@@ -35,11 +40,9 @@ log "Verifying static asset references (source)..."
 
 log "Building backend executable..."
 if ! "${PYTHON_BIN}" -m PyInstaller --version >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m pip install pyinstaller
+  echo "PyInstaller is not importable after uv sync."
+  exit 1
 fi
-
-log "Installing backend dependencies..."
-"${PYTHON_BIN}" -m pip install -r "${ROOT_DIR}/requirements.txt"
 
 log "Checking python-multipart availability..."
 "${PYTHON_BIN}" -c "import multipart, multipart.multipart"

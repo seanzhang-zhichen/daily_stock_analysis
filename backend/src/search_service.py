@@ -306,7 +306,7 @@ class TavilySearchProvider(BaseSearchProvider):
                 results=[],
                 provider=self.name,
                 success=False,
-                error_message="tavily-python 未安装，请运行: pip install tavily-python"
+                error_message="tavily-python 未安装，请运行: uv sync --locked"
             )
         
         try:
@@ -489,7 +489,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 results=[],
                 provider=self.name,
                 success=False,
-                error_message="google-search-results 未安装，请运行: pip install google-search-results"
+                error_message="google-search-results 未安装，请运行: uv sync --locked"
             )
         
         try:
@@ -891,7 +891,7 @@ class BochaSearchProvider(BaseSearchProvider):
                 results=[],
                 provider=self.name,
                 success=False,
-                error_message="requests 未安装，请运行: pip install requests"
+                error_message="requests 未安装，请运行: uv sync --locked"
             )
         
         try:
@@ -1088,7 +1088,7 @@ class AnspireSearchProvider(BaseSearchProvider):
                 results=[],
                 provider=self.name,
                 success=False,
-                error_message="requests 未安装，请运行：pip install requests"
+                error_message="requests 未安装，请运行：uv sync --locked"
             )
         
         try:

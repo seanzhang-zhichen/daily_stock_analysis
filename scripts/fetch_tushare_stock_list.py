@@ -10,7 +10,7 @@ Tushare 股票列表获取脚本
 
 环境要求：
     - 需要在 .env 中配置 TUSHARE_TOKEN
-    - 需要安装 tushare: pip install tushare
+    - 需要同步项目依赖: uv sync --locked
     - 账号积分要求：
         * A股/港股：2000积分
         * 美股：120积分试用，5000积分正式权限
@@ -41,7 +41,7 @@ try:
     import tushare as ts
 except ImportError:
     print("[错误] 未安装 tushare 库")
-    print("请执行: pip install tushare")
+    print("请执行: uv sync --locked")
     sys.exit(1)
 
 

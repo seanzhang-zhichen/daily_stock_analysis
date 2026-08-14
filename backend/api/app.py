@@ -339,7 +339,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
 <p>Build the frontend first:</p>
 <p><code>cd frontend/web &amp;&amp; npm install &amp;&amp; npm run build</code></p>
 <p>Or start with auto-build:</p>
-<p><code>python backend/main.py --webui-only</code></p>
+<p><code>uv run --locked python backend/main.py --webui-only</code></p>
 <div class="hint"><p>If you only need the API, visit <a href="/docs">/docs</a> for the interactive API documentation.</p></div>
 <p class="status">API Version 1.0.0 &bull; <a href="/api/health">/api/health</a></p>
 </div></body></html>"""

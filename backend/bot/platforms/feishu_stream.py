@@ -15,7 +15,7 @@
 - 内置自动重连和心跳保活
 
 依赖：
-pip install lark-oapi
+uv sync --locked
 
 飞书长连接文档：
 https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/server-side-sdk/python--sdk/handle-events
@@ -48,7 +48,7 @@ try:
 except ImportError:
     FEISHU_SDK_AVAILABLE = False
     logger.warning("[Feishu Stream] lark-oapi SDK 未安装，Stream 模式不可用")
-    logger.warning("[Feishu Stream] 请运行: pip install lark-oapi")
+    logger.warning("[Feishu Stream] 请运行: uv sync --locked")
 
 from bot.models import BotMessage, BotResponse, ChatType
 from src.formatters import format_feishu_markdown, chunk_content_by_max_bytes
@@ -548,7 +548,7 @@ class FeishuStreamClient:
         if not FEISHU_SDK_AVAILABLE:
             raise ImportError(
                 "lark-oapi SDK 未安装。\n"
-                "请运行: pip install lark-oapi"
+                "请运行: uv sync --locked"
             )
 
         from src.config import get_config

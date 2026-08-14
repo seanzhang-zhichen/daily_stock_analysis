@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [文档] 移除 GitHub Actions 部署、配置与发布说明，统一改为自建服务器、Docker 和本地脚本运行口径。
+- [改进] Python 依赖管理从 pip/requirements 迁移到 uv，以 `pyproject.toml` 声明运行时与开发依赖、提交 `uv.lock` 保证可复现安装，并同步 Docker、桌面开发与打包、验证脚本和开发部署文档。
 - [改进] 运营后台「套餐与用量」支持新增付费套餐；会员中心和手动开通页均改为读取后端当前套餐目录，不再假设固定付费套餐代码。
 - [新功能] 支持通过 `.env` 配置 `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` 引导平台超级管理员，启动时自动创建或激活同邮箱 To C 用户并授予 `is_admin=True`；`SUPER_ADMIN_SYNC_PASSWORD=true` 时可强制同步已有账号密码。
 - [修复] 内置每日定时任务不再执行全局 `STOCK_LIST` 分析，改为仅处理开启每日推送且自选股非空的用户，避免空自选股用户仍收到示例股票分析。
@@ -85,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [chore] Complete remaining low-risk legacy cleanup by removing the Stocks API `codes` response compatibility field and desktop-specific system config import/export service aliases.
 - [修复] 登录/注册页邮箱输入框补充邮箱图标，与密码输入框的图标样式保持一致。
 - [修复] 修复本地前后端分离开发时注册验证邮件默认生成 `localhost:8000/verify-email` 导致邮箱验证页无法生效的问题：邮箱验证链接默认指向 Web 前端 `localhost:5200`，并新增 `USER_FRONTEND_BASE_URL` 支持自定义前端公开地址。
-- [改进] Docker 构建新增 npm、Debian apt 与 pip 镜像源构建参数，默认使用国内镜像加速依赖下载，并在 `.env.example` 与中英文部署文档中补充覆盖方式。
+- [改进] Docker 构建新增 npm 与 Debian apt 镜像源构建参数，默认使用国内镜像加速依赖下载，并在 `.env.example` 与部署文档中补充覆盖方式；Python 依赖来源由 `uv.lock` 固定。
 - [文档] 更新本地前后端启动说明，明确 `--serve-only` 仅启动 FastAPI API、Web 前端开发服务器使用 `frontend/web` 的 `npm run dev` 运行在 5200 端口，生产/本地一体化 WebUI 使用 `--webui-only` 托管构建产物。
 - [chore] 收敛项目目录边界：Web 前端位于 `frontend/web/`，桌面端位于 `frontend/desktop/`，后端真实代码位于 `backend/`；移除根目录 `main.py` / `server.py` / `webui.py` 与 `src` / `api` / `data_provider` / `bot` 兼容 shim，并同步更新 CI、Docker 与相关文档。
 - [文档] 同步 To C、产品规划与中英文完整指南文档：补充 `USER_FRONTEND_BASE_URL`、公开股票搜索接口与股票索引表说明，校正模型偏好和 `allowed_models` 运营配置状态，并修复完整指南中的项目结构与 Docker Compose 示例。
@@ -147,13 +149,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [chore] Web 前端重构 Phase 6 最终 cyan 清零：`AccountPage`（邮箱已验证 badge、toggle 开关）、`Pagination`（当前页按钮）、`StockAutocomplete`（loading spinner）、`SettingsHelpButton`（bullet 圆点）、`Collapsible`（icon）、`PaymentDialog`（支付方式选择态、Loader）、`StatCard`（primary tone border）、`StatusDot`（info 状态）中残留的 `text-cyan`/`bg-cyan`/`border-cyan` 全部替换为 `text-primary`/`bg-primary`/`border-primary`；保留 `SuggestionsList.tsx`（US 市场语义色）和 `JsonViewer.tsx`（JSON 键名高亮）两处语义性例外；lint/build 通过。
 - [改进] Web 前端重构 Phase 6 推进：新增 `prose-legal` CSS 类（`frontend/web/src/styles/components.css`）补全 `LegalPageLayout` 法律协议文章排版；`index.css` 大规模清理——删除全部 `--home-*`（light/dark 各约 60 条）和 `--settings-*`（light/dark 各约 23 条）私有 token，删除 `terminal-card`/`terminal-card-hover`/`gradient-border-card`/`glass-card`/`home-panel-card`/`dashboard-card`/`glass-panel`/`glass-panel-lg`/`page-drawer-overlay`/`home-mobile-overlay`/`shell-page-frame` 共 11 组旧视觉 CSS 类，删除全部 `home-*` 组件 CSS 类（subpanel/history-item/surface-button/accent-chip/pill-link/spinner/divider/report-hero/rail-card/insight-card/board/strategy/news/trace/markdown-prose 及其 `.dark` 覆盖，共约 370 行），删除废弃 `badge-*`/`list-item`/`feed-item`/`glow-*`/`animate-pulse-glow`/`animate-slide-up`/`title-gradient` 等孤立样式；修复残留 `.prose :where(th, td)` 中已删除 token `--home-prose-border-strong` 引用，改为内联值；Phase 5/6 四页面/53 条定向测试通过，lint 0 errors，build 通过。
 - [改进] Web 前端重构 Phase 5 启动：`NotFoundPage` 将 `btn-primary` 原生按钮替换为 `Button` 组件；`AccountPage`、`OrdersPage`、`InvoicesPage`、`BillingPage`、`NoticesPage`、`AdminPage` 外层包装全部迁移到 `StandardPageLayout`，所有条件分支早返回（未启用 / 未登录 / 加载失败等）同步使用 `StandardPageLayout`；各页面中的 `text-cyan` / `border-cyan` / `bg-cyan` 硬编码颜色替换为 `text-primary` / `border-primary` / `bg-primary` 语义化 token；`NoticesPage` `info` 类型公告配色从 `cyan` 迁移到 `primary`；`SettingsPage` 删除无 CSS 的 `settings-page` 空类，`settings-border` 替换为 `border-border/60`，`shadow-soft-card-strong` 替换为 `shadow-card`；lint/build 通过。
-- [chore] 引入 Alembic 数据库迁移基础设施：新增 `alembic.ini`、`alembic/env.py`（自动读取项目 DB URL）、`alembic/script.py.mako`、基线迁移 `alembic/versions/20250519_8f3a2b1c9d0e_baseline.py`；`DatabaseManager` 启动时对文件型 SQLite 和网络数据库自动执行 `alembic upgrade head`，`:memory:` SQLite（测试环境）保持 `create_all`；`requirements.txt` 追加 `alembic>=1.13.0`；`AGENTS.md` 新增"数据库迁移"章节，明确所有 schema 变更必须通过 Alembic migration 完成。
+- [chore] 引入 Alembic 数据库迁移基础设施：新增 `alembic.ini`、`alembic/env.py`（自动读取项目 DB URL）、`alembic/script.py.mako`、基线迁移 `alembic/versions/20250519_8f3a2b1c9d0e_baseline.py`；`DatabaseManager` 启动时对文件型 SQLite 和网络数据库自动执行 `alembic upgrade head`，`:memory:` SQLite（测试环境）保持 `create_all`；`pyproject.toml` 声明 `alembic>=1.13.0`；`AGENTS.md` 新增"数据库迁移"章节，明确所有 schema 变更必须通过 Alembic migration 完成。
 - [新功能] Phase 5 退款前端入口：`OrdersPage` paid 订单新增「申请退款」按钮 + 内联弹窗（退款原因 textarea + 提交/取消），调用 `billingApi.requestRefund`，提交成功后原位展示「退款已提交」状态标签。
 - [新功能] Phase 5 退款邮件回执：运营在 `/admin` 审核退款后（通过或拒绝），`api/v1/endpoints/admin.py` 自动向用户发送审核结果邮件（`src/users/email.get_email_backend`），失败仅记日志不影响主流程。
 - [新功能] Phase 6 SQLite 备份脚本：新增 `scripts/backup_db.py`，使用 SQLite 在线热备份 API，支持时间戳命名、gzip 压缩、可配置保留份数（默认 7）、外部上传钩子 `BACKUP_UPLOAD_SCRIPT` 和 dry-run 模式；可直接 `python scripts/backup_db.py --dry-run` 验证配置。
 - [文档] `docs/to-c-product-plan.md` 更新 Phase 5/6 进度：退款后收回付费套餐权益、退款邮件回执、OrdersPage 退款入口、备份脚本均标记为已落地。
 - [新功能] Phase 6 公告中心：新增 `AppNotice` ORM 表（`app_notices`，含 `notice_type`/`is_pinned`/`is_published`/`target_plan`/`expires_at`）；新增 `api/v1/endpoints/notices.py` 提供公开列表 `GET /api/v1/notices`、近期公告数 `GET /api/v1/notices/unread-count`、管理员 CRUD + publish/unpublish 接口，两个公开端点已加入 `AuthMiddleware` 白名单；前端新增 `/notices` 页面（置顶/普通分区展示、加载更多）、侧边栏「公告」导航项（Bell 图标，含近 30 天发布数角标）、Admin `/admin` 新增「公告管理」标签页（创建草稿 + 发布/下架 + 删除）。
-- [新功能] Phase 6 Sentry 错误监控：`requirements.txt` 追加 `sentry-sdk[fastapi]>=2.0.0`；`api/app.py` 新增 `_init_sentry()` 函数，读取 `SENTRY_DSN`/`SENTRY_ENVIRONMENT`/`SENTRY_TRACES_SAMPLE_RATE` 环境变量，接入 `FastApiIntegration` + `SqlalchemyIntegration`；`SENTRY_DSN` 留空时完全不初始化，不影响主流程；`.env.example` 补充相关字段说明。
+- [新功能] Phase 6 Sentry 错误监控：`pyproject.toml` 声明 `sentry-sdk[fastapi]>=2.0.0`；`api/app.py` 新增 `_init_sentry()` 函数，读取 `SENTRY_DSN`/`SENTRY_ENVIRONMENT`/`SENTRY_TRACES_SAMPLE_RATE` 环境变量，接入 `FastApiIntegration` + `SqlalchemyIntegration`；`SENTRY_DSN` 留空时完全不初始化，不影响主流程；`.env.example` 补充相关字段说明。
 - [改进] Phase 6 注册防刷：`registration_guard.py` + `config.py` 新增邮箱域名 DNS 宽松 MX 校验（`check_mx_domain`，基于 `socket.getaddrinfo`，网络故障时 fail-open 放行）；由 `USER_EMAIL_MX_CHECK_ENABLED=true` 开关控制（默认关闭）；`service.py` 向 `RegistrationGuardConfig` 透传 `mx_check_enabled`；`.env.example` 补充说明。
 - [新功能] Phase 6 客服入口：前端 `SidebarNav` 侧边栏底部新增「帮助」链接（`HelpCircle` 图标），进入站内 `/help` 帮助中心，集中展示 FAQ、反馈指引、配置入口和免责声明。
 - [文档] `docs/to-c-product-plan.md` Phase 6 状态更新为「主要落地」，标注公告中心、Sentry 监控、MX 校验、客服入口已落地；`.env.example` 同步追加四个新变量区段。

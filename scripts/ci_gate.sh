@@ -2,19 +2,23 @@
 
 set -euo pipefail
 
+uv_run() {
+  uv run --locked "$@"
+}
+
 syntax_check() {
   echo "==> backend-gate: Python syntax check"
-  python -m py_compile main.py server.py webui.py
-  python -m py_compile backend/__init__.py
-  python -m py_compile backend/main.py backend/src/config.py backend/src/auth.py backend/src/analyzer.py backend/src/notification.py
-  python -m py_compile backend/src/storage/__init__.py backend/src/scheduler.py backend/src/search_service.py
-  python -m py_compile backend/src/market_analyzer.py backend/src/stock_analyzer.py
-  python -m py_compile backend/data_provider/*.py
+  uv_run python -m py_compile backend/__init__.py
+  uv_run python -m py_compile backend/main.py backend/server.py backend/src/config.py backend/src/auth.py
+  uv_run python -m py_compile backend/src/analyzer.py backend/src/notification.py backend/src/storage/__init__.py
+  uv_run python -m py_compile backend/src/scheduler.py backend/src/search_service.py
+  uv_run python -m py_compile backend/src/market_analyzer.py backend/src/stock_analyzer.py
+  uv_run python -m py_compile backend/data_provider/*.py
 }
 
 flake8_checks() {
   echo "==> backend-gate: flake8 critical checks"
-  flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+  uv_run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 }
 
 deterministic_checks() {
@@ -25,7 +29,7 @@ deterministic_checks() {
 
 offline_test_suite() {
   echo "==> backend-gate: offline test suite"
-  python -m pytest -m "not network"
+  uv_run python -m pytest -m "not network"
 }
 
 run_all() {

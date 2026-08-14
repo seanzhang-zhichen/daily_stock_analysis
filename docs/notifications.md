@@ -1,6 +1,6 @@
 # 通知能力基线
 
-本文档记录通知能力 P0-P7 终态：渠道、配置 key、GitHub Actions 映射、Web 设置元数据、CLI 诊断口径、Web 一键测试、自定义 Webhook Body 模板语义、通知路由策略、降噪机制、聚合报告失败隔离、ntfy / Gotify 一等渠道、WebPush / Apprise 评估，以及本地 / Docker / GitHub Actions / Desktop 场景化配置说明。P0 只做基线与只读诊断；P1 增加 Web 单渠道真实测试；P2 产品化现有 Body 模板；P3 增加 report / alert / system_error 路由；P4 增加进程内降噪；P5 强化测试诊断和聚合报告逐渠道失败隔离；P6-A 新增 ntfy；P6-C 新增 Gotify；P6-D 只评估 WebPush / Apprise；P7 收口文档与 Actions env 对照表自动化，不新增运行时依赖、配置入口、per-URL 模板、跨进程持久化、真实每日摘要或重试循环。
+本文档记录通知能力 P0-P7 终态：渠道、配置 key、Web 设置元数据、CLI 诊断口径、Web 一键测试、自定义 Webhook Body 模板语义、通知路由策略、降噪机制、聚合报告失败隔离、ntfy / Gotify 一等渠道、WebPush / Apprise 评估，以及本地 / Docker / Desktop 场景化配置说明。P0 只做基线与只读诊断；P1 增加 Web 单渠道真实测试；P2 产品化现有 Body 模板；P3 增加 report / alert / system_error 路由；P4 增加进程内降噪；P5 强化测试诊断和聚合报告逐渠道失败隔离；P6-A 新增 ntfy；P6-C 新增 Gotify；P6-D 只评估 WebPush / Apprise；P7 收口文档，不新增运行时依赖、配置入口、per-URL 模板、跨进程持久化、真实每日摘要或重试循环。
 
 ## 渠道基线
 
@@ -34,65 +34,10 @@
 - WebPush、Apprise、更细粒度路由、跨进程降噪和真实每日摘要暂不进入运行时实现；相关配置如未来引入，应先更新本文档、`.env.example`、Web 元数据与回归测试。
 - Bark 保持 custom webhook 基线，不新增 `BARK_*` 一等配置。
 
-## GitHub Actions 映射
-
-仓库自带 `.github/workflows/daily_analysis.yml` 只显式导入固定变量名。P0/P3/P4/P6 已把 Body 模板、安全项、PushPlus topic、路由、降噪、ntfy 和 Gotify 等通知 key 纳入默认 workflow。下面的表格由 `scripts/generate_notification_actions_env_table.py` 从 workflow `env:` 和通知诊断元数据生成，避免手写对照表和真实 Actions 映射继续漂移。
-
-<!-- notification-actions-env-table:start -->
-
-| Key | Tier | Channel / feature | Actions source | Default |
-| --- | --- | --- | --- | --- |
-| `WECHAT_WEBHOOK_URL` | minimal | wechat | Secret | - |
-| `WECHAT_MSG_TYPE` | advanced | wechat | Variable or Secret | `markdown` |
-| `FEISHU_WEBHOOK_URL` | minimal | feishu | Secret | - |
-| `FEISHU_WEBHOOK_SECRET` | advanced | feishu | Secret | - |
-| `FEISHU_WEBHOOK_KEYWORD` | advanced | feishu | Variable or Secret | - |
-| `TELEGRAM_BOT_TOKEN` | minimal | telegram | Secret | - |
-| `TELEGRAM_CHAT_ID` | minimal | telegram | Secret | - |
-| `TELEGRAM_MESSAGE_THREAD_ID` | advanced | telegram | Secret | - |
-| `EMAIL_SENDER` | minimal | email | Variable or Secret | - |
-| `EMAIL_PASSWORD` | minimal | email | Secret | - |
-| `EMAIL_RECEIVERS` | advanced | email | Variable or Secret | - |
-| `EMAIL_SENDER_NAME` | advanced | email | Variable or Secret | `daily_stock_analysis股票分析助手` |
-| `PUSHOVER_USER_KEY` | minimal | pushover | Secret | - |
-| `PUSHOVER_API_TOKEN` | minimal | pushover | Secret | - |
-| `NTFY_URL` | minimal | ntfy | Secret | - |
-| `NTFY_TOKEN` | advanced | ntfy | Secret | - |
-| `GOTIFY_URL` | minimal | gotify | Secret | - |
-| `GOTIFY_TOKEN` | minimal | gotify | Secret | - |
-| `PUSHPLUS_TOKEN` | minimal | pushplus | Secret | - |
-| `PUSHPLUS_TOPIC` | advanced | pushplus | Variable or Secret | - |
-| `CUSTOM_WEBHOOK_URLS` | minimal | custom | Secret | - |
-| `CUSTOM_WEBHOOK_BEARER_TOKEN` | advanced | custom | Secret | - |
-| `CUSTOM_WEBHOOK_BODY_TEMPLATE` | advanced | custom | Variable or Secret | - |
-| `WEBHOOK_VERIFY_SSL` | advanced | ntfy, gotify, custom, astrbot | Variable or Secret | `true` |
-| `DISCORD_WEBHOOK_URL` | minimal | discord | Secret | - |
-| `DISCORD_BOT_TOKEN` | minimal | discord | Secret | - |
-| `DISCORD_MAIN_CHANNEL_ID` | minimal | discord | Secret | - |
-| `ASTRBOT_URL` | minimal | astrbot | Secret | - |
-| `ASTRBOT_TOKEN` | advanced | astrbot | Secret | - |
-| `SERVERCHAN3_SENDKEY` | minimal | serverchan3 | Secret | - |
-| `SLACK_WEBHOOK_URL` | minimal | slack | Secret | - |
-| `SLACK_BOT_TOKEN` | minimal | slack | Secret | - |
-| `SLACK_CHANNEL_ID` | minimal | slack | Secret | - |
-| `NOTIFICATION_REPORT_CHANNELS` | advanced | routing | Variable or Secret | - |
-| `NOTIFICATION_ALERT_CHANNELS` | advanced | routing | Variable or Secret | - |
-| `NOTIFICATION_SYSTEM_ERROR_CHANNELS` | advanced | routing | Variable or Secret | - |
-| `NOTIFICATION_DEDUP_TTL_SECONDS` | advanced | noise | Variable or Secret | `0` |
-| `NOTIFICATION_COOLDOWN_SECONDS` | advanced | noise | Variable or Secret | `0` |
-| `NOTIFICATION_QUIET_HOURS` | advanced | noise | Variable or Secret | - |
-| `NOTIFICATION_TIMEZONE` | advanced | noise | Variable or Secret | - |
-| `NOTIFICATION_MIN_SEVERITY` | advanced | noise | Variable or Secret | - |
-| `NOTIFICATION_DAILY_DIGEST_ENABLED` | advanced | noise | Variable or Secret | `false` |
-
-<!-- notification-actions-env-table:end -->
-
-默认 workflow 仍不映射 `MARKDOWN_TO_IMAGE_CHANNELS` 与 `MERGE_EMAIL_NOTIFICATION`。它们是发送形态或聚合行为开关，不是渠道凭证；在 Actions 中自动开始读取同名 Secret/Variable 会引入额外行为变化。
-
 ## CLI 诊断
 
 ```bash
-python backend/main.py --check-notify
+uv run --locked python backend/main.py --check-notify
 ```
 
 该命令只读配置，不发送通知，不写入 `.env`。它会在配置加载和日志初始化后立即执行，完成后直接退出，不再进入 Web、调度、大盘复盘或默认分析流程。
@@ -229,7 +174,7 @@ P4 新增进程内降噪，只影响静态配置渠道，不影响 `send_to_cont
 - 未显式传入 `cooldown_key` 的调用按路由和严重级别共享默认冷却槽位，例如 report / info 的普通通知会共用同一个槽位。
 - 同一进程内相同 key 的并发发送会先占用短生命周期 in-flight 槽位，避免突发重复发送；静态渠道全部失败时释放该槽位，不写入正式去重 / 冷却状态。
 - 降噪判断异常时 fail-open：记录日志并继续发送静态渠道。
-- `NOTIFICATION_TIMEZONE` 留空时使用 `datetime.now().astimezone()` 解析到的运行时本地时区；Actions / Docker 场景建议显式配置 `NOTIFICATION_TIMEZONE` 以避免时区歧义。
+- `NOTIFICATION_TIMEZONE` 留空时使用 `datetime.now().astimezone()` 解析到的运行时本地时区；服务器 / Docker 场景建议显式配置 `NOTIFICATION_TIMEZONE` 以避免时区歧义。
 
 ## WebPush / Apprise 评估
 
@@ -247,17 +192,17 @@ WebPush 后续如要实现，需要先单独设计订阅生命周期与安全边
 Apprise 后续如要引入，应先作为可选依赖评估，而不是默认依赖：
 
 - Apprise 是通用通知库，覆盖面广，但会与当前已有 WeChat、Telegram、Discord、Slack、ntfy、Gotify、Pushover 等一等渠道重叠。
-- 需要评估依赖体积、安装失败路径、Docker 镜像膨胀、GitHub Actions 依赖缓存和可选 extras 策略。
+- 需要评估依赖体积、安装失败路径、Docker 镜像膨胀和可选 extras 策略。
 - secret 传递不能直接暴露完整 Apprise URL；需要统一脱敏、Web 测试目标遮罩和错误日志过滤。
 - 发送失败应隔离在 Apprise 渠道内，不能影响已有渠道的失败隔离语义。
-- 如果采用 Apprise，建议先新增单独 experimental channel 或 CLI-only spike，再决定是否纳入 Web 设置页和 Actions env。
+- 如果采用 Apprise，建议先新增单独 experimental channel 或 CLI-only spike，再决定是否纳入 Web 设置页和服务器环境配置。
 
 ## 本地配置
 
 本地运行优先使用项目根目录 `.env`。复制 `.env.example` 后填写至少一个 minimal key 即可启用对应静态通知渠道；advanced key 只改变认证、安全、格式、路由或降噪行为，不会单独启用渠道。
 
 ```bash
-python backend/main.py --check-notify
+uv run --locked python backend/main.py --check-notify
 ```
 
 `--check-notify` 是只读诊断：不发送通知、不写 `.env`、不进入分析流程。配置好 WebUI 后，也可以在系统设置页用单渠道测试发送真实测试消息；该测试只使用页面草稿临时配置，不保存 `.env`。
@@ -268,12 +213,6 @@ Docker 场景可通过 `--env-file .env` / Compose `env_file` 注入运行时环
 
 降噪静默时段建议显式配置 `NOTIFICATION_TIMEZONE`，避免容器默认时区与预期不一致。自签名内网 webhook 可临时使用 `WEBHOOK_VERIFY_SSL=false`，但不要在公网链路关闭证书校验。
 
-## GitHub Actions
-
-默认 `daily_analysis.yml` 只读取表格中显式映射的 Secret / Variable。新增 repository Secret 或 Variable 后，只有变量名已经出现在 workflow `env:` 中才会进入运行进程；`STOCK_GROUP_N` / `EMAIL_GROUP_N` 这类任意编号变量不会自动导入。
-
-Secret 适合 token、password、webhook URL 等敏感项；Variable 适合 `WECHAT_MSG_TYPE`、`EMAIL_SENDER_NAME`、路由、降噪窗口和时区这类非敏感行为配置。`MARKDOWN_TO_IMAGE_CHANNELS` 与 `MERGE_EMAIL_NOTIFICATION` 默认不映射，如需在自己的 fork 中使用，应显式修改 workflow 并补充对应测试。
-
 ## Desktop
 
 桌面端复用 Web 设置页的通知配置和单渠道测试入口。通知测试会发送真实测试消息，但只使用当前页面草稿值，不会自动保存；需要持久化时仍需点击保存配置。
@@ -283,6 +222,5 @@ Secret 适合 token、password、webhook URL 等敏感项；Variable 适合 `WEC
 ## 回滚方式
 
 - 本地 / Docker：恢复旧 `.env`，或删除对应渠道 minimal key 后重启进程。
-- GitHub Actions：清空或删除对应 Secret / Variable；未映射的 key 不会进入 workflow 运行进程。
 - Desktop：使用配置备份导入旧 `.env`，或在设置页清空对应渠道配置并保存。
-- 版本回退：P6/P7 新增的 `NTFY_*`、`GOTIFY_*`、路由和降噪 key 在旧版本中会被忽略；若要避免误导，应同时从 `.env` 或 Actions 配置中移除。
+- 版本回退：P6/P7 新增的 `NTFY_*`、`GOTIFY_*`、路由和降噪 key 在旧版本中会被忽略；若要避免误导，应同时从 `.env` 或服务器环境配置中移除。

@@ -468,16 +468,16 @@ Repository 是 Service 与 ORM 之间的数据访问层。
 
 ```bash
 # 查看当前版本
-alembic current
+uv run --locked alembic current
 
 # 生成迁移
-alembic revision --autogenerate -m "add xxx table"
+uv run --locked alembic revision --autogenerate -m "add xxx table"
 
 # 应用到最新
-alembic upgrade head
+uv run --locked alembic upgrade head
 
 # 回退一个版本
-alembic downgrade -1
+uv run --locked alembic downgrade -1
 ```
 
 ### 当前迁移文件
@@ -493,10 +493,10 @@ alembic downgrade -1
 
 ```text
 1. 修改 ORM 模型
-2. 运行 alembic revision --autogenerate
+2. 运行 `uv run --locked alembic revision --autogenerate`
 3. 检查生成脚本是否正确
 4. 补充 downgrade 逻辑
-5. 运行 alembic upgrade head
+5. 运行 `uv run --locked alembic upgrade head`
 6. 补充测试
 7. 更新文档和 docs/CHANGELOG.md
 ```

@@ -8,7 +8,7 @@
 
 ## 目录
 
-- [方式一：直接部署（pip + python）](#方式一直接部署pip--python)
+- [方式一：直接部署（uv + Python）](#方式一直接部署uv--python)
 - [方式二：Docker Compose](#方式二docker-compose)
 - [如何在浏览器里打开界面](#如何在浏览器里打开界面)
 - [如何确认 Docker 重建已生效](#如何确认-docker-重建已生效)
@@ -18,7 +18,7 @@
 
 ---
 
-## 方式一：直接部署（pip + python）
+## 方式一：直接部署（uv + Python）
 
 ### 第一步：修改 .env 中的监听地址
 
@@ -36,7 +36,7 @@ WEBUI_HOST=0.0.0.0
 
 > `127.0.0.1` 表示只有本机能访问，`0.0.0.0` 表示允许任何来源访问。云服务器必须改成 `0.0.0.0` 才能从外网打开界面。
 
-> **注意**：当前 `python backend/main.py` 启动逻辑会在 host 为默认 `0.0.0.0` 时读取 `.env` 里的 `WEBUI_HOST`；即使显式传入 `--host 0.0.0.0`，如果 `.env` 里仍是 `WEBUI_HOST=127.0.0.1`，最终也可能只监听本机。云服务器请务必先把 `.env` 改成 `WEBUI_HOST=0.0.0.0`。
+> **注意**：当前 `uv run --locked --no-dev python backend/main.py` 启动逻辑会在 host 为默认 `0.0.0.0` 时读取 `.env` 里的 `WEBUI_HOST`；即使显式传入 `--host 0.0.0.0`，如果 `.env` 里仍是 `WEBUI_HOST=127.0.0.1`，最终也可能只监听本机。云服务器请务必先把 `.env` 改成 `WEBUI_HOST=0.0.0.0`。
 
 ### 第二步：启动服务
 
@@ -44,10 +44,10 @@ WEBUI_HOST=0.0.0.0
 
 ```bash
 # 只启动 Web 界面（不自动执行分析）
-python backend/main.py --webui-only
+uv run --locked --no-dev python backend/main.py --webui-only
 
 # 或者：启动 Web 界面（启动时执行一次分析；需每日定时分析请加 --schedule 或设 SCHEDULE_ENABLED=true）
-python backend/main.py --webui
+uv run --locked --no-dev python backend/main.py --webui
 ```
 
 启动成功后，终端会输出类似：
@@ -59,7 +59,7 @@ FastAPI 服务已启动: http://0.0.0.0:8000
 如果你想让服务在退出终端后继续运行，可以用 `nohup`：
 
 ```bash
-nohup python backend/main.py --webui-only > /dev/null 2>&1 &
+nohup uv run --locked --no-dev python backend/main.py --webui-only > /dev/null 2>&1 &
 ```
 
 > 日志文件会由程序自动写入 `logs/` 目录，用 `tail -f logs/stock_analysis_*.log` 查看。
@@ -147,7 +147,7 @@ http://your-domain.com:8000
 
 先区分两件事：
 
-1. **Docker 镜像发布版本**：看你部署时使用的镜像 tag，例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`。仓库的 Docker 发布由 `.github/workflows/docker-publish.yml` 按 `v*.*.*` Git tag 触发，所以 Docker 版本应以镜像 tag / GitHub Releases 为准。
+1. **Docker 镜像版本**：看服务器部署时使用的镜像 tag，例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`；自建镜像则以构建时使用的 Git commit 或自定义 tag 为准。
 2. **当前页面加载的前端构建**：看 WebUI “系统设置”页里的版本信息卡片，用来确认浏览器拿到的静态资源是否已经更新。
 
 也就是说，**“系统设置”里的版本信息更适合判断前端是否重建成功，不等同于 Docker 镜像发布版本**。
@@ -255,7 +255,7 @@ cd frontend/web
 npm ci
 npm run build
 cd ../..
-python backend/main.py --webui-only
+uv run --locked --no-dev python backend/main.py --webui-only
 ```
 
 ---
@@ -325,7 +325,7 @@ ADMIN_AUTH_ENABLED=true
 
 重启服务后，第一次访问网页时会要求设置初始密码。设置完成后，每次打开设置页面都需要输入密码，可以防止 API Key 等敏感配置被他人看到。
 
-> 如果忘了密码，可以在服务器上执行：`python -m src.auth reset_password`
+> 如果忘了密码，可以在服务器上执行：`uv run --locked --no-dev python -m src.auth reset_password`
 
 ---
 

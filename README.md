@@ -3,10 +3,8 @@
 # 📈 股票智能分析系统
 
 [![GitHub stars](https://img.shields.io/github/stars/ZhuLinsen/daily_stock_analysis?style=social)](https://github.com/ZhuLinsen/daily_stock_analysis/stargazers)
-[![CI](https://github.com/ZhuLinsen/daily_stock_analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/ZhuLinsen/daily_stock_analysis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Ready-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/zhulinsen/daily_stock_analysis)
 
 <p align="center">
@@ -43,7 +41,7 @@
 | Web / 桌面工作台 | 手动分析、任务进度、历史报告、完整 Markdown、回测、持仓、配置管理、浅色 / 深色主题 |
 | Agent 策略问股 | 多轮追问，支持均线、缠论、波浪、趋势、热点、事件、成长、预期等 15 种内置策略，覆盖 Web/Bot/API |
 | 智能导入与补全 | 图片、CSV/Excel、剪贴板导入；股票代码/名称/拼音/别名补全 |
-| 自动化与推送 | GitHub Actions、Docker、本地定时任务、FastAPI 服务和企业微信/飞书/Telegram/Discord/Slack/邮件推送 |
+| 自动化与推送 | 自建服务器、Docker、本地定时任务、FastAPI 服务和企业微信/飞书/Telegram/Discord/Slack/邮件推送 |
 
 > 功能细节、字段契约、基本面 P0 超时语义、交易纪律、数据源优先级、Web/API 行为请看 [完整配置与部署指南](docs/full-guide.md)。
 
@@ -60,106 +58,43 @@
 
 ## 🚀 快速开始
 
-### 方式一：GitHub Actions（推荐）
+### 本地运行 / Docker 部署
 
-> 5 分钟完成部署，零成本，无需服务器。
+本地运行需要先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)：
 
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-#### 1. Fork 本仓库
-
-点击右上角 `Fork` 按钮（顺便点个 Star⭐ 支持一下）
-
-#### 2. 配置 Secrets
-
-`Settings` → `Secrets and variables` → `Actions` → `New repository secret`
-
-**AI 模型配置（至少配置一个）**
-
-默认先选一个模型服务商并填写 API Key；需要多模型、图片识别、本地模型或高级路由时，再参考 [LLM 配置指南](docs/LLM_CONFIG_GUIDE.md)。
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/?share_code=QFBC0FYC) API Key，一Key同时启用全球热门大模型和联网搜索，无需科学上网，含免费额度 | **推荐** |
-| `AIHUBMIX_KEY` | [AIHubMix](https://aihubmix.com/?aff=CfMq) API Key，一Key切换使用全系模型，无需科学上网，本项目可享 10% 优惠 | **推荐** |
-| `GEMINI_API_KEY` | Google Gemini API Key | 可选 |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API Key | 可选 |
-| `OPENAI_API_KEY` | OpenAI 兼容 API Key（支持 DeepSeek、通义千问等） | 可选 |
-| `OPENAI_BASE_URL` / `OPENAI_MODEL` | 使用 OpenAI 兼容服务时填写 | 可选 |
-
-> Ollama 更适合本地 / Docker 部署，GitHub Actions 推荐使用云端 API。
-
-**通知渠道配置（至少配置一个）**
-
-| Secret 名称 | 说明 |
-|------------|------|
-| `WECHAT_WEBHOOK_URL` | 企业微信机器人 |
-| `FEISHU_WEBHOOK_URL` | 飞书机器人 |
-| `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | Telegram |
-| `DISCORD_WEBHOOK_URL` | Discord Webhook |
-| `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` | Slack Bot |
-| `EMAIL_SENDER` + `EMAIL_PASSWORD` | 邮件推送 |
-
-更多渠道、签名校验、分组邮件、Markdown 转图片等配置见 [通知渠道详细配置](docs/full-guide.md#通知渠道详细配置)。
-
-**自选股配置（必填）**
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `STOCK_LIST` | 自选股代码，如 `600519,hk00700,AAPL,TSLA` | ✅ |
-
-**新闻源配置（推荐）**
-
-新闻源会显著影响舆情、公告、事件和催化因素质量，建议至少配置一个搜索服务。
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/)：中文内容特别优化，适合 A 股新闻和舆情检索；同一 Key 可复用为 Anspire 大模型 | **推荐** |
-| `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis)：搜索引擎结果补强，适合实时金融新闻 | **推荐** |
-| `TAVILY_API_KEYS` | [Tavily](https://tavily.com/)：通用新闻搜索 API | 可选 |
-| `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/)：中文搜索优化，支持 AI 摘要 | 可选 |
-| `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/)：隐私优先，美股资讯补强 | 可选 |
-| `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/)：结构化搜索结果 | 可选 |
-| `SEARXNG_BASE_URLS` | SearXNG 自建实例：无配额兜底，适合私有部署 | 可选 |
-
-更多搜索源、社交舆情和降级规则见 [搜索服务配置](docs/full-guide.md#搜索服务配置)。
-
-#### 3. 启用 Actions
-
-`Actions` 标签 → `I understand my workflows, go ahead and enable them`
-
-#### 4. 手动测试
-
-`Actions` → `每日股票分析` → `Run workflow` → `Run workflow`
-
-#### 完成
-
-默认每个**工作日 18:00（北京时间）**自动执行，也可手动触发。默认非交易日（含 A/H/US 节假日）不执行；强制运行、交易日检查、断点续传等规则见 [完整指南](docs/full-guide.md#定时任务配置)。
-
-### 方式二：本地运行 / Docker 部署
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 ```bash
 # 克隆项目
 git clone https://github.com/ZhuLinsen/daily_stock_analysis.git && cd daily_stock_analysis
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装锁定依赖
+uv sync --locked
 
 # 配置环境变量
 cp .env.example .env && vim .env
 
 # 运行分析
-python backend/main.py
+uv run --locked python backend/main.py
 ```
 
 常用命令：
 
 ```bash
-python backend/main.py --debug
-python backend/main.py --dry-run
-python backend/main.py --stocks 600519,hk00700,AAPL
-python backend/main.py --market-review
-python backend/main.py --schedule
-python backend/main.py --serve-only
+uv run --locked python backend/main.py --debug
+uv run --locked python backend/main.py --dry-run
+uv run --locked python backend/main.py --stocks 600519,hk00700,AAPL
+uv run --locked python backend/main.py --market-review
+uv run --locked python backend/main.py --schedule
+uv run --locked python backend/main.py --serve-only
 ```
 
 > Docker 部署、定时任务、云服务器访问请参考 [完整指南](docs/full-guide.md)；桌面客户端打包请参考 [桌面端打包说明](docs/desktop-package.md)。
@@ -225,7 +160,7 @@ Web 工作台提供配置管理、任务监控、手动分析、历史报告、�
 
 ```bash
 # 终端 1：后端 API
-python backend/main.py --serve-only
+uv run --locked python backend/main.py --serve-only
 
 # 终端 2：前端开发服务器
 cd frontend/web
@@ -235,7 +170,7 @@ npm run dev
 
 访问 `http://localhost:5200` 即可使用；前端会把 `/api/*` 代理到 `http://127.0.0.1:8000`。
 
-本地一体化体验或生产部署可运行 `python backend/main.py --webui-only`，由后端托管已构建的 Web 前端并访问 `http://127.0.0.1:8000`。完整启动方式见 [本地启动指南](docs/local-dev.md) 和 [本地 WebUI 管理界面](docs/full-guide.md#本地-webui-管理界面)。
+本地一体化体验或生产部署可运行 `uv run --locked python backend/main.py --webui-only`，由后端托管已构建的 Web 前端并访问 `http://127.0.0.1:8000`。完整启动方式见 [本地启动指南](docs/local-dev.md) 和 [本地 WebUI 管理界面](docs/full-guide.md#本地-webui-管理界面)。
 
 ## 🤖 Agent 策略问股
 

@@ -7,11 +7,11 @@ API-only 入口分开维护。它会读取 ``WEBUI_HOST`` / ``WEBUI_PORT``，
 ``api.app:app``。
 
 等效命令：
-    python backend/main.py --webui-only
+    uv run --locked python backend/main.py --webui-only
 
 Usage:
-    python backend/webui.py
-    WEBUI_HOST=0.0.0.0 WEBUI_PORT=8000 python backend/webui.py
+    uv run --locked python backend/webui.py
+    WEBUI_HOST=0.0.0.0 WEBUI_PORT=8000 uv run --locked python backend/webui.py
 """
 
 from __future__ import annotations

@@ -1570,7 +1570,7 @@ class Config:
         try:
             import yaml
         except ImportError:
-            _logger.warning("PyYAML not installed; LITELLM_CONFIG ignored. Install with: pip install pyyaml")
+            _logger.warning("PyYAML not installed; LITELLM_CONFIG ignored. Run: uv sync --locked")
             return []
 
         path = Path(config_path)

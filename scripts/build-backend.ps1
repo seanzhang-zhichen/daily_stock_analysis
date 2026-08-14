@@ -12,11 +12,27 @@ if (!(Test-Path 'node_modules')) {
 npm run build
 Pop-Location
 
-$pythonBin = $env:PYTHON_BIN
-if ([string]::IsNullOrWhiteSpace($pythonBin)) {
-  $pythonBin = 'python'
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+if ($null -eq $uvCommand) {
+  throw 'uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/.'
 }
 
+$pythonRequest = $env:PYTHON_BIN
+$syncArgs = @('sync', '--locked')
+if (-not [string]::IsNullOrWhiteSpace($pythonRequest)) {
+  $syncArgs += @('--python', $pythonRequest)
+}
+
+Write-Host 'Syncing Python dependencies with uv...'
+& $uvCommand.Source @syncArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "uv sync --locked failed with exit code $LASTEXITCODE."
+}
+
+$pythonBin = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (!(Test-Path -LiteralPath $pythonBin)) {
+  throw "uv did not create the expected interpreter: $pythonBin"
+}
 Write-Host "Using Python: $pythonBin"
 
 Write-Host 'Verifying static asset references (source)...'
@@ -41,13 +57,7 @@ function Test-PythonCode {
 
 Write-Host 'Building backend executable...'
 if (-not (Test-PythonCode -Python $pythonBin -Code "import PyInstaller")) {
-  & $pythonBin -m pip install pyinstaller
-}
-
-Write-Host 'Installing backend dependencies...'
-& $pythonBin -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) {
-  throw "pip install -r requirements.txt failed with exit code $LASTEXITCODE."
+  throw 'PyInstaller is not importable after uv sync.'
 }
 
 Write-Host 'Checking python-multipart availability...'

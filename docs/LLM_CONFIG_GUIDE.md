@@ -4,10 +4,10 @@
 
 本项目对外提供统一的 AI 模型接入体验，支持主流官方 API、OpenAI 兼容平台以及本地模型。底层由 [LiteLLM](https://docs.litellm.ai/) 驱动，但大多数用户只需要理解“选服务商、填 API Key、选主模型/渠道”这条默认路径。为了照顾不同阶段的用户，我们设计了“三层优先级”配置，按需选择最适合你的方式即可。
 
-如果你正在选择具体服务商、配置 GitHub Actions Secrets / Variables、排查 `details.reason` 错误或准备回滚配置，请优先查看 [LLM 服务商配置指南](./llm-providers.md)。该文档集中维护 provider 预设、Actions 变量对照、运行时能力检测边界和常见错误处理建议。
+如果你正在选择具体服务商、配置服务器环境变量、排查 `details.reason` 错误或准备回滚配置，请优先查看 [LLM 服务商配置指南](./llm-providers.md)。该文档集中维护 provider 预设、运行时能力检测边界和常见错误处理建议。
 
 > 本页的 provider/model/Base URL 说明本次未新增外部兼容语义，仅用于同步现网约定；实际兼容判断仍按当前仓库锁定依赖与运行时实现执行：
-> - 依赖边界：`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 `requirements.txt` 一致）。
+> - 依赖边界：`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 `pyproject.toml` 一致）。
 > - 兼容验证入口：`tests/test_system_config_service.py`、`tests/test_system_config_api.py` 以及现有前端模型配置页回归用例。
 > - 回退路径：优先使用 `.env` 配置备份 + `POST /api/v1/system/config/import` 恢复；也可在重启前手动回填旧 `LITELLM_MODEL` / `LLM_*` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE`。
 
@@ -84,10 +84,10 @@ OLLAMA_API_BASE=http://localhost:11434
 LITELLM_MODEL=ollama/qwen3:8b
 ```
 
-> **重要**：Ollama 必须使用 `OLLAMA_API_BASE` 配置，**不要**使用 `OPENAI_BASE_URL`，否则系统会错误拼接 URL（如 404、`api/generate/api/show`）。远程 Ollama 时，将 `OLLAMA_API_BASE` 设为实际地址（如 `http://192.168.1.100:11434`）。当前依赖约束为 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 requirements.txt 一致）。
+> **重要**：Ollama 必须使用 `OLLAMA_API_BASE` 配置，**不要**使用 `OPENAI_BASE_URL`，否则系统会错误拼接 URL（如 404、`api/generate/api/show`）。远程 Ollama 时，将 `OLLAMA_API_BASE` 设为实际地址（如 `http://192.168.1.100:11434`）。当前依赖约束为 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 pyproject.toml 一致）。
 
 > **恭喜！小白读到这里就可以去运行程序了！**
-> 想测测看通没通？在主目录打开命令行输入：`python scripts/check_env.py --llm`
+> 想测测看通没通？在主目录打开命令行输入：`uv run --locked python scripts/check_env.py --llm`
 
 ---
 
@@ -113,7 +113,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 - 保存渠道时，只会更新这次提交的 key；不会因为切换渠道模式而静默迁移整个旧配置。唯一会被**同步清理**的是运行时模型引用：如果 `LITELLM_MODEL`、`AGENT_LITELLM_MODEL`、`VISION_MODEL` 或 `LITELLM_FALLBACK_MODELS` 指向了当前已启用渠道里已经不存在的模型，设置页会在保存前把这些失效引用清空/移除，避免运行时继续指向无效模型；即使当前启用渠道没有任何可选模型，也会清理缺少 legacy Key 支撑的托管 provider 旧值。`cohere/*`、`google/*`、`xai/*` 这类直连模型仅用于说明历史 `direct-env` 兼容保留语义，不等于可用性承诺，是否可用请按各厂商官方模型/API 文档再做实际验证。
 - 后端一致性依据：配置校验链路在 `SystemConfigService._validate_llm_runtime_selection`（`src/services/system_config_service.py`）中通过 `_uses_direct_env_provider`（`src/config.py`）判断运行时来源；当前仅 `gemini`、`vertex_ai`、`anthropic`、`openai`、`deepseek` 属于托管 key provider，`cohere`、`google`、`xai` 不在该白名单中，因此会保留为直连模型。
 - 回退方式也保持最小：把对应渠道模型列表改回去后重新选择主模型 / fallback，或直接用系统配置导出备份 / 手动 `.env` 还原之前的 `LLM_*`、`LITELLM_MODEL`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`LLM_TEMPERATURE` 即可，不需要额外跑迁移脚本。Web 端如需恢复配置，也可在启用管理员鉴权（`ADMIN_AUTH_ENABLED=true`）后通过 `POST /api/v1/system/config/import` 回滚。
-- 当前仓库对此链路的依赖约束是 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `requirements.txt`）；回归覆盖包括 `tests/test_system_config_service.py`、`tests/test_system_config_api.py` 和 `frontend/web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`。
+- 当前仓库对此链路的依赖约束是 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `pyproject.toml`）；回归覆盖包括 `tests/test_system_config_service.py`、`tests/test_system_config_api.py` 和 `frontend/web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`。
 
 > **外部 provider 示例模型说明**：`cohere/*`、`google/*`、`xai/*` 等 provider 前缀值仅用于说明当前保存清理语义，**不代表该依赖约束内的逐型号可用性保证**。文档或测试中的具体模型名都是配置保留行为样例，不是生产推荐；实际可用性请以对应官方模型文档为准，并结合仓库依赖约束 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` 复核。
 
@@ -205,7 +205,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 - LiteLLM 官方要求 OpenAI Compatible 渠道模型名使用 `openai/` 前缀：<https://docs.litellm.ai/docs/providers/openai_compatible>
 - Moonshot 官方兼容性文档区分两种固定值：**thinking 模式固定 `1.0`，non-thinking 模式固定 `0.6`**；传其它值会被接口拒绝：<https://platform.moonshot.ai/docs/guide/compatibility#parameters-differences-in-request-body>
 - OpenAI Chat Completions 规范中 `temperature` 是可选参数；对 GPT-5 / o 系列等只接受默认温度的模型，本项目会在请求层省略 `temperature`，让服务端使用默认值，而不是改写你的 `LLM_TEMPERATURE`：<https://platform.openai.com/docs/api-reference/chat/create>
-- 当前仓库的运行时依赖约束是 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `requirements.txt`）；本次兼容逻辑按该约束回归验证了主分析、大盘复盘、Agent 直连 LiteLLM，以及系统设置页的渠道连通性测试。
+- 当前仓库的运行时依赖约束是 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（见 `pyproject.toml`）；本次兼容逻辑按该约束回归验证了主分析、大盘复盘、Agent 直连 LiteLLM，以及系统设置页的渠道连通性测试。
 - 因此本项目会在请求发出前按**实际请求模式**归一化 `kimi-k2.6` 及其 `kimi-k2.6-*` 变体：默认 / thinking 路径使用 `temperature=1.0`；如果你的 LiteLLM YAML 路由别名里显式写了 `litellm_params.extra_body.thinking.type: disabled`（或等价 non-thinking 配置），则自动切到 `temperature=0.6`。你在 `.env` 或 Web 设置里保存的 `LLM_TEMPERATURE` 不会被改写。
 - 如果兼容平台对未收录的新模型返回明确的参数错误（例如 `temperature` 不支持、只能使用默认 `1.0`、`top_p` 不支持），运行时会对**当前请求**做一次参数修正并重试；只有重试成功后才把该策略缓存在当前进程内。该缓存不会写回 `.env`，服务重启后会重新按配置与适配规则判断。
 - 对已经产生部分内容的流式响应，系统不会在半截输出后切换参数；仍沿用原有“同模型非流式重试 / fallback 模型”的稳定路径，避免拼接出不一致的回答。
@@ -216,7 +216,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 
 ### 兼容性与回退复核清单（按 PR 审核口径）
 
-- 运行时依赖约束：`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 `requirements.txt` 一致）。
+- 运行时依赖约束：`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 `pyproject.toml` 一致）。
 - 回归验证入口：
   - 渠道模型发现与连接：`tests/test_llm_channel_config.py`
   - 运行时源清理与恢复（含系统配置导出备份链路）：`tests/test_system_config_service.py`
@@ -265,34 +265,6 @@ model_list:
       api_base: http://localhost:11434
 ```
 
-### GitHub Actions配置说明
-
-1. `Settings` → `Secrets and variables` → `Actions`。非敏感配置（如模型名、开关、Base URL）可以放在 `Secret` 或 `Variables`；凡是 `*_API_KEY` / `*_API_KEYS` 以及 `LLM_<NAME>_API_KEY` / `LLM_<NAME>_API_KEYS` 这类密钥字段，请统一放在 `Secret` 标签页的 `New repository secret`
-
-2. 按下表配置，只有全部必填配置正确配置，YAML 高级配置模式才可以生效，YAML配置文件的写法，可以参考自带的 `docs/examples/litellm_config.example.yaml`
-
-| Secret 名称 | 说明 | 必填 |
-|------------|------|:----:|
-| `LITELLM_CONFIG` | 高级模型路由配置文件路径，通常配置 `./litellm_config.yaml` | 必填 |
-| `LITELLM_MODEL` | 默认主模型名称或路由别名 | 必填 |
-| `LITELLM_CONFIG_YAML` | 存放 YAML 配置文件内容，可不在仓库中提交实体文件 | 可选 |
-| `LITELLM_API_KEY` | 用于存储API Key，可在配置文件中引用（环境变量引用方式）。由于GitHub Actions必须要指定导入的环境变量，因此你不能像本地运行模式那样自由命名环境变量 | 可选，必须配置到repository secret中 |
-| `ANTHROPIC_API_KEY` | 如果要多个API Key，这个变量名称也能拿来用 | 可选，必须配置到repository secret中 |
-| `OPENAI_API_KEY` | 同上，可以用来存储API Key | 可选，必须配置到repository secret中 |
-
-渠道模式无需上传 YAML 文件。仓库自带 `daily_analysis.yml` 已显式透传以下常用字段：
-
-- 运行时选择：`LLM_CHANNELS`、`LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`VISION_PROVIDER_PRIORITY`、`LLM_TEMPERATURE`
-- 多 Key：`GEMINI_API_KEYS`、`ANTHROPIC_API_KEYS`、`OPENAI_API_KEYS`、`DEEPSEEK_API_KEYS`（当前 workflow 仅从 repository secrets 导入，不会读取同名 Variables）
-- 常用渠道名：`primary`、`secondary`、`aihubmix`、`deepseek`、`dashscope`、`zhipu`、`moonshot`、`minimax`、`volcengine`、`siliconflow`、`openrouter`、`gemini`、`anthropic`、`openai`、`ollama`
-
-例如在 GitHub Actions 中配置 `LLM_CHANNELS=primary,deepseek` 时，需同步配置 `LLM_PRIMARY_*` / `LLM_DEEPSEEK_*`。其中 `LLM_<NAME>_API_KEY` / `LLM_<NAME>_API_KEYS` 当前也仅从 repository secrets 导入；如果你把这些值放在 Variables，运行时不会生效。若使用自定义渠道名（如 `my_proxy`），GitHub Actions 还必须在 workflow `env:` 中显式新增对应的 `LLM_MY_PROXY_*` 映射；本地 `.env` 和 Docker 不受这个限制。
-
-
-> **三层配置互斥准则**：YAML 优先级最高！只要配置了 YAML，**渠道模式** 和 **新手极简模式** 统统被忽略。系统优先级为：`YAML配置 > 渠道模式 > 极简单模型`。
-
----
-
 ## 扩展功能：看图模型 (Vision) 配置
 
 系统中有些特定功能（比如上传股票软件截图，让 AI 提取出截图里的股票代码并放入自选股池）必须用到具备“视觉能力”的模型。你需在 `.env` 单独给它指派一个懂图片的模型。
@@ -316,8 +288,8 @@ VISION_PROVIDER_PRIORITY=gemini,anthropic,openai
 
 配好了之后心惊胆战不知道对不对？在命令行（Terminal）里敲入下面代码帮你挂号问诊：
 
-- `python scripts/check_env.py --config` ：纯检测 `.env` 配置文件里的逻辑写得对不对，是不是少写了什么。（秒出结果，不调用网络，纯检查本地文本拼写）
-- `python scripts/check_env.py --llm` ：系统会真的发一句问候语给大模型，让你亲眼看到他的回答。这能彻底测出你的**网络通不通、账号有没有欠费**。
+- `uv run --locked python scripts/check_env.py --config` ：纯检测 `.env` 配置文件里的逻辑写得对不对，是不是少写了什么。（秒出结果，不调用网络，纯检查本地文本拼写）
+- `uv run --locked python scripts/check_env.py --llm` ：系统会真的发一句问候语给大模型，让你亲眼看到他的回答。这能彻底测出你的**网络通不通、账号有没有欠费**。
 
 ### 常见踩坑答疑台
 

@@ -26,7 +26,6 @@
 
 确保你的仓库包含以下文件：
 
-- `.github/workflows/docker-publish.yml`（已自动创建）
 - `docker/Dockerfile`（已存在）
 - 完整的项目代码
 
@@ -42,9 +41,7 @@
 
 ### 2.2 配置构建规则
 
-Zeabur 会自动检测 `.github/workflows/docker-publish.yml` 文件，并使用 GitHub Actions 构建镜像。
-
-如果没有自动检测到，可以手动配置：
+使用仓库内的 Dockerfile 构建镜像：
 
 1. 在项目页面，点击「构建规则」
 2. 选择「Dockerfile」
@@ -262,9 +259,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 当你向仓库推送新代码时：
 
-1. GitHub Actions 会自动构建新镜像
-2. Zeabur 会检测到新镜像
-3. 你可以选择「自动部署」或手动触发部署
+1. Zeabur 检测到代码更新并按 `docker/Dockerfile` 重新构建镜像
+2. 你可以选择「自动部署」或手动触发部署
 
 ### 10.2 手动更新
 

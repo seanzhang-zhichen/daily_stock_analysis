@@ -18,18 +18,15 @@
 
 ### 开发环境
 
+需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/getting-started/installation/)；尚未安装 uv 时请先按官方说明完成安装。
+
 ```bash
 # 克隆仓库
 git clone https://github.com/ZhuLinsen/daily_stock_analysis.git
 cd daily_stock_analysis
 
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
-
-# 安装依赖
-pip install -r requirements.txt
+# 创建 .venv 并安装锁定的运行时、测试与打包依赖
+uv sync --locked
 
 # 配置环境变量
 cp .env.example .env
@@ -87,8 +84,7 @@ docs: 更新 README 部署说明
 
 ```bash
 # backend gate（推荐）
-pip install -r requirements.txt
-pip install flake8 pytest
+uv sync --locked
 ./scripts/ci_gate.sh
 
 # 前端 gate（如修改了 frontend/web）

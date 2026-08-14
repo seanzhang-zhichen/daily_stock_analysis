@@ -77,7 +77,7 @@ AnalysisHistory   NotificationService
 
 | 入口 | 文件 | 说明 |
 |------|------|------|
-| CLI | `backend/main.py` | `python backend/main.py --stocks 600519` |
+| CLI | `backend/main.py` | `uv run --locked python backend/main.py --stocks 600519` |
 | FastAPI | `backend/api/v1/endpoints/analysis.py` | Web 端提交异步分析任务 |
 | 定时器 | `backend/src/scheduler.py` | 每日固定时间执行自选股分析 |
 | Bot | `backend/bot/handler.py` | IM Webhook 触发分析 |

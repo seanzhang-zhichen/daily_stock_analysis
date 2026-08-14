@@ -34,7 +34,7 @@ npm install
 npm run dev
 ```
 
-首次运行时会自动从 `.env.example` 复制生成 `.env`。
+使用一键脚本时会先执行 `uv sync --locked`，并通过 `DSA_PYTHON` 让 Electron 使用仓库 `.venv` 中的解释器。手动启动前也应先在仓库根目录执行 `uv sync --locked`，再将 `DSA_PYTHON` 指向该解释器。首次运行时会自动从 `.env.example` 复制生成 `.env`。
 
 ## 打包 (Windows)
 
@@ -42,6 +42,7 @@ npm run dev
 
 - Node.js 18+
 - Python 3.10+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - 开启 Windows 开发者模式（electron-builder 需要创建符号链接）
   - 设置 -> 隐私和安全性 -> 开发者选项 -> 开发者模式
 
@@ -59,34 +60,13 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 
 当前 Windows 安装包使用 NSIS 向导式安装流程，仅支持当前用户安装且已禁用管理员提权，安装时可手动选择目标目录（例如非 C 盘）。安装器通过 NSIS `.onVerifyInstDir` 回调在安装器层面阻止选择 `Program Files`、`Windows` 等系统保护目录——选择这些路径时"下一步"按钮会被自动禁用。安装完成后，桌面端仍会按现有逻辑在安装目录旁生成/读取 `.env`、`data/stock_analysis.db`（含 `data/stock_analysis.db-wal` / `data/stock_analysis.db-shm`）和 `logs/desktop.log`。推荐使用默认的 per-user 安装目录。如果不想安装，仍可继续分发 `win-unpacked` 免安装包。
 
-## GitHub CI 自动打包并发布 Release
-
-仓库已支持通过 GitHub Actions 自动构建桌面端并上传到 GitHub Releases：
-
-- 工作流：`.github/workflows/desktop-release.yml`
-- 触发方式：
-  - 推送语义化 tag（如 `v3.2.12`）后自动触发
-  - 在 Actions 页面手动触发并指定 `release_tag`
-- 产物：
-  - Windows 安装包：Release 附件和本地 `frontend/desktop/dist/` 中统一为 `daily-stock-analysis-windows-installer-<tag>.exe`
-  - Windows 自动更新元数据：Release 附件会额外保留 `latest.yml` 和 `*.blockmap`，供安装版桌面端后台下载与校验更新；普通用户无需手动下载这些元数据
-  - Windows 免安装包：`daily-stock-analysis-windows-noinstall-<tag>.zip`
-  - macOS Intel：`daily-stock-analysis-macos-x64-<tag>.dmg`
-  - macOS Apple Silicon：`daily-stock-analysis-macos-arm64-<tag>.dmg`
-
-建议发布流程：
-
-1. 合并代码到 `main`
-2. 由自动打 tag 工作流生成版本（或手动创建 tag）
-3. `desktop-release` 工作流自动构建并把两个平台安装包附加到对应 GitHub Release
-
 ## 发版前可复现验证（桌面更新链路）
 
-桌面端自动更新链路依赖 Windows NSIS 安装产物、`latest.yml` 与 `*.blockmap` 元数据。当前桌面 CI 不覆盖 `desktop-release` 打包产物可发布链路，提交前建议补充如下本地验证：
+桌面端自动更新链路依赖 Windows NSIS 安装产物、`latest.yml` 与 `*.blockmap` 元数据。自建发布流程应在 Windows 构建环境补充如下验证：
 
 说明：该清单专注于 Windows NSIS 安装版与 `electron-updater` 发布元数据。当前 Linux 环境无法直接产出 Windows 安装包和 updater 元数据（`latest.yml` / `*.blockmap`），此类链路需在 Windows 发布执行器或 Windows 本机环境复核。
 
-若在非 Windows 环境无法完成上述验证，请在 PR 验收说明中明确补齐 Windows 发布链路复核人、复核时间窗及 `desktop-release` 产物检查结果（release/tag 与 `daily-stock-analysis-windows-installer-<tag>.exe`、`latest.yml`、`*.blockmap` 版本一致性与可下载性）。
+若当前构建服务器不是 Windows，请在发版前安排 Windows 构建环境复核，并检查 tag 与 `daily-stock-analysis-windows-installer-<tag>.exe`、`latest.yml`、`*.blockmap` 的版本一致性与可下载性。
 
 1. 先构建 Web 静态产物（桌面端主窗口与设置页入口依赖）
 
@@ -163,7 +143,7 @@ Windows 发布链路复核清单（在 PR 后由发布团队/维护者执行）�
 - release/tag 与 `daily-stock-analysis-windows-installer-<tag>.exe` 的版本号一致；
 - `latest.yml`、`daily-stock-analysis-windows-installer-<tag>.exe`、`*.blockmap` 同 tag 同步出现且可下载；
 - `latest.yml` 中 `version` 与 Release tag 语义一致（去掉 `v` 前缀后比对），且 `path` / `files.url` 与安装包附件名一致；
-- 如缺少上述文件或 `release-tag` 不匹配，需标注阻断并补齐 `desktop-release` 打包流程。
+- 如缺少上述文件或 `release-tag` 不匹配，需阻断发布并补齐服务器端桌面打包流程。
 
 5. Windows/NSIS 产物与发布附件一致性请在 Windows 环境手动验证（可人工触发发布流程），并在升级后核对运行时文件留存：
 
@@ -192,9 +172,8 @@ npm run build
 2) 打包 Python 后端
 
 ```bash
-pip install pyinstaller
-pip install -r requirements.txt
-python -m PyInstaller --name stock_analysis --onefile --noconsole --add-data "static;static" --hidden-import=multipart --hidden-import=multipart.multipart main.py
+uv sync --locked
+uv run --locked python -m PyInstaller --name stock_analysis --onefile --noconsole --add-data "static;static" --hidden-import=multipart --hidden-import=multipart.multipart backend/main.py
 ```
 
 将生成的 exe 复制到 `dist/backend/`：
