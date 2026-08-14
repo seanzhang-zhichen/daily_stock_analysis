@@ -20,6 +20,7 @@ export interface ParsedApiError {
   message: string;
   rawMessage: string;
   status?: number;
+  code?: string;
   category: ApiErrorCategory;
 }
 
@@ -42,6 +43,7 @@ type CreateParsedApiErrorOptions = {
   message: string;
   rawMessage?: string;
   status?: number;
+  code?: string;
   category?: ApiErrorCategory;
 };
 
@@ -210,6 +212,7 @@ export function createParsedApiError(options: CreateParsedApiErrorOptions): Pars
     message: options.message,
     rawMessage: options.rawMessage?.trim() || options.message,
     status: options.status,
+    code: options.code,
     category: options.category ?? 'unknown',
   };
 }
@@ -463,6 +466,7 @@ export function parseApiError(error: unknown): ParsedApiError {
       message: payloadText ?? `请求未成功完成（HTTP ${status}）。`,
       rawMessage,
       status,
+      code: errorCode ?? undefined,
       category: 'http_error',
     });
   }

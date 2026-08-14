@@ -33,9 +33,9 @@
 | `USER_REGISTER_DISPOSABLE_BLOCK` | `true` | 是否拦截一次性 / 临时邮箱注册（Phase 6 §5.8.1）；命中后注册接口返回 `invalid_email` 且写一条 `auth.register.blocked` 审计日志。 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS` |  | 逗号分隔的额外 disposable 邮箱域名，与内置黑名单合并生效（大小写不敏感）。 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS_REPLACE` | `false` | 设为 `true` 时用 `USER_DISPOSABLE_EMAIL_DOMAINS` **替换** 内置黑名单，便于全自定义运营策略。 |
-| `USER_REGISTER_RATE_WINDOW_HOURS` | `24` | 注册尝试频率限制的滚动窗口长度（小时）。 |
+| `USER_REGISTER_RATE_WINDOW_HOURS` | `1` | 注册尝试频率限制的滚动窗口长度（小时）。 |
 | `USER_REGISTER_IP_DAILY_MAX` | `10` | 同一 IP 在滚动窗口内允许的最大注册尝试次数；超过后续请求返回 `rate_limited`。设为 `0` 关闭 IP 限频。 |
-| `USER_REGISTER_EMAIL_DAILY_MAX` | `3` | 同一邮箱（哈希）在滚动窗口内允许的最大注册尝试次数；超过后续请求返回 `rate_limited`。设为 `0` 关闭邮箱限频。 |
+| `USER_REGISTER_EMAIL_DAILY_MAX` | `10` | 同一邮箱（哈希）在滚动窗口内允许的最大注册尝试次数；超过后续请求返回 `rate_limited`。设为 `0` 关闭邮箱限频。 |
 | `USER_EMAIL_MX_CHECK_ENABLED` | `false` | 开启后注册时校验邮箱域名是否可解析；网络异常时放行。 |
 | `PAYMENT_ENABLED` | `false` | 是否启用真实支付通道；支付密钥和证书仍只从部署环境变量读取。 |
 | `ORDER_EXPIRE_MINUTES` | `15` | 新创建订单的支付有效期。 |

@@ -185,10 +185,8 @@ export const accountApi = {
     return data;
   },
 
-  async verifyEmail(token: string): Promise<{ user: AccountUser }> {
-    const { data } = await apiClient.post<{ user: AccountUser }>('/api/v1/account/verify-email', {
-      token,
-    });
+  async verifyEmail(email: string, code: string): Promise<{ user: AccountUser }> {
+    const { data } = await apiClient.post<{ user: AccountUser }>('/api/v1/account/verify-email', { email, code });
     return data;
   },
 

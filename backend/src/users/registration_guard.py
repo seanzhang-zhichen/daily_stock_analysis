@@ -7,7 +7,7 @@
    ``USER_DISPOSABLE_EMAIL_DOMAINS`` 环境变量扩展。命中的域名会直接拒绝注册,
    错误码使用 :class:`UserErrorCode.INVALID_EMAIL`。
 
-2. **IP / 邮箱注册频率限制**: 在 ``USER_REGISTER_RATE_WINDOW_HOURS`` (默认 24h) 滚动窗口内,
+2. **IP / 邮箱注册频率限制**: 在 ``USER_REGISTER_RATE_WINDOW_HOURS`` (默认 1h) 滚动窗口内,
    - 同一 IP 累计注册尝试超过 ``USER_REGISTER_IP_DAILY_MAX`` 后, 后续请求触发限流;
    - 同一邮箱累计注册尝试超过 ``USER_REGISTER_EMAIL_DAILY_MAX`` 后, 后续请求触发限流。
    计数依赖 :class:`AppAuditLog` 表中的 ``auth.register.attempt`` 事件,
@@ -161,8 +161,8 @@ class RegistrationGuardConfig:
 
     disposable_block_enabled: bool = True
     ip_daily_max: int = 10
-    email_daily_max: int = 3
-    window_hours: int = 24
+    email_daily_max: int = 10
+    window_hours: int = 1
     mx_check_enabled: bool = False  # 默认关闭, 设 USER_EMAIL_MX_CHECK_ENABLED=true 启用
     disposable_domains: tuple[str, ...] = ()
     disposable_domains_replace: bool = False

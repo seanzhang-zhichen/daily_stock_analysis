@@ -2,7 +2,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
-import { Button } from '../components/common';
+import { Button, Input } from '../components/common';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { SettingsAlert } from '../components/settings';
 import { accountApi } from '../api/account';
@@ -10,35 +10,29 @@ import { getParsedApiError, isParsedApiError, type ParsedApiError } from '../api
 
 const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const token = searchParams.get('token') ?? '';
+  const [email, setEmail] = useState(searchParams.get('email') ?? '');
+  const [code, setCode] = useState('');
 
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
-    token ? 'loading' : 'idle'
-  );
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [error, setError] = useState<ParsedApiError | string | null>(null);
 
   useEffect(() => {
     document.title = '邮箱验证 - AlphaLens';
   }, []);
 
-  useEffect(() => {
-    if (!token) {
+  const submitCode = () => {
+    if (!email || !/^\d{6}$/.test(code)) {
+      setError('请输入邮箱和 6 位验证码');
+      setStatus('error');
       return;
     }
-    let cancelled = false;
-    accountApi
-      .verifyEmail(token)
-      .then(() => {
-        if (!cancelled) setStatus('success');
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setStatus('error');
-          setError(getParsedApiError(err));
-        }
-      });
-    return () => { cancelled = true; };
-  }, [token]);
+    setStatus('loading');
+    setError(null);
+    accountApi.verifyEmail(email, code).then(() => setStatus('success')).catch((err) => {
+      setStatus('error');
+      setError(getParsedApiError(err));
+    });
+  };
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--login-bg-main)] px-4 py-12">
@@ -60,8 +54,12 @@ const VerifyEmailPage: React.FC = () => {
             <p className="mt-1.5 text-sm text-[var(--login-text-secondary)]">验证你的邮箱地址以激活账号</p>
           </div>
 
-          {!token && (
+          {status === 'idle' && (
             <div className="space-y-4">
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="邮箱地址" type="email" />
+              <Input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6 位验证码" inputMode="numeric" maxLength={6} />
+              <Button type="button" className="h-11 w-full" onClick={submitCode}>验证邮箱</Button>
+              {/* The legacy invalid-link guidance remains below for old bookmarks. */}
               <SettingsAlert
                 title="链接无效"
                 message="未找到验证 token，请检查邮件中的链接是否完整。"
@@ -71,10 +69,6 @@ const VerifyEmailPage: React.FC = () => {
                 如需重新发送验证邮件，请登录账号后在账户设置中操作；或联系站点管理员。
               </p>
             </div>
-          )}
-
-          {token && status === 'idle' && (
-            <p className="text-sm text-[var(--login-text-secondary)]">正在准备验证…</p>
           )}
 
           {status === 'loading' && (

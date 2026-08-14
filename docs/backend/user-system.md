@@ -217,9 +217,9 @@ POST /api/v1/account/register
 | `USER_REGISTER_DISPOSABLE_BLOCK` | true | 是否拦截一次性邮箱 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS` | 空 | 追加的一次性邮箱域名黑名单 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS_REPLACE` | false | 是否用自定义黑名单替换内置黑名单 |
-| `USER_REGISTER_IP_DAILY_MAX` | 10 | 每 IP 每日注册上限 |
-| `USER_REGISTER_EMAIL_DAILY_MAX` | 3 | 单邮箱每日尝试上限 |
-| `USER_REGISTER_RATE_WINDOW_HOURS` | 24 | 限流窗口 |
+| `USER_REGISTER_IP_DAILY_MAX` | 10 | 单 IP 在限流窗口内的注册尝试上限 |
+| `USER_REGISTER_EMAIL_DAILY_MAX` | 10 | 单邮箱在限流窗口内的注册尝试上限 |
+| `USER_REGISTER_RATE_WINDOW_HOURS` | 1 | 限流窗口（小时） |
 | `USER_EMAIL_MX_CHECK_ENABLED` | false | 是否校验邮箱 MX 记录 |
 
 ---
@@ -700,7 +700,7 @@ To C 运营配置优先从 `app_platform_settings` 读取，并可在运营后�
 | `USER_DISPOSABLE_EMAIL_DOMAINS` | 空 | 追加的一次性邮箱域名黑名单 |
 | `USER_DISPOSABLE_EMAIL_DOMAINS_REPLACE` | false | 是否用自定义黑名单替换内置黑名单 |
 | `USER_REGISTER_IP_DAILY_MAX` | 10 | IP 注册频率限制 |
-| `USER_REGISTER_EMAIL_DAILY_MAX` | 3 | 邮箱注册频率限制 |
+| `USER_REGISTER_EMAIL_DAILY_MAX` | 10 | 邮箱注册频率限制 |
 | `USER_EMAIL_MX_CHECK_ENABLED` | false | 是否检查邮箱 MX |
 | `USER_FRONTEND_BASE_URL` | `http://localhost:5200` | 注册验证邮件前端链接 |
 | `SUPER_ADMIN_EMAIL` | 空 | 启动时引导平台超级管理员的邮箱 |

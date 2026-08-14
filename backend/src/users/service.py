@@ -122,15 +122,15 @@ def _send_verification_email(
     settings: UserModeSettings,
 ) -> None:
     """创建邮箱验证 token 并通过配置的邮件后端发出。"""
-    token = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
     repo.create_verification_token(
         db,
         user_id=user.id,
-        raw_token=token,
+        raw_token=code,
         purpose="verify",
         ttl_hours=settings.verification_ttl_hours,
     )
-    verify_url = f"{get_frontend_public_base_url()}/verify-email?token={token}"
+    verify_url = f"{get_frontend_public_base_url()}/verify-email"
     backend = email_backend or get_email_backend()
     backend.send(
         EmailMessageDTO(
@@ -140,8 +140,8 @@ def _send_verification_email(
                 "你好,\n\n"
                 "请点击以下链接完成邮箱验证，激活你的 DSA 智能分析账号：\n\n"
                 f"{verify_url}\n\n"
-                "备用验证 token：\n\n"
-                f"{token}\n\n"
+                "邮箱验证码：\n\n"
+                f"{code}\n\n"
                 f"链接 {settings.verification_ttl_hours} 小时内有效，点击一次即可完成验证。\n\n"
                 "若无法点击链接，请复制上方地址到浏览器中打开。\n\n"
                 "若不是你本人操作，请忽略本邮件。"
@@ -340,13 +340,18 @@ def login(
 def verify_email(
     db: Session,
     *,
-    token: str,
+    email: str = "",
+    code: str = "",
     settings: Optional[UserModeSettings] = None,
 ) -> AppUser:
     """消费邮箱验证 token 并标记用户已验证。"""
     settings = settings or load_user_mode_settings()
     _ensure_mode_enabled(settings)
-    row = repo.consume_verification_token(db, raw_token=token, purpose="verify")
+    if email and (not code.isdigit() or len(code) != 6):
+        raise UserError(UserErrorCode.INVALID_TOKEN, "验证码无效或已过期")
+    row = (
+        repo.consume_verification_code(db, email=email, code=code, purpose="verify")
+    )
     if row is None:
         raise UserError(UserErrorCode.INVALID_TOKEN, "验证码无效或已过期")
     user = repo.get_user_by_id(db, row.user_id)

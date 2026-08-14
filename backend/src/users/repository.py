@@ -128,3 +128,35 @@ def consume_verification_token(
     db.add(row)
     db.flush()
     return row
+
+
+def consume_verification_code(
+    db: Session,
+    *,
+    email: str,
+    code: str,
+    purpose: str,
+) -> Optional[AppUserEmailVerification]:
+    """Consume a one-time numeric verification code for an email address."""
+    if not email or not code:
+        return None
+    now = datetime.utcnow()
+    row = (
+        db.query(AppUserEmailVerification)
+        .join(AppUser, AppUser.id == AppUserEmailVerification.user_id)
+        .filter(
+            AppUser.email == email.strip().lower(),
+            AppUserEmailVerification.token_hash == hash_token(code.strip()),
+            AppUserEmailVerification.purpose == purpose,
+            AppUserEmailVerification.consumed_at.is_(None),
+            AppUserEmailVerification.expires_at > now,
+        )
+        .order_by(AppUserEmailVerification.created_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    row.consumed_at = now
+    db.add(row)
+    db.flush()
+    return row

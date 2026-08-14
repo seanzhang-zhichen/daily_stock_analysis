@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 注册防刷默认策略调整为同一 IP、同一邮箱在 1 小时滚动窗口内各允许 10 次尝试，降低正常用户因重复操作被长时间拦截的概率。
+- [修复] 修复注册后未完成邮箱验证时无法继续流程的问题：再次登录会恢复验证码输入与重发入口，重复注册提示会引导用户通过登录继续验证。
+- [改进] 注册邮箱验证改为发送 6 位数字验证码，Web 端支持输入验证码完成验证，邮箱验证接口不再接受旧 token。
 - [文档] 移除 GitHub Actions 部署、配置与发布说明，统一改为自建服务器、Docker 和本地脚本运行口径。
 - [改进] Python 依赖管理从 pip/requirements 迁移到 uv，以 `pyproject.toml` 声明运行时与开发依赖、提交 `uv.lock` 保证可复现安装，并同步 Docker、桌面开发与打包、验证脚本和开发部署文档。
 - [改进] 运营后台「套餐与用量」支持新增付费套餐；会员中心和手动开通页均改为读取后端当前套餐目录，不再假设固定付费套餐代码。

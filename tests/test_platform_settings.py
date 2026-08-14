@@ -26,6 +26,9 @@ class TestPlatformSettings(unittest.TestCase):
             for key in (
                 "USER_PUBLIC_REGISTRATION_ENABLED",
                 "USER_INVITE_CODES",
+                "USER_REGISTER_IP_DAILY_MAX",
+                "USER_REGISTER_EMAIL_DAILY_MAX",
+                "USER_REGISTER_RATE_WINDOW_HOURS",
                 "PAYMENT_ENABLED",
                 "ORDER_EXPIRE_MINUTES",
             )
@@ -54,6 +57,13 @@ class TestPlatformSettings(unittest.TestCase):
 
         self.assertFalse(settings.public_registration_enabled)
         self.assertEqual(get_platform_setting_value(self.db, "ORDER_EXPIRE_MINUTES"), 45)
+
+    def test_registration_rate_limit_defaults(self):
+        settings = load_user_mode_settings(self.db)
+
+        self.assertEqual(settings.register_ip_daily_max, 10)
+        self.assertEqual(settings.register_email_daily_max, 10)
+        self.assertEqual(settings.register_rate_window_hours, 1)
 
     def test_db_setting_overrides_env_for_user_mode(self):
         os.environ["USER_PUBLIC_REGISTRATION_ENABLED"] = "false"

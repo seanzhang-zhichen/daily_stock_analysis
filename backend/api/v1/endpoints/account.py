@@ -102,9 +102,10 @@ class LoginRequest(BaseModel):
 
 
 class VerifyEmailRequest(BaseModel):
-    """邮箱验证 token 请求体。"""
+    """邮箱验证码请求体。"""
 
-    token: str = Field(default="")
+    email: str = Field(default="")
+    code: str = Field(default="")
 
 
 class RequestResetRequest(BaseModel):
@@ -498,10 +499,10 @@ async def account_logout(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/verify-email", summary="邮箱验证")
 async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
-    """Verify an email address using a service-issued token."""
+    """Verify an email address using a code sent to the mailbox."""
     try:
         settings = _get_settings_or_disabled(db)
-        user = svc_verify_email(db, token=body.token, settings=settings)
+        user = svc_verify_email(db, email=body.email, code=body.code, settings=settings)
         _commit_or_rollback(db)
     except UserError as exc:
         db.rollback()

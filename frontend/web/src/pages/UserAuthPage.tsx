@@ -32,6 +32,8 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
   const [error, setError] = useState<ParsedApiError | string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [resendCooldownSec, setResendCooldownSec] = useState(0);
   const [resendError, setResendError] = useState<ParsedApiError | string | null>(null);
@@ -86,6 +88,9 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
         const res = await loginWithEmail(email.trim(), password);
         if (res.success) {
           navigate(redirect, { replace: true });
+        } else if (res.error?.code === 'email_not_verified') {
+          setPendingVerificationEmail(normalizedEmail);
+          setPassword('');
         } else {
           setError(res.error ?? '登录失败');
         }
@@ -107,7 +112,14 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
             setInfo('注册成功！请登录后开始使用。');
           }
         } else {
-          setError(res.error ?? '注册失败');
+          if (res.error?.code === 'email_already_registered') {
+            setError({
+              ...res.error,
+              message: '该邮箱已注册。请返回登录；如果邮箱尚未验证，登录后可继续输入或重新发送验证码。',
+            });
+          } else {
+            setError(res.error ?? '注册失败');
+          }
         }
       }
     } finally {
@@ -130,6 +142,26 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
       setResendError(getParsedApiError(err));
     } finally {
       setIsResendingVerification(false);
+    }
+  };
+
+  const handleVerifyEmail = async () => {
+    if (!pendingVerificationEmail || !/^\d{6}$/.test(verificationCode)) {
+      setResendError('请输入邮件中的 6 位验证码');
+      return;
+    }
+    setIsVerifyingEmail(true);
+    setResendError(null);
+    try {
+      await accountApi.verifyEmail(pendingVerificationEmail, verificationCode);
+      setPendingVerificationEmail(null);
+      setVerificationCode('');
+      setInfo('邮箱验证成功，请登录。');
+      navigate(`/login${location.search}`, { replace: true });
+    } catch (err) {
+      setResendError(getParsedApiError(err));
+    } finally {
+      setIsVerifyingEmail(false);
     }
   };
 
@@ -228,7 +260,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
             </div>
           ) : (
             <>
-              {mode === 'register' && pendingVerificationEmail ? (
+              {pendingVerificationEmail ? (
                 <div className="space-y-6">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary">
                     <MailCheck className="h-7 w-7" />
@@ -236,8 +268,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                   <div>
                     <h2 className="text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">请查收验证邮件</h2>
                     <p className="mt-2 text-sm leading-6 text-[var(--login-text-secondary)]">
-                      我们已向 <span className="font-semibold text-[var(--login-text-primary)]">{pendingVerificationEmail}</span> 发送验证邮件。
-                      请打开邮箱并点击邮件中的链接，完成注册流程后再返回登录。
+                      请使用发送至 <span className="font-semibold text-[var(--login-text-primary)]">{pendingVerificationEmail}</span> 的验证码完成验证；如果验证码已失效，请重新发送。
                     </p>
                   </div>
                   <div className="rounded-xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)] p-3 text-xs leading-relaxed text-[var(--login-text-secondary)]">
@@ -252,6 +283,24 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                   )}
                   {resendInfo && <SettingsAlert title="已重新发送" message={resendInfo} variant="success" />}
                   <div className="space-y-3">
+                    <Input
+                      value={verificationCode}
+                      onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="请输入 6 位验证码"
+                      inputMode="numeric"
+                      maxLength={6}
+                      className="h-11 rounded-xl text-center text-lg tracking-[0.35em]"
+                    />
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="lg"
+                      className="h-11 w-full rounded-xl text-sm font-semibold"
+                      disabled={isVerifyingEmail || verificationCode.length !== 6}
+                      onClick={() => void handleVerifyEmail()}
+                    >
+                      {isVerifyingEmail ? '验证中…' : '验证邮箱'}
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
@@ -287,6 +336,7 @@ const UserAuthPage: React.FC<{ mode: Mode }> = ({ mode }) => {
                       className="h-11 w-full rounded-xl text-sm font-semibold"
                       onClick={() => {
                         setPendingVerificationEmail(null);
+                        setVerificationCode('');
                         setResendError(null);
                         setResendInfo(null);
                         setResendCooldownSec(0);
