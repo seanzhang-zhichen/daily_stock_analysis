@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 选股改为平台默认能力，移除 `SCREENING_ENABLED` 配置开关与前端开启流程。
+- [新功能] 移植内建多因子选股模块，新增 `/api/v1/screening` 策略、热点、异步筛选与按用户隔离的历史接口，Web 新增 `/screening` 完整选股工作台，并保留旧 `/stock-selection` 入口兼容。
 - [改进] 注册防刷默认策略调整为同一 IP、同一邮箱在 1 小时滚动窗口内各允许 10 次尝试，降低正常用户因重复操作被长时间拦截的概率。
 - [修复] 修复注册后未完成邮箱验证时无法继续流程的问题：再次登录会恢复验证码输入与重发入口，重复注册提示会引导用户通过登录继续验证。
 - [改进] 注册邮箱验证改为发送 6 位数字验证码，Web 端支持输入验证码完成验证，邮箱验证接口不再接受旧 token。

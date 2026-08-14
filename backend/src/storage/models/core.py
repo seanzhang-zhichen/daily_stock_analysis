@@ -235,6 +235,33 @@ class AnalysisHistory(Base):
         }
 
 
+class ScreeningRun(Base):
+    """Persisted summary and payload for one built-in screening run."""
+
+    __tablename__ = "screening_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    run_id = Column(String(64), nullable=False, unique=True, index=True)
+    strategy = Column(String(64), nullable=False, index=True)
+    market = Column(String(16), nullable=False, index=True)
+    snapshot_source = Column(String(64), index=True)
+    snapshot_count = Column(Integer)
+    after_filter_count = Column(Integer)
+    candidate_count = Column(Integer, nullable=False, default=0)
+    llm_ranked = Column(Boolean)
+    daily_enriched = Column(Boolean)
+    source_errors_json = Column(Text)
+    warnings_json = Column(Text)
+    result_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_screening_run_strategy_created", "strategy", "created_at"),
+        Index("ix_screening_run_market_created", "market", "created_at"),
+    )
+
+
 class StockIndexEntry(Base):
     """本地股票搜索索引条目，覆盖代码、中文名、拼音和别名。"""
 
@@ -285,6 +312,7 @@ __all__ = [
     "NewsIntel",
     "FundamentalSnapshot",
     "AnalysisHistory",
+    "ScreeningRun",
     "StockIndexEntry",
     "StockIndexMeta",
 ]

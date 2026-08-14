@@ -63,6 +63,7 @@ from src.storage.models import (
     FundamentalSnapshot,
     LLMUsage,
     NewsIntel,
+    ScreeningRun,
     PortfolioAccount,
     PortfolioCashLedger,
     PortfolioCorporateAction,
@@ -104,6 +105,7 @@ __all__ = [
     "NewsIntel",
     "FundamentalSnapshot",
     "AnalysisHistory",
+    "ScreeningRun",
     "StockIndexEntry",
     "StockIndexMeta",
     # backtest

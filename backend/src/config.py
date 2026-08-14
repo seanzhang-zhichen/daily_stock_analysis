@@ -329,6 +329,84 @@ def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
     return models
 
 
+# Screening and newer LLM channel consumers share these compatibility helpers.
+# Keep them here so older deployments can load the screening engine without
+# requiring a separate configuration implementation.
+def normalize_llm_channel_api_surface(value: Optional[str]) -> str:
+    candidate = (value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "chat": "chat_completions",
+        "chat_completion": "chat_completions",
+        "completions": "chat_completions",
+        "response": "responses",
+        "responses_api": "responses",
+    }
+    normalized = aliases.get(candidate, candidate)
+    return normalized if normalized in {"chat_completions", "responses"} else "chat_completions"
+
+
+def is_supported_llm_channel_api_surface_value(value: Optional[str]) -> bool:
+    candidate = (value or "").strip().lower().replace("-", "_")
+    return not candidate or candidate in {
+        "chat", "chat_completion", "completions", "chat_completions",
+        "response", "responses_api", "responses",
+    }
+
+
+def _screening_model_provider(model: str) -> str:
+    normalized = (model or "").strip()
+    if "/" not in normalized:
+        return ""
+    return normalized.split("/", 1)[0].lower()
+
+
+def find_incompatible_llm_channel_models(
+    models: List[str],
+    protocol: Optional[str],
+    api_surface: Optional[str],
+    base_url: Optional[str] = None,
+) -> List[str]:
+    if normalize_llm_channel_api_surface(api_surface) != "responses":
+        return []
+    resolved = resolve_llm_channel_protocol(protocol, base_url=base_url, models=models)
+    if resolved != "openai":
+        return [model for model in models if str(model or "").strip()]
+    return [
+        model for model in models
+        if _screening_model_provider(normalize_llm_channel_model(model, resolved, base_url)) not in {"", "openai"}
+    ]
+
+
+def find_llm_channel_surface_conflicts(channels: List[Dict[str, Any]]) -> Dict[str, Tuple[str, ...]]:
+    route_surfaces: Dict[str, set[str]] = {}
+    for channel in channels:
+        if not isinstance(channel, dict) or not channel.get("enabled", True):
+            continue
+        protocol = str(channel.get("protocol") or "")
+        base_url = str(channel.get("base_url") or "")
+        surface = normalize_llm_channel_api_surface(channel.get("api_surface"))
+        for raw_model in channel.get("models") or []:
+            model = normalize_llm_channel_model(str(raw_model), protocol, base_url)
+            if model:
+                route_surfaces.setdefault(model, set()).add(surface)
+    return {
+        model: tuple(sorted(surfaces))
+        for model, surfaces in route_surfaces.items()
+        if len(surfaces) > 1
+    }
+
+
+def apply_litellm_api_surface(model: str, api_surface: Optional[str]) -> str:
+    normalized_model = (model or "").strip()
+    if not normalized_model or normalize_llm_channel_api_surface(api_surface) != "responses":
+        return normalized_model
+    provider = _screening_model_provider(normalized_model)
+    if provider != "openai":
+        raise ValueError("Responses API surface requires an openai/<model> route")
+    remainder = normalized_model.split("/", 1)[1]
+    return normalized_model if remainder.startswith("responses/") else f"openai/responses/{remainder}"
+
+
 def resolve_litellm_wire_model(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,

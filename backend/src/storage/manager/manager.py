@@ -24,6 +24,7 @@ from src.storage.manager.analysis_history import AnalysisHistoryMixin
 from src.storage.manager.conversation import ConversationMixin
 from src.storage.manager.llm_usage import LLMUsageMixin
 from src.storage.manager.news import NewsMixin
+from src.storage.manager.screening import ScreeningMixin
 from src.storage.manager.stock_data import StockDataMixin
 
 
@@ -33,6 +34,7 @@ class DatabaseManager(
     AnalysisHistoryMixin,
     ConversationMixin,
     LLMUsageMixin,
+    ScreeningMixin,
     _DatabaseManagerBase,
 ):
     """

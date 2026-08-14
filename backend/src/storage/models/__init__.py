@@ -49,6 +49,7 @@ from src.storage.models.core import (
     AnalysisHistory,
     FundamentalSnapshot,
     NewsIntel,
+    ScreeningRun,
     StockDaily,
     StockIndexEntry,
     StockIndexMeta,
@@ -70,6 +71,7 @@ __all__ = [
     "NewsIntel",
     "FundamentalSnapshot",
     "AnalysisHistory",
+    "ScreeningRun",
     "StockIndexEntry",
     "StockIndexMeta",
     # backtest

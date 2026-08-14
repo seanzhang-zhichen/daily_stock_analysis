@@ -1,7 +1,7 @@
 import type React from 'react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Check, SlidersHorizontal } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
 import { agentApi, type SkillInfo } from '../api/agent';
@@ -37,8 +37,17 @@ type MarketReviewNotice = {
   message: string;
 } | null;
 
+type StockAnalysisNavigationState = {
+  stockCode?: string;
+  stockName?: string;
+  autoAnalyze?: boolean;
+  skills?: string[];
+};
+
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const consumedNavigationKeyRef = useRef<string | null>(null);
   const [searchParams] = useSearchParams();
   const { userMode } = useAuth();
   const canReadSetupStatus = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
@@ -372,18 +381,37 @@ const HomePage: React.FC = () => {
       stockCode?: string,
       stockName?: string,
       selectionSource?: 'manual' | 'autocomplete' | 'import' | 'image',
+      analysisSkills?: string[],
     ) => {
       const resolvedStock = stockCode ? null : resolveExactStockInput(query);
       void submitAnalysis({
         stockCode: stockCode ?? resolvedStock?.canonicalCode,
         stockName: stockName ?? resolvedStock?.nameZh,
-        originalQuery: query,
+        originalQuery: stockCode ?? query,
         selectionSource: selectionSource ?? 'manual',
-        skills: selectedAnalysisSkills,
+        skills: analysisSkills ?? selectedAnalysisSkills,
       });
     },
     [query, resolveExactStockInput, selectedAnalysisSkills, submitAnalysis],
   );
+
+  useEffect(() => {
+    const state = location.state as StockAnalysisNavigationState | null;
+    const stockCode = typeof state?.stockCode === 'string' ? state.stockCode.trim() : '';
+    if (!stockCode || consumedNavigationKeyRef.current === location.key) {
+      return;
+    }
+    consumedNavigationKeyRef.current = location.key;
+    const stockName = typeof state?.stockName === 'string' ? state.stockName.trim() : '';
+    setQuery(stockCode);
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: null },
+    );
+    if (state?.autoAnalyze) {
+      handleSubmitAnalysis(stockCode, stockName || undefined, 'import', state.skills);
+    }
+  }, [handleSubmitAnalysis, location, navigate, setQuery]);
 
   const handleAskFollowUp = useCallback(() => {
     if (selectedReport?.meta.id === undefined || selectedReport.meta.reportType === 'market_review') {

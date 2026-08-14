@@ -245,6 +245,50 @@ describe('HomePage', () => {
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();
   });
 
+  it('consumes a screening candidate once and starts analysis with mapped skills', async () => {
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+    vi.mocked(analysisApi.analyzeAsync).mockResolvedValue({
+      taskId: 'task-screening-candidate',
+      status: 'pending',
+    });
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: '/',
+          state: {
+            stockCode: '300308.SZ',
+            stockName: '中际旭创',
+            autoAnalyze: true,
+            skills: ['growth_quality'],
+          },
+        }]}
+      >
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(analysisApi.analyzeAsync).toHaveBeenCalledWith(expect.objectContaining({
+        stockCode: '300308.SZ',
+        stockName: '中际旭创',
+        originalQuery: '300308.SZ',
+        selectionSource: 'import',
+        skills: ['growth_quality'],
+      }));
+    });
+    expect(analysisApi.analyzeAsync).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith(
+      { pathname: '/', search: '', hash: '' },
+      { replace: true, state: null },
+    );
+  });
+
   it('does not request setup status for regular To C users', async () => {
     authState.userMode = {
       userModeEnabled: true,
