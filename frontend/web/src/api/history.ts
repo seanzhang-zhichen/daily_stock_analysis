@@ -78,6 +78,22 @@ export const historyApi = {
     return response.data.content;
   },
 
+  /** Generate a PNG share poster for one persisted report. */
+  getShareImage: async (recordId: number): Promise<Blob> => {
+    const response = await apiClient.get<Blob>(`/api/v1/history/${recordId}/share-image`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  /** Fetch the deterministic poster HTML for browser-side PNG rendering. */
+  getShareImageHtml: async (recordId: number): Promise<string> => {
+    const response = await apiClient.get<string>(`/api/v1/history/${recordId}/share-image-html`, {
+      responseType: 'text',
+    });
+    return response.data;
+  },
+
   /**
    * 批量删除历史记录
    * @param recordIds 分析历史记录主键 ID 列表

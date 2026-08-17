@@ -11,6 +11,7 @@ import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { HistoryList } from '../components/history';
 import { TaskPanel } from '../components/tasks';
+import { ShareImageButton } from '../components/report/ShareImageButton';
 import { useAuth, useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { useStockIndex } from '../hooks/useStockIndex';
 import type { SetupStatusResponse } from '../types/systemConfig';
@@ -901,6 +902,11 @@ const HomePage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <ShareImageButton
+                      recordId={selectedReport.meta.id}
+                      reportTitle={selectedReport.meta.stockName || selectedReport.meta.stockCode}
+                      reportLanguage={reportLanguage}
+                    />
                     <Button
                       variant="outline"
                       size="sm"

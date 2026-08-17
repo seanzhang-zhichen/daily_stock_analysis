@@ -49,6 +49,12 @@ const REPORT_TEXT = {
     laggingBoard: '领跌',
     neutralBoard: '中性',
     reanalyze: '重新分析',
+    generateShareImage: '分享',
+    generatingShareImage: '生成中...',
+    shareImageReadyToShare: '再次点击分享',
+    shareImageReady: '已生成',
+    shareImageFailed: '重试',
+    shareImageRequiresHistory: '报告保存后可分享',
   },
   en: {
     keyInsights: 'KEY INSIGHTS',
@@ -95,6 +101,12 @@ const REPORT_TEXT = {
     laggingBoard: 'Lagging',
     neutralBoard: 'Neutral',
     reanalyze: 'Reanalyze',
+    generateShareImage: 'Share',
+    generatingShareImage: 'Generating...',
+    shareImageReadyToShare: 'Share now',
+    shareImageReady: 'Ready',
+    shareImageFailed: 'Retry',
+    shareImageRequiresHistory: 'Available after saving',
   },
 } as const;
 

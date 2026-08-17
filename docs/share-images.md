@@ -1,0 +1,33 @@
+# 报告分享图
+
+报告页支持把已保存的个股分析或大盘复盘生成 1080px 宽的 AlphaLens 分享图。入口位于报告顶部操作栏，与“重新分析”“追问 AI”“完整报告”在同一区域，仅当报告已有历史记录 ID 时显示。
+
+## 使用方式
+
+- 浏览器支持文件分享时，第一次点击生成图片，第二次点击打开系统分享面板。
+- 浏览器不支持文件分享时，点击后直接下载 PNG。
+- Web 优先使用当前浏览器渲染 PNG，不要求服务端安装额外转图工具。
+- 桌面端使用内置 Chromium 渲染完整长图，不依赖系统安装 `wkhtmltoimage`。
+- 旧版桌面端没有分享图桥接时，入口仍会显示，并使用 Web 浏览器渲染路径。
+
+分享图优先使用历史记录中的结构化分析数据，缺失字段会隐藏；Markdown 只作为兼容回退，不推断价格、评分、点位或市场统计。图片默认只展示 AlphaLens 品牌与投资风险声明，不带社交账号或二维码。
+
+## API
+
+- `GET /api/v1/history/{record_id}/share-image`：返回服务端渲染的 PNG，作为浏览器渲染失败时的兼容回退。
+- `GET /api/v1/history/{record_id}/share-image-html`：返回 Web 与桌面端截图使用的 HTML。
+
+两条接口都要求登录，并通过当前用户 ID 查询历史记录。其他用户的记录按不存在处理。响应使用 `Cache-Control: no-store`；HTML 端点同时限制 CSP，只允许内联样式和 `data:` 图片。
+
+## 渲染与限制
+
+Web 与桌面端默认使用各自内置的浏览器能力生成 PNG。Web 浏览器渲染失败时会回退到 PNG 接口；服务端 PNG 沿用 `MD2IMG_ENGINE`：
+
+- `wkhtmltoimage`：默认引擎，需要运行环境安装对应工具。
+- `markdown-to-file`：需要全局可用的 `m2f` 命令。
+
+当浏览器与服务端渲染器均不可用时，PNG 接口返回 `503`，前端显示可重试状态。报告超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时不会生成图片；HTML 端点返回 `413`。已有通知图片在没有传入结构化分享数据时仍沿用原 Markdown 渲染，不改变通知样式。
+
+## 维护边界
+
+海报解析与布局位于 `backend/src/share_image.py`，PNG 引擎适配位于 `backend/src/md2img.py`，历史报告接口位于 `backend/api/v1/endpoints/history.py`。桌面端通过隔离的隐藏窗口访问当前后端同源地址，禁止新窗口、跨页导航和 Node 集成，截图完成后立即销毁窗口。

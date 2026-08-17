@@ -38,6 +38,7 @@ vi.mock('../../api/history', () => ({
     deleteRecords: vi.fn(),
     getNews: vi.fn().mockResolvedValue({ total: 0, items: [] }),
     getMarkdown: vi.fn().mockResolvedValue('# report'),
+    getShareImage: vi.fn(),
   },
 }));
 
@@ -215,7 +216,8 @@ describe('HomePage', () => {
     expect(within(reportToolbar).getByText('标准')).toBeInTheDocument();
     expect(
       within(reportToolbar).getAllByRole('button').map((button) => button.getAttribute('data-variant')),
-    ).toEqual(['outline', 'outline', 'secondary']);
+    ).toEqual(['outline', 'outline', 'outline', 'secondary']);
+    expect(within(reportToolbar).getByRole('button', { name: '分享' })).toBeInTheDocument();
     expect(
       screen.getByRole('button', {
         name: getReportText(normalizeReportLanguage(historyReport.meta.reportLanguage)).fullReport,

@@ -136,6 +136,95 @@ test('buildMainPageUrl includes desktop version and cache buster', (t) => {
   );
 });
 
+test('buildDesktopShareImageUrl uses the current backend origin and validates the record', (t) => {
+  const mainModule = loadMainModule(t);
+
+  assert.equal(
+    mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/?desktop_version=3.17.1', 17),
+    'http://127.0.0.1:8123/api/v1/history/17/share-image-html'
+  );
+  assert.throws(
+    () => mainModule.buildDesktopShareImageUrl('https://example.com/', 17),
+    /configured backend origin/
+  );
+  assert.throws(
+    () => mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/', 0),
+    /Invalid share image record ID/
+  );
+  assert.throws(
+    () => mainModule.buildDesktopShareImageUrl(
+      'http://example.com:8123/',
+      17,
+      'http://127.0.0.1:8123'
+    ),
+    /configured backend origin/
+  );
+});
+
+test('renderDesktopShareImage captures the complete poster and closes its window', async (t) => {
+  const windows = [];
+  function FakeRenderWindow(options) {
+    let destroyed = false;
+    let executeCount = 0;
+    const instance = {
+      options,
+      loadedUrl: '',
+      contentSize: null,
+      captureRect: null,
+      webContents: {
+        setWindowOpenHandler: () => undefined,
+        on: () => undefined,
+        executeJavaScript: async () => {
+          executeCount += 1;
+          return executeCount === 1
+            ? { contentType: 'text/html', width: 1080, height: 1840 }
+            : undefined;
+        },
+        capturePage: async (rect) => {
+          instance.captureRect = rect;
+          return {
+            isEmpty: () => false,
+            toPNG: () => Buffer.from('png-bytes'),
+          };
+        },
+      },
+      loadURL: async (url) => {
+        instance.loadedUrl = url;
+      },
+      setContentSize: (width, height) => {
+        instance.contentSize = [width, height];
+      },
+      isDestroyed: () => destroyed,
+      destroy: () => {
+        destroyed = true;
+      },
+    };
+    windows.push(instance);
+    return instance;
+  }
+  FakeRenderWindow.getAllWindows = () => [];
+
+  const mainModule = loadMainModule(t, { browserWindow: FakeRenderWindow });
+  const sourceWindow = {
+    isDestroyed: () => false,
+    webContents: {
+      getURL: () => 'http://127.0.0.1:8123/?desktop_version=3.17.1',
+    },
+  };
+
+  const bytes = await mainModule.renderDesktopShareImage(29, {
+    sourceWindow,
+    BrowserWindowClass: FakeRenderWindow,
+    backendOrigin: 'http://127.0.0.1:8123',
+  });
+
+  assert.equal(windows[0].loadedUrl, 'http://127.0.0.1:8123/api/v1/history/29/share-image-html');
+  assert.deepEqual(windows[0].contentSize, [1080, 1840]);
+  assert.deepEqual(windows[0].captureRect, { x: 0, y: 0, width: 1080, height: 1840 });
+  assert.equal(windows[0].isDestroyed(), true);
+  assert.equal(Buffer.from(bytes).toString(), 'png-bytes');
+});
+
 test('extractReleaseMetadata ignores releases without semver tags', (t) => {
   const mainModule = loadMainModule(t);
 

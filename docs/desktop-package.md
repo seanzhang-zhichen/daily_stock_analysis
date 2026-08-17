@@ -7,6 +7,7 @@
 - React UI（Vite 构建）由本地 FastAPI 服务托管
 - Electron 启动时自动拉起后端服务，等待 `/api/health` 就绪后加载 UI
 - 用户配置文件 `.env` 和数据库放在 exe 同级目录（便携模式）
+- 报告分享图由隔离的隐藏 Chromium 窗口渲染，复用主窗口登录会话并在截图后立即销毁
 
 ## 本地开发
 
