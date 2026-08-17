@@ -9,7 +9,7 @@ notification. Data collection and prompt construction stay in ``MarketAnalyzer``
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 import uuid
 
 from src.config import get_config
@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 MARKET_REVIEW_HISTORY_CODE = "MARKET"
 MARKET_REVIEW_REPORT_TYPE = "market_review"
+
+
+def _run_daily_review_with_snapshot(
+    market_analyzer: MarketAnalyzer,
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Return a report and its same-overview Market Light snapshot.
+
+    The fallback keeps compatibility with injected analyzers that only expose
+    the historical ``run_daily_review`` method.
+    """
+    runner = type(market_analyzer).__dict__.get("run_daily_review_with_snapshot")
+    if callable(runner):
+        report, snapshot = runner(market_analyzer)
+        return report, snapshot if isinstance(snapshot, dict) and snapshot else None
+    return market_analyzer.run_daily_review(), None
 
 
 def _get_market_review_text(language: str) -> dict[str, str]:
@@ -101,6 +116,7 @@ def run_market_review(
         if len(run_markets) > 1:
             # 多市场顺序执行，合并报告
             parts = []
+            market_light_snapshots: Dict[str, Dict[str, Any]] = {}
             for mkt, title_key, label in _ALL_MARKETS:
                 if mkt not in run_markets:
                     continue
@@ -108,7 +124,9 @@ def run_market_review(
                 mkt_analyzer = MarketAnalyzer(
                     search_service=search_service, analyzer=analyzer, region=mkt
                 )
-                mkt_report = mkt_analyzer.run_daily_review()
+                mkt_report, market_light_snapshot = _run_daily_review_with_snapshot(mkt_analyzer)
+                if market_light_snapshot is not None:
+                    market_light_snapshots[mkt] = market_light_snapshot
                 if mkt_report:
                     parts.append(f"{review_text[title_key]}\n\n{mkt_report}")
             if parts:
@@ -121,7 +139,12 @@ def run_market_review(
                 analyzer=analyzer,
                 region=region,
             )
-            review_report = market_analyzer.run_daily_review()
+            review_report, market_light_snapshot = _run_daily_review_with_snapshot(market_analyzer)
+            market_light_snapshots = (
+                {region: market_light_snapshot}
+                if market_light_snapshot is not None
+                else {}
+            )
         
         if review_report:
             # 保存报告到文件
@@ -139,6 +162,7 @@ def run_market_review(
                 region=region,
                 config=config,
                 query_id=query_id,
+                market_light_snapshots=market_light_snapshots,
             )
             
             # 推送通知（合并模式下跳过，由 main 层统一发送）
@@ -171,6 +195,7 @@ def _persist_market_review_history(
     region: str,
     config: object,
     query_id: Optional[str] = None,
+    market_light_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> int:
     """Persist market review output into the existing analysis history table.
 
@@ -211,6 +236,8 @@ def _persist_market_review_history(
             "market_review_region": region,
             "report_language": report_language,
         }
+        if market_light_snapshots:
+            context_snapshot["market_light_snapshots"] = market_light_snapshots
 
         saved = DatabaseManager.get_instance().save_analysis_history(
             result=result,

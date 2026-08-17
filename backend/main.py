@@ -56,6 +56,23 @@ from src.logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_portfolio_stock_codes(args: argparse.Namespace) -> Optional[List[str]]:
+    """Load an optional broker portfolio as the analysis stock universe."""
+    portfolio = str(getattr(args, "portfolio", "") or "").strip().lower()
+    if not portfolio:
+        return None
+    if portfolio != "futu":
+        raise ValueError(f"unsupported portfolio: {portfolio}")
+    from src.brokers.futu.portfolio import load_futu_stock_codes
+
+    codes = [canonical_stock_code(code) for code in load_futu_stock_codes()]
+    codes = [code for code in codes if code]
+    logger.info("portfolio=futu replaced stocks/STOCK_LIST with %d holdings", len(codes))
+    return codes
+
+
 _RUNTIME_ENV_FILE_KEYS = set()
 
 
@@ -259,6 +276,14 @@ def parse_arguments() -> argparse.Namespace:
         '--stocks',
         type=str,
         help='指定要分析的股票代码，逗号分隔（覆盖配置文件）'
+    )
+
+    parser.add_argument(
+        '--portfolio',
+        type=str.lower,
+        choices=('futu',),
+        default=None,
+        help='Use holdings from a supported broker portfolio (currently futu)',
     )
 
     parser.add_argument(
@@ -713,12 +738,20 @@ def run_full_analysis(
 
     用于手动运行和兼容全局分析入口；每日定时任务只处理用户自选股。
     """
+    # Broker loading is a CLI contract boundary. Configuration and OpenD errors
+    # must reach main() so a one-shot invocation exits non-zero.
+    portfolio_codes = _resolve_portfolio_stock_codes(args)
+    portfolio_is_empty = portfolio_codes == []
+
     # Import pipeline modules outside the broad try/except so that import-time
     # failures propagate to the caller instead of being silently swallowed.
     from src.core.market_review import run_market_review
     from src.core.pipeline import StockAnalysisPipeline
 
     try:
+        if portfolio_codes is not None:
+            stock_codes = portfolio_codes
+
         # Hot-reload STOCK_LIST when this global analysis entry has no explicit stocks.
         if stock_codes is None:
             config.refresh_stock_list()
@@ -729,10 +762,13 @@ def run_full_analysis(
             config, args, effective_codes
         )
         if should_skip:
-            logger.info(
-                "今日所有相关市场均为非交易日，跳过执行。可使用 --force-run 强制执行。"
-            )
-            return
+            if portfolio_is_empty:
+                logger.info("真实账户中无符合条件的 Futu 持仓，本轮跳过执行。")
+            else:
+                logger.info(
+                    "今日所有相关市场均为非交易日，跳过执行。可使用 --force-run 强制执行。"
+                )
+            return True
         if set(filtered_codes) != set(effective_codes):
             skipped = set(effective_codes) - set(filtered_codes)
             logger.info("今日休市股票已跳过: %s", skipped)
@@ -764,12 +800,16 @@ def run_full_analysis(
         )
 
         # 1. 运行个股分析
-        results = pipeline.run(
-            stock_codes=stock_codes,
-            dry_run=args.dry_run,
-            send_notification=not args.no_notify,
-            merge_notification=merge_notification
-        )
+        if portfolio_codes is not None and not stock_codes:
+            logger.info("真实账户中无符合条件的 Futu 持仓，跳过个股分析。")
+            results = []
+        else:
+            results = pipeline.run(
+                stock_codes=stock_codes,
+                dry_run=args.dry_run,
+                send_notification=not args.no_notify,
+                merge_notification=merge_notification
+            )
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
@@ -896,8 +936,11 @@ def run_full_analysis(
         except Exception as e:
             logger.warning(f"自动回测失败（已忽略）: {e}")
 
+        return True
+
     except Exception as e:
         logger.exception(f"分析流程执行失败: {e}")
+        return False
 
 
 def start_api_server(
@@ -1227,6 +1270,11 @@ def main() -> int:
 
             from src.scheduler import run_with_schedule
             _warn_scheduled_stock_codes_ignored(stock_codes)
+            if getattr(args, "portfolio", None):
+                logger.warning(
+                    "定时模式下检测到 --portfolio 参数；当前多租户调度仅处理开启每日推送的用户自选股，"
+                    "不会读取券商真实持仓。"
+                )
             schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
 
             def scheduled_task():

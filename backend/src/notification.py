@@ -17,6 +17,8 @@ A股自选股智能分析系统 - 通知层
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from enum import Enum
@@ -85,6 +87,29 @@ class NotificationChannel(Enum):
     SLACK = "slack"        # Slack
     ASTRBOT = "astrbot"
     UNKNOWN = "unknown"    # 未知
+
+
+@dataclass
+class ChannelAttemptResult:
+    """Structured result for one notification channel attempt."""
+
+    channel: str
+    success: bool
+    error_code: Optional[str] = None
+    retryable: bool = False
+    latency_ms: Optional[int] = None
+    diagnostics: Optional[str] = None
+
+
+@dataclass
+class NotificationDispatchResult:
+    """Structured notification dispatch result consumed by alert history."""
+
+    dispatched: bool
+    success: bool
+    status: str
+    channel_results: List[ChannelAttemptResult] = field(default_factory=list)
+    message: Optional[str] = None
 
 
 class ChannelDetector:
@@ -1884,6 +1909,63 @@ class NotificationService(
             self.release_noise_control(noise_decision)
         return success_count > 0 or context_success
    
+    def send_with_results(
+        self,
+        content: str,
+        email_stock_codes: Optional[List[str]] = None,
+        email_send_to_all: bool = False,
+        route_type: Optional[str] = None,
+        severity: Optional[str] = None,
+        dedup_key: Optional[str] = None,
+        cooldown_key: Optional[str] = None,
+        structured_payload: Optional[Dict[str, Any]] = None,
+    ) -> NotificationDispatchResult:
+        """Send through the existing gateway and expose a structured attempt.
+
+        The target repository's notification gateway still reports one aggregate
+        boolean. Keeping that gateway intact preserves all channel routing and
+        noise-control behavior while allowing alert delivery history to record a
+        stable attempt result.
+        """
+        started_at = time.monotonic()
+        try:
+            success = bool(self.send(
+                content,
+                email_stock_codes=email_stock_codes,
+                email_send_to_all=email_send_to_all,
+                route_type=route_type,
+                severity=severity,
+                dedup_key=dedup_key,
+                cooldown_key=cooldown_key,
+            ))
+        except Exception as exc:
+            return NotificationDispatchResult(
+                dispatched=True,
+                success=False,
+                status="exception",
+                channel_results=[ChannelAttemptResult(
+                    channel="legacy_gateway",
+                    success=False,
+                    error_code="exception",
+                    retryable=True,
+                    latency_ms=int((time.monotonic() - started_at) * 1000),
+                    diagnostics=str(exc),
+                )],
+                message=str(exc),
+            )
+        return NotificationDispatchResult(
+            dispatched=success,
+            success=success,
+            status="sent" if success else "no_channel",
+            channel_results=[ChannelAttemptResult(
+                channel="legacy_gateway",
+                success=success,
+                error_code=None if success else "send_failed",
+                retryable=not success,
+                latency_ms=int((time.monotonic() - started_at) * 1000),
+            )],
+        )
+
     def save_report_to_file(
         self, 
         content: str, 

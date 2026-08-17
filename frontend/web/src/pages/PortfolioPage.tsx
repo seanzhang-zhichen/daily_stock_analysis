@@ -7,6 +7,14 @@ import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Button, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { WorkspacePageLayout } from '../components/common/PageLayouts';
 import { toDateInputValue } from '../utils/format';
+import {
+  formatMoney,
+  formatPositionMoney,
+  formatPositionPrice,
+  formatSignedPct,
+  getPositionPriceLabel,
+  hasPositionPrice,
+} from '../utils/portfolioFormat';
 import type {
   PortfolioAccountItem,
   PortfolioCashDirection,
@@ -18,6 +26,7 @@ import type {
   PortfolioImportBrokerItem,
   PortfolioImportCommitResponse,
   PortfolioImportParseResponse,
+  PortfolioMarket,
   PortfolioPositionItem,
   PortfolioRiskResponse,
   PortfolioSide,
@@ -32,6 +41,19 @@ const FALLBACK_BROKERS: PortfolioImportBrokerItem[] = [
   { broker: 'citic', aliases: ['zhongxin'], displayName: '中信' },
   { broker: 'cmb', aliases: ['cmbchina', 'zhaoshang'], displayName: '招商' },
 ];
+const PORTFOLIO_MARKET_OPTIONS: Array<{ value: PortfolioMarket; label: string }> = [
+  { value: 'cn', label: 'A 股' },
+  { value: 'hk', label: '港股' },
+  { value: 'us', label: '美股' },
+  { value: 'jp', label: '日股' },
+  { value: 'kr', label: '韩股' },
+  { value: 'tw', label: '台股' },
+];
+const PORTFOLIO_LIMITATION_LABELS: Record<string, string> = {
+  realtime_quote_best_effort: '实时行情为尽力获取，失败时会回退到历史收盘价',
+  fx_and_cost_basis_partial: '汇率与成本基准支持有限，请核对券商账单',
+  sector_and_risk_metrics_limited: '行业归类与部分风险指标支持有限',
+};
 
 type AccountOption = 'all' | number;
 type EventType = 'trade' | 'cash' | 'corporate';
@@ -68,48 +90,9 @@ function getTodayIso(): string {
   return toDateInputValue(new Date());
 }
 
-function formatMoney(value: number | undefined | null, currency = 'CNY'): string {
-  if (value == null || Number.isNaN(value)) return '--';
-  return `${currency} ${Number(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
 function formatPct(value: number | undefined | null): string {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(2)}%`;
-}
-
-function formatSignedPct(value: number | undefined | null): string {
-  if (value == null || Number.isNaN(value)) return '--';
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${value.toFixed(2)}%`;
-}
-
-function hasPositionPrice(row: PortfolioPositionItem): boolean {
-  return row.priceAvailable !== false && row.priceSource !== 'missing';
-}
-
-function formatPositionPrice(row: PortfolioPositionItem): string {
-  if (!hasPositionPrice(row)) return '--';
-  return row.lastPrice.toFixed(4);
-}
-
-function formatPositionMoney(value: number, row: PortfolioPositionItem): string {
-  if (!hasPositionPrice(row)) return '--';
-  return formatMoney(value, row.valuationCurrency);
-}
-
-function getPositionPriceLabel(row: PortfolioPositionItem): string {
-  if (!hasPositionPrice(row)) return '缺价';
-  if (row.priceSource === 'realtime_quote') {
-    return row.priceProvider ? `实时价 · ${row.priceProvider}` : '实时价';
-  }
-  if (row.priceSource === 'history_close') {
-    return row.priceStale && row.priceDate ? `收盘价 · ${row.priceDate}` : '收盘价';
-  }
-  return row.priceSource || '未知来源';
 }
 
 function formatSideLabel(value: PortfolioSide): string {
@@ -440,7 +423,7 @@ type PortfolioRiskSummaryProps = {
 };
 
 const PortfolioRiskSummary: React.FC<PortfolioRiskSummaryProps> = ({ risk, snapshot, costMethod }) => (
-  <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
+  <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
     <Card padding="md">
       <h3 className="text-sm font-semibold text-foreground mb-2">回撤监控</h3>
       <div className="text-xs text-secondary space-y-1">
@@ -463,6 +446,21 @@ const PortfolioRiskSummary: React.FC<PortfolioRiskSummaryProps> = ({ risk, snaps
         <div>账户数: {snapshot?.accountCount ?? 0}</div>
         <div>计价币种: {snapshot?.currency || 'CNY'}</div>
         <div>成本法: {(snapshot?.costMethod || costMethod).toUpperCase()}</div>
+      </div>
+    </Card>
+    <Card padding="md">
+      <h3 className="text-sm font-semibold text-foreground mb-2">AI 风险信号</h3>
+      <div className="text-xs text-secondary space-y-1">
+        {risk?.decisionSignalRisk?.available === false ? (
+          <div className="text-warning">当前无法读取 AI 风险信号</div>
+        ) : (
+          <>
+            <div>防御信号: {risk?.decisionSignalRisk?.total ?? 0}</div>
+            <div>
+              卖出 {risk?.decisionSignalRisk?.actions?.sell ?? 0} · 减仓 {risk?.decisionSignalRisk?.actions?.reduce ?? 0} · 告警 {risk?.decisionSignalRisk?.actions?.alert ?? 0}
+            </div>
+          </>
+        )}
       </div>
     </Card>
   </section>
@@ -872,7 +870,7 @@ const PortfolioPage: React.FC = () => {
   const [accountForm, setAccountForm] = useState({
     name: '',
     broker: 'Demo',
-    market: 'cn' as 'cn' | 'hk' | 'us',
+    market: 'cn' as PortfolioMarket,
     baseCurrency: 'CNY',
   });
   const [costMethod, setCostMethod] = useState<PortfolioCostMethod>('fifo');
@@ -1001,13 +999,14 @@ const PortfolioPage: React.FC = () => {
     }
   }, [selectedBroker]);
 
-  const loadSnapshotAndRisk = useCallback(async () => {
+  const loadSnapshotAndRisk = useCallback(async (includeRealtime = false) => {
     setIsLoading(true);
     setRiskWarning(null);
     try {
       const snapshotData = await portfolioApi.getSnapshot({
         accountId: queryAccountId,
         costMethod,
+        includeRealtime,
       });
       setSnapshot(snapshotData);
       setError(null);
@@ -1016,6 +1015,7 @@ const PortfolioPage: React.FC = () => {
         const riskData = await portfolioApi.getRisk({
           accountId: queryAccountId,
           costMethod,
+          includeRealtime,
         });
         setRisk(riskData);
       } catch (riskErr) {
@@ -1357,7 +1357,7 @@ const PortfolioPage: React.FC = () => {
   };
 
   const handleRefresh = async () => {
-    await Promise.all([loadAccounts(), loadSnapshotAndRisk(), loadEvents(), loadBrokers()]);
+    await Promise.all([loadAccounts(), loadSnapshotAndRisk(true), loadEvents(), loadBrokers()]);
   };
 
   const reloadSnapshotAndRiskForScope = useCallback(async (
@@ -1376,6 +1376,7 @@ const PortfolioPage: React.FC = () => {
       const snapshotData = await portfolioApi.getSnapshot({
         accountId: requestedAccountId,
         costMethod: requestedCostMethod,
+        includeRealtime: false,
       });
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         return false;
@@ -1387,6 +1388,7 @@ const PortfolioPage: React.FC = () => {
         const riskData = await portfolioApi.getRisk({
           accountId: requestedAccountId,
           costMethod: requestedCostMethod,
+          includeRealtime: false,
         });
         if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
           return false;
@@ -1458,6 +1460,12 @@ const PortfolioPage: React.FC = () => {
     }
   };
 
+  const snapshotQualityMessage = snapshot?.dataQuality === 'partial' && snapshot.limitations?.length
+    ? snapshot.limitations
+      .map((limitation) => PORTFOLIO_LIMITATION_LABELS[limitation] || limitation)
+      .join('；')
+    : null;
+
   return (
     <WorkspacePageLayout>
       <section className="space-y-3">
@@ -1499,6 +1507,13 @@ const PortfolioPage: React.FC = () => {
           variant="warning"
           title="风险模块降级"
           message={riskWarning}
+        />
+      ) : null}
+      {snapshotQualityMessage ? (
+        <InlineAlert
+          variant="warning"
+          title="部分市场估值能力有限"
+          message={snapshotQualityMessage}
         />
       ) : null}
       {writeWarning ? (
@@ -1567,11 +1582,13 @@ const PortfolioPage: React.FC = () => {
             <select
               className={PORTFOLIO_SELECT_CLASS}
               value={accountForm.market}
-              onChange={(e) => setAccountForm((prev) => ({ ...prev, market: e.target.value as 'cn' | 'hk' | 'us' }))}
+              onChange={(e) => setAccountForm((prev) => ({ ...prev, market: e.target.value as PortfolioMarket }))}
             >
-              <option value="cn">市场：A 股（cn）</option>
-              <option value="hk">市场：港股（hk）</option>
-              <option value="us">市场：美股（us）</option>
+              {PORTFOLIO_MARKET_OPTIONS.map((market) => (
+                <option key={market.value} value={market.value}>
+                  市场：{market.label}（{market.value}）
+                </option>
+              ))}
             </select>
             <Button type="submit" variant="outline" size="sm" disabled={accountCreating}>
               {accountCreating ? '创建中...' : '创建账户'}

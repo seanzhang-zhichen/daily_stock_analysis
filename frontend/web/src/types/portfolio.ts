@@ -2,13 +2,14 @@ export type PortfolioCostMethod = 'fifo' | 'avg';
 export type PortfolioSide = 'buy' | 'sell';
 export type PortfolioCashDirection = 'in' | 'out';
 export type PortfolioCorporateActionType = 'cash_dividend' | 'split_adjustment';
+export type PortfolioMarket = 'cn' | 'hk' | 'us' | 'jp' | 'kr' | 'tw';
 
 export interface PortfolioAccountItem {
   id: number;
   ownerId?: string | null;
   name: string;
   broker?: string | null;
-  market: 'cn' | 'hk' | 'us';
+  market: PortfolioMarket;
   baseCurrency: string;
   isActive: boolean;
   createdAt?: string | null;
@@ -22,7 +23,7 @@ export interface PortfolioAccountListResponse {
 export interface PortfolioAccountCreateRequest {
   name: string;
   broker?: string;
-  market: 'cn' | 'hk' | 'us';
+  market: PortfolioMarket;
   baseCurrency: string;
   ownerId?: string;
 }
@@ -44,6 +45,8 @@ export interface PortfolioPositionItem {
   priceDate?: string | null;
   priceStale?: boolean;
   priceAvailable?: boolean;
+  dataQuality?: string;
+  limitations?: string[];
 }
 
 export interface PortfolioAccountSnapshot {
@@ -63,6 +66,8 @@ export interface PortfolioAccountSnapshot {
   feeTotal: number;
   taxTotal: number;
   fxStale: boolean;
+  dataQuality?: string;
+  limitations?: string[];
   positions: PortfolioPositionItem[];
 }
 
@@ -79,6 +84,8 @@ export interface PortfolioSnapshotResponse {
   feeTotal: number;
   taxTotal: number;
   fxStale: boolean;
+  dataQuality?: string;
+  limitations?: string[];
   accounts: PortfolioAccountSnapshot[];
 }
 
@@ -142,6 +149,12 @@ export interface PortfolioRiskResponse {
     nearCount: number;
     items: PortfolioStopLossItem[];
   };
+  decisionSignalRisk?: {
+    available: boolean;
+    total: number;
+    actions: Record<string, number>;
+    items: Array<{ accountId?: number | null; symbol: string; market: string; signal: Record<string, unknown> }>;
+  };
 }
 
 export interface PortfolioTradeCreateRequest {
@@ -153,7 +166,7 @@ export interface PortfolioTradeCreateRequest {
   price: number;
   fee?: number;
   tax?: number;
-  market?: 'cn' | 'hk' | 'us';
+  market?: PortfolioMarket;
   currency?: string;
   tradeUid?: string;
   note?: string;
@@ -173,7 +186,7 @@ export interface PortfolioCorporateActionCreateRequest {
   symbol: string;
   effectiveDate: string;
   actionType: PortfolioCorporateActionType;
-  market?: 'cn' | 'hk' | 'us';
+  market?: PortfolioMarket;
   currency?: string;
   cashDividendPerShare?: number;
   splitRatio?: number;

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.deps import get_database_manager, get_db
-from api.v1.schemas.usage import UsageSummaryResponse
+from api.v1.schemas.usage import UsageDashboardResponse, UsageSummaryResponse
 from src.storage import DatabaseManager, AppGrowthEvent
 from src.users.config import SESSION_COOKIE_NAME, load_user_mode_settings
 from src.users.sessions import resolve_session
@@ -87,10 +87,51 @@ def get_usage_summary(
         period=period,
         from_date=from_dt.date().isoformat(),
         to_date=to_dt.date().isoformat(),
-        total_calls=data["total_calls"],
-        total_tokens=data["total_tokens"],
-        by_call_type=data["by_call_type"],
-        by_model=data["by_model"],
+        total_calls=data.get("total_calls", 0),
+        total_prompt_tokens=data.get("total_prompt_tokens", 0),
+        total_completion_tokens=data.get("total_completion_tokens", 0),
+        total_tokens=data.get("total_tokens", 0),
+        by_call_type=data.get("by_call_type", []),
+        by_model=data.get("by_model", []),
+    )
+
+
+def _enrich_call_record(row: dict[str, Any]) -> dict[str, Any]:
+    called_at = row.get("called_at")
+    return {
+        **row,
+        "called_at": called_at.isoformat() if isinstance(called_at, datetime) else str(called_at or ""),
+    }
+
+
+@router.get(
+    "/dashboard",
+    response_model=UsageDashboardResponse,
+    summary="LLM token usage monitoring dashboard",
+    description="Return token totals, model breakdowns, and recent LLM call records.",
+)
+def get_usage_dashboard(
+    period: str = Query("month", description="'today' | 'month' | 'all'"),
+    limit: int = Query(50, ge=1, le=200, description="Recent call records to include"),
+    db_manager: DatabaseManager = Depends(get_database_manager),
+) -> UsageDashboardResponse:
+    """Return the summary and newest call records used by the usage page."""
+    if period not in _VALID_PERIODS:
+        period = "month"
+    from_dt, to_dt = _date_range(period)
+    data = db_manager.get_llm_usage_summary(from_dt, to_dt)
+    records = db_manager.get_llm_usage_records(from_dt, to_dt, limit=limit)
+    return UsageDashboardResponse(
+        period=period,
+        from_date=from_dt.date().isoformat(),
+        to_date=to_dt.date().isoformat(),
+        total_calls=data.get("total_calls", 0),
+        total_prompt_tokens=data.get("total_prompt_tokens", 0),
+        total_completion_tokens=data.get("total_completion_tokens", 0),
+        total_tokens=data.get("total_tokens", 0),
+        by_call_type=data.get("by_call_type", []),
+        by_model=data.get("by_model", []),
+        recent_calls=[_enrich_call_record(row) for row in records],
     )
 
 

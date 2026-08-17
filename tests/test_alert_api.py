@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 
 import src.auth as auth
 from api.app import create_app
+from api.deps import get_current_user
 from src.config import Config
 from src.storage import AlertNotificationRecord, AlertTriggerRecord, DatabaseManager
 
@@ -39,6 +40,9 @@ class AlertApiTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         _reset_auth_globals()
+        self.old_env_file = os.environ.get("ENV_FILE")
+        self.old_database_path = os.environ.get("DATABASE_PATH")
+        self.old_database_url = os.environ.get("DATABASE_URL")
         self.temp_dir = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp_dir.name)
         self.env_path = self.data_dir / ".env"
@@ -59,17 +63,35 @@ class AlertApiTestCase(unittest.TestCase):
 
         os.environ["ENV_FILE"] = str(self.env_path)
         os.environ["DATABASE_PATH"] = str(self.db_path)
+        os.environ["DATABASE_URL"] = f"sqlite:///{self.db_path.as_posix()}"
         Config.reset_instance()
         DatabaseManager.reset_instance()
+        self.current_user_id = 1
+        self.auth_session_patcher = patch(
+            "api.middlewares.auth._resolve_user_session",
+            side_effect=lambda _request: SimpleNamespace(id=self.current_user_id),
+        )
+        self.auth_session_patcher.start()
         app = create_app(static_dir=self.data_dir / "empty-static")
+        app.dependency_overrides[get_current_user] = (
+            lambda: SimpleNamespace(id=self.current_user_id)
+        )
         self.client = TestClient(app)
         self.db = DatabaseManager.get_instance()
 
     def tearDown(self) -> None:
+        self.auth_session_patcher.stop()
         DatabaseManager.reset_instance()
         Config.reset_instance()
-        os.environ.pop("ENV_FILE", None)
-        os.environ.pop("DATABASE_PATH", None)
+        for key, value in (
+            ("ENV_FILE", self.old_env_file),
+            ("DATABASE_PATH", self.old_database_path),
+            ("DATABASE_URL", self.old_database_url),
+        ):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.temp_dir.cleanup()
         _reset_auth_globals()
 
@@ -132,6 +154,35 @@ class AlertApiTestCase(unittest.TestCase):
 
         missing_resp = self.client.get(f"/api/v1/alerts/rules/{rule_id}")
         self.assertEqual(missing_resp.status_code, 404)
+
+    def test_rules_and_history_are_isolated_by_current_user(self) -> None:
+        rule = self._create_rule()
+        with self.db.get_session() as session:
+            trigger = AlertTriggerRecord(
+                rule_id=rule["id"],
+                target="600519",
+                status="triggered",
+            )
+            session.add(trigger)
+            session.flush()
+            session.add(AlertNotificationRecord(
+                trigger_id=trigger.id,
+                channel="email",
+                success=True,
+            ))
+            session.commit()
+
+        self.current_user_id = 2
+        rules = self.client.get("/api/v1/alerts/rules")
+        detail = self.client.get(f"/api/v1/alerts/rules/{rule['id']}")
+        triggers = self.client.get("/api/v1/alerts/triggers")
+        notifications = self.client.get("/api/v1/alerts/notifications")
+
+        self.assertEqual(rules.status_code, 200)
+        self.assertEqual(rules.json()["items"], [])
+        self.assertEqual(detail.status_code, 404)
+        self.assertEqual(triggers.json()["items"], [])
+        self.assertEqual(notifications.json()["items"], [])
 
     def test_rule_update_rejects_empty_payload(self) -> None:
         rule = self._create_rule()

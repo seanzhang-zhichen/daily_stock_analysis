@@ -11,25 +11,19 @@
   - Web 前端改动在 `frontend/web/`
   - 桌面端改动在 `frontend/desktop/`
   - 部署与自动化改动在 `scripts/`、`docker/`；若恢复 GitHub Actions，则工作流放在 `.github/workflows/`
-- 未经明确确认，不执行 `git commit`、`git tag`、`git push`。
+- 未经明确确认，不执行 `git pull`、`git commit`、`git tag`、`git push`。
 - commit message 使用英文，不添加 `Co-Authored-By`。
 - 不写死密钥、账号、路径、模型名、端口或环境差异逻辑。
 - 优先复用现有模块、配置入口、脚本和测试，不新增平行实现。
 - 默认稳定性优先于“顺手优化”；非当前任务直接需要的重构、抽象和基础设施迁移一律克制。
 - 新增配置项时，必须同步更新 `.env.example` 和相关文档。
 - 涉及用户可见能力、CLI/API 行为、部署方式、通知方式、报告结构变化时，必须同步更新相关文档与 `docs/CHANGELOG.md`。
-- `docs/CHANGELOG.md` 的 `[Unreleased]` 段使用**扁平格式**：每条独立一行，格式为 `- [类型] 描述`，类型取值：`新功能`/`改进`/`修复`/`文档`/`测试`/`chore`；**禁止在 `[Unreleased]` 内新增 `### 类目标题`**，以减少并发 PR 的 merge 冲突。发版时由 maintainer 汇总整理成带标题的正式格式。
+- `docs/CHANGELOG.md` 的 `[Unreleased]` 段使用**扁平格式**：每条独立一行，格式为 `- [类型] 描述`，类型取值：`新功能`/`改进`/`修复`/`文档`/`测试`/`chore`；**禁止在 `[Unreleased]` 内新增 `### 类目标题`**，以减少并发改动的 merge 冲突。发版时由 maintainer 汇总整理成带标题的正式格式。
 - `README.md` 只用于项目定位、核心能力总览、快速开始、主要入口、赞助/合作等首页级信息；非必要不更新 README，避免持续膨胀。
 - 更细的模块行为、页面交互、专题配置、排障说明、字段契约、实现语义和边界条件，优先更新对应 `docs/*.md` 或专题文档，不写入 README。
 - 变更中英双语文档之一时，需评估另一份是否需要同步；若未同步，交付说明里要写明原因。
 - 注释、docstring、日志文案以清晰准确为准，不强制要求英文，但应与文件语境保持一致。
 - **所有数据库 schema 变更（新增表、新增列、删除列、修改列类型、新增索引等）必须通过 Alembic migration 完成，禁止直接调用 `Base.metadata.create_all()` 或手写 `ALTER TABLE` 语句来变更生产 schema。** 详见"数据库迁移"一节。
-
-## 1.1 PR 标题规范（非阻断建议）
-
-- 推荐使用 `<类型>: <修改内容>` 作为 PR 标题，例如 `fix: 修复大盘分析历史记录丢失`，优先类型为 `fix`/`feat`/`refactor`/`docs`/`chore`/`test`/`ci`。
-- 标题应描述实际变更内容，建议不添加 `[codex]`、`codex`、`autocode`、`copilot` 或其他工具/agent 来源前缀。
-- 该规范仅用于协作可读性与一致性提示，不应单独作为 review process blocker。
 
 ## 2. AI 协作资产治理
 
@@ -113,14 +107,6 @@ npm install
 npm run build
 ```
 
-### PR / CI 证据
-
-```bash
-gh pr view <pr_number>
-gh pr checks <pr_number>
-gh run view <run_id> --log-failed
-```
-
 ## 5. 默认工作流
 
 1. 先判断任务类型：`fix / feat / refactor / docs / chore / test / review`
@@ -142,7 +128,7 @@ gh run view <run_id> --log-failed
 
 ### CI 覆盖原则
 
-当前检出版本未包含 `.github/workflows/`，因此不能假定 GitHub Actions 已覆盖改动。以本节本地验证矩阵为最低标准；若目标 PR 上实际存在远端 CI 结果，可引用其结论，并补充远端未覆盖的改动面。
+当前检出版本未包含 `.github/workflows/`，因此不能假定 GitHub Actions 已覆盖改动。以本节本地验证矩阵为最低标准；若实际存在可用的远端 CI 结果，可引用其结论，并补充远端未覆盖的改动面。
 
 ### 按改动面执行
 
@@ -201,33 +187,13 @@ gh run view <run_id> --log-failed
 - 报告 / Prompt / 通知：
   - 修改报告结构、Prompt、提取器、通知模板、机器人链路时，要检查上游输入与下游消费方是否仍兼容。
   - 单一通知渠道失败不应拖垮整个分析主流程，除非需求明确要求 fail-fast。
-  - 修改 `backend/src/services/image_stock_extractor.py` 中 `EXTRACT_PROMPT` 时，要在 PR 描述中附完整最新 prompt。
+  - 修改 `backend/src/services/image_stock_extractor.py` 中 `EXTRACT_PROMPT` 时，要同步更新 `docs/image-extract-prompt.md` 中的完整最新 prompt。
 
 - 工作流 / 发布 / 打包：
   - 修改自动 tag、Release、Docker 发布、日常分析或桌面端打包流程时，要评估触发条件、产物路径、权限边界和回滚方式。
   - 自动 tag 默认保持 opt-in：只有 commit title 含 `#patch`、`#minor`、`#major` 才触发版本号更新，除非需求明确要求改变发布策略。
 
-## 8. Issue / PR / Skill 工作流
-
-- 当前仓库未内置 issue / PR 协作 skill；若未来新增，其命令、模板、验证顺序和交付结构必须与 `AGENTS.md` 保持一致。
-- issue 分析、PR 审查、issue 修复默认优先读取可用的 CI / 工作流证据，再决定是否补本地验证；本地分析产物可保存到忽略的 `.claude/reviews/`。
-- 协作流程不得默认执行 `git pull`、`git push`、`git tag`、`gh pr create` 等会改变远端或当前分支状态的操作；这些操作必须要求用户确认。
-- PR 审查默认顺序：
-  1. 必要性
-  2. 关联性
-  3. 标题建议（`<类型>: <修改内容>`，且不含工具/agent 前缀；不作为硬性阻断项）
-  4. 描述完整性（若仓库存在 PR 模板则对照模板）
-  5. 验证证据
-  6. 实现正确性
-  7. 合入判定
-- 对 `fix` 类 PR，必须说明：原问题、根因、修复点、回归风险。
-- 合入阻断条件：
-  - 正确性或安全性问题
-  - 阻断型 CI 未通过
-  - PR 描述与实际改动内容实质性矛盾
-  - 缺少回滚方案
-
-## 9. 数据库迁移
+## 8. 数据库迁移
 
 **原则：所有 schema 变更（新增/修改/删除 表、列、索引）必须通过 Alembic migration 完成。**
 
@@ -264,7 +230,7 @@ uv run --locked alembic stamp b0bc3c721ef0
 1. 修改 `backend/src/storage/models/` 下的 ORM 模型
 2. 运行 `uv run --locked alembic revision --autogenerate -m "..."` 生成迁移文件
 3. **人工 review** 生成的 `backend/alembic/versions/` 文件，确认 DDL 正确
-4. 提交迁移文件与模型变更到同一 PR
+4. 将迁移文件与模型变更作为同一项变更交付
 5. 生产部署时 `uv run --locked alembic upgrade head`（或由 `DatabaseManager` 启动时自动执行）
 
 ### 存量数据库升级（首次引入 Alembic）
@@ -283,7 +249,7 @@ uv run --locked alembic stamp b0bc3c721ef0
 - 禁止在代码中手写 `ALTER TABLE` / `CREATE TABLE` 等 DDL 语句
 - 禁止直接修改已合并的迁移文件（需要修正时，创建新的迁移）
 
-## 10. 交付与发布
+## 9. 交付与发布
 
 - 默认交付结构：
   - `改了什么`
@@ -295,4 +261,4 @@ uv run --locked alembic stamp b0bc3c721ef0
 - 如果是 `docs` 任务，可直接写：`Docs only, tests not run`，但仍需说明是否核对了命令和文件名。
 - 自动 tag 默认不触发，只有 commit title 包含 `#patch`、`#minor`、`#major` 才会触发版本号更新。
 - 手动打 tag 必须使用 annotated tag。
-- 用户可见变更优先通过 PR 合入，并补齐 label 与验证说明。
+- 用户可见变更交付时需补齐验证说明。

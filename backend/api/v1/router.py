@@ -18,6 +18,7 @@ from api.v1.endpoints import (
     backtest,
     billing,
     credits,
+    decision_signals,
     history,
     notices,
     portfolio,
@@ -60,6 +61,12 @@ router.include_router(
     history.router,
     prefix="/history",
     tags=["History"]
+)
+
+router.include_router(
+    decision_signals.router,
+    prefix="/decision-signals",
+    tags=["DecisionSignals"],
 )
 
 router.include_router(

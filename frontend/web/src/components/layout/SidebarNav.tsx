@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Activity,
   BarChart3,
   Bell,
   BellRing,
@@ -44,6 +45,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'chat', label: '问股', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
   { key: 'tasks', label: '任务', to: '/tasks', icon: ListChecks },
   { key: 'stockSelection', label: '选股', to: '/screening', icon: TrendingUp },
+  { key: 'decisionSignals', label: 'AI 建议', to: '/decision-signals', icon: Activity },
   { key: 'backtest', label: '回测', to: '/backtest', icon: BarChart3 },
   { key: 'research', label: '研报', to: '/research-reports', icon: FileText },
   { key: 'usage', label: '用量', to: '/usage', icon: Gauge },

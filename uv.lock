@@ -805,6 +805,7 @@ dependencies = [
     { name = "exchange-calendars" },
     { name = "fake-useragent" },
     { name = "fastapi" },
+    { name = "futu-api" },
     { name = "google-search-results" },
     { name = "httpx", extra = ["socks"] },
     { name = "imgkit" },
@@ -864,6 +865,7 @@ requires-dist = [
     { name = "exchange-calendars", specifier = ">=4.5.0" },
     { name = "fake-useragent", specifier = ">=1.4.0" },
     { name = "fastapi", specifier = ">=0.109.0" },
+    { name = "futu-api", specifier = "==10.8.6808" },
     { name = "google-search-results", specifier = ">=2.4.0" },
     { name = "httpx", extras = ["socks"] },
     { name = "imgkit", specifier = ">=1.2.0" },
@@ -1295,6 +1297,19 @@ sdist = { url = "https://files.pythonhosted.org/packages/00/78/f34251dadb8f39212
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl", hash = "sha256:b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279", size = 206583, upload-time = "2026-07-28T16:34:49.538Z" },
 ]
+
+[[package]]
+name = "futu-api"
+version = "10.8.6808"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "protobuf" },
+    { name = "pycryptodome" },
+    { name = "simplejson" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/52/271bf5a88b2583ea07f575dfdea123c9597fa7e35fe3b013668a052694e8/futu_api-10.8.6808.tar.gz", hash = "sha256:a239e836accc40995846bb39263218d8b77fa7d35bfd18772005439175fba6c8", size = 6411611, upload-time = "2026-06-25T08:30:37.307Z" }
 
 [[package]]
 name = "google-search-results"

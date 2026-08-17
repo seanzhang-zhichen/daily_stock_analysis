@@ -8,12 +8,18 @@ metrics remain meaningful even if the risk endpoint is opened infrequently.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Config, get_config
 from src.repositories.portfolio_repo import PortfolioRepository
+from src.services.decision_signal_service import DecisionSignalService
+from src.services.decision_signal_summary import summarize_decision_signal
 from src.services.portfolio_service import PortfolioService
+
+logger = logging.getLogger(__name__)
+DEFENSIVE_DECISION_SIGNAL_ACTIONS = ("sell", "reduce", "alert")
 
 
 class PortfolioRiskService:
@@ -24,11 +30,13 @@ class PortfolioRiskService:
         *,
         repo: Optional[PortfolioRepository] = None,
         portfolio_service: Optional[PortfolioService] = None,
+        decision_signal_service: Optional[DecisionSignalService] = None,
         config: Optional[Config] = None,
     ):
         """Initialize repository/service dependencies and lazy data manager state."""
         self.repo = repo or PortfolioRepository()
         self.portfolio_service = portfolio_service or PortfolioService(repo=self.repo)
+        self.decision_signal_service = decision_signal_service or DecisionSignalService(portfolio_repo=self.repo)
         self.config = config or get_config()
         self._data_manager = None
         self._data_manager_init_error = ""
@@ -40,6 +48,7 @@ class PortfolioRiskService:
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
         owner_id: Optional[str] = None,
+        include_realtime: bool = True,
     ) -> Dict[str, Any]:
         """Build all configured portfolio risk blocks for one account scope/date."""
         as_of_date = as_of or date.today()
@@ -48,6 +57,7 @@ class PortfolioRiskService:
             as_of=as_of_date,
             cost_method=cost_method,
             owner_id=owner_id,
+            include_realtime=include_realtime,
         )
 
         thresholds = {
@@ -73,6 +83,8 @@ class PortfolioRiskService:
             as_of_date=as_of_date,
             cost_method=cost_method,
             lookback_days=thresholds["lookback_days"],
+            owner_id=owner_id,
+            include_realtime=include_realtime,
         )
         drawdown = self._build_drawdown(
             account_id=account_id,
@@ -82,6 +94,7 @@ class PortfolioRiskService:
             lookback_days=thresholds["lookback_days"],
         )
         stop_loss = self._build_stop_loss(snapshot, thresholds)
+        decision_signal_risk = self._build_decision_signal_risk(snapshot, owner_id=owner_id)
 
         return {
             "as_of": as_of_date.isoformat(),
@@ -93,7 +106,71 @@ class PortfolioRiskService:
             "sector_concentration": sector_concentration,
             "drawdown": drawdown,
             "stop_loss": stop_loss,
+            "decision_signal_risk": decision_signal_risk,
         }
+
+    def _build_decision_signal_risk(
+        self,
+        snapshot: Dict[str, Any],
+        *,
+        owner_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """Count active defensive AI signals for currently held positions."""
+        empty = {
+            "available": True,
+            "total": 0,
+            "actions": {action: 0 for action in DEFENSIVE_DECISION_SIGNAL_ACTIONS},
+            "items": [],
+        }
+        try:
+            user_id = int(owner_id) if owner_id is not None else None
+            risk_items: List[Dict[str, Any]] = []
+            action_counts = {action: 0 for action in DEFENSIVE_DECISION_SIGNAL_ACTIONS}
+            seen = set()
+            for account in snapshot.get("accounts", []) or []:
+                for position in account.get("positions", []) or []:
+                    if float(position.get("quantity") or 0.0) <= 0:
+                        continue
+                    market = str(position.get("market") or account.get("market") or "").strip().lower()
+                    symbol = str(position.get("symbol") or "").strip().upper()
+                    if not symbol:
+                        continue
+                    response = self.decision_signal_service.list_signals(
+                        user_id=user_id,
+                        market=market or None,
+                        stock_code=symbol,
+                        status="active",
+                        page=1,
+                        page_size=100,
+                    )
+                    signal = next(
+                        (item for item in response.get("items", [])
+                         if str(item.get("action") or "") in DEFENSIVE_DECISION_SIGNAL_ACTIONS),
+                        None,
+                    )
+                    summary = summarize_decision_signal(signal)
+                    if not summary:
+                        continue
+                    action = str(summary.get("action") or "")
+                    key = (account.get("account_id"), market, symbol, summary.get("id"))
+                    if action not in action_counts or key in seen:
+                        continue
+                    seen.add(key)
+                    action_counts[action] += 1
+                    risk_items.append({
+                        "account_id": account.get("account_id"),
+                        "symbol": symbol,
+                        "market": market,
+                        "signal": summary,
+                    })
+            empty["total"] = len(risk_items)
+            empty["actions"] = action_counts
+            empty["items"] = risk_items
+            return empty
+        except Exception:
+            logger.exception("[PortfolioRiskService] Decision signal risk unavailable")
+            empty["available"] = False
+            return empty
 
     def _ensure_drawdown_snapshot_window(
         self,
@@ -102,6 +179,8 @@ class PortfolioRiskService:
         as_of_date: date,
         cost_method: str,
         lookback_days: int,
+        owner_id: Optional[str] = None,
+        include_realtime: bool = True,
     ) -> None:
         """Backfill missing daily snapshots needed for drawdown calculations."""
         if lookback_days <= 0:
@@ -111,6 +190,7 @@ class PortfolioRiskService:
             account_id=account_id,
             as_of_date=as_of_date,
             lookback_days=lookback_days,
+            owner_id=owner_id,
         )
         if start_date > as_of_date:
             return
@@ -130,12 +210,17 @@ class PortfolioRiskService:
                         account_id=account_id,
                         as_of=current_date,
                         cost_method=cost_method,
+                        owner_id=owner_id,
+                        include_realtime=include_realtime,
                     )
                     existing_dates.add(current_date)
                 current_date += timedelta(days=1)
             return
 
-        account_ids = [int(account.id) for account in self.repo.list_accounts(include_inactive=False)]
+        account_ids = [
+            int(account.id)
+            for account in self.repo.list_accounts(include_inactive=False, owner_id=owner_id)
+        ]
         if not account_ids:
             return
         existing_pairs = {(int(row.account_id), row.snapshot_date) for row in existing_rows}
@@ -146,6 +231,8 @@ class PortfolioRiskService:
                     account_id=None,
                     as_of=current_date,
                     cost_method=cost_method,
+                    owner_id=owner_id,
+                    include_realtime=include_realtime,
                 )
                 for aid in account_ids:
                     existing_pairs.add((aid, current_date))
@@ -157,6 +244,7 @@ class PortfolioRiskService:
         account_id: Optional[int],
         as_of_date: date,
         lookback_days: int,
+        owner_id: Optional[str] = None,
     ) -> date:
         """Start backfill no earlier than lookback start or first account activity."""
         window_start = as_of_date - timedelta(days=lookback_days)
@@ -165,7 +253,7 @@ class PortfolioRiskService:
             return max(window_start, first_activity or as_of_date)
 
         first_activity_candidates: List[date] = []
-        for account in self.repo.list_accounts(include_inactive=False):
+        for account in self.repo.list_accounts(include_inactive=False, owner_id=owner_id):
             first_activity = self.repo.get_first_activity_date(account_id=int(account.id), as_of=as_of_date)
             if first_activity is not None:
                 first_activity_candidates.append(first_activity)

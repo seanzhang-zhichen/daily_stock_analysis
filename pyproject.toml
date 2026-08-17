@@ -21,6 +21,7 @@ dependencies = [
     "yfinance>=0.2.0",
     "longbridge>=0.2.0",
     "tickflow>=0.1.0",
+    "futu-api==10.8.6808",
 
     # Bots and notifications
     "lark-oapi>=1.0.0",

@@ -136,7 +136,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertEqual(pos["price_provider"], "unit-test")
         self.assertTrue(pos["price_available"])
 
-    def test_current_snapshot_uses_close_before_realtime_fallback(self) -> None:
+    def test_current_snapshot_prefers_realtime_before_close_fallback(self) -> None:
         today = date.today()
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
@@ -155,16 +155,68 @@ class PortfolioServiceTestCase(unittest.TestCase):
         with patch.object(
             PortfolioService,
             "_fetch_realtime_position_price",
-            side_effect=AssertionError("close price should be used before realtime fallback"),
+            return_value=(125.0, "unit-test"),
         ):
             snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
 
         pos = snapshot["accounts"][0]["positions"][0]
-        self.assertAlmostEqual(pos["last_price"], 118.0, places=6)
-        self.assertAlmostEqual(pos["market_value_base"], 1180.0, places=6)
-        self.assertAlmostEqual(pos["unrealized_pnl_base"], 180.0, places=6)
-        self.assertEqual(pos["price_source"], "history_close")
+        self.assertAlmostEqual(pos["last_price"], 125.0, places=6)
+        self.assertAlmostEqual(pos["market_value_base"], 1250.0, places=6)
+        self.assertAlmostEqual(pos["unrealized_pnl_base"], 250.0, places=6)
+        self.assertEqual(pos["price_source"], "realtime_quote")
         self.assertTrue(pos["price_available"])
+
+    def test_current_snapshot_can_skip_realtime_quotes(self) -> None:
+        today = date.today()
+        aid = self._create_account_with_position(
+            market="cn",
+            currency="CNY",
+            symbol="600519",
+            close=118.0,
+            close_date=today,
+        )
+
+        with patch.object(
+            PortfolioService,
+            "_fetch_realtime_position_price",
+            side_effect=AssertionError("include_realtime=false must not fetch realtime quotes"),
+        ):
+            snapshot = self.service.get_portfolio_snapshot(
+                account_id=aid,
+                as_of=today,
+                cost_method="fifo",
+                include_realtime=False,
+            )
+
+        pos = snapshot["accounts"][0]["positions"][0]
+        self.assertEqual(pos["last_price"], 118.0)
+        self.assertEqual(pos["price_source"], "history_close")
+
+    def test_partial_markets_expose_data_quality_limitations(self) -> None:
+        for market, currency, symbol in (
+            ("jp", "JPY", "7203.T"),
+            ("kr", "KRW", "005930.KS"),
+            ("tw", "TWD", "2330.TW"),
+        ):
+            with self.subTest(market=market):
+                aid = self._create_account_with_position(
+                    market=market,
+                    currency=currency,
+                    symbol=symbol,
+                    close=100.0,
+                )
+                snapshot = self.service.get_portfolio_snapshot(
+                    account_id=aid,
+                    as_of=date(2026, 1, 3),
+                    include_realtime=False,
+                )
+
+                account = snapshot["accounts"][0]
+                position = account["positions"][0]
+                self.assertEqual(snapshot["data_quality"], "partial")
+                self.assertEqual(account["data_quality"], "partial")
+                self.assertEqual(position["data_quality"], "partial")
+                self.assertIn("realtime_quote_best_effort", position["limitations"])
 
     def test_historical_snapshot_marks_missing_price_without_cost_fallback(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")

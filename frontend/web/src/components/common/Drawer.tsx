@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '../../utils/cn';
 
 let activeDrawerCount = 0;
@@ -61,7 +62,7 @@ export const Drawer: React.FC<DrawerProps> = ({
   const titleId = title ? `drawer-title-${side}` : undefined;
   const sidePositionClass = side === 'left' ? 'left-0 justify-start' : 'right-0 justify-end';
 
-  return (
+  const drawer = (
     <div className="fixed inset-0 overflow-hidden" style={{ zIndex }} role="presentation">
       {/* Backdrop */}
       <div
@@ -108,4 +109,6 @@ export const Drawer: React.FC<DrawerProps> = ({
       </div>
     </div>
   );
+
+  return createPortal(drawer, document.body);
 };

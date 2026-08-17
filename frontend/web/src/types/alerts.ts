@@ -1,57 +1,111 @@
+export type AlertType =
+  | 'price_cross'
+  | 'price_change_percent'
+  | 'volume_spike'
+  | 'ma_price_cross'
+  | 'rsi_threshold'
+  | 'macd_cross'
+  | 'kdj_cross'
+  | 'cci_threshold'
+  | 'portfolio_stop_loss'
+  | 'portfolio_concentration'
+  | 'portfolio_drawdown'
+  | 'portfolio_price_stale'
+  | 'market_light_status'
+  | 'market_light_score_drop';
 export type AlertSeverity = 'info' | 'warning' | 'critical';
+export type AlertTargetScope = 'single_symbol' | 'watchlist' | 'portfolio_holdings' | 'portfolio_account' | 'market';
+export type AlertDirection = 'above' | 'below' | 'up' | 'down' | 'bullish_cross' | 'bearish_cross';
+export type PortfolioStopLossMode = 'near' | 'breach';
+export type MarketRegion = 'cn' | 'hk' | 'us';
+export type MarketLightStatus = 'yellow' | 'red';
+export type AlertDryRunStatus = 'triggered' | 'not_triggered' | 'evaluation_error';
+export type AlertTriggerStatus = 'triggered' | 'skipped' | 'degraded' | 'failed';
 
-export type AlertRuleParameters = {
-  direction?: 'above' | 'below' | 'up' | 'down';
+export interface AlertRuleParameters {
+  direction?: AlertDirection;
   price?: number;
   changePct?: number;
   multiplier?: number;
-  [key: string]: unknown;
-};
+  window?: number;
+  period?: number;
+  threshold?: number;
+  fastPeriod?: number;
+  slowPeriod?: number;
+  signalPeriod?: number;
+  kPeriod?: number;
+  dPeriod?: number;
+  mode?: PortfolioStopLossMode;
+  statuses?: MarketLightStatus[];
+  minDrop?: number;
+}
 
-export type AlertRuleItem = {
+export interface AlertRuleItem {
   id: number;
   name: string;
-  targetScope: 'single_symbol' | string;
+  targetScope: AlertTargetScope;
   target: string;
-  alertType: string;
+  alertType: AlertType;
   parameters: AlertRuleParameters;
-  severity: AlertSeverity | string;
+  severity: AlertSeverity;
   enabled: boolean;
   source: string;
   cooldownPolicy?: Record<string, unknown> | null;
   notificationPolicy?: Record<string, unknown> | null;
+  lastTriggeredAt?: string | null;
+  cooldownUntil?: string | null;
+  cooldownActive?: boolean | null;
   createdAt?: string | null;
   updatedAt?: string | null;
-};
+}
 
-export type AlertRuleInput = {
-  name?: string;
-  targetScope?: 'single_symbol';
-  target: string;
-  alertType: string;
-  parameters: AlertRuleParameters;
-  severity: AlertSeverity;
-  enabled: boolean;
-  cooldownPolicy?: Record<string, unknown> | null;
-  notificationPolicy?: Record<string, unknown> | null;
-};
-
-export type AlertRuleListResponse = {
+export interface AlertRuleListResponse {
   items: AlertRuleItem[];
   total: number;
   page: number;
   pageSize: number;
-};
+}
 
-export type AlertRuleTestResponse = {
+export interface AlertRuleCreateRequest {
+  name?: string;
+  targetScope?: AlertTargetScope;
+  target: string;
+  alertType: AlertType;
+  parameters: AlertRuleParameters;
+  severity: AlertSeverity;
+  enabled?: boolean;
+}
+
+export interface AlertDeleteResponse {
+  deleted: number;
+}
+
+export interface AlertRuleTestResponse {
   ruleId: number;
-  status: 'triggered' | 'not_triggered' | 'evaluation_error';
+  targetScope?: AlertTargetScope | string | null;
+  status: AlertDryRunStatus;
   triggered: boolean;
   observedValue?: unknown;
   message: string;
-};
+  evaluatedCount?: number;
+  triggeredCount?: number;
+  degradedCount?: number;
+  skippedCount?: number;
+  targetResults?: AlertRuleTargetResult[];
+}
 
-export type AlertTriggerItem = {
+export interface AlertRuleTargetResult {
+  target: string;
+  displayTarget?: string | null;
+  status: AlertDryRunStatus;
+  recordStatus?: AlertTriggerStatus | null;
+  triggered: boolean;
+  observedValue?: unknown;
+  threshold?: unknown;
+  message: string;
+}
+
+export interface AlertTriggerItem {
   id: number;
   ruleId?: number | null;
   target: string;
@@ -61,18 +115,18 @@ export type AlertTriggerItem = {
   dataSource?: string | null;
   dataTimestamp?: string | null;
   triggeredAt?: string | null;
-  status: string;
+  status: AlertTriggerStatus | string;
   diagnostics?: string | null;
-};
+}
 
-export type AlertTriggerListResponse = {
+export interface AlertTriggerListResponse {
   items: AlertTriggerItem[];
   total: number;
   page: number;
   pageSize: number;
-};
+}
 
-export type AlertNotificationItem = {
+export interface AlertNotificationItem {
   id: number;
   triggerId?: number | null;
   channel: string;
@@ -83,11 +137,37 @@ export type AlertNotificationItem = {
   latencyMs?: number | null;
   diagnostics?: string | null;
   createdAt?: string | null;
-};
+}
 
-export type AlertNotificationListResponse = {
+export interface AlertNotificationListResponse {
   items: AlertNotificationItem[];
   total: number;
   page: number;
   pageSize: number;
-};
+}
+
+export interface AlertRuleListQuery {
+  enabled?: boolean;
+  alertType?: AlertType;
+  targetScope?: AlertTargetScope;
+  target?: string;
+  source?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AlertTriggerListQuery {
+  ruleId?: number;
+  target?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AlertNotificationListQuery {
+  triggerId?: number;
+  channel?: string;
+  success?: boolean;
+  page?: number;
+  pageSize?: number;
+}

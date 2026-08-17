@@ -61,15 +61,17 @@ def test_alerts_doc_defines_required_contract_entities() -> None:
 def test_alerts_doc_covers_storage_evaluation_and_rollback() -> None:
     doc = _read_doc()
 
-    assert (PROJECT_ROOT / "src" / "storage.py").is_file()
+    assert (PROJECT_ROOT / "backend" / "src" / "storage" / "__init__.py").is_file()
+    assert (PROJECT_ROOT / "backend" / "alembic" / "versions" / "20260814_add_alert_cooldowns.py").is_file()
 
     for token in (
         "## 存储方案评估",
-        "src/storage.py",
-        "src/repositories/",
-        "src/services/",
+        "backend/src/storage/",
+        "backend/src/repositories/",
+        "backend/src/services/",
+        "20260814_add_alert_cooldowns.py",
         "data/stock_analysis.db",
-        "幂等初始化",
+        "幂等迁移",
         "回滚说明",
     ):
         assert token in doc
@@ -79,7 +81,7 @@ def test_alerts_doc_keeps_p0_non_goals_explicit() -> None:
     doc = _read_doc()
 
     for token in (
-        "P0 阶段不新增 `api/v1/schemas/alerts.py`",
+        "P0 阶段不新增 `backend/api/v1/schemas/alerts.py`",
         "P0 阶段不新增 Web 告警中心页面",
         "P0 阶段不新增数据库表",
         "P0 阶段不实现触发历史",
@@ -93,8 +95,8 @@ def test_alerts_doc_defines_p1_api_mvp_scope() -> None:
     doc = _read_doc()
 
     for token in (
-        "api/v1/endpoints/alerts.py",
-        "api/v1/schemas/alerts.py",
+        "backend/api/v1/endpoints/alerts.py",
+        "backend/api/v1/schemas/alerts.py",
         "GET /api/v1/alerts/rules",
         "POST /api/v1/alerts/rules",
         "GET /api/v1/alerts/rules/{rule_id}",
@@ -135,7 +137,7 @@ def test_alerts_doc_defines_p2_worker_scope() -> None:
 
     for token in (
         "## P2 告警评估 Worker",
-        "src/services/alert_worker.py",
+        "backend/src/services/alert_worker.py",
         "agent_event_monitor",
         "持久化 active rules",
         "legacy JSON",
@@ -151,9 +153,25 @@ def test_alerts_doc_describes_p1_rollback_for_created_tables() -> None:
 
     for token in (
         "P1 新增 Alert API 代码",
-        "`alert_rules` / `alert_triggers` / `alert_notifications` SQLite 表",
-        "Base.metadata.create_all()",
-        "SQLite 表与数据不会自动删除",
-        "手动删除相关表",
+        "`alert_rules` / `alert_triggers` / `alert_notifications` 表",
+        "Alembic downgrade",
+        "alembic downgrade 20260814_decision_signals",
+        "downgrade 会删除冷却表",
     ):
         assert token in doc
+
+
+def test_alerts_doc_defines_target_market_light_scope() -> None:
+    doc = _read_doc()
+
+    for token in (
+        "## P7 大盘红绿灯结构化告警",
+        "`market_light_status`",
+        "`market_light_score_drop`",
+        "`cn` / `hk` / `us`",
+        "`context_snapshot.market_light_snapshots`",
+        "禁止 persist 阶段二次拉行情",
+    ):
+        assert token in doc
+
+    assert "`cn` / `hk` / `us` / `jp` / `kr`" not in doc

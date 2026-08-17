@@ -59,7 +59,7 @@ def get_db() -> DatabaseManager:
 
 
 def persist_llm_usage(
-    usage: Dict[str, Any],
+    usage: Optional[Dict[str, Any]],
     model: str,
     call_type: str,
     stock_code: Optional[str] = None,
@@ -67,16 +67,30 @@ def persist_llm_usage(
     """Fire-and-forget: write one LLM call record to llm_usage. Never raises."""
     try:
         db = DatabaseManager.get_instance()
+        payload = usage or {}
         db.record_llm_usage(
             call_type=call_type,
             model=model,
-            prompt_tokens=usage.get("prompt_tokens", 0) or 0,
-            completion_tokens=usage.get("completion_tokens", 0) or 0,
-            total_tokens=usage.get("total_tokens", 0) or 0,
+            prompt_tokens=_coerce_non_negative_int(payload.get("prompt_tokens")),
+            completion_tokens=_coerce_non_negative_int(payload.get("completion_tokens")),
+            total_tokens=_coerce_non_negative_int(payload.get("total_tokens")),
             stock_code=stock_code,
         )
     except Exception as exc:
         logging.getLogger(__name__).warning("[LLM usage] failed to persist usage record: %s", exc)
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    """Normalize provider counters before writing integer columns."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0) if value.is_integer() else 0
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
 
 
 __all__ = ["DatabaseManager", "get_db", "persist_llm_usage"]

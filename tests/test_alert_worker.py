@@ -21,6 +21,9 @@ from src.storage import DatabaseManager
 
 class AlertWorkerTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self.old_env_file = os.environ.get("ENV_FILE")
+        self.old_database_path = os.environ.get("DATABASE_PATH")
+        self.old_database_url = os.environ.get("DATABASE_URL")
         self.temp_dir = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp_dir.name)
         self.env_path = self.data_dir / ".env"
@@ -37,6 +40,7 @@ class AlertWorkerTestCase(unittest.TestCase):
         )
         os.environ["ENV_FILE"] = str(self.env_path)
         os.environ["DATABASE_PATH"] = str(self.db_path)
+        os.environ["DATABASE_URL"] = f"sqlite:///{self.db_path.as_posix()}"
         Config.reset_instance()
         DatabaseManager.reset_instance()
         self.service = AlertService()
@@ -44,8 +48,15 @@ class AlertWorkerTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         DatabaseManager.reset_instance()
         Config.reset_instance()
-        os.environ.pop("ENV_FILE", None)
-        os.environ.pop("DATABASE_PATH", None)
+        for key, value in (
+            ("ENV_FILE", self.old_env_file),
+            ("DATABASE_PATH", self.old_database_path),
+            ("DATABASE_URL", self.old_database_url),
+        ):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.temp_dir.cleanup()
 
     def _config(self, raw_rules: str = "") -> SimpleNamespace:
@@ -423,7 +434,7 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(len(triggers), 1)
         self.assertEqual(triggers[0]["target"], "300750")
 
-    def test_fingerprint_ttl_suppresses_duplicate_notifications_but_expires(self) -> None:
+    def test_default_db_cooldown_suppresses_duplicate_notifications(self) -> None:
         self._create_rule(target="600519")
         notifier = MagicMock()
         notifier.send.return_value = True
@@ -446,7 +457,7 @@ class AlertWorkerTestCase(unittest.TestCase):
             now["value"] += 61
             worker.run_once()
 
-        self.assertEqual(notifier.send.call_count, 2)
+        self.assertEqual(notifier.send.call_count, 1)
         self.assertEqual(len(self._triggers(status="triggered")), 3)
 
     def test_failed_notification_attempts_do_not_consume_fingerprint_window(self) -> None:

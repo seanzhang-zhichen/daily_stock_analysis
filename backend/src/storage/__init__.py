@@ -23,6 +23,7 @@ A股自选股智能分析系统 - 存储层
 
 from src.storage.base import Base
 from src.storage.models import (
+    AlertCooldownRecord,
     AlertNotificationRecord,
     AlertRuleRecord,
     AlertTriggerRecord,
@@ -60,6 +61,7 @@ from src.storage.models import (
     BacktestResult,
     BacktestSummary,
     ConversationMessage,
+    DecisionSignalRecord,
     FundamentalSnapshot,
     LLMUsage,
     NewsIntel,
@@ -123,10 +125,13 @@ __all__ = [
     # conversation / llm
     "ConversationMessage",
     "LLMUsage",
+    # decision signals
+    "DecisionSignalRecord",
     # alert
     "AlertRuleRecord",
     "AlertTriggerRecord",
     "AlertNotificationRecord",
+    "AlertCooldownRecord",
     # app (To C)
     "AppUser",
     "AppUserSession",

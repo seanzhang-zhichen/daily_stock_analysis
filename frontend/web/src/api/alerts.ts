@@ -1,104 +1,105 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
 import type {
+  AlertDeleteResponse,
+  AlertNotificationListQuery,
   AlertNotificationListResponse,
-  AlertRuleInput,
+  AlertRuleCreateRequest,
   AlertRuleItem,
+  AlertRuleListQuery,
   AlertRuleListResponse,
   AlertRuleTestResponse,
+  AlertTriggerListQuery,
   AlertTriggerListResponse,
 } from '../types/alerts';
 
-type ListRulesQuery = {
-  enabled?: boolean;
-  alertType?: string;
-  target?: string;
-  page?: number;
-  pageSize?: number;
-};
-
-type ListTriggersQuery = {
-  ruleId?: number;
-  target?: string;
-  status?: string;
-  page?: number;
-  pageSize?: number;
-};
-
-type ListNotificationsQuery = {
-  triggerId?: number;
-  channel?: string;
-  success?: boolean;
-  page?: number;
-  pageSize?: number;
-};
-
-function buildRulePayload(input: Partial<AlertRuleInput>): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
-  if (input.name !== undefined) payload.name = input.name;
-  if (input.targetScope !== undefined) payload.target_scope = input.targetScope;
-  if (input.target !== undefined) payload.target = input.target;
-  if (input.alertType !== undefined) payload.alert_type = input.alertType;
-  if (input.parameters !== undefined) {
-    payload.parameters = {
-      ...input.parameters,
-      ...(input.parameters.changePct !== undefined ? { change_pct: input.parameters.changePct } : {}),
-    };
-    delete (payload.parameters as Record<string, unknown>).changePct;
-  }
-  if (input.severity !== undefined) payload.severity = input.severity;
-  if (input.enabled !== undefined) payload.enabled = input.enabled;
-  if (input.cooldownPolicy !== undefined) payload.cooldown_policy = input.cooldownPolicy;
-  if (input.notificationPolicy !== undefined) payload.notification_policy = input.notificationPolicy;
-  return payload;
+function omitUndefined(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
 }
 
-function buildListParams(query: ListRulesQuery | ListTriggersQuery | ListNotificationsQuery): Record<string, unknown> {
-  const params: Record<string, unknown> = {};
-  Object.entries(query).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return;
-    }
-    if (key === 'pageSize') {
-      params.page_size = value;
-    } else if (key === 'alertType') {
-      params.alert_type = value;
-    } else if (key === 'ruleId') {
-      params.rule_id = value;
-    } else {
-      params[key] = value;
-    }
-  });
+function toSnakeRulePayload(payload: AlertRuleCreateRequest): Record<string, unknown> {
+  const request: Record<string, unknown> = {};
+  if (payload.name !== undefined) request.name = payload.name;
+  if (payload.targetScope !== undefined) request.target_scope = payload.targetScope;
+  if (payload.target !== undefined) request.target = payload.target;
+  if (payload.alertType !== undefined) request.alert_type = payload.alertType;
+  if (payload.severity !== undefined) request.severity = payload.severity;
+  if (payload.enabled !== undefined) request.enabled = payload.enabled;
+  if (payload.parameters !== undefined) {
+    request.parameters = omitUndefined({
+      direction: payload.parameters.direction,
+      price: payload.parameters.price,
+      change_pct: payload.parameters.changePct,
+      multiplier: payload.parameters.multiplier,
+      window: payload.parameters.window,
+      period: payload.parameters.period,
+      threshold: payload.parameters.threshold,
+      fast_period: payload.parameters.fastPeriod,
+      slow_period: payload.parameters.slowPeriod,
+      signal_period: payload.parameters.signalPeriod,
+      k_period: payload.parameters.kPeriod,
+      d_period: payload.parameters.dPeriod,
+      mode: payload.parameters.mode,
+      statuses: payload.parameters.statuses,
+      min_drop: payload.parameters.minDrop,
+    });
+  }
+  return request;
+}
+
+function toRuleListParams(query: AlertRuleListQuery = {}): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = {};
+  if (query.enabled !== undefined) params.enabled = query.enabled;
+  if (query.alertType) params.alert_type = query.alertType;
+  if (query.targetScope) params.target_scope = query.targetScope;
+  if (query.target) params.target = query.target;
+  if (query.source) params.source = query.source;
+  if (query.page !== undefined) params.page = query.page;
+  if (query.pageSize !== undefined) params.page_size = query.pageSize;
+  return params;
+}
+
+function toTriggerListParams(query: AlertTriggerListQuery = {}): Record<string, string | number> {
+  const params: Record<string, string | number> = {};
+  if (query.ruleId !== undefined) params.rule_id = query.ruleId;
+  if (query.target) params.target = query.target;
+  if (query.status) params.status = query.status;
+  if (query.page !== undefined) params.page = query.page;
+  if (query.pageSize !== undefined) params.page_size = query.pageSize;
+  return params;
+}
+
+function toNotificationListParams(query: AlertNotificationListQuery = {}): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = {};
+  if (query.triggerId !== undefined) params.trigger_id = query.triggerId;
+  if (query.channel) params.channel = query.channel;
+  if (query.success !== undefined) params.success = query.success;
+  if (query.page !== undefined) params.page = query.page;
+  if (query.pageSize !== undefined) params.page_size = query.pageSize;
   return params;
 }
 
 export const alertsApi = {
-  async listRules(query: ListRulesQuery = {}): Promise<AlertRuleListResponse> {
+  async listRules(query: AlertRuleListQuery = {}): Promise<AlertRuleListResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/alerts/rules', {
-      params: buildListParams(query),
+      params: toRuleListParams(query),
     });
     return toCamelCase<AlertRuleListResponse>(response.data);
   },
 
-  async createRule(input: AlertRuleInput): Promise<AlertRuleItem> {
-    const response = await apiClient.post<Record<string, unknown>>('/api/v1/alerts/rules', buildRulePayload({
-      targetScope: 'single_symbol',
-      ...input,
-    }));
-    return toCamelCase<AlertRuleItem>(response.data);
-  },
-
-  async updateRule(ruleId: number, input: Partial<AlertRuleInput>): Promise<AlertRuleItem> {
-    const response = await apiClient.patch<Record<string, unknown>>(
-      `/api/v1/alerts/rules/${ruleId}`,
-      buildRulePayload(input),
+  async createRule(payload: AlertRuleCreateRequest): Promise<AlertRuleItem> {
+    const response = await apiClient.post<Record<string, unknown>>(
+      '/api/v1/alerts/rules',
+      toSnakeRulePayload(payload),
     );
     return toCamelCase<AlertRuleItem>(response.data);
   },
 
-  async deleteRule(ruleId: number): Promise<{ deleted: number }> {
+  async deleteRule(ruleId: number): Promise<AlertDeleteResponse> {
     const response = await apiClient.delete<Record<string, unknown>>(`/api/v1/alerts/rules/${ruleId}`);
-    return toCamelCase<{ deleted: number }>(response.data);
+    return toCamelCase<AlertDeleteResponse>(response.data);
   },
 
   async enableRule(ruleId: number): Promise<AlertRuleItem> {
@@ -116,16 +117,16 @@ export const alertsApi = {
     return toCamelCase<AlertRuleTestResponse>(response.data);
   },
 
-  async listTriggers(query: ListTriggersQuery = {}): Promise<AlertTriggerListResponse> {
+  async listTriggers(query: AlertTriggerListQuery = {}): Promise<AlertTriggerListResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/alerts/triggers', {
-      params: buildListParams(query),
+      params: toTriggerListParams(query),
     });
     return toCamelCase<AlertTriggerListResponse>(response.data);
   },
 
-  async listNotifications(query: ListNotificationsQuery = {}): Promise<AlertNotificationListResponse> {
+  async listNotifications(query: AlertNotificationListQuery = {}): Promise<AlertNotificationListResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/alerts/notifications', {
-      params: buildListParams(query),
+      params: toNotificationListParams(query),
     });
     return toCamelCase<AlertNotificationListResponse>(response.data);
   },

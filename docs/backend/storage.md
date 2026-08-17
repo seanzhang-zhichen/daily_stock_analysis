@@ -54,6 +54,7 @@ backend/src/storage/
 │   ├── portfolio.py             # 投资组合账户、交易、持仓、现金、汇率
 │   ├── backtest.py              # 回测结果与汇总
 │   ├── alert.py                 # 预警规则、触发、通知记录
+│   ├── decision_signal.py       # 用户隔离的结构化 AI 建议
 │   └── conversation.py          # Agent 对话与 LLM 用量
 └── manager/
     ├── _base.py                 # DatabaseManager 基础设施
@@ -141,7 +142,8 @@ def get_db():
 | `app.py` | To C 用户体系 | `AppUser`, `AppPlan`, `AppOrder`, `AppAuditLog`, `AppNotice` 等 |
 | `portfolio.py` | 投资组合 | `PortfolioAccount`, `PortfolioTrade`, `PortfolioPosition` 等 |
 | `backtest.py` | 回测 | `BacktestResult`, `BacktestSummary` |
-| `alert.py` | 预警 | `AlertRuleRecord`, `AlertTriggerRecord`, `AlertNotificationRecord` |
+| `alert.py` | 告警 | `AlertRuleRecord`, `AlertTriggerRecord`, `AlertNotificationRecord`, `AlertCooldownRecord` |
+| `decision_signal.py` | AI 建议 | `DecisionSignalRecord` |
 | `conversation.py` | Agent 会话 | `ConversationMessage`, `LLMUsage` |
 
 ---
@@ -265,6 +267,14 @@ FastAPI lifespan → ensure_stock_index_seeded() → stock_index 表为空时写
 GET /api/v1/stocks/search?q=茅台
 ```
 
+### `decision_signals` — AI 建议
+
+模型：`DecisionSignalRecord`
+
+该表保存从 `analysis_history` 提取的结构化建议，核心字段包括用户、股票、来源报告、动作、评分、观察周期、价格计划、风险摘要、状态和有效期。`UNIQUE(user_id, source_type, source_report_id)` 用于来源幂等；组合索引覆盖用户 + 股票 + 状态 + 时间，以及用户 + 市场 + 动作 + 时间两类列表查询。
+
+`source_report_id` 保留来源追踪但不设置外键，避免删除历史报告时隐式级联删除已经沉淀的建议。所有 schema 变化由 `20260814_add_decision_signals.py` Alembic migration 管理。
+
 ---
 
 ## 用户体系表
@@ -382,20 +392,26 @@ backend/src/core/backtest_engine.py
 
 | 表 | 模型 | 说明 |
 |----|------|------|
-| `alert_rule_records` | `AlertRuleRecord` | 用户配置的预警规则 |
-| `alert_trigger_records` | `AlertTriggerRecord` | 每次触发记录 |
-| `alert_notification_records` | `AlertNotificationRecord` | 通知发送记录 |
+| `alert_rules` | `AlertRuleRecord` | 按 `user_id` 隔离的告警规则 |
+| `alert_triggers` | `AlertTriggerRecord` | 触发、跳过、降级和失败记录 |
+| `alert_notifications` | `AlertNotificationRecord` | 真实渠道与 synthetic 状态的通知尝试 |
+| `alert_cooldowns` | `AlertCooldownRecord` | 按规则、目标和等级持久化的业务冷却状态 |
 
 支持的规则类型：
 
 - `price_cross`
 - `price_change_percent`
 - `volume_spike`
+- `ma_cross`、`rsi_threshold`、`macd_cross`、`kdj_cross`、`cci_threshold`
+- `portfolio_stop_loss`、`portfolio_concentration`、`portfolio_drawdown`、`portfolio_price_stale`
+- `market_light_status`、`market_light_score_drop`
 
 预警服务位于：
 
 - `backend/src/services/alert_service.py`
 - `backend/src/services/alert_worker.py`
+
+`alert_cooldowns` 由 `backend/alembic/versions/20260814_add_alert_cooldowns.py` 创建；告警规则、历史查询和 API 均保留当前用户边界。
 
 ---
 

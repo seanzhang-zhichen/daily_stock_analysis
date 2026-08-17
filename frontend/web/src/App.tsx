@@ -16,6 +16,7 @@ import {
   loadBacktestPage,
   loadBillingPage,
   loadChatPage,
+  loadDecisionSignalsPage,
   loadForgotPasswordPage,
   loadHelpPage,
   loadHomePage,
@@ -52,6 +53,7 @@ const TasksPage = lazy(loadTasksPage);
 const StockSelectionPage = lazy(loadStockSelectionPage);
 const StockScreeningPage = lazy(loadScreeningPage);
 const PortfolioPage = lazy(loadPortfolioPage);
+const DecisionSignalsPage = lazy(loadDecisionSignalsPage);
 const UserAuthPage = lazy(loadUserAuthPage);
 const ForgotPasswordPage = lazy(loadForgotPasswordPage);
 const AccountPage = lazy(loadAccountPage);
@@ -151,6 +153,7 @@ const AppContent: React.FC = () => {
             <Route path="/stock-selection" element={<StockSelectionPage />} />
             <Route path="/screening" element={<StockScreeningPage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
+            <Route path="/decision-signals" element={<DecisionSignalsPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route
               path="/settings"

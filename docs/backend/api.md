@@ -14,6 +14,7 @@
    - [Analysis — 股票分析任务](#analysis--股票分析任务)
    - [Agent — AI 对话与研究](#agent--ai-对话与研究)
    - [History — 分析历史](#history--分析历史)
+   - [Decision Signals — AI 建议](#decision-signals--ai-建议)
    - [Stocks — 股票数据](#stocks--股票数据)
    - [Stock Selection — 选股](#stock-selection--选股)
    - [Backtest — 回测](#backtest--回测)
@@ -269,6 +270,22 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 
 ---
 
+### Decision Signals — AI 建议
+
+**前缀：** `/api/v1/decision-signals`
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | `/` | 需登录 | 分页查询当前用户的结构化 AI 建议 |
+| POST | `/sync` | 需登录 | 从当前用户最近分析历史执行幂等同步 |
+| GET | `/latest/{stock_code}` | 需登录 | 查询单股最新有效建议 |
+| GET | `/{signal_id}` | 需登录 | 查询建议详情 |
+| PATCH | `/{signal_id}/status` | 需登录 | 关闭、失效、归档或标记过期 |
+
+列表接口支持 `market`、`stock_code`、`action`、`status`、`created_from` 和 `created_to` 筛选。所有读取和写入都使用当前会话的 `AppUser.id` 隔离；完整字段、生命周期和回滚说明见 [AI 建议专题](../decision-signals.md)。
+
+---
+
 ### Stocks — 股票数据
 
 **前缀：** `/api/v1/stocks`
@@ -346,21 +363,25 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 |------|------|------|------|
 | GET | `/accounts` | 需登录 | 账户列表 |
 | POST | `/accounts` | 需登录 | 创建账户 |
-| GET | `/accounts/{id}` | 需登录 | 账户详情（含持仓、现金） |
-| DELETE | `/accounts/{id}` | 需登录 | 删除账户 |
-| POST | `/accounts/{id}/trades` | 需登录 | 录入交易流水 |
-| GET | `/accounts/{id}/trades` | 需登录 | 交易历史 |
-| GET | `/accounts/{id}/positions` | 需登录 | 当前持仓 |
-| GET | `/accounts/{id}/snapshots` | 需登录 | 每日净值快照 |
-| POST | `/accounts/{id}/cash` | 需登录 | 出入金记录 |
-| POST | `/accounts/{id}/corporate-actions` | 需登录 | 录入分红/拆股 |
-| POST | `/import` | 需登录 | 批量导入交易记录 |
+| PUT / DELETE | `/accounts/{account_id}` | 需登录 | 更新或归档账户 |
+| GET / POST | `/trades` | 需登录 | 查询或录入交易流水 |
+| DELETE | `/trades/{trade_id}` | 需登录 | 删除交易流水 |
+| GET / POST | `/cash-ledger` | 需登录 | 查询或录入现金流水 |
+| DELETE | `/cash-ledger/{entry_id}` | 需登录 | 删除现金流水 |
+| GET / POST | `/corporate-actions` | 需登录 | 查询或录入公司行动 |
+| DELETE | `/corporate-actions/{action_id}` | 需登录 | 删除公司行动 |
+| GET | `/snapshot` | 需登录 | 当前或历史持仓快照 |
+| GET | `/risk` | 需登录 | 集中度、回撤、止损与 AI 风险摘要 |
+| GET / POST | `/imports/csv/*` | 需登录 | 券商 CSV 解析、预览和提交 |
+| POST | `/fx/refresh` | 需登录 | 刷新估值所需汇率缓存 |
+
+账户、交易和公司行动的市场枚举支持 `cn|hk|us|jp|kr|tw`。`GET /snapshot` 与 `GET /risk` 支持 `include_realtime` 查询参数：当天估值默认优先尝试实时行情，传 `false` 时直接使用本地历史收盘价回退路径。快照及持仓项会返回 `data_quality`、`limitations`，用于标记 JP/KR/TW 等部分支持市场的能力边界。所有持仓端点均以当前登录用户强制隔离，客户端不能通过请求体切换 owner。
 
 成本计算方法支持 `fifo`（先进先出）和 `avg`（加权平均），创建账户时指定。
 
 ---
 
-### Alerts — 价格预警
+### Alerts — 告警中心
 
 **前缀：** `/api/v1/alerts`
 
@@ -371,8 +392,11 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | GET | `/rules/{id}` | 需登录 | 单条规则详情 |
 | PATCH | `/rules/{id}` | 需登录 | 更新规则 |
 | DELETE | `/rules/{id}` | 需登录 | 删除规则 |
-| POST | `/rules/{id}/dry-run` | 需登录 | 用当前价格 dry-run 评估规则 |
-| GET | `/triggers` | 需登录 | 预警触发记录 |
+| POST | `/rules/{id}/enable` | 需登录 | 启用规则 |
+| POST | `/rules/{id}/disable` | 需登录 | 停用规则 |
+| POST | `/rules/{id}/test` | 需登录 | 用当前数据 dry-run 评估规则 |
+| GET | `/triggers` | 需登录 | 查询触发、跳过、降级和失败记录 |
+| GET | `/notifications` | 需登录 | 查询真实渠道与 synthetic 通知尝试 |
 
 **支持的预警类型：**
 
@@ -381,6 +405,11 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | `price_cross` | 价格穿越指定价位（上穿/下穿） |
 | `price_change_percent` | 涨跌幅超过阈值 |
 | `volume_spike` | 成交量突增（量比超阈值） |
+| `ma_cross` / `rsi_threshold` / `macd_cross` / `kdj_cross` / `cci_threshold` | 日线技术指标 |
+| `portfolio_stop_loss` / `portfolio_concentration` / `portfolio_drawdown` / `portfolio_price_stale` | 持仓账户风险 |
+| `market_light_status` / `market_light_score_drop` | A 股、港股和美股大盘红绿灯 |
+
+规则支持 `single_symbol`、`watchlist`、`portfolio_holdings`、`portfolio_account` 和 `market` 目标范围。所有规则 CRUD、触发历史与通知历史都按当前登录用户隔离；完整参数、冷却和回滚语义见 [实时告警中心](../alerts.md)。
 
 ---
 
@@ -391,9 +420,10 @@ data: {"task_id": "xxx", "status": "processing", "progress": 60, "message": "正
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
 | GET | `/summary` | 需登录 | 全局 LLM 调用次数与 token 用量汇总，支持 `period=today/month/all` |
+| GET | `/dashboard` | 需登录 | 用量看板数据：Prompt/Completion 拆分、模型单次峰值和最近调用明细；支持 `limit=1..200` |
 | POST | `/events` | 无 | 前端增长事件埋点上报，未知事件名静默忽略 |
 
-`/summary` 返回 `totalCalls`、`totalTokens`、`byCallType` 和 `byModel`，Web `/usage` 用量看板仅对内部部署或 To C 管理员开放。
+`/summary` 和 `/dashboard` 返回 `totalCalls`、`totalPromptTokens`、`totalCompletionTokens`、`totalTokens`、`byCallType` 和 `byModel`；`/dashboard` 额外返回 `recentCalls`。Web `/usage` 用量看板仅对内部部署或 To C 管理员开放。
 
 ---
 

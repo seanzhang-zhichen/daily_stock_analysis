@@ -2,6 +2,7 @@
 """Tests for localized market review wrappers."""
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -161,10 +162,46 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
         self.assertNotIn("美股", result)
         self.assertNotIn("US Market", result)
 
+    def test_run_market_review_persists_same_overview_market_light_snapshot(self) -> None:
+        notifier = self._make_notifier()
+        snapshot = {
+            "region": "cn",
+            "trade_date": "2026-08-14",
+            "status": "yellow",
+            "score": 52,
+        }
+
+        class SnapshotAnalyzer:
+            def __init__(self, **_kwargs):
+                pass
+
+            def run_daily_review_with_snapshot(self):
+                return "CN body", snapshot
+
+        with patch.object(
+            market_review_module,
+            "get_config",
+            return_value=SimpleNamespace(report_language="zh", market_review_region="cn"),
+        ), patch.object(
+            market_review_module,
+            "MarketAnalyzer",
+            SnapshotAnalyzer,
+        ), patch.object(market_review_module, "_persist_market_review_history") as persist_history:
+            result = run_market_review(notifier, send_notification=False)
+
+        self.assertEqual(result, "CN body")
+        self.assertEqual(
+            persist_history.call_args.kwargs["market_light_snapshots"],
+            {"cn": snapshot},
+        )
+
     def test_persist_market_review_history_saves_markdown_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             old_db_path = os.environ.get("DATABASE_PATH")
-            os.environ["DATABASE_PATH"] = os.path.join(temp_dir, "market_review_history.db")
+            old_db_url = os.environ.get("DATABASE_URL")
+            db_path = os.path.join(temp_dir, "market_review_history.db")
+            os.environ["DATABASE_PATH"] = db_path
+            os.environ["DATABASE_URL"] = f"sqlite:///{db_path.replace(os.sep, '/')}"
             Config._instance = None
             DatabaseManager.reset_instance()
             try:
@@ -174,6 +211,14 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
                     region="cn",
                     config=SimpleNamespace(report_language="zh"),
                     query_id="market-task-001",
+                    market_light_snapshots={
+                        "cn": {
+                            "region": "cn",
+                            "trade_date": "2026-08-14",
+                            "status": "yellow",
+                            "score": 52,
+                        }
+                    },
                 )
 
                 self.assertEqual(saved, 1)
@@ -188,6 +233,11 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
                     self.assertEqual(row.report_type, market_review_module.MARKET_REVIEW_REPORT_TYPE)
                     self.assertEqual(row.news_content, "## 今日大盘\n\n复盘正文")
                     self.assertIn("# 🎯 大盘复盘", row.raw_result)
+                    context_snapshot = json.loads(row.context_snapshot)
+                    self.assertEqual(
+                        context_snapshot["market_light_snapshots"]["cn"]["trade_date"],
+                        "2026-08-14",
+                    )
             finally:
                 DatabaseManager.reset_instance()
                 Config._instance = None
@@ -195,6 +245,10 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
                     os.environ.pop("DATABASE_PATH", None)
                 else:
                     os.environ["DATABASE_PATH"] = old_db_path
+                if old_db_url is None:
+                    os.environ.pop("DATABASE_URL", None)
+                else:
+                    os.environ["DATABASE_URL"] = old_db_url
 
 
 if __name__ == "__main__":

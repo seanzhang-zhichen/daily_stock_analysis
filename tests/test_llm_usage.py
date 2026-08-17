@@ -129,6 +129,8 @@ class TestGetLLMUsageSummary(unittest.TestCase):
         self.assertEqual(result["total_calls"], 5)
         # 3*300 + 2*150 = 900 + 300 = 1200
         self.assertEqual(result["total_tokens"], 1200)
+        self.assertEqual(result["total_prompt_tokens"], 400)
+        self.assertEqual(result["total_completion_tokens"], 800)
 
     def test_by_call_type(self):
         from_dt, to_dt = self._today_range()
@@ -155,6 +157,13 @@ class TestGetLLMUsageSummary(unittest.TestCase):
         self.assertEqual(result["total_tokens"], 0)
         self.assertEqual(result["by_call_type"], [])
         self.assertEqual(result["by_model"], [])
+
+    def test_recent_records_are_newest_first_and_limited(self):
+        from_dt, to_dt = self._today_range()
+        rows = self.db.get_llm_usage_records(from_dt, to_dt, limit=1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["call_type"], "agent")
+        self.assertIn("called_at", rows[0])
 
 
 class TestPersistUsageHelper(unittest.TestCase):

@@ -1233,6 +1233,18 @@ Market conditions can change quickly. The data above is for reference only and d
         
         return report
 
+    def run_daily_review_with_snapshot(self) -> tuple[str, Dict[str, Any]]:
+        """Run the review and return the Market Light snapshot from the same overview."""
+        logger.info("========== 开始大盘复盘分析 ==========")
+
+        overview = self.get_market_overview()
+        news = self.search_market_news()
+        report = self.generate_market_review(overview, news)
+        snapshot = self.build_market_light_snapshot(overview)
+
+        logger.info("========== 大盘复盘分析完成 ==========")
+        return report, snapshot
+
 
 # 测试入口
 if __name__ == "__main__":

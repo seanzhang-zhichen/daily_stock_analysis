@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 
 import src.auth as auth
 from api.app import create_app
+from api.deps import get_current_user
 from src.config import Config
 from src.services.portfolio_import_service import PortfolioImportService
 from src.services.portfolio_risk_service import PortfolioRiskService
@@ -75,9 +76,18 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.risk_service = PortfolioRiskService(portfolio_service=self.service)
         self._board_fetch_patcher = patch.object(PortfolioRiskService, "_fetch_belong_boards", return_value=[])
         self._board_fetch_patcher.start()
-        self.client = TestClient(create_app(static_dir=data_dir / "empty-static"))
+        self.auth_session_patcher = patch(
+            "api.middlewares.auth._resolve_user_session",
+            return_value=SimpleNamespace(id=1),
+        )
+        self.auth_session_patcher.start()
+        self.app = create_app(static_dir=data_dir / "empty-static")
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1)
+        self.client = TestClient(self.app)
 
     def tearDown(self) -> None:
+        self.auth_session_patcher.stop()
+        self.app.dependency_overrides.clear()
         DatabaseManager.reset_instance()
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)
@@ -619,7 +629,9 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertEqual(summary["error_count"], 0)
 
     def test_fx_refresh_endpoint_returns_disabled_status_fields(self) -> None:
-        account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")
+        account = self.service.create_account(
+            name="US", broker="Demo", market="us", base_currency="CNY", owner_id="1"
+        )
         account_id = account["id"]
         self.service.record_cash_ledger(
             account_id=account_id,
@@ -650,7 +662,9 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertEqual(payload["error_count"], 0)
 
     def test_fx_refresh_endpoint_returns_enabled_status_fields(self) -> None:
-        account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")
+        account = self.service.create_account(
+            name="US", broker="Demo", market="us", base_currency="CNY", owner_id="1"
+        )
         account_id = account["id"]
         self.service.record_cash_ledger(
             account_id=account_id,

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 
 from src.storage.base import Base
@@ -95,8 +96,33 @@ class AlertNotificationRecord(Base):
     )
 
 
+class AlertCooldownRecord(Base):
+    """Persisted cooldown state for database-managed alert rules."""
+
+    __tablename__ = 'alert_cooldowns'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_id = Column(Integer, index=True)
+    rule_key = Column(String(255), index=True)
+    target = Column(String(64), nullable=False, index=True)
+    severity = Column(String(16), nullable=False, default='warning', index=True)
+    last_triggered_at = Column(DateTime, index=True)
+    cooldown_until = Column(DateTime, index=True)
+    reason = Column(Text)
+    state = Column(String(16), nullable=False, default='active', index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'rule_id', 'target', 'severity',
+            name='uix_alert_cooldown_rule_target_severity',
+        ),
+    )
+
+
 __all__ = [
     "AlertRuleRecord",
     "AlertTriggerRecord",
     "AlertNotificationRecord",
+    "AlertCooldownRecord",
 ]

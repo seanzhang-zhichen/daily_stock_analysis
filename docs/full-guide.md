@@ -424,6 +424,7 @@ uv run --locked python backend/main.py                        # 完整分析（�
 uv run --locked python backend/main.py --market-review        # 仅大盘复盘
 uv run --locked python backend/main.py --no-market-review     # 仅个股分析
 uv run --locked python backend/main.py --stocks 600519,300750 # 指定股票
+uv run --locked python backend/main.py --portfolio futu       # 使用 Futu 真实 LONG 正股持仓
 uv run --locked python backend/main.py --dry-run              # 仅获取数据，不 AI 分析
 uv run --locked python backend/main.py --no-notify            # 不发送推送
 uv run --locked python backend/main.py --schedule             # 定时任务模式
@@ -431,6 +432,21 @@ uv run --locked python backend/main.py --force-run            # 非交易日也�
 uv run --locked python backend/main.py --debug                # 调试模式（详细日志）
 uv run --locked python backend/main.py --workers 5            # 指定并发数
 ```
+
+#### Futu OpenD 持仓分析
+
+`--portfolio futu` 会在单次分析开始前读取 Futu OpenD，并用真实账户中的持仓覆盖 `--stocks` 与 `STOCK_LIST`。只保留状态为 `ACTIVE` 的 `REAL` 普通或主证券账户中，方向明确为 `LONG`、数量非零且静态类型为 `STOCK` 的沪深 A 股、港股和美股持仓；空头、ETF、期权、窝轮、期货、B 股和其他市场会被排除。没有符合条件的持仓时不会回退到手工股票列表。
+
+```env
+FUTU_OPEND_HOST=127.0.0.1
+FUTU_OPEND_PORT=11111
+FUTU_SECURITY_FIRM=NONE
+# FUTU_ACC_ID=12345678
+```
+
+`FUTU_ACC_ID` 留空时合并所有符合条件的账户，填写时必须是一个真实账户的正整数 ID。集成只调用账户、持仓和证券静态信息查询接口，不执行下单、改单、撤单或交易解锁。`futu-api==10.8.6808` 只支持 IPv4 地址或可解析到 IPv4 的主机名；Docker 中 OpenD 位于宿主机时，Windows/macOS 可使用 `host.docker.internal`，Linux 需先配置对应 host-gateway。跨主机连接会传输真实账户与持仓信息，应只使用受信网络或本机端口转发。
+
+目标仓库的 `--schedule` 模式固定按已登录用户的自选股分桶运行，以保持多租户通知隔离；该模式会明确忽略 `--portfolio`。需要定时读取 Futu 持仓时，应由外部任务调度器定时执行不带 `--schedule` 的 `uv run --locked python backend/main.py --portfolio futu`。
 
 ---
 
@@ -450,7 +466,7 @@ uv run --locked python backend/main.py --schedule
 uv run --locked python backend/main.py --schedule --no-run-immediately
 ```
 
-> 说明：定时模式只会处理开启「每日推送」且自选股非空的用户，分析范围来自每个用户在 Web 端维护的自选股列表，不再使用全局 `STOCK_LIST`。如果同时传入 `--stocks`，该参数会被忽略；需要临时只跑指定股票时，请使用非定时的单次运行命令。
+> 说明：定时模式只会处理开启「每日推送」且自选股非空的用户，分析范围来自每个用户在 Web 端维护的自选股列表，不再使用全局 `STOCK_LIST`。如果同时传入 `--stocks` 或 `--portfolio`，该参数会被忽略；需要临时只跑指定股票或 Futu 持仓时，请使用非定时的单次运行命令。
 >
 > 从 `uv run --locked python backend/main.py --schedule`、`uv run --locked python backend/main.py --serve --schedule` 或等价内置调度模式启动后，WebUI 保存新的 `SCHEDULE_TIME` 会在下一轮调度检查内自动重绑 daily job，无需重启进程；旧的执行时间不会继续保留。
 
@@ -995,6 +1011,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 | `/api/v1/analysis/status/{task_id}` | GET | 查询任务状态 |
 | `/api/v1/history` | GET | 查询分析历史 |
 | `/api/v1/usage/summary?period=today|month|all` | GET | 按调用类型与模型维度汇总 LLM 调用次数和 Token 用量 |
+| `/api/v1/usage/dashboard?period=today|month|all&limit=50` | GET | 返回 Prompt/Completion 拆分、模型单次峰值和最近调用明细 |
 | `/api/v1/backtest/run` | POST | 触发回测 |
 | `/api/v1/backtest/results` | GET | 查询回测结果（分页） |
 | `/api/v1/backtest/performance` | GET | 获取整体回测表现 |
@@ -1046,6 +1063,9 @@ curl http://127.0.0.1:8000/api/v1/analysis/status/<task_id>
 
 # 查询今日 LLM 用量
 curl "http://127.0.0.1:8000/api/v1/usage/summary?period=today"
+
+# 查询用量看板（含最近调用明细）
+curl "http://127.0.0.1:8000/api/v1/usage/dashboard?period=today&limit=50"
 
 # 触发回测（全部股票）
 curl -X POST http://127.0.0.1:8000/api/v1/backtest/run \
@@ -1170,7 +1190,8 @@ P2 worker 会把 `triggered`、`skipped`、`degraded`、`failed` 写入 `alert_t
 - 导入流程会先把 CSV 解析成标准化记录，再逐条提交到持仓账本；遇到忙碌行会计入 `failed_count`，不会因为单行冲突让整批请求整体失败。
 - 交易去重优先使用账户内唯一的 `trade_uid`，缺失时回退到基于日期、代码、方向、数量、价格、费用、税费、币种的确定性哈希。
 - 卖出会先校验可用数量，超卖返回 `409 portfolio_oversell`；并发写入冲突时可能返回 `409 portfolio_busy`。
-- 持仓快照的 `positions[]` 会返回 `price_source`、`price_date`、`price_stale`、`price_available` 等价格元信息；当天快照优先使用历史收盘价，仅在收盘价缺失时尝试实时价 fallback，历史 `as_of` 快照不会拉取实时价，也不会再把成本价静默当作现价；缺价持仓会标记 `price_available=false` 并从市值与未实现盈亏汇总中排除。
+- 持仓快照的 `positions[]` 会返回 `price_source`、`price_date`、`price_stale`、`price_available`、`data_quality`、`limitations` 等估值元信息；当天快照默认先尝试实时行情，失败或价格非正时回退到最近历史收盘价。传入 `include_realtime=false` 会跳过外部实时行情，Web 首屏使用该模式快速展示，用户手动刷新时再拉取实时行情。历史 `as_of` 快照不会拉取实时价，也不会把成本价静默当作现价；缺价持仓会标记 `price_available=false` 并从市值与未实现盈亏汇总中排除。
+- 账户和交易市场支持 `cn`、`hk`、`us`、`jp`、`kr`、`tw`。日股、韩股和台股当前属于部分估值支持，响应会以 `data_quality=partial` 和 `limitations` 明确标记实时行情、汇率/成本基准及行业风险指标边界。
 - 汇率刷新会先尝试在线源；若在线获取失败，则回退到最近一次缓存并标记 `is_stale=true`，避免快照和风险页整体不可用。
 - 当 `PORTFOLIO_FX_UPDATE_ENABLED=false` 时，手动刷新接口会明确返回“在线刷新已禁用”，页面不会误导为“当前没有可刷新的汇率对”。
 - 风险摘要包含集中度、回撤、止损接近度等信息；`sector_concentration` 会优先尝试按板块归类，失败时降级到 `UNCLASSIFIED`，不会阻断风险结果返回。

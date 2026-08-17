@@ -1,98 +1,88 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, BrainCircuit, CalendarDays, Loader2, RefreshCw } from 'lucide-react';
+import { Activity, Clock3, Cpu, Database, Gauge, RefreshCw } from 'lucide-react';
 import { usageApi } from '../api/usage';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
-import { Badge, Button, Card, EmptyState } from '../components/common';
-import { StandardPageLayout } from '../components/common/PageLayouts';
-import { SettingsAlert } from '../components/settings';
-import type { UsageCallTypeBreakdown, UsageModelBreakdown, UsagePeriod, UsageSummaryResponse } from '../types/usage';
+import { ApiErrorAlert, Button, Card, EmptyState, PageHeader, StandardPageLayout, StatCard } from '../components/common';
+import type { UsageCallTypeBreakdown, UsageDashboardResponse, UsageModelBreakdown, UsagePeriod } from '../types/usage';
 
-type PeriodOption = {
-  key: UsagePeriod;
-  label: string;
-};
-
-const PERIOD_OPTIONS: PeriodOption[] = [
+const PERIOD_OPTIONS: Array<{ key: UsagePeriod; label: string }> = [
   { key: 'today', label: '今天' },
   { key: 'month', label: '本月' },
   { key: 'all', label: '全部' },
 ];
 
-function formatInteger(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return '--';
-  return value.toLocaleString('zh-CN');
+function formatNumber(value: number | null | undefined): string {
+  return (value ?? 0).toLocaleString('zh-CN');
 }
 
-function formatCallType(value: string): string {
-  if (value === 'analysis') return '股票分析';
-  if (value === 'agent') return '问股 Agent';
-  if (value === 'market_review') return '大盘复盘';
-  if (value === 'deep_research') return '深度研究';
-  return value || '未知';
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value || '-' : date.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
 }
 
-function getTokenShare(tokens: number, total: number): number {
-  if (!total || total <= 0) return 0;
-  return Math.max(0, Math.min(100, (tokens / total) * 100));
+function callTypeLabel(value: string): string {
+  return ({ analysis: '个股分析', agent: '问股 Agent', market_review: '大盘复盘', deep_research: '深度研究' } as Record<string, string>)[value] || value || '未知';
 }
 
-type BreakdownRowProps = {
-  label: string;
-  calls: number;
-  tokens: number;
-  totalTokens: number;
-  badge?: React.ReactNode;
-};
-
-const BreakdownRow: React.FC<BreakdownRowProps> = ({ label, calls, tokens, totalTokens, badge }) => {
-  const share = getTokenShare(tokens, totalTokens);
-  return (
-    <div className="rounded-xl border border-border/60 bg-card/50 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">{label}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-text">
-            <span>{formatInteger(calls)} 次调用</span>
-            <span>{formatInteger(tokens)} tokens</span>
-          </div>
-        </div>
-        {badge}
+const ModelCard: React.FC<{ item: UsageModelBreakdown }> = ({ item }) => (
+  <Card padding="sm">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h3 className="truncate text-base font-semibold text-foreground">{item.model}</h3>
+        <p className="mt-1 text-xs text-secondary-text">{formatNumber(item.calls)} 次调用</p>
       </div>
-      <div className="mt-3 flex items-center gap-2">
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted">
-          <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${share}%` }} />
-        </div>
-        <span className="w-12 text-right text-xs tabular-nums text-muted-text">{share.toFixed(1)}%</span>
-      </div>
+      <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-xs text-primary">
+        {formatNumber(item.totalTokens)} tokens
+      </span>
     </div>
+    <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+      <div><p className="text-xs text-secondary-text">Prompt</p><p className="mt-1 font-medium">{formatNumber(item.promptTokens)}</p></div>
+      <div><p className="text-xs text-secondary-text">Completion</p><p className="mt-1 font-medium">{formatNumber(item.completionTokens)}</p></div>
+      <div><p className="text-xs text-secondary-text">单次峰值</p><p className="mt-1 font-medium">{formatNumber(item.maxTotalTokens)}</p></div>
+    </div>
+  </Card>
+);
+
+const CallTypeBreakdown: React.FC<{ items: UsageCallTypeBreakdown[] }> = ({ items }) => {
+  const largest = Math.max(...items.map((item) => item.totalTokens), 1);
+  return (
+    <Card title="调用类型" subtitle="BREAKDOWN">
+      {items.length === 0 ? <EmptyState title="暂无调用类型数据" /> : (
+        <div className="space-y-4">
+          {items.map((item) => (
+            <div key={item.callType}>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium">{callTypeLabel(item.callType)}</span>
+                <span className="text-secondary-text">{formatNumber(item.totalTokens)} tokens</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-muted">
+                <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, (item.totalTokens / largest) * 100)}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-secondary-text">
+                {formatNumber(item.calls)} 次 · Prompt {formatNumber(item.promptTokens)} · Completion {formatNumber(item.completionTokens)}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 };
-
-function sortByTokens<T extends { totalTokens: number }>(items: T[]): T[] {
-  return [...items].sort((a, b) => b.totalTokens - a.totalTokens);
-}
 
 const UsagePage: React.FC = () => {
   const [period, setPeriod] = useState<UsagePeriod>('month');
-  const [summary, setSummary] = useState<UsageSummaryResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [dashboard, setDashboard] = useState<UsageDashboardResponse | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ParsedApiError | null>(null);
 
-  const callTypeRows = useMemo<UsageCallTypeBreakdown[]>(
-    () => sortByTokens(summary?.byCallType || []),
-    [summary?.byCallType],
-  );
-  const modelRows = useMemo<UsageModelBreakdown[]>(
-    () => sortByTokens(summary?.byModel || []),
-    [summary?.byModel],
-  );
-
-  const loadSummary = useCallback(async () => {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setSummary(await usageApi.getSummary(period));
+      setDashboard(await usageApi.getDashboard({ period, limit: 50 }));
     } catch (err) {
       setError(getParsedApiError(err));
     } finally {
@@ -100,131 +90,58 @@ const UsagePage: React.FC = () => {
     }
   }, [period]);
 
-  useEffect(() => {
-    document.title = '用量看板 - AlphaLens';
-  }, []);
+  useEffect(() => { void loadDashboard(); }, [loadDashboard]);
 
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+  const models = useMemo(() => [...(dashboard?.byModel || [])].sort((a, b) => b.totalTokens - a.totalTokens), [dashboard]);
+  const callTypes = useMemo(() => [...(dashboard?.byCallType || [])].sort((a, b) => b.totalTokens - a.totalTokens), [dashboard]);
 
   return (
     <StandardPageLayout>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-text">USAGE</p>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">用量看板</h1>
-          <p className="text-sm text-secondary-text/80">
-            查看 LLM 调用次数、Token 消耗，以及按调用类型和模型拆分的用量。
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => void loadSummary()} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
-        </Button>
-      </div>
-
-      {error ? <SettingsAlert title="加载失败" message={error.message} variant="error" /> : null}
-
-      <Card>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {PERIOD_OPTIONS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                  period === item.key
-                    ? 'border-primary/40 bg-primary/10 text-primary'
-                    : 'border-border/60 bg-card/50 text-secondary-text hover:text-foreground'
-                }`}
-                onClick={() => setPeriod(item.key)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-muted-text">
-            <CalendarDays className="h-4 w-4" />
-            {summary ? `${summary.fromDate} 至 ${summary.toDate}` : '等待加载'}
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <Card padding="sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs text-muted-text">总调用</p>
-              <p className="mt-1 text-2xl font-semibold text-foreground">{formatInteger(summary?.totalCalls)}</p>
-            </div>
-            <BarChart3 className="h-5 w-5 text-primary" />
-          </div>
-        </Card>
-        <Card padding="sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs text-muted-text">总 Tokens</p>
-              <p className="mt-1 text-2xl font-semibold text-foreground">{formatInteger(summary?.totalTokens)}</p>
-            </div>
-            <BrainCircuit className="h-5 w-5 text-primary" />
-          </div>
-        </Card>
-        <Card padding="sm">
-          <p className="text-xs text-muted-text">平均 Tokens / 调用</p>
-          <p className="mt-1 text-2xl font-semibold text-foreground">
-            {summary && summary.totalCalls > 0
-              ? formatInteger(Math.round(summary.totalTokens / summary.totalCalls))
-              : '--'}
-          </p>
-        </Card>
-      </div>
-
-      {loading && !summary ? (
-        <Card>
-          <div className="flex items-center gap-2 text-sm text-secondary-text">
-            <Loader2 className="h-4 w-4 animate-spin" /> 加载用量数据中...
-          </div>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <Card title="调用类型" subtitle={`CALL TYPES (${callTypeRows.length})`}>
-            {callTypeRows.length === 0 ? (
-              <EmptyState title="暂无调用类型数据" description="当前周期还没有记录到 LLM 调用。" />
-            ) : (
-              <div className="space-y-2">
-                {callTypeRows.map((item) => (
-                  <BreakdownRow
-                    key={item.callType}
-                    label={formatCallType(item.callType)}
-                    calls={item.calls}
-                    tokens={item.totalTokens}
-                    totalTokens={summary?.totalTokens || 0}
-                    badge={<Badge variant="info">{item.callType}</Badge>}
-                  />
+      <div className="space-y-5">
+        <PageHeader
+          eyebrow="USAGE"
+          title="用量看板"
+          description="查看 LLM 调用次数、Prompt/Completion 消耗、模型用量和最近调用明细。"
+          actions={(
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl border border-border/70 bg-card/70 p-1">
+                {PERIOD_OPTIONS.map((option) => (
+                  <button key={option.key} type="button" onClick={() => setPeriod(option.key)} className={`rounded-lg px-3 py-1.5 text-sm ${period === option.key ? 'bg-primary text-white' : 'text-secondary-text hover:bg-hover'}`}>
+                    {option.label}
+                  </button>
                 ))}
               </div>
-            )}
-          </Card>
+              <Button variant="outline" onClick={() => void loadDashboard()} disabled={loading}>
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
+              </Button>
+            </div>
+          )}
+        />
 
-          <Card title="模型分布" subtitle={`MODELS (${modelRows.length})`}>
-            {modelRows.length === 0 ? (
-              <EmptyState title="暂无模型数据" description="当前周期还没有记录到模型维度用量。" />
-            ) : (
-              <div className="space-y-2">
-                {modelRows.map((item) => (
-                  <BreakdownRow
-                    key={item.model}
-                    label={item.model}
-                    calls={item.calls}
-                    tokens={item.totalTokens}
-                    totalTokens={summary?.totalTokens || 0}
-                  />
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-      )}
+        {error ? <ApiErrorAlert error={error} actionLabel="重试" onAction={() => void loadDashboard()} /> : null}
+        {loading && !dashboard ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-28 animate-pulse rounded-2xl border border-border/70 bg-card/60" />)}</div> : null}
+
+        {dashboard ? <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="总 Tokens" value={formatNumber(dashboard.totalTokens)} hint={`${dashboard.fromDate} 至 ${dashboard.toDate}`} icon={<Database className="h-5 w-5" />} tone="primary" />
+            <StatCard label="调用次数" value={formatNumber(dashboard.totalCalls)} hint="已记录的 LLM 调用" icon={<Activity className="h-5 w-5" />} />
+            <StatCard label="Prompt tokens" value={formatNumber(dashboard.totalPromptTokens)} hint="输入上下文消耗" icon={<Cpu className="h-5 w-5" />} />
+            <StatCard label="Completion tokens" value={formatNumber(dashboard.totalCompletionTokens)} hint="模型输出消耗" icon={<Gauge className="h-5 w-5" />} />
+          </div>
+
+          {dashboard.totalCalls === 0 ? <EmptyState title="暂无 Token 用量记录" description="完成一次分析、复盘或问股调用后，这里会显示用量。" /> : (
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
+              <section className="space-y-4"><div><h2 className="text-lg font-semibold">模型用量</h2><p className="mt-1 text-sm text-secondary-text">按模型聚合 Token 消耗、调用次数和单次峰值。</p></div><div className="grid gap-4">{models.map((item) => <ModelCard key={item.model} item={item} />)}</div></section>
+              <CallTypeBreakdown items={callTypes} />
+            </div>
+          )}
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">最近调用</h2><p className="mt-1 text-sm text-secondary-text">最近 50 条 LLM Token 审计记录。</p></div><Clock3 className="h-5 w-5 text-secondary-text" /></div>
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/75 shadow-card"><div className="overflow-x-auto"><table className="min-w-full divide-y divide-border/70 text-sm"><thead className="bg-surface-2/70 text-left text-xs uppercase tracking-[0.16em] text-secondary-text"><tr><th className="px-4 py-3 font-medium">时间</th><th className="px-4 py-3 font-medium">类型</th><th className="px-4 py-3 font-medium">模型</th><th className="px-4 py-3 text-right font-medium">Prompt</th><th className="px-4 py-3 text-right font-medium">Completion</th><th className="px-4 py-3 text-right font-medium">Total</th></tr></thead><tbody className="divide-y divide-border/60">{dashboard.recentCalls.length ? dashboard.recentCalls.map((item) => <tr key={item.id} className="hover:bg-hover/60"><td className="whitespace-nowrap px-4 py-3 text-secondary-text">{formatDateTime(item.calledAt)}</td><td className="whitespace-nowrap px-4 py-3">{callTypeLabel(item.callType)}</td><td className="min-w-56 px-4 py-3"><div className="max-w-[18rem] truncate font-medium">{item.model}</div>{item.stockCode ? <div className="text-xs text-secondary-text">{item.stockCode}</div> : null}</td><td className="whitespace-nowrap px-4 py-3 text-right text-secondary-text">{formatNumber(item.promptTokens)}</td><td className="whitespace-nowrap px-4 py-3 text-right text-secondary-text">{formatNumber(item.completionTokens)}</td><td className="whitespace-nowrap px-4 py-3 text-right font-medium">{formatNumber(item.totalTokens)}</td></tr>) : <tr><td colSpan={6} className="px-4 py-8 text-center text-secondary-text">暂无最近调用记录</td></tr>}</tbody></table></div></div>
+          </section>
+        </> : null}
+      </div>
     </StandardPageLayout>
   );
 };

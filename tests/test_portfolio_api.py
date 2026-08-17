@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -22,6 +23,7 @@ except ModuleNotFoundError:
 
 import src.auth as auth
 from api.app import create_app
+from api.deps import get_current_user
 from src.config import Config
 from src.services.portfolio_service import PortfolioBusyError
 from src.storage import DatabaseManager
@@ -61,11 +63,19 @@ class PortfolioApiTestCase(unittest.TestCase):
         os.environ["DATABASE_PATH"] = str(self.db_path)
         Config.reset_instance()
         DatabaseManager.reset_instance()
-        app = create_app(static_dir=self.data_dir / "empty-static")
-        self.client = TestClient(app)
+        self.auth_session_patcher = patch(
+            "api.middlewares.auth._resolve_user_session",
+            return_value=SimpleNamespace(id=1),
+        )
+        self.auth_session_patcher.start()
+        self.app = create_app(static_dir=self.data_dir / "empty-static")
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1)
+        self.client = TestClient(self.app)
         self.db = DatabaseManager.get_instance()
 
     def tearDown(self) -> None:
+        self.auth_session_patcher.stop()
+        self.app.dependency_overrides.clear()
         DatabaseManager.reset_instance()
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)

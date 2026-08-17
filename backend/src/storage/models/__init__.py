@@ -7,6 +7,7 @@
 """
 
 from src.storage.models.alert import (
+    AlertCooldownRecord,
     AlertNotificationRecord,
     AlertRuleRecord,
     AlertTriggerRecord,
@@ -45,6 +46,7 @@ from src.storage.models.app import (
 )
 from src.storage.models.backtest import BacktestResult, BacktestSummary
 from src.storage.models.conversation import ConversationMessage, LLMUsage
+from src.storage.models.decision_signal import DecisionSignalRecord
 from src.storage.models.core import (
     AnalysisHistory,
     FundamentalSnapshot,
@@ -89,10 +91,13 @@ __all__ = [
     # conversation / llm
     "ConversationMessage",
     "LLMUsage",
+    # decision signals
+    "DecisionSignalRecord",
     # alert
     "AlertRuleRecord",
     "AlertTriggerRecord",
     "AlertNotificationRecord",
+    "AlertCooldownRecord",
     # app (To C)
     "AppUser",
     "AppUserSession",

@@ -52,7 +52,8 @@
 | 文档 | 内容 |
 | --- | --- |
 | [To C 多用户模式](to-c-mode.md) | 多用户认证、API、表结构、配额与数据隔离边界。 |
-| [实时告警中心](alerts.md) | EventMonitor 基线、告警契约、存储评估和 Phase 边界。 |
+| [实时告警中心](alerts.md) | 告警规则、技术指标、持仓联动、Market Light、通知冷却与部署边界。 |
+| [AI 建议](decision-signals.md) | 分析建议的结构化提取、查询、生命周期、用户隔离与回滚。 |
 | [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界。 |
 | [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明。 |
 

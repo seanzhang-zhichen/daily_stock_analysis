@@ -516,6 +516,10 @@ def get_snapshot(
     account_id: Optional[int] = Query(None, description="Optional account id, default returns all accounts"),
     as_of: Optional[date] = Query(None, description="Snapshot date, default today"),
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
+    include_realtime: bool = Query(
+        True,
+        description="Whether today's snapshot should try realtime quotes before historical close fallback",
+    ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioSnapshotResponse:
     """Return a portfolio valuation snapshot for one or all accounts."""
@@ -527,6 +531,7 @@ def get_snapshot(
             as_of=as_of,
             cost_method=cost_method,
             owner_id=owner_id_str,
+            include_realtime=include_realtime,
         )
         return PortfolioSnapshotResponse(**data)
     except ValueError as exc:
@@ -657,13 +662,23 @@ def get_risk_report(
     account_id: Optional[int] = Query(None, description="Optional account id"),
     as_of: Optional[date] = Query(None, description="Risk report date, default today"),
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
+    include_realtime: bool = Query(
+        True,
+        description="Whether today's risk snapshot should try realtime quotes before historical close fallback",
+    ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioRiskResponse:
     """Return concentration, drawdown, and stop-loss risk dimensions."""
     service = PortfolioRiskService()
     owner_id_str = str(current_user.id)
     try:
-        data = service.get_risk_report(account_id=account_id, as_of=as_of, cost_method=cost_method, owner_id=owner_id_str)
+        data = service.get_risk_report(
+            account_id=account_id,
+            as_of=as_of,
+            cost_method=cost_method,
+            owner_id=owner_id_str,
+            include_realtime=include_realtime,
+        )
         return PortfolioRiskResponse(**data)
     except ValueError as exc:
         raise _bad_request(exc)
