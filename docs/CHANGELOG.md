@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
-- [新功能] 迁移报告分享图能力，支持个股与大盘历史报告生成 AlphaLens 海报，并在 Web 提供无需服务端转图工具的系统分享/PNG 下载、在桌面端提供内置 Chromium 长图渲染。
+- [新功能] 迁移报告分享图能力，支持个股与大盘历史报告生成 AlphaLens 海报，单击后预览并提供剪切板复制/可靠的本地保存/系统分享，同时在 Web 免除服务端转图工具依赖、在桌面端使用内置 Chromium 长图渲染。
 - [改进] 完善 `/usage` 用量看板，新增 Prompt/Completion 拆分、按模型单次峰值、最近调用明细和 `/api/v1/usage/dashboard` 接口。
 - [新功能] 移植持仓模块增强：新增 Futu OpenD 真实 LONG 正股只读分析入口，扩展日股、韩股、台股持仓契约，并补充实时估值开关、数据质量限制和 Web 风险展示。
 - [新功能] 移植完整告警中心，新增技术指标、自选股、持仓风险与大盘红绿灯规则，支持按用户管理、触发历史、通知尝试和持久化冷却。
