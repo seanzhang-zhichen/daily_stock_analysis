@@ -48,6 +48,9 @@ class AnalysisService:
         progress_callback: Optional[Callable[[int, str], None]] = None,
         skills: Optional[List[str]] = None,
         user_id: Optional[int] = None,
+        query_source: str = "api",
+        analysis_phase: str = "auto",
+        portfolio_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行股票分析
@@ -84,9 +87,11 @@ class AnalysisService:
             pipeline = StockAnalysisPipeline(
                 config=config,
                 query_id=query_id,
-                query_source="api",
+                query_source=query_source or "api",
                 progress_callback=progress_callback,
                 analysis_skills=skills,
+                analysis_phase=analysis_phase,
+                portfolio_context=portfolio_context,
                 user_id=user_id,
             )
             

@@ -10,6 +10,12 @@ const buildTime = new Date().toISOString()
 
 // https://vite.dev/config/
 export default defineConfig({
+  resolve: {
+    // html2pdf.js otherwise pulls html2canvas 1.x, which cannot parse Tailwind 4's oklab colors.
+    alias: {
+      html2canvas: 'html2canvas-pro',
+    },
+  },
   define: {
     __APP_PACKAGE_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
     __APP_BUILD_TIME__: JSON.stringify(buildTime),

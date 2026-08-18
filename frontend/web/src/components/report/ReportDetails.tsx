@@ -92,7 +92,7 @@ export const ReportDetails: React.FC<ReportDetailsProps> = ({
   };
 
   return (
-    <Card variant="bordered" padding="md" className="text-left">
+    <Card variant="bordered" padding="md" className="report-diagnostics text-left">
       <DashboardPanelHeader
         eyebrow={text.transparency}
         title={text.traceability}

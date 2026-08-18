@@ -1,10 +1,13 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recharts';
+import { Archive, Sparkles } from 'lucide-react';
+import { decisionSignalsApi } from '../api/decisionSignals';
 import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Button, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
+import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
 import { WorkspacePageLayout } from '../components/common/PageLayouts';
 import { toDateInputValue } from '../utils/format';
 import {
@@ -33,6 +36,7 @@ import type {
   PortfolioSnapshotResponse,
   PortfolioTradeListItem,
 } from '../types/portfolio';
+import type { DecisionSignalItem } from '../types/decisionSignals';
 
 const PIE_COLORS = ['#00d4ff', '#00ff88', '#ffaa00', '#ff7a45', '#7f8cff', '#ff4466'];
 const DEFAULT_PAGE_SIZE = 20;
@@ -163,6 +167,7 @@ type PortfolioControlBarProps = {
   onAccountChange: (v: AccountOption) => void;
   onCostMethodChange: (v: PortfolioCostMethod) => void;
   onToggleCreateAccount: () => void;
+  onArchiveAccount: () => void;
   onRefresh: () => void;
 };
 
@@ -176,10 +181,11 @@ const PortfolioControlBar: React.FC<PortfolioControlBarProps> = ({
   onAccountChange,
   onCostMethodChange,
   onToggleCreateAccount,
+  onArchiveAccount,
   onRefresh,
 }) => (
   <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_220px_280px] gap-2 items-end">
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_220px_360px] gap-2 items-end">
       <div>
         <p className="text-xs text-secondary mb-1">账户视图</p>
         <select
@@ -207,6 +213,12 @@ const PortfolioControlBar: React.FC<PortfolioControlBarProps> = ({
         </select>
       </div>
       <div className="flex gap-2">
+        {selectedAccount !== 'all' ? (
+          <Button variant="outline" size="sm" onClick={onArchiveAccount} title="归档当前账户">
+            <Archive className="h-4 w-4" />
+            归档
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           size="sm"
@@ -309,6 +321,11 @@ type PositionsAndConcentrationPanelProps = {
   risk: PortfolioRiskResponse | null;
   concentrationPieData: { name: string; value: number }[];
   concentrationMode: 'sector' | 'position';
+  signalByPositionKey: Map<string, DecisionSignalItem>;
+  signalsLoading: boolean;
+  signalsWarning: string | null;
+  analyzingPositionKey: string | null;
+  onAnalyzePosition: (row: FlatPosition) => void;
 };
 
 const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelProps> = ({
@@ -316,6 +333,11 @@ const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelPro
   risk,
   concentrationPieData,
   concentrationMode,
+  signalByPositionKey,
+  signalsLoading,
+  signalsWarning,
+  analyzingPositionKey,
+  onAnalyzePosition,
 }) => (
   <section className="grid grid-cols-1 xl:grid-cols-3 gap-3">
     <Card className="xl:col-span-2" padding="md">
@@ -323,6 +345,9 @@ const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelPro
         <h2 className="text-sm font-semibold text-foreground">持仓明细</h2>
         <span className="text-xs text-secondary">共 {positionRows.length} 项</span>
       </div>
+      {signalsWarning ? (
+        <InlineAlert variant="warning" message={signalsWarning} className="mb-3 rounded-lg px-3 py-2 text-xs shadow-none" />
+      ) : null}
       {positionRows.length === 0 ? (
         <EmptyState
           title="当前无持仓数据"
@@ -331,7 +356,7 @@ const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelPro
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="min-w-[980px] w-full text-sm">
             <thead className="text-xs text-secondary border-b border-white/10">
               <tr>
                 <th className="text-left py-2 pr-2">账户</th>
@@ -342,11 +367,16 @@ const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelPro
                 <th className="text-right py-2 pr-2">市值</th>
                 <th className="text-right py-2">未实现盈亏</th>
                 <th className="text-right py-2">收益率</th>
+                <th className="min-w-[11rem] text-right py-2 px-3">最新 AI 信号</th>
+                <th className="w-24 text-right py-2">操作</th>
               </tr>
             </thead>
             <tbody>
-              {positionRows.map((row) => (
-                <tr key={`${row.accountId}-${row.symbol}-${row.market}`} className="border-b border-white/5">
+              {positionRows.map((row) => {
+                const rowKey = `${row.accountId}-${row.symbol}-${row.market}`;
+                const analyzing = analyzingPositionKey === rowKey;
+                return (
+                <tr key={rowKey} className="border-b border-white/5">
                   <td className="py-2 pr-2 text-secondary">{row.accountName}</td>
                   <td className="py-2 pr-2 font-mono text-foreground">{row.symbol}</td>
                   <td className="py-2 pr-2 text-right">{row.quantity.toFixed(2)}</td>
@@ -372,8 +402,24 @@ const PositionsAndConcentrationPanel: React.FC<PositionsAndConcentrationPanelPro
                   }`}>
                     {formatSignedPct(row.unrealizedPnlPct)}
                   </td>
+                  <td className="py-2 px-3 text-right align-top">
+                    <PortfolioSignalSummary item={signalByPositionKey.get(rowKey)} loading={signalsLoading} />
+                  </td>
+                  <td className="py-2 text-right">
+                    <Button
+                      variant="outline"
+                      size="xsm"
+                      disabled={analyzing}
+                      onClick={() => onAnalyzePosition(row)}
+                      title={`分析 ${row.symbol}`}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {analyzing ? '提交中' : '分析'}
+                    </Button>
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -882,6 +928,14 @@ const PortfolioPage: React.FC = () => {
   const [error, setError] = useState<ParsedApiError | null>(null);
   const [riskWarning, setRiskWarning] = useState<string | null>(null);
   const [writeWarning, setWriteWarning] = useState<string | null>(null);
+  const [portfolioSignals, setPortfolioSignals] = useState<DecisionSignalItem[]>([]);
+  const [portfolioSignalsLoading, setPortfolioSignalsLoading] = useState(false);
+  const [portfolioSignalsWarning, setPortfolioSignalsWarning] = useState<string | null>(null);
+  const portfolioSignalsRequestRef = useRef(0);
+  const [positionAnalysisLoadingKey, setPositionAnalysisLoadingKey] = useState<string | null>(null);
+  const [positionAnalysisMessage, setPositionAnalysisMessage] = useState<string | null>(null);
+  const [pendingArchiveAccount, setPendingArchiveAccount] = useState<PortfolioAccountItem | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
 
   const [brokers, setBrokers] = useState<PortfolioImportBrokerItem[]>([]);
   const [selectedBroker, setSelectedBroker] = useState('huatai');
@@ -1143,6 +1197,94 @@ const PortfolioPage: React.FC = () => {
     return rows;
   }, [snapshot]);
 
+  const positionSignalLookups = useMemo(() => {
+    const lookups = new Map<string, string>();
+    for (const row of positionRows) {
+      const symbol = String(row.symbol || '').trim();
+      if (symbol) lookups.set(symbol.toUpperCase(), symbol);
+    }
+    return Array.from(lookups.values());
+  }, [positionRows]);
+
+  useEffect(() => {
+    const requestId = portfolioSignalsRequestRef.current + 1;
+    portfolioSignalsRequestRef.current = requestId;
+
+    if (positionSignalLookups.length === 0) {
+      setPortfolioSignals([]);
+      setPortfolioSignalsWarning(null);
+      setPortfolioSignalsLoading(false);
+      return;
+    }
+
+    const loadSignals = async () => {
+      setPortfolioSignalsLoading(true);
+      setPortfolioSignalsWarning(null);
+      const results = await Promise.all(positionSignalLookups.map(async (symbol) => {
+        try {
+          const response = await decisionSignalsApi.latest(symbol);
+          return { items: response.items || [], error: null as string | null };
+        } catch (err) {
+          return { items: [] as DecisionSignalItem[], error: getParsedApiError(err).message };
+        }
+      }));
+      if (portfolioSignalsRequestRef.current !== requestId) return;
+
+      const failures = results.flatMap((result) => result.error ? [result.error] : []);
+      setPortfolioSignals(
+        results.flatMap((result) => result.items).filter((item) => item.status === 'active'),
+      );
+      setPortfolioSignalsWarning(
+        failures.length > 0 ? `部分持仓的最新信号读取失败：${failures[0]}` : null,
+      );
+      setPortfolioSignalsLoading(false);
+    };
+
+    void loadSignals();
+    return () => {
+      portfolioSignalsRequestRef.current += 1;
+    };
+  }, [positionSignalLookups]);
+
+  const signalByPositionKey = useMemo(() => {
+    const signalIndex = new Map<string, DecisionSignalItem>();
+    for (const signal of portfolioSignals) {
+      const identity = `${String(signal.market || '').toLowerCase()}:${String(signal.stockCode || '').toUpperCase()}`;
+      const existing = signalIndex.get(identity);
+      if (!existing || String(signal.createdAt || '') > String(existing.createdAt || '')) {
+        signalIndex.set(identity, signal);
+      }
+    }
+
+    const mapped = new Map<string, DecisionSignalItem>();
+    for (const row of positionRows) {
+      const rowKey = `${row.accountId}-${row.symbol}-${row.market}`;
+      const identity = `${String(row.market || '').toLowerCase()}:${String(row.symbol || '').toUpperCase()}`;
+      const signal = signalIndex.get(identity);
+      if (signal) mapped.set(rowKey, signal);
+    }
+    return mapped;
+  }, [portfolioSignals, positionRows]);
+
+  const handleAnalyzePosition = async (row: FlatPosition) => {
+    const rowKey = `${row.accountId}-${row.symbol}-${row.market}`;
+    setPositionAnalysisLoadingKey(rowKey);
+    setPositionAnalysisMessage(null);
+    setError(null);
+    try {
+      const task = await portfolioApi.analyzePosition(row.symbol, {
+        accountId: row.accountId,
+        analysisPhase: 'auto',
+        force: false,
+      });
+      setPositionAnalysisMessage(`已提交 ${row.symbol} 分析任务：${task.taskId}`);
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setPositionAnalysisLoadingKey(null);
+    }
+  };
+
   const sectorPieData = useMemo(() => {
     const sectors = risk?.sectorConcentration?.topSectors || [];
     return sectors
@@ -1356,6 +1498,24 @@ const PortfolioPage: React.FC = () => {
     }
   };
 
+  const handleConfirmArchiveAccount = async () => {
+    if (!pendingArchiveAccount || archiveLoading) return;
+    try {
+      setArchiveLoading(true);
+      setError(null);
+      await portfolioApi.deleteAccount(pendingArchiveAccount.id);
+      const archivedName = pendingArchiveAccount.name;
+      setPendingArchiveAccount(null);
+      setSelectedAccount('all');
+      await loadAccounts();
+      setPositionAnalysisMessage(`账户“${archivedName}”已归档。`);
+    } catch (err) {
+      setError(getParsedApiError(err));
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
   const handleRefresh = async () => {
     await Promise.all([loadAccounts(), loadSnapshotAndRisk(true), loadEvents(), loadBrokers()]);
   };
@@ -1490,6 +1650,9 @@ const PortfolioPage: React.FC = () => {
               setAccountCreateError(null);
               setAccountCreateSuccess(null);
             }}
+            onArchiveAccount={() => {
+              if (writableAccount) setPendingArchiveAccount(writableAccount);
+            }}
             onRefresh={() => void handleRefresh()}
           />
         ) : (
@@ -1521,6 +1684,13 @@ const PortfolioPage: React.FC = () => {
           variant="warning"
           title="操作提示"
           message={writeWarning}
+        />
+      ) : null}
+      {positionAnalysisMessage ? (
+        <InlineAlert
+          variant="success"
+          title="操作已受理"
+          message={positionAnalysisMessage}
         />
       ) : null}
 
@@ -1611,6 +1781,11 @@ const PortfolioPage: React.FC = () => {
         risk={risk}
         concentrationPieData={concentrationPieData}
         concentrationMode={concentrationMode}
+        signalByPositionKey={signalByPositionKey}
+        signalsLoading={portfolioSignalsLoading}
+        signalsWarning={portfolioSignalsWarning}
+        analyzingPositionKey={positionAnalysisLoadingKey}
+        onAnalyzePosition={(row) => void handleAnalyzePosition(row)}
       />
 
       {writeBlocked && hasAccounts ? (
@@ -1682,6 +1857,18 @@ const PortfolioPage: React.FC = () => {
         onEventPageNext={() => setEventPage((prev) => Math.min(totalEventPages, prev + 1))}
         onLoadEvents={() => void loadEvents()}
         onOpenDeleteDialog={openDeleteDialog}
+      />
+      <ConfirmDialog
+        isOpen={Boolean(pendingArchiveAccount)}
+        title="归档持仓账户"
+        message={`确认归档账户“${pendingArchiveAccount?.name || ''}”吗？归档后不会删除历史流水，但该账户将不再出现在默认持仓、流水和风险视图中。`}
+        confirmText={archiveLoading ? '归档中...' : '确认归档'}
+        cancelText="取消"
+        isDanger
+        onConfirm={() => void handleConfirmArchiveAccount()}
+        onCancel={() => {
+          if (!archiveLoading) setPendingArchiveAccount(null);
+        }}
       />
       <ConfirmDialog
         isOpen={Boolean(pendingDelete)}

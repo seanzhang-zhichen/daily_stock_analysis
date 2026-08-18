@@ -15,6 +15,8 @@ import type {
   PortfolioImportBrokerListResponse,
   PortfolioImportCommitResponse,
   PortfolioImportParseResponse,
+  PortfolioPositionAnalysisAccepted,
+  PortfolioPositionAnalysisRequest,
   PortfolioRiskResponse,
   PortfolioSnapshotResponse,
   PortfolioTradeCreateRequest,
@@ -120,6 +122,26 @@ export const portfolioApi = {
       owner_id: payload.ownerId,
     });
     return toCamelCase<PortfolioAccountItem>(response.data);
+  },
+
+  async deleteAccount(accountId: number): Promise<PortfolioDeleteResponse> {
+    const response = await apiClient.delete<Record<string, unknown>>(`/api/v1/portfolio/accounts/${accountId}`);
+    return toCamelCase<PortfolioDeleteResponse>(response.data);
+  },
+
+  async analyzePosition(
+    symbol: string,
+    payload: PortfolioPositionAnalysisRequest = {},
+  ): Promise<PortfolioPositionAnalysisAccepted> {
+    const response = await apiClient.post<Record<string, unknown>>(
+      `/api/v1/portfolio/positions/${encodeURIComponent(symbol)}/analysis`,
+      {
+        account_id: payload.accountId,
+        analysis_phase: payload.analysisPhase ?? 'auto',
+        force: payload.force ?? false,
+      },
+    );
+    return toCamelCase<PortfolioPositionAnalysisAccepted>(response.data);
   },
 
   async getSnapshot(query: SnapshotQuery = {}): Promise<PortfolioSnapshotResponse> {

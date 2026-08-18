@@ -123,6 +123,21 @@ class TestTaskInfo:
         assert copied.original_query == "茅台"
         assert copied.selection_source == "autocomplete"
 
+    def test_portfolio_context_is_internal_only(self):
+        task = TaskInfo(
+            task_id="test123",
+            stock_code="600519",
+            query_source="portfolio",
+            analysis_phase="intraday",
+            portfolio_context={"account_id": 7, "quantity": 10},
+        )
+
+        payload = task.to_dict()
+        assert payload["query_source"] == "portfolio"
+        assert payload["analysis_phase"] == "intraday"
+        assert "portfolio_context" not in payload
+        assert task.copy().portfolio_context == {"account_id": 7, "quantity": 10}
+
 
 class TestTaskQueue:
     """Test task queue"""

@@ -72,6 +72,11 @@ class TaskInfo:
     completed_at: Optional[datetime] = None
     original_query: Optional[str] = None
     selection_source: Optional[str] = None
+    query_source: str = "api"
+    analysis_phase: str = "auto"
+    # Internal-only context for the analysis worker. It is deliberately omitted
+    # from ``to_dict`` so task lists and SSE payloads never expose holdings.
+    portfolio_context: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None
     # To C 模式下的归属用户 ID
     user_id: Optional[int] = None
@@ -96,6 +101,8 @@ class TaskInfo:
             "error": self.error,
             "original_query": self.original_query,
             "selection_source": self.selection_source,
+            "query_source": self.query_source,
+            "analysis_phase": self.analysis_phase,
             "skills": self.skills,
         }
     
@@ -116,6 +123,9 @@ class TaskInfo:
             completed_at=self.completed_at,
             original_query=self.original_query,
             selection_source=self.selection_source,
+            query_source=self.query_source,
+            analysis_phase=self.analysis_phase,
+            portfolio_context=dict(self.portfolio_context) if isinstance(self.portfolio_context, dict) else None,
             skills=list(self.skills) if self.skills is not None else None,
             user_id=self.user_id,
             refund_analysis_quota=self.refund_analysis_quota,
@@ -320,6 +330,9 @@ class AnalysisTaskQueue:
         force_refresh: bool = False,
         skills: Optional[List[str]] = None,
         user_id: Optional[int] = None,
+        query_source: str = "api",
+        analysis_phase: str = "auto",
+        portfolio_context: Optional[Dict[str, Any]] = None,
     ) -> TaskInfo:
         """
         Submit a single analysis task.
@@ -347,7 +360,10 @@ class AnalysisTaskQueue:
             stock_name=stock_name,
             original_query=original_query,
             selection_source=selection_source,
+            query_source=query_source,
+            portfolio_context=portfolio_context,
             report_type=report_type,
+            analysis_phase=analysis_phase,
             force_refresh=force_refresh,
             skills=skills,
             user_id=user_id,
@@ -371,6 +387,9 @@ class AnalysisTaskQueue:
         quota_refund_date: Optional[date] = None,
         refund_analysis_credits: bool = False,
         analysis_credit_cost: int = 0,
+        query_source: str = "api",
+        analysis_phase: str = "auto",
+        portfolio_context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -409,6 +428,9 @@ class AnalysisTaskQueue:
                     report_type=report_type,
                     original_query=original_query,
                     selection_source=selection_source,
+                    query_source=query_source or "api",
+                    analysis_phase=analysis_phase or "auto",
+                    portfolio_context=dict(portfolio_context) if isinstance(portfolio_context, dict) else None,
                     skills=task_skills,
                     user_id=user_id,
                     refund_analysis_quota=bool(refund_analysis_quota),
@@ -656,6 +678,13 @@ class AnalysisTaskQueue:
             task.started_at = datetime.now()
             task.message = "正在分析中..."
             task.progress = 10
+            query_source = task.query_source or "api"
+            analysis_phase = task.analysis_phase or "auto"
+            portfolio_context = (
+                dict(task.portfolio_context)
+                if isinstance(task.portfolio_context, dict)
+                else None
+            )
         
         self._broadcast_event("task_started", task.to_dict(), user_id=task.user_id)
         
@@ -678,6 +707,9 @@ class AnalysisTaskQueue:
                 send_notification=notify,
                 progress_callback=_on_progress,
                 skills=skills,
+                query_source=query_source,
+                analysis_phase=analysis_phase,
+                portfolio_context=portfolio_context,
                 user_id=user_id,
             )
             

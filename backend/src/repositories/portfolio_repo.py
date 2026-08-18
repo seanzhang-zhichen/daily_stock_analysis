@@ -655,9 +655,17 @@ class PortfolioRepository:
                 conditions.append(PortfolioTrade.side == side)
             if owner_id is not None:
                 owner_subq = select(PortfolioAccount.id).where(
-                    PortfolioAccount.owner_id == owner_id
+                    and_(
+                        PortfolioAccount.owner_id == owner_id,
+                        PortfolioAccount.is_active.is_(True),
+                    )
                 )
                 conditions.append(PortfolioTrade.account_id.in_(owner_subq))
+            else:
+                active_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.is_active.is_(True)
+                )
+                conditions.append(PortfolioTrade.account_id.in_(active_subq))
 
             data_query = select(PortfolioTrade)
             count_query = select(func.count()).select_from(PortfolioTrade)
@@ -699,9 +707,17 @@ class PortfolioRepository:
                 conditions.append(PortfolioCashLedger.direction == direction)
             if owner_id is not None:
                 owner_subq = select(PortfolioAccount.id).where(
-                    PortfolioAccount.owner_id == owner_id
+                    and_(
+                        PortfolioAccount.owner_id == owner_id,
+                        PortfolioAccount.is_active.is_(True),
+                    )
                 )
                 conditions.append(PortfolioCashLedger.account_id.in_(owner_subq))
+            else:
+                active_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.is_active.is_(True)
+                )
+                conditions.append(PortfolioCashLedger.account_id.in_(active_subq))
 
             data_query = select(PortfolioCashLedger)
             count_query = select(func.count()).select_from(PortfolioCashLedger)
@@ -746,9 +762,17 @@ class PortfolioRepository:
                 conditions.append(PortfolioCorporateAction.action_type == action_type)
             if owner_id is not None:
                 owner_subq = select(PortfolioAccount.id).where(
-                    PortfolioAccount.owner_id == owner_id
+                    and_(
+                        PortfolioAccount.owner_id == owner_id,
+                        PortfolioAccount.is_active.is_(True),
+                    )
                 )
                 conditions.append(PortfolioCorporateAction.account_id.in_(owner_subq))
+            else:
+                active_subq = select(PortfolioAccount.id).where(
+                    PortfolioAccount.is_active.is_(True)
+                )
+                conditions.append(PortfolioCorporateAction.account_id.in_(active_subq))
 
             data_query = select(PortfolioCorporateAction)
             count_query = select(func.count()).select_from(PortfolioCorporateAction)
@@ -860,6 +884,7 @@ class PortfolioRepository:
         as_of: date,
         cost_method: str,
         account_id: Optional[int] = None,
+        owner_id: Optional[str] = None,
         lookback_days: int = 180,
     ) -> List[PortfolioDailySnapshot]:
         """Load snapshot rows in ascending date order for risk monitoring."""
@@ -872,6 +897,12 @@ class PortfolioRepository:
             )
             if account_id is not None:
                 query = query.where(PortfolioDailySnapshot.account_id == account_id)
+            active_accounts = select(PortfolioAccount.id).where(
+                PortfolioAccount.is_active.is_(True)
+            )
+            if owner_id is not None:
+                active_accounts = active_accounts.where(PortfolioAccount.owner_id == owner_id)
+            query = query.where(PortfolioDailySnapshot.account_id.in_(active_accounts))
             rows = session.execute(
                 query.order_by(
                     PortfolioDailySnapshot.snapshot_date.asc(),

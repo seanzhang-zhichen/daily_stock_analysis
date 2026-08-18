@@ -92,6 +92,8 @@ class StockAnalysisPipeline:
         progress_callback: Optional[Callable[[int, str], None]] = None,
         analysis_skills: Optional[List[str]] = None,
         user_id: Optional[int] = None,
+        analysis_phase: str = "auto",
+        portfolio_context: Optional[Dict[str, Any]] = None,
     ):
         """
         初始化调度器
@@ -112,6 +114,10 @@ class StockAnalysisPipeline:
         )
         self.progress_callback = progress_callback
         self.analysis_skills = list(analysis_skills) if analysis_skills is not None else None
+        self.analysis_phase = analysis_phase or "auto"
+        self.portfolio_context = (
+            dict(portfolio_context) if isinstance(portfolio_context, dict) else None
+        )
         self.user_id = user_id
         
         # 初始化各模块
@@ -484,6 +490,9 @@ class StockAnalysisPipeline:
                 stock_name,  # 传入股票名称
                 fundamental_context,
             )
+            if self.portfolio_context is not None:
+                enhanced_context["portfolio_context"] = dict(self.portfolio_context)
+            enhanced_context["analysis_phase"] = self.analysis_phase
             deep_research_profile = self._build_deep_research_stock_profile(
                 code,
                 stock_name,
@@ -841,7 +850,10 @@ class StockAnalysisPipeline:
                 "report_type": report_type.value,
                 "report_language": report_language,
                 "fundamental_context": fundamental_context,
+                "analysis_phase": self.analysis_phase,
             }
+            if self.portfolio_context is not None:
+                initial_context["portfolio_context"] = dict(self.portfolio_context)
             if self.analysis_skills is not None:
                 initial_context["skills"] = self.analysis_skills
             
@@ -950,12 +962,14 @@ class StockAnalysisPipeline:
             if result and result.success:
                 try:
                     initial_context["stock_name"] = resolved_stock_name
+                    persisted_agent_context = dict(initial_context)
+                    persisted_agent_context.pop("portfolio_context", None)
                     self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
                         report_type=report_type.value,
                         news_content=None,
-                        context_snapshot=initial_context,
+                        context_snapshot=persisted_agent_context,
                         save_snapshot=self.save_context_snapshot,
                         user_id=self.user_id,
                     )
@@ -1715,8 +1729,10 @@ class StockAnalysisPipeline:
         """
         构建分析上下文快照
         """
+        persisted_context = dict(enhanced_context)
+        persisted_context.pop("portfolio_context", None)
         snapshot = {
-            "enhanced_context": enhanced_context,
+            "enhanced_context": persisted_context,
             "news_content": news_content,
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
             "chip_distribution_raw": self._safe_to_dict(chip_data),

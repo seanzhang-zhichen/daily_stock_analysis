@@ -118,6 +118,30 @@ const SignalMetric: React.FC<{ label: string; value: string }> = ({ label, value
   </div>
 );
 
+export const PortfolioSignalSummary: React.FC<{
+  item?: DecisionSignalItem;
+  loading?: boolean;
+}> = ({ item, loading = false }) => {
+  if (loading && !item) {
+    return <span className="text-xs text-secondary-text">读取中...</span>;
+  }
+  if (!item) {
+    return <span className="text-xs text-muted-text">暂无有效信号</span>;
+  }
+  return (
+    <div className="min-w-[10rem] max-w-[16rem] text-left">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <Badge variant={actionTone(item.action)}>{item.actionLabel || ACTION_LABELS[item.action]}</Badge>
+        {item.horizon ? (
+          <span className="text-[11px] text-secondary-text">{HORIZON_LABELS[item.horizon] || item.horizon}</span>
+        ) : null}
+      </div>
+      {item.riskSummary ? <p className="mt-1 line-clamp-2 text-[11px] text-warning">{item.riskSummary}</p> : null}
+      {item.watchConditions ? <p className="mt-1 line-clamp-2 text-[11px] text-secondary-text">{item.watchConditions}</p> : null}
+    </div>
+  );
+};
+
 const DetailBlock: React.FC<{
   icon: React.ReactNode;
   label: string;

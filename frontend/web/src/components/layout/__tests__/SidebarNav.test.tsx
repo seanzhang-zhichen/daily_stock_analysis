@@ -83,6 +83,16 @@ describe('SidebarNav', () => {
     expect(screen.getByRole('link', { name: '帮助' })).toHaveAttribute('href', '/help');
   });
 
+  it('shows the portfolio entry in the main navigation', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: '持仓' })).toHaveAttribute('href', '/portfolio');
+  });
+
   it('preloads route modules when links are previewed', () => {
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>

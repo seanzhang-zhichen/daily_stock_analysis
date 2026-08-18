@@ -9,6 +9,7 @@ import { useStockPoolStore } from '../../stores';
 import type { StockIndexItem } from '../../types/stockIndex';
 import type { AnalysisReport } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
+import { buildReportPdfFilename, exportReportToPdf } from '../../utils/reportPdf';
 import HomePage from '../HomePage';
 
 const navigateMock = vi.fn();
@@ -82,6 +83,11 @@ vi.mock('../../hooks/useStockIndex', () => ({
     fallback: false,
     loaded: true,
   }),
+}));
+
+vi.mock('../../utils/reportPdf', () => ({
+  buildReportPdfFilename: vi.fn(() => '贵州茅台-600519-分析报告.pdf'),
+  exportReportToPdf: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../components/report/ReportSummary', () => ({
@@ -171,6 +177,7 @@ describe('HomePage', () => {
     navigateMock.mockReset();
     stockIndexState.index = [];
     authState.userMode = null;
+    vi.mocked(exportReportToPdf).mockResolvedValue(undefined);
     useStockPoolStore.getState().resetDashboardState();
     vi.mocked(agentApi.getSkills).mockResolvedValue({ skills: [], default_skill_id: '' });
     vi.mocked(systemConfigApi.getSetupStatus).mockResolvedValue({
@@ -217,7 +224,11 @@ describe('HomePage', () => {
     expect(
       within(reportToolbar).getAllByRole('button').map((button) => button.getAttribute('data-variant')),
     ).toEqual(['outline', 'outline', 'outline', 'secondary']);
-    expect(within(reportToolbar).getByRole('button', { name: '分享' })).toBeInTheDocument();
+    const shareButton = within(reportToolbar).getByRole('button', { name: '分享' });
+    expect(shareButton).toBeInTheDocument();
+    expect(within(reportToolbar).queryByRole('button', { name: '导出 PDF' })).not.toBeInTheDocument();
+    fireEvent.click(shareButton);
+    expect(within(reportToolbar).getByRole('menuitem', { name: '导出 PDF' })).toBeInTheDocument();
     expect(
       screen.getByRole('button', {
         name: getReportText(normalizeReportLanguage(historyReport.meta.reportLanguage)).fullReport,
@@ -245,6 +256,45 @@ describe('HomePage', () => {
     expect(screen.getByRole('button', { name: /贵州茅台/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /先看大盘复盘/i })).toBeInTheDocument();
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();
+  });
+
+  it('generates and downloads the current report as PDF', async () => {
+    let finishExport: (() => void) | undefined;
+    vi.mocked(exportReportToPdf).mockImplementation(() => new Promise<void>((resolve) => {
+      finishExport = resolve;
+    }));
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 1,
+      page: 1,
+      limit: 20,
+      items: [historyItem],
+    });
+    vi.mocked(historyApi.getDetail).mockResolvedValue(historyReport);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const reportToolbar = await screen.findByTestId('home-report-toolbar');
+    const shareButton = within(reportToolbar).getByRole('button', { name: '分享' });
+    fireEvent.click(shareButton);
+    fireEvent.click(within(reportToolbar).getByRole('menuitem', { name: '导出 PDF' }));
+
+    expect(shareButton).toHaveAttribute('aria-busy', 'true');
+    expect(within(reportToolbar).getByRole('status')).toHaveTextContent('导出中...');
+    expect(buildReportPdfFilename).toHaveBeenCalledWith('贵州茅台', '600519', 'zh');
+    expect(exportReportToPdf).toHaveBeenCalledWith(
+      screen.getByTestId('report-summary').closest('[data-pdf-report]'),
+      '贵州茅台-600519-分析报告.pdf',
+    );
+    expect(shareButton.closest('[data-pdf-hide]')).not.toBeNull();
+
+    finishExport?.();
+    await waitFor(() => {
+      expect(shareButton).not.toHaveAttribute('aria-busy');
+    });
   });
 
   it('consumes a screening candidate once and starts analysis with mapped skills', async () => {

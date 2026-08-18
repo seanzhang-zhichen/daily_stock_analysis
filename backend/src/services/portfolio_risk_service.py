@@ -92,6 +92,7 @@ class PortfolioRiskService:
             cost_method=cost_method,
             threshold_pct=thresholds["drawdown_alert_pct"],
             lookback_days=thresholds["lookback_days"],
+            owner_id=owner_id,
         )
         stop_loss = self._build_stop_loss(snapshot, thresholds)
         decision_signal_risk = self._build_decision_signal_risk(snapshot, owner_id=owner_id)
@@ -199,6 +200,7 @@ class PortfolioRiskService:
             as_of=as_of_date,
             cost_method=cost_method,
             account_id=account_id,
+            owner_id=owner_id,
             lookback_days=lookback_days,
         )
         if account_id is not None:
@@ -459,12 +461,14 @@ class PortfolioRiskService:
         cost_method: str,
         threshold_pct: float,
         lookback_days: int,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Compute max/current drawdown from stored daily equity snapshots."""
         rows = self.repo.list_daily_snapshots_for_risk(
             as_of=as_of_date,
             cost_method=cost_method,
             account_id=account_id,
+            owner_id=owner_id,
             lookback_days=lookback_days,
         )
         if not rows:

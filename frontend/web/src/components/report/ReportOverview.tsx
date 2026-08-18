@@ -122,11 +122,11 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="report-overview space-y-5">
       {/* 主信息区 - 两列布局，items-stretch 确保右侧与左侧同高 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
+      <div className="report-overview-layout grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
         {/* 左侧：股票信息与结论 */}
-        <div className="lg:col-span-2 space-y-5">
+        <div className="report-overview-main lg:col-span-2 space-y-5">
           {/* 股票头部 */}
           <Card variant="gradient" padding="md" className="!overflow-visible">
             <div className="flex items-start justify-between mb-5">
@@ -171,7 +171,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           </Card>
 
           {/* 操作建议和趋势预测 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="report-overview-signals grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* 操作建议 */}
             <Card
               variant="bordered"
@@ -264,7 +264,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         </div>
 
         {/* 右侧：情绪指标 - 填满格子高度，消除与 STRATEGY POINTS 之间的空隙 */}
-        <div className="flex flex-col self-stretch min-h-full">
+        <div className="report-overview-sentiment flex flex-col self-stretch min-h-full">
           <Card variant="bordered" padding="md" className="!overflow-visible flex-1 flex flex-col min-h-0">
             <div className="text-center flex-1 flex flex-col justify-center">
               <h3 className="mb-5 text-sm font-medium tracking-wide text-foreground">{text.marketSentiment}</h3>

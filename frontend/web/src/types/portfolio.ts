@@ -201,6 +201,20 @@ export interface PortfolioDeleteResponse {
   deleted: number;
 }
 
+export type PortfolioAnalysisPhase = 'auto' | 'premarket' | 'intraday' | 'postmarket';
+
+export interface PortfolioPositionAnalysisRequest {
+  accountId?: number;
+  analysisPhase?: PortfolioAnalysisPhase;
+  force?: boolean;
+}
+
+export interface PortfolioPositionAnalysisAccepted {
+  taskId: string;
+  status: 'pending' | 'processing';
+  message?: string | null;
+}
+
 export interface PortfolioTradeListItem {
   id: number;
   accountId: number;

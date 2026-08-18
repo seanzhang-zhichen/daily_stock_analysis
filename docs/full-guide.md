@@ -1164,6 +1164,8 @@ P2 worker 会把 `triggered`、`skipped`、`degraded`、`failed` 写入 `alert_t
 - 查看全量持仓或切换到单个账户视角。
 - 在 `fifo` / `avg` 两种成本法之间切换，查看快照 KPI、风险摘要和 Top Positions 集中度图表。
 - 直接在 Web 页面新增账户，或录入交易、现金流水、公司行动等事件。
+- 对不再使用的账户执行归档；归档保留历史数据，但默认持仓、流水和风险视图不再读取该账户。
+- 在持仓明细中查看最新有效 AI 决策信号，并为某一非零持仓提交异步单股分析任务。
 - 通过 CSV 导入持仓记录，支持先 `dry_run` 预览，再决定是否正式写入。
 - 在事件列表中按账户、日期、方向、代码等条件筛选，并对单账户事件做删除修正。
 
@@ -1173,6 +1175,8 @@ P2 worker 会把 `triggered`、`skipped`、`degraded`、`failed` 写入 `alert_t
 |------|------|------|
 | `/api/v1/portfolio/snapshot` | GET | 查询持仓快照 |
 | `/api/v1/portfolio/risk` | GET | 查询风险摘要 |
+| `/api/v1/portfolio/accounts/{account_id}` | DELETE | 归档账户（软删除） |
+| `/api/v1/portfolio/positions/{symbol}/analysis` | POST | 为非零持仓提交异步单股分析 |
 | `/api/v1/portfolio/trades` | GET | 分页查询交易记录 |
 | `/api/v1/portfolio/cash-ledger` | GET | 分页查询现金流水 |
 | `/api/v1/portfolio/corporate-actions` | GET | 分页查询公司行动 |
@@ -1190,6 +1194,8 @@ P2 worker 会把 `triggered`、`skipped`、`degraded`、`failed` 写入 `alert_t
 - 导入流程会先把 CSV 解析成标准化记录，再逐条提交到持仓账本；遇到忙碌行会计入 `failed_count`，不会因为单行冲突让整批请求整体失败。
 - 交易去重优先使用账户内唯一的 `trade_uid`，缺失时回退到基于日期、代码、方向、数量、价格、费用、税费、币种的确定性哈希。
 - 卖出会先校验可用数量，超卖返回 `409 portfolio_oversell`；并发写入冲突时可能返回 `409 portfolio_busy`。
+- 持仓分析请求支持 `account_id`、`analysis_phase` 和 `force`。同一股票只在一个账户持有时可省略 `account_id`；多个账户同时持有时必须指定账户，否则返回 `400 ambiguous_position_account`。无非零持仓时返回 404。
+- 持仓数量、成本和盈亏等上下文只在分析任务内部透传，不会出现在任务列表、SSE 事件或持久化分析上下文快照中。
 - 持仓快照的 `positions[]` 会返回 `price_source`、`price_date`、`price_stale`、`price_available`、`data_quality`、`limitations` 等估值元信息；当天快照默认先尝试实时行情，失败或价格非正时回退到最近历史收盘价。传入 `include_realtime=false` 会跳过外部实时行情，Web 首屏使用该模式快速展示，用户手动刷新时再拉取实时行情。历史 `as_of` 快照不会拉取实时价，也不会把成本价静默当作现价；缺价持仓会标记 `price_available=false` 并从市值与未实现盈亏汇总中排除。
 - 账户和交易市场支持 `cn`、`hk`、`us`、`jp`、`kr`、`tw`。日股、韩股和台股当前属于部分估值支持，响应会以 `data_quality=partial` 和 `limitations` 明确标记实时行情、汇率/成本基准及行业风险指标边界。
 - 汇率刷新会先尝试在线源；若在线获取失败，则回退到最近一次缓存并标记 `is_stale=true`，避免快照和风险页整体不可用。

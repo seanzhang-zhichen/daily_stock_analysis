@@ -53,7 +53,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
   }
 
   return (
-    <Card variant="bordered" padding="md">
+    <Card variant="bordered" padding="md" className="report-news">
       <DashboardPanelHeader
         eyebrow={text.relatedNews}
       />
@@ -93,7 +93,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
           {items.map((item, index) => (
             <div
               key={`${item.title}-${index}`}
-              className="group rounded-xl border border-subtle bg-surface/70 p-4 transition-colors hover:bg-surface-muted/70"
+              className="report-news-item group rounded-xl border border-subtle bg-surface/70 p-4 transition-colors hover:bg-surface-muted/70"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0 text-left">

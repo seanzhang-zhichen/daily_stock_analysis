@@ -853,6 +853,159 @@ input[type='radio']:focus-visible {
   }
 }
 
+.pdf-export-surface {
+  --background: 213 28% 96%;
+  --foreground: 224 32% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 32% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 32% 12%;
+  --primary: 192 88% 39%;
+  --primary-foreground: 216 33% 97%;
+  --secondary: 214 32% 91%;
+  --secondary-foreground: 224 32% 16%;
+  --muted: 214 26% 92%;
+  --muted-foreground: 224 13% 41%;
+  --border: 217 24% 82%;
+  --elevated: 0 0% 100%;
+  --hover: 214 29% 90%;
+  --secondary-text: 224 18% 28%;
+  --muted-text: 224 12% 35%;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--card);
+  --color-surface-muted: var(--muted);
+  --color-surface-raised: var(--elevated);
+  --color-surface-overlay: var(--popover);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--secondary-text);
+  --color-border: var(--border);
+  --color-border-strong: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-muted: var(--primary);
+  --bg-base: hsl(var(--background));
+  --bg-card: hsl(var(--card));
+  --bg-elevated: hsl(var(--elevated));
+  --bg-hover: hsl(var(--hover));
+  --text-primary: hsl(var(--foreground));
+  --text-secondary-text: hsl(var(--secondary-text));
+  --text-muted-text: hsl(var(--muted-text));
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: #fff !important;
+  color: #111827 !important;
+  overflow: visible !important;
+}
+
+.pdf-export-surface .report-diagnostics,
+.pdf-export-surface [data-pdf-hide] {
+  display: none !important;
+}
+
+.pdf-export-surface .animate-fade-in {
+  animation: none !important;
+}
+
+.pdf-export-surface .report-summary {
+  margin-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.pdf-export-surface .ui-card {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.pdf-export-surface .ui-card-hoverable {
+  transform: none !important;
+}
+
+.pdf-export-surface .report-overview-layout {
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 0.75rem !important;
+}
+
+.pdf-export-surface .report-overview-main {
+  grid-column: auto !important;
+  min-width: 0 !important;
+}
+
+.pdf-export-surface .report-overview-signals,
+.pdf-export-surface .report-strategy-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.75rem !important;
+}
+
+.pdf-export-surface .report-overview-sentiment {
+  min-height: 0 !important;
+}
+
+.pdf-export-surface .gauge-ring + div > span:first-child {
+  color: #111827 !important;
+  text-shadow: 0 0 16px rgb(8 145 178 / 22%) !important;
+}
+
+.pdf-export-surface .gauge-ring + div > span:last-child {
+  color: #0891b2 !important;
+}
+
+.pdf-export-surface .space-y-5 > :not(:last-child) {
+  margin-block-end: 0.75rem !important;
+}
+
+/* Recharts keeps its SVG dimensions from the live page when html2pdf clones it.
+   Keep the chart in its reserved box so it cannot paint over the data table. */
+.pdf-export-surface .report-price-chart {
+  height: 16rem !important;
+  min-height: 16rem !important;
+  overflow: hidden !important;
+}
+
+.pdf-export-surface .report-price-chart .recharts-responsive-container,
+.pdf-export-surface .report-price-chart .pdf-chart-raster {
+  width: 100% !important;
+  height: 16rem !important;
+  max-height: 16rem !important;
+}
+
+.pdf-export-surface .report-price-table {
+  overflow: hidden !important;
+}
+
+.pdf-export-surface .report-price-table table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed !important;
+  font-size: 0.625rem !important;
+}
+
+.pdf-export-surface .report-price-table :is(th, td) {
+  padding: 0.45rem 0.3rem !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.pdf-export-surface .report-overview .ui-card,
+.pdf-export-surface .report-strategy,
+.pdf-export-surface .report-price-history,
+.pdf-export-surface .report-news-item,
+.pdf-export-surface .stock-profile-section {
+  break-inside: avoid;
+  break-inside: avoid-page;
+  page-break-inside: avoid;
+}
+
+.pdf-export-surface a {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+
 .ui-icon-button {
   display: inline-flex;
   height: 2.5rem;
@@ -1666,10 +1819,21 @@ input[type='radio']:focus-visible {
   flex: 1;
 }
 
-.ui-menu-item:hover,
+.ui-menu-item:hover:not([aria-disabled='true']),
+.ui-menu-item:focus-visible,
 .ui-menu-item-active {
   background: hsl(var(--color-primary-muted) / 0.1);
   color: hsl(var(--color-foreground));
+}
+
+.ui-menu-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px hsl(var(--color-primary) / 0.38);
+}
+
+.ui-menu-item[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ui-menu-check {

@@ -22,6 +22,9 @@ const {
   parseCsvImport,
   commitCsvImport,
   createAccount,
+  deleteAccount,
+  analyzePosition,
+  latestSignal,
 } = vi.hoisted(() => ({
   getAccounts: vi.fn(),
   getSnapshot: vi.fn(),
@@ -40,6 +43,9 @@ const {
   parseCsvImport: vi.fn(),
   commitCsvImport: vi.fn(),
   createAccount: vi.fn(),
+  deleteAccount: vi.fn(),
+  analyzePosition: vi.fn(),
+  latestSignal: vi.fn(),
 }));
 
 vi.mock('../../api/portfolio', () => ({
@@ -61,6 +67,14 @@ vi.mock('../../api/portfolio', () => ({
     parseCsvImport,
     commitCsvImport,
     createAccount,
+    deleteAccount,
+    analyzePosition,
+  },
+}));
+
+vi.mock('../../api/decisionSignals', () => ({
+  decisionSignalsApi: {
+    latest: latestSignal,
   },
 }));
 
@@ -234,6 +248,9 @@ describe('PortfolioPage FX refresh', () => {
       errors: [],
     });
     createAccount.mockResolvedValue({ id: 1 });
+    deleteAccount.mockResolvedValue({ deleted: 1 });
+    analyzePosition.mockResolvedValue({ taskId: 'task-portfolio-1', status: 'pending' });
+    latestSignal.mockResolvedValue({ items: [] });
   });
 
   it('renders stale FX status with a manual refresh button', async () => {
@@ -364,8 +381,54 @@ describe('PortfolioPage FX refresh', () => {
 
     const hkRowCells = within(hkRow as HTMLTableRowElement).getAllByRole('cell');
     const aaplRowCells = within(aaplRow as HTMLTableRowElement).getAllByRole('cell');
-    expect(hkRowCells.at(-1)).toHaveClass('text-success');
-    expect(aaplRowCells.at(-1)).toHaveClass('text-secondary');
+    expect(hkRowCells.at(-3)).toHaveClass('text-success');
+    expect(aaplRowCells.at(-3)).toHaveClass('text-secondary');
+  });
+
+  it('submits analysis for a held position and renders its latest active signal', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ positions: [
+      { symbol: 'AAPL', market: 'us', currency: 'USD', quantity: 5, avgCost: 100, totalCost: 500, lastPrice: 120, marketValueBase: 600, unrealizedPnlBase: 100, unrealizedPnlPct: 20, valuationCurrency: 'USD' },
+    ] }));
+    latestSignal.mockResolvedValueOnce({ items: [{
+      id: 9,
+      stockCode: 'AAPL',
+      stockName: 'Apple',
+      market: 'us',
+      sourceType: 'analysis_report',
+      sourceReportId: 11,
+      triggerSource: 'portfolio',
+      action: 'hold',
+      actionLabel: '持有',
+      horizon: '5d',
+      planQuality: 'complete',
+      status: 'active',
+      createdAt: '2026-03-19T08:00:00Z',
+    }] });
+
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+
+    expect(await screen.findByText('持有')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '分析' }));
+
+    await waitFor(() => expect(analyzePosition).toHaveBeenCalledWith('AAPL', {
+      accountId: 1,
+      analysisPhase: 'auto',
+      force: false,
+    }));
+    expect(await screen.findByText(/task-portfolio-1/)).toBeInTheDocument();
+  });
+
+  it('archives the selected account after confirmation', async () => {
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: '1' } });
+    fireEvent.click(await screen.findByRole('button', { name: '归档' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认归档' }));
+
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalledWith(1));
+    expect(await screen.findByText('账户“Main”已归档。')).toBeInTheDocument();
   });
 
   it('prefers disabled feedback over empty-pair feedback when refresh is disabled', async () => {

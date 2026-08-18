@@ -11,11 +11,12 @@ import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { HistoryList } from '../components/history';
 import { TaskPanel } from '../components/tasks';
-import { ShareImageButton } from '../components/report/ShareImageButton';
+import { ReportShareMenu } from '../components/report/ReportShareMenu';
 import { useAuth, useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { useStockIndex } from '../hooks/useStockIndex';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { formatDateTime, formatReportType } from '../utils/format';
+import { buildReportPdfFilename, exportReportToPdf } from '../utils/reportPdf';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
 import { searchStocks } from '../utils/searchStocks';
 
@@ -66,6 +67,7 @@ const HomePage: React.FC = () => {
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
   const marketReviewPollTimer = useRef<number | null>(null);
   const dashboardScrollRef = useRef<HTMLElement | null>(null);
+  const reportExportRef = useRef<HTMLDivElement | null>(null);
   const strategyMenuRef = useRef<HTMLDivElement | null>(null);
   const strategyButtonRef = useRef<HTMLButtonElement | null>(null);
   const strategyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -95,7 +97,6 @@ const HomePage: React.FC = () => {
 
   useEffect(() => stopMarketReviewPolling, [stopMarketReviewPolling]);
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
-
   const {
     query,
     inputError,
@@ -439,6 +440,20 @@ const HomePage: React.FC = () => {
       skills: selectedAnalysisSkills,
     });
   }, [selectedAnalysisSkills, selectedReport, submitAnalysis]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!selectedReport || !reportExportRef.current) {
+      throw new Error('Report content is not available for PDF export');
+    }
+
+    const reportTitle = selectedReport.meta.stockName || selectedReport.meta.stockCode;
+    const filename = buildReportPdfFilename(
+      reportTitle,
+      selectedReport.meta.stockCode,
+      reportLanguage,
+    );
+    await exportReportToPdf(reportExportRef.current, filename);
+  }, [reportLanguage, selectedReport]);
 
   const pollMarketReviewStatus = useCallback(
     async (taskId: string) => {
@@ -885,10 +900,11 @@ const HomePage: React.FC = () => {
                 <DashboardStateBlock title="加载报告中..." loading />
               </div>
             ) : selectedReport ? (
-              <div className="home-report-stack space-y-4 pb-8">
+              <div ref={reportExportRef} className="home-report-stack space-y-4 pb-8" data-pdf-report>
                 <div
                   data-testid="home-report-toolbar"
-                  className="ui-card ui-card-bordered ui-card-padding-sm flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                  data-pdf-hide
+                  className="ui-card ui-card-bordered ui-card-padding-sm z-20 !overflow-visible flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
                     <p className="ui-eyebrow">Analysis Report</p>
@@ -902,10 +918,11 @@ const HomePage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <ShareImageButton
+                    <ReportShareMenu
                       recordId={selectedReport.meta.id}
                       reportTitle={selectedReport.meta.stockName || selectedReport.meta.stockCode}
                       reportLanguage={reportLanguage}
+                      onExportPdf={handleExportPdf}
                     />
                     <Button
                       variant="outline"

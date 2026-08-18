@@ -812,7 +812,7 @@ const StockScreeningPage: React.FC = () => {
   const [candidates, setCandidates] = useState<ScreeningCandidate[]>([]);
   const [hotspots, setHotspots] = useState<ScreeningHotspot[]>([]);
   const [hotspotsUpdatedAt, setHotspotsUpdatedAt] = useState<string | null>(null);
-  const [hotspotsExpanded, setHotspotsExpanded] = useState(false);
+  const [hotspotsExpanded, setHotspotsExpanded] = useState(true);
   const [selectedHotspotTopic, setSelectedHotspotTopic] = useState<string | null>(null);
   const selectedHotspotTopicRef = useRef<string | null>(null);
   const hotspotDetailRequestIdRef = useRef(0);

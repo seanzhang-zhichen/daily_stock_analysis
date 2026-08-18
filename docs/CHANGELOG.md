@@ -8,7 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
-- [新功能] 迁移报告分享图能力，支持个股与大盘历史报告生成 AlphaLens 海报，单击后预览并提供剪切板复制/可靠的本地保存/系统分享，同时在 Web 免除服务端转图工具依赖、在桌面端使用内置 Chromium 长图渲染。
+- [改进] 恢复 Web 侧边栏“持仓”入口，登录用户可直接进入 `/portfolio` 查看和管理持仓。
+- [新功能] 持仓页支持归档账户、展示最新有效 AI 决策信号，并可对非零持仓提交异步单股分析任务。
+- [修复] 持仓流水与风险快照查询默认过滤已归档账户，持仓分析上下文不再进入任务列表、SSE 或历史上下文快照。
+- [改进] Web 选股页的热点题材默认展开，进入页面即可查看当前热点与详情。
+- [新功能] Web 报告“分享”菜单新增 PDF 导出，按需加载客户端生成链并将当前报告正文直接下载到本地，同时保留图表与表格、隐藏交互控件和管理员排障信息。
+- [修复] 修复 Web 报告导出 PDF 时桌面宽布局被 A4 画布裁切、重复页眉、卡片跨页断裂、股价图表覆盖表格及异常留白的问题。
+- [修复] 补齐热点题材依赖的 AkShare 可终止超时调用，修复刷新时因缺少 `_akshare_call_with_timeout` 而持续降级为空数据的问题。
+- [新功能] 迁移报告分享图能力，支持个股与大盘历史报告从“分享”菜单生成 AlphaLens 海报，预览后提供剪切板复制/可靠的本地保存/系统分享，同时在 Web 免除服务端转图工具依赖、在桌面端使用内置 Chromium 长图渲染。
 - [改进] 完善 `/usage` 用量看板，新增 Prompt/Completion 拆分、按模型单次峰值、最近调用明细和 `/api/v1/usage/dashboard` 接口。
 - [新功能] 移植持仓模块增强：新增 Futu OpenD 真实 LONG 正股只读分析入口，扩展日股、韩股、台股持仓契约，并补充实时估值开关、数据质量限制和 Web 风险展示。
 - [新功能] 移植完整告警中心，新增技术指标、自选股、持仓风险与大盘红绿灯规则，支持按用户管理、触发历史、通知尝试和持久化冷却。

@@ -206,6 +206,17 @@ class PortfolioPositionItem(BaseModel):
     limitations: List[str] = Field(default_factory=list)
 
 
+class PortfolioPositionAnalysisRequest(BaseModel):
+    """Request body for submitting an analysis task for a held position."""
+
+    account_id: Optional[int] = Field(
+        None,
+        description="Optional account id; required when the symbol is held in multiple accounts",
+    )
+    analysis_phase: Literal["auto", "premarket", "intraday", "postmarket"] = "auto"
+    force: bool = Field(False, description="Force refresh analysis inputs without bypassing duplicate tasks")
+
+
 class PortfolioAccountSnapshot(BaseModel):
     """Account-level holdings, cash, and PnL snapshot."""
 

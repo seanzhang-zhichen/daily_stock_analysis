@@ -37,7 +37,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   );
 
   return (
-    <div className="space-y-5 pb-8 animate-fade-in">
+    <div className="report-summary space-y-5 pb-8 animate-fade-in">
       {/* 概览区（首屏） */}
       <ReportOverview
         meta={meta}
@@ -61,7 +61,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
       {/* 分析模型标记（Issue #528）— 报告末尾 */}
       {shouldShowModel && (
-        <p className="px-1 text-xs text-muted-text">
+        <p className="px-1 text-xs text-muted-text" data-pdf-hide>
           {text.analysisModel}: {modelUsed}
         </p>
       )}

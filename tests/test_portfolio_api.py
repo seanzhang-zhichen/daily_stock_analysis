@@ -26,6 +26,7 @@ from api.app import create_app
 from api.deps import get_current_user
 from src.config import Config
 from src.services.portfolio_service import PortfolioBusyError
+from src.services.task_queue import DuplicateTaskError
 from src.storage import DatabaseManager
 
 
@@ -555,6 +556,136 @@ class PortfolioApiTestCase(unittest.TestCase):
     def test_event_list_invalid_page_size_returns_422(self) -> None:
         resp = self.client.get("/api/v1/portfolio/trades", params={"page_size": 101})
         self.assertEqual(resp.status_code, 422)
+
+    def test_position_analysis_submits_private_portfolio_context(self) -> None:
+        account = self.client.post(
+            "/api/v1/portfolio/accounts",
+            json={"name": "Main", "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+        ).json()
+        self.client.post(
+            "/api/v1/portfolio/trades",
+            json={
+                "account_id": account["id"],
+                "symbol": "600519",
+                "trade_date": "2026-01-02",
+                "side": "buy",
+                "quantity": 10,
+                "price": 100,
+                "market": "cn",
+                "currency": "CNY",
+            },
+        )
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = (
+            [SimpleNamespace(task_id="task-1", stock_code="600519")],
+            [],
+        )
+
+        with patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
+            response = self.client.post(
+                "/api/v1/portfolio/positions/600519/analysis",
+                json={"account_id": account["id"], "analysis_phase": "intraday"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["task_id"], "task-1")
+        self.assertNotIn("portfolio_context", response.json())
+        _, kwargs = queue.submit_tasks_batch.call_args
+        self.assertEqual(kwargs["query_source"], "portfolio")
+        self.assertEqual(kwargs["analysis_phase"], "intraday")
+        self.assertEqual(kwargs["user_id"], 1)
+        self.assertEqual(kwargs["portfolio_context"]["account_id"], account["id"])
+        self.assertEqual(kwargs["portfolio_context"]["quantity"], 10.0)
+
+    def test_position_analysis_requires_non_zero_position(self) -> None:
+        response = self.client.post(
+            "/api/v1/portfolio/positions/600519/analysis",
+            json={},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json().get("error"), "not_found")
+
+    def test_position_analysis_requires_account_when_symbol_is_held_twice(self) -> None:
+        for name in ("Main", "Second"):
+            account = self.client.post(
+                "/api/v1/portfolio/accounts",
+                json={"name": name, "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+            ).json()
+            self.client.post(
+                "/api/v1/portfolio/trades",
+                json={
+                    "account_id": account["id"],
+                    "symbol": "600519",
+                    "trade_date": "2026-01-02",
+                    "side": "buy",
+                    "quantity": 1,
+                    "price": 100,
+                    "market": "cn",
+                    "currency": "CNY",
+                },
+            )
+
+        response = self.client.post(
+            "/api/v1/portfolio/positions/600519/analysis",
+            json={},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "ambiguous_position_account")
+
+    def test_position_analysis_duplicate_returns_409_without_context(self) -> None:
+        account = self.client.post(
+            "/api/v1/portfolio/accounts",
+            json={"name": "Main", "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+        ).json()
+        self.client.post(
+            "/api/v1/portfolio/trades",
+            json={
+                "account_id": account["id"],
+                "symbol": "600519",
+                "trade_date": "2026-01-02",
+                "side": "buy",
+                "quantity": 1,
+                "price": 100,
+                "market": "cn",
+                "currency": "CNY",
+            },
+        )
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([], [DuplicateTaskError("600519", "existing-1")])
+
+        with patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
+            response = self.client.post(
+                "/api/v1/portfolio/positions/600519/analysis",
+                json={"account_id": account["id"]},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["existing_task_id"], "existing-1")
+        self.assertNotIn("portfolio_context", response.json())
+
+    def test_archived_account_is_hidden_from_default_portfolio_queries(self) -> None:
+        account = self.client.post(
+            "/api/v1/portfolio/accounts",
+            json={"name": "Archive me", "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+        ).json()
+        self.client.post(
+            "/api/v1/portfolio/cash-ledger",
+            json={
+                "account_id": account["id"],
+                "event_date": "2026-01-01",
+                "direction": "in",
+                "amount": 1000,
+                "currency": "CNY",
+            },
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/v1/portfolio/accounts/{account['id']}").status_code,
+            200,
+        )
+
+        self.assertEqual(self.client.get("/api/v1/portfolio/accounts").json()["accounts"], [])
+        self.assertEqual(self.client.get("/api/v1/portfolio/cash-ledger").json()["items"], [])
+        self.assertEqual(self.client.get("/api/v1/portfolio/snapshot").json()["accounts"], [])
 
 
 if __name__ == "__main__":

@@ -74,13 +74,13 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({ strategy, langua
   ];
 
   return (
-    <Card variant="bordered" padding="md">
+    <Card variant="bordered" padding="md" className="report-strategy">
       <DashboardPanelHeader
         eyebrow={text.strategyPoints}
         title={text.sniperLevels}
         className="mb-3"
       />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="report-strategy-grid grid grid-cols-2 md:grid-cols-4 gap-3">
         {strategyItems.map((item) => (
           <StrategyItem key={item.label} {...item} />
         ))}

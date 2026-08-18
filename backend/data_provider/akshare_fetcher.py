@@ -24,6 +24,7 @@ AkshareFetcher - 主数据源 (Priority 1)
 """
 
 import logging
+import multiprocessing
 import os
 import random
 import time
@@ -60,6 +61,9 @@ logger = logging.getLogger(__name__)
 
 SINA_REALTIME_ENDPOINT = "hq.sinajs.cn/list"
 TENCENT_REALTIME_ENDPOINT = "qt.gtimg.cn/q"
+_AKSHARE_HISTORY_CALL_TIMEOUT = 30.0
+_AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE = 1.0
+_AKSHARE_TIMEOUT_PROCESS_START_METHOD = "spawn"
 
 
 # User-Agent 池，用于随机轮换
@@ -250,6 +254,72 @@ def _build_realtime_failure_message(
         f"symbol={symbol}, category={category}, error_type={error_type}, "
         f"elapsed={elapsed:.2f}s, detail={detail}"
     )
+
+
+def _akshare_call_with_timeout(
+    func,
+    *args,
+    timeout: Optional[float] = None,
+    call_name: str = "akshare",
+    **kwargs,
+):
+    """Run an AkShare call in a subprocess with a bounded wait time."""
+    wait_seconds = _AKSHARE_HISTORY_CALL_TIMEOUT if timeout is None else float(timeout)
+
+    multiprocessing.freeze_support()
+    ctx = multiprocessing.get_context(_AKSHARE_TIMEOUT_PROCESS_START_METHOD)
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(
+        target=_akshare_timeout_worker,
+        args=(child_conn, func, args, kwargs),
+        name=f"akshare-{call_name}",
+        daemon=True,
+    )
+
+    process.start()
+    child_conn.close()
+
+    try:
+        if not parent_conn.poll(wait_seconds):
+            _terminate_akshare_process(process)
+            raise TimeoutError(f"{call_name} 调用超过 {wait_seconds:g}s，已放弃等待")
+
+        try:
+            ok, value = parent_conn.recv()
+        except EOFError as exc:
+            raise RuntimeError(f"{call_name} 调用进程未返回结果") from exc
+    finally:
+        parent_conn.close()
+        process.join(_AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE)
+        _terminate_akshare_process(process)
+
+    if ok:
+        return value
+    raise value
+
+
+def _akshare_timeout_worker(conn, func, args, kwargs) -> None:
+    try:
+        conn.send((True, func(*args, **kwargs)))
+    except BaseException as exc:
+        try:
+            conn.send((False, exc))
+        except BaseException:
+            try:
+                conn.send((False, RuntimeError(f"{type(exc).__name__}: {exc}")))
+            except BaseException:
+                pass
+    finally:
+        conn.close()
+
+
+def _terminate_akshare_process(process) -> None:
+    if process.is_alive():
+        process.terminate()
+        process.join(_AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE)
+    if process.is_alive():
+        process.kill()
+        process.join(_AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE)
 
 
 class AkshareFetcher(BaseFetcher):
