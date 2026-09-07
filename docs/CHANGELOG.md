@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 日线数据新增可空 `canonical_id` 双写与 Alembic 迁移，显式 A 股指数与同码个股在历史存储中保持独立身份。
+- [修复] 接入 `TUSHARE_HTTP_URL` 自建网关配置，并修正东财 ETF 历史 K 线请求使用交易所 `secid`，避免 ETF 路由到错误证券。
+- [改进] 新闻检索为空时区分未配置搜索渠道与零命中，并在中英韩报告、历史详情和 Web 新闻区如实披露证据边界。
+- [改进] A股股票名称解析统一 NFKC/去空白归一，提升全角名称、内嵌空格和拼音/模糊匹配的稳定性。
+- [新功能] 增加常用 A 股指数身份注册表及代码/名称别名解析，避免指数代码与个股代码冲突。
+- [改进] 增加腾讯直连 A 股日 K 线最终兜底，并支持通过 `TENCENT_PRIORITY` 调整其优先级。
+- [新功能] A股分析新增市场结构与题材主线上下文，贯通LLM、Agent、历史报告、DecisionSignal与Web市场位置卡。
+- [新功能] A 股个股分析接入当日大盘环境摘要；高风险或退潮环境下自动将激进买入建议软化为观望并限制仓位。
+- [文档] 为 `.env.example` 中所有环境变量补充中文内联注释，便于查阅配置用途。
+- [改进] 热点题材详情与摘要现在最多展示每个题材前 10 只核心股。
+- [改进] 热点题材列表默认每 10 分钟自动刷新，并新增 `SCREENING_HOTSPOT_CACHE_TTL_SEC` 配置项；过期刷新失败时继续回退最近可用快照。
+- [改进] 对齐大盘复盘内容能力：新增日股/韩股市场 profile、概念题材涨跌榜字段，并强化行业与概念主线的报告提示。
 - [改进] 恢复 Web 侧边栏“持仓”入口，登录用户可直接进入 `/portfolio` 查看和管理持仓。
 - [新功能] 持仓页支持归档账户、展示最新有效 AI 决策信号，并可对非零持仓提交异步单股分析任务。
 - [修复] 持仓流水与风险快照查询默认过滤已归档账户，持仓分析上下文不再进入任务列表、SSE 或历史上下文快照。

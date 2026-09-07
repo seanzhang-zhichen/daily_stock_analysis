@@ -19,7 +19,7 @@ import random
 import time
 from threading import BoundedSemaphore, RLock, Thread
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Optional, List, Tuple, Dict, Any
 
 import pandas as pd
@@ -523,6 +523,7 @@ class DataFetcherManager:
         "BaostockFetcher": {"cn"},
         "YfinanceFetcher": {"cn", "hk", "us"},
         "LongbridgeFetcher": {"hk", "us"},
+        "TencentFetcher": {"cn"},
         "FinnhubFetcher": {"us"},
         "AlphaVantageFetcher": {"us"},
     }
@@ -1018,6 +1019,7 @@ class DataFetcherManager:
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
         from .longbridge_fetcher import LongbridgeFetcher
+        from .tencent_fetcher import TencentFetcher
         config = get_config()
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
@@ -1025,6 +1027,7 @@ class DataFetcherManager:
         pytdx = PytdxFetcher()      # 通达信数据源（可配 PYTDX_HOST/PYTDX_PORT）
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
+        tencent = TencentFetcher()
         optional_fetchers: List[BaseFetcher] = []
 
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
@@ -1066,6 +1069,7 @@ class DataFetcherManager:
                 pytdx,
                 baostock,
                 yfinance,
+                tencent,
                 *optional_fetchers,
             ]
 
@@ -1084,6 +1088,52 @@ class DataFetcherManager:
             self._fetchers.append(fetcher)
             self._fetchers.sort(key=lambda f: f.priority)
             self._refresh_fetcher_indexes_locked()
+
+    def _get_a_share_index_daily_data(
+        self,
+        target: Any,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        days: int,
+    ) -> Tuple[pd.DataFrame, str]:
+        """Fetch an explicit A-share index through index-capable providers.
+
+        Index symbols must stay exchange-qualified.  In particular, sending
+        ``000300`` to a normal stock endpoint can return a different security
+        (or silently empty data), so the provider chain is deliberately small
+        and receives ``target.canonical_id`` unchanged.
+        """
+        if not start_date or not end_date:
+            end = datetime.now().date()
+            end_date = end_date or end.strftime("%Y-%m-%d")
+            start_date = start_date or (end - timedelta(days=max(30, int(days) * 2))).strftime("%Y-%m-%d")
+        names = ["AkshareFetcher", "TencentFetcher", "YfinanceFetcher"]
+        available = {fetcher.name: fetcher for fetcher in self._get_fetchers_snapshot()}
+        errors: list[str] = []
+        for name in names:
+            fetcher = available.get(name)
+            if fetcher is None or not self._is_fetcher_available(fetcher, capability="daily_data"):
+                continue
+            # CSI indices are not accepted by Tencent/YFinance in this
+            # project; AkShare is retained in the chain for future support.
+            if (getattr(target, "exchange", "") or "").upper() == "CSI" and name != "AkshareFetcher":
+                continue
+            try:
+                frame = self._call_fetcher_method(
+                    fetcher,
+                    "get_daily_data",
+                    stock_code=target.canonical_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    days=days,
+                )
+                if frame is not None and not frame.empty:
+                    return frame, name
+            except Exception as exc:
+                errors.append(f"[{name}] {type(exc).__name__}: {exc}")
+                logger.warning("[指数数据源失败] %s via %s: %s", target.canonical_id, name, exc)
+        logger.warning("[指数数据源终止] %s: %s", target.canonical_id, "; ".join(errors) or "暂无可用数据源")
+        return pd.DataFrame(columns=STANDARD_COLUMNS), ""
     
     def get_daily_data(
         self, 
@@ -1116,8 +1166,27 @@ class DataFetcherManager:
         """
         from .us_index_mapping import is_us_index_code, is_us_stock_code
 
-        # Normalize code (strip SH/SZ prefix etc.)
-        stock_code = normalize_stock_code(stock_code)
+        # Preserve explicit registered index identity; bare numeric inputs keep
+        # the historical stock semantics.
+        raw_stock_code = (stock_code or "").strip()
+        index_target = None
+        try:
+            from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+            candidate = parse_analysis_target(raw_stock_code)
+            if candidate.status == ParseStatus.UNSUPPORTED:
+                raise DataFetchError(
+                    f"{raw_stock_code}: {candidate.unsupported_reason or 'unsupported analysis target'}"
+                )
+            if candidate.status == ParseStatus.INDEX and raw_stock_code:
+                index_target = candidate
+                stock_code = candidate.canonical_id
+            else:
+                stock_code = normalize_stock_code(stock_code)
+        except ImportError:
+            stock_code = normalize_stock_code(stock_code)
+
+        if index_target is not None:
+            return self._get_a_share_index_daily_data(index_target, start_date, end_date, days)
 
         fetchers = self._get_fetchers_snapshot()
         errors = []
@@ -1130,7 +1199,10 @@ class DataFetcherManager:
         is_us_index = is_us_index_code(stock_code)
         is_us = is_us_index or is_us_stock_code(stock_code)
         is_hk = (not is_us) and _is_hk_market(stock_code)
-        if is_hk:
+        if index_target is not None:
+            allowed = {"TencentFetcher", "AkshareFetcher", "YfinanceFetcher"}
+            fetchers = [f for f in fetchers if f.name in allowed]
+        elif is_hk:
             fetchers = self._filter_daily_fetchers_for_market(fetchers, "hk")
         fetchers = self._filter_fetchers_by_capability(fetchers, capability="daily_data")
         total_fetchers = len(fetchers)
@@ -1259,8 +1331,18 @@ class DataFetcherManager:
         Returns:
             预取的股票数量（0 表示跳过预取）
         """
-        # Normalize all codes
-        stock_codes = [normalize_stock_code(c) for c in stock_codes]
+        # Normalize stocks while preserving explicit index identities.
+        normalized_codes = []
+        for code in stock_codes:
+            try:
+                from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+                target = parse_analysis_target(code)
+                normalized_codes.append(
+                    target.canonical_id if target.status == ParseStatus.INDEX else normalize_stock_code(code)
+                )
+            except Exception:
+                normalized_codes.append(normalize_stock_code(code))
+        stock_codes = normalized_codes
 
         from src.config import get_config
 
@@ -1293,7 +1375,7 @@ class DataFetcherManager:
         
         # 如果没有全量数据源，或者全量数据源排在第 3 位之后，跳过预取
         if first_bulk_source_index is None or first_bulk_source_index >= 2:
-            logger.info(f"[预取] 当前优先级使用轻量级数据源(sina/tencent)，无需预取")
+            logger.info("[预取] 当前优先级使用轻量级数据源(sina/tencent)，无需预取")
             return 0
         
         # 如果股票数量少于 5 个，不进行批量预取（逐个查询更高效）
@@ -1311,10 +1393,10 @@ class DataFetcherManager:
             quote = self.get_realtime_quote(first_code)
             
             if quote:
-                logger.info(f"[预取] 批量预取完成，缓存已填充")
+                logger.info("[预取] 批量预取完成，缓存已填充")
                 return len(stock_codes)
             else:
-                logger.warning(f"[预取] 批量预取失败，将使用逐个查询模式")
+                logger.warning("[预取] 批量预取失败，将使用逐个查询模式")
                 return 0
                 
         except Exception as e:
@@ -1342,8 +1424,19 @@ class DataFetcherManager:
             UnifiedRealtimeQuote 对象，所有数据源都失败则返回 None
         """
         raw_stock_code = (stock_code or "").strip()
-        # Normalize code (strip SH/SZ prefix etc.)
-        stock_code = normalize_stock_code(stock_code)
+        index_target = None
+        try:
+            from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+            parsed = parse_analysis_target(raw_stock_code)
+            if parsed.status == ParseStatus.UNSUPPORTED:
+                return None
+            if parsed.status == ParseStatus.INDEX:
+                index_target = parsed
+                stock_code = parsed.canonical_id
+            else:
+                stock_code = normalize_stock_code(stock_code)
+        except ImportError:
+            stock_code = normalize_stock_code(stock_code)
 
         from .akshare_fetcher import _is_us_code
         from .us_index_mapping import is_us_index_code
@@ -1354,6 +1447,21 @@ class DataFetcherManager:
         # 如果实时行情功能被禁用，直接返回 None
         if not config.enable_realtime_quote:
             logger.debug(f"[实时行情] 功能已禁用，跳过 {stock_code}")
+            return None
+
+        if index_target is not None:
+            # Index quotes must retain their exchange-qualified identity so
+            # 000001 (stock) cannot collide with sh000001 (index).
+            for source in ("tencent", "sina", "em"):
+                fetcher = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
+                if fetcher is None:
+                    break
+                try:
+                    quote = self._call_fetcher_method(fetcher, "get_realtime_quote", stock_code, source=source)
+                    if quote is not None and quote.has_basic_data():
+                        return quote
+                except Exception as exc:
+                    logger.debug("Index realtime quote failed: %s/%s: %s", stock_code, source, exc)
             return None
 
         # ----------------------------------------------------------
@@ -1647,6 +1755,13 @@ class DataFetcherManager:
             股票中文名称，所有数据源都失败则返回 None
         """
         raw_stock_code = (stock_code or "").strip()
+        try:
+            from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+            index_target = parse_analysis_target(raw_stock_code)
+            if index_target.status == ParseStatus.INDEX and index_target.matched_index is not None:
+                return index_target.matched_index.name
+        except ImportError:
+            pass
         # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
         static_name = STOCK_NAME_MAP.get(stock_code)
@@ -1733,7 +1848,17 @@ class DataFetcherManager:
         """
         if not stock_codes:
             return
-        stock_codes = [normalize_stock_code(c) for c in stock_codes]
+        normalized_codes = []
+        for code in stock_codes:
+            try:
+                from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+                target = parse_analysis_target(code)
+                normalized_codes.append(
+                    target.canonical_id if target.status == ParseStatus.INDEX else normalize_stock_code(code)
+                )
+            except Exception:
+                normalized_codes.append(normalize_stock_code(code))
+        stock_codes = normalized_codes
         if use_bulk:
             self.batch_get_stock_names(stock_codes)
             return

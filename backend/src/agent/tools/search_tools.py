@@ -9,6 +9,7 @@ Tools:
 
 import logging
 
+from src.agent.news_evidence import record_news_evidence
 from src.agent.tools.registry import ToolParameter, ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,14 @@ def _handle_search_stock_news(stock_code: str, stock_name: str) -> dict:
     response = service.search_stock_news(stock_code, stock_name, max_results=5)
 
     if not response.success:
+        record_news_evidence(0)
         return {
             "query": response.query,
             "success": False,
             "error": response.error_message,
         }
+
+    record_news_evidence(len(response.results))
 
     _persist_news_response(
         stock_code=stock_code,
@@ -150,6 +154,7 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
     )
 
     if not intel_results:
+        record_news_evidence(0)
         return {"error": "Comprehensive intel search returned no results"}
 
     # Format into readable report
@@ -157,8 +162,10 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
 
     # Also return structured data
     dimensions = {}
+    total_results = 0
     for dim_name, response in intel_results.items():
         if response and response.success:
+            total_results += len(response.results)
             _persist_news_response(
                 stock_code=stock_code,
                 stock_name=stock_name,
@@ -177,6 +184,8 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
                     for r in response.results[:3]  # limit to 3 per dimension to save tokens
                 ],
             }
+
+    record_news_evidence(total_results)
 
     return {
         "report": report,

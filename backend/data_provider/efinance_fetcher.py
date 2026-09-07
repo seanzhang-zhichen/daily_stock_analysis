@@ -108,6 +108,21 @@ logger = logging.getLogger(__name__)
 
 EASTMONEY_HISTORY_ENDPOINT = "push2his.eastmoney.com/api/qt/stock/kline/get"
 
+_ETF_SH_PREFIXES = ("51", "52", "56", "58")
+_ETF_SZ_PREFIXES = ("15", "16", "18")
+
+
+def _build_eastmoney_etf_secid(stock_code: str) -> str:
+    """Build Eastmoney exchange-qualified secid for an A-share ETF."""
+    code = normalize_stock_code(stock_code)
+    if not code.isdigit() or len(code) != 6:
+        raise DataFetchError(f"Invalid ETF code: {stock_code}")
+    if code.startswith(_ETF_SH_PREFIXES):
+        return f"1.{code}"
+    if code.startswith(_ETF_SZ_PREFIXES):
+        return f"0.{code}"
+    raise DataFetchError(f"Unsupported A-share ETF exchange: {stock_code}")
+
 
 # User-Agent 池，用于随机轮换
 USER_AGENTS = [
@@ -481,8 +496,9 @@ class EfinanceFetcher(BaseFetcher):
         # Format dates (efinance uses YYYYMMDD)
         beg_date = start_date.replace('-', '')
         end_date_fmt = end_date.replace('-', '')
+        secid = _build_eastmoney_etf_secid(stock_code)
 
-        logger.info(f"[API调用] ef.stock.get_quote_history(stock_codes={stock_code}, "
+        logger.info(f"[API调用] ef.stock.get_quote_history(stock_codes={secid}, "
                      f"beg={beg_date}, end={end_date_fmt}, klt=101, fqt=1)  [ETF]")
 
         api_start = time.time()
@@ -490,7 +506,7 @@ class EfinanceFetcher(BaseFetcher):
             # ETFs are exchange-traded securities; use the stock API to get full OHLCV data
             df = _ef_call_with_timeout(
                 ef.stock.get_quote_history,
-                stock_codes=stock_code,
+                stock_codes=secid,
                 beg=beg_date,
                 end=end_date_fmt,
                 klt=101,  # daily

@@ -670,6 +670,11 @@ class AgentExecutor:
                 parts.append(f"\n[系统已获取的筹码分布]\n{json.dumps(context['chip_distribution'], ensure_ascii=False)}")
             if context.get("fundamental_context"):
                 parts.append(f"\n[系统已获取的基本面上下文]\n{json.dumps(context['fundamental_context'], ensure_ascii=False, default=str)}")
+            if context.get("market_structure_context"):
+                parts.append(
+                    f"\n[系统已获取的A股市场结构与题材上下文]\n"
+                    f"{json.dumps(context['market_structure_context'], ensure_ascii=False, default=str)}"
+                )
             if context.get("stock_profile"):
                 parts.append(f"\n[系统已完成的 Deep Research 股票基本情况]\n{json.dumps(context['stock_profile'], ensure_ascii=False, default=str)}")
             if context.get("news_context"):

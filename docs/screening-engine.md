@@ -26,6 +26,7 @@ SCREENING_SNAPSHOT_CACHE_TTL_SEC=300
 SCREENING_SOURCE_CALL_TIMEOUT_SEC=
 SCREENING_HOTSPOT_CALL_TIMEOUT_SEC=8
 SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC=12
+SCREENING_HOTSPOT_CACHE_TTL_SEC=600
 SCREENING_SNAPSHOT_CALL_TIMEOUT_SEC=60
 SCREENING_DAILY_CALL_TIMEOUT_SEC=20
 SCREENING_EASTMONEY_MIN_INTERVAL_SEC=1.0
@@ -41,7 +42,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 | `/api/v1/screening/status` | GET | 返回开关、引擎状态、契约版本、参考项目和数据源健康信息 |
 | `/api/v1/screening/strategies` | GET | 返回选股策略 |
 | `/api/v1/screening/hotspots` | GET | 读取缓存或显式刷新热点题材 |
-| `/api/v1/screening/hotspots/{topic}` | GET | 返回题材路线、成分股与核心股；`include_search=true` 时按需搜索近期消息 |
+| `/api/v1/screening/hotspots/{topic}` | GET | 返回题材路线、成分股与最多 10 只核心/高热度股票；`include_search=true` 时按需搜索近期消息 |
 | `/api/v1/screening/screen` | POST | 同步执行选股；可传匿名 `variant_seed` 在每次运行中生成有界的近分候选组合 |
 | `/api/v1/screening/screen/tasks` | POST | 提交后台选股任务；请求字段与同步接口一致 |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询任务进度、错误或最终结果 |
@@ -92,7 +93,7 @@ Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随�
 | 全市场快照 | `data/screening/snapshot.last_good.json` | 默认 5 分钟内直接复用且不标记 fallback；过期后请求实时源，实时源全部失败时仍可按最大陈旧时间约束回退并标记 stale/fallback |
 | 个股日 K | `data/screening/daily_history/` | 按代码、来源和回看窗口分键，默认 TTL 24 小时；实时源全部失败时可使用过期缓存并标记 stale |
 | 行业/概念映射 | `data/screening/industry_provider_cache/` | 默认 TTL 24 小时，并保存板块热度历史用于趋势计算 |
-| 热点列表与历史 | `data/screening/hotspots.json`、`hotspot.history.jsonl` | 显式刷新写入；实时失败时回退最近可用快照 |
+| 热点列表与历史 | `data/screening/hotspots.json`、`hotspot.history.jsonl` | 缓存默认 TTL 10 分钟（`SCREENING_HOTSPOT_CACHE_TTL_SEC`，设为 `0` 关闭新鲜缓存复用）；过期后自动刷新，实时失败时回退最近可用快照 |
 | 热点详情 | `data/screening/hotspot_details/` | 默认 TTL 30 分钟；只缓存结构化基础详情，显式消息搜索不写入或续期该缓存；实时失败时可回退过期详情并返回陈旧时长 |
 | DSA 实时行情 | `DataFetcherManager` 的行情缓存 | 默认 TTL 10 分钟，沿用 `REALTIME_CACHE_TTL` |
 | DSA 基本面/资金流 | `DataFetcherManager` 的基本面缓存 | 默认 TTL 120 秒，沿用 `FUNDAMENTAL_CACHE_TTL_SECONDS` |

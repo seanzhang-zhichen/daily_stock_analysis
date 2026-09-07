@@ -72,6 +72,17 @@ def _is_us_code(stock_code: str) -> bool:
     return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code))
 
 
+def _resolve_tushare_http_url() -> Optional[str]:
+    """Return a validated custom Tushare-compatible endpoint, if configured."""
+    raw = os.getenv("TUSHARE_HTTP_URL")
+    if raw is None or not raw.strip():
+        return None
+    url = raw.strip()
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("TUSHARE_HTTP_URL must start with http:// or https://")
+    return url
+
+
 class _TushareHttpClient:
     """Lightweight Tushare Pro client that does not require the tushare SDK."""
 
@@ -182,7 +193,10 @@ class TushareFetcher(BaseFetcher):
         The project already normalizes all Pro calls through the same request
         contract, so we do not need the official tushare SDK during runtime.
         """
-        client = _TushareHttpClient(token=token)
+        api_url = _resolve_tushare_http_url()
+        if api_url:
+            logger.info("Tushare using custom HTTP endpoint: %s", api_url)
+        client = _TushareHttpClient(token=token, api_url=api_url or "http://api.tushare.pro")
         logger.debug("Tushare API client configured for direct HTTP calls")
         return client
 

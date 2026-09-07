@@ -96,6 +96,29 @@ export interface SectorRankings {
   bottom?: SectorRankingItem[];
 }
 
+export interface MarketStructureContext {
+  schemaVersion?: string;
+  status?: 'ok' | 'partial' | 'unknown' | 'not_supported' | string;
+  market?: string;
+  tradeDate?: string;
+  marketThemeContext?: {
+    status?: string;
+    activeThemes?: Array<{ name?: string; changePct?: number; phase?: string }>;
+    leadingIndustries?: Array<{ name?: string; changePct?: number }>;
+    leadingConcepts?: Array<{ name?: string; changePct?: number }>;
+    dataQuality?: { missingFields?: string[] };
+  };
+  stockMarketPosition?: {
+    status?: string;
+    primaryTheme?: { name?: string; source?: string; phase?: string; rank?: number; changePct?: number };
+    relatedBoards?: Array<{ name?: string; source?: string; rank?: number; changePct?: number }>;
+    stockRole?: string;
+    themePhase?: string;
+    riskTags?: Array<{ code?: string; message?: string }>;
+    missingFields?: string[];
+  };
+}
+
 export interface PriceHistoryItem {
   code: string;
   date: string;
@@ -122,6 +145,7 @@ export interface StockProfile {
 
 /** Details section */
 export interface ReportDetails {
+  emptyNewsDisclosure?: string;
   newsContent?: string;
   rawResult?: Record<string, unknown>;
   contextSnapshot?: Record<string, unknown>;
@@ -130,6 +154,7 @@ export interface ReportDetails {
   stockProfile?: StockProfile;
   belongBoards?: RelatedBoard[];
   sectorRankings?: SectorRankings;
+  marketStructureContext?: MarketStructureContext;
   priceHistory?: PriceHistoryItem[];
 }
 

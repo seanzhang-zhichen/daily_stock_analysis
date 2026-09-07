@@ -49,6 +49,8 @@ from src.report_language import (
 )
 from src.schemas.report_schema import AnalysisReportSchema
 from src.market_context import get_market_role, get_market_guidelines
+from src.services.daily_market_context import format_daily_market_context_prompt_section
+from src.market_structure_prompt import format_market_structure_prompt_section
 
 logger = logging.getLogger(__name__)
 
@@ -1374,6 +1376,10 @@ class AnalysisResult:
     raw_response: Optional[str] = None  # 原始响应（调试用）
     search_performed: bool = False  # 是否执行了联网搜索
     data_sources: str = ""  # 数据来源说明
+    market_structure_context: Optional[Dict[str, Any]] = None
+    news_result_count: Optional[int] = None
+    news_result_count_known: bool = True
+    news_evidence_present: bool = False
     success: bool = True
     error_message: Optional[str] = None
 
@@ -1418,6 +1424,10 @@ class AnalysisResult:
             'risk_warning': self.risk_warning,
             'buy_reason': self.buy_reason,
             'market_snapshot': self.market_snapshot,
+            'market_structure_context': self.market_structure_context,
+            'news_result_count': self.news_result_count,
+            'news_result_count_known': self.news_result_count_known,
+            'news_evidence_present': self.news_evidence_present,
             'search_performed': self.search_performed,
             'success': self.success,
             'error_message': self.error_message,
@@ -3092,6 +3102,20 @@ class GeminiAnalyzer:
 - 当数据缺失时，请使用中文直接说明“{no_data_text}，无法判断”。
 """
         
+        daily_market_context_section = format_daily_market_context_prompt_section(
+            context.get("daily_market_context") if isinstance(context, dict) else None,
+            report_language=report_language,
+        )
+        if daily_market_context_section:
+            prompt += daily_market_context_section
+
+        market_structure_section = format_market_structure_prompt_section(
+            context.get("market_structure_context") if isinstance(context, dict) else None,
+            report_language=report_language,
+        )
+        if market_structure_section:
+            prompt += market_structure_section
+
         return prompt
     
     def _format_volume(self, volume: Optional[float]) -> str:

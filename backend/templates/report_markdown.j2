@@ -7,6 +7,9 @@
 
 {% for e in enriched %}
 {{ e.signal_emoji }} **{{ e.stock_name }}({{ e.result.code }})**: {{ e.localized_operation_advice }} | {{ labels.score_label }} {{ e.result.sentiment_score }} | {{ e.localized_trend_prediction }}
+{% if e.empty_news_disclosure %}
+{{ e.empty_news_disclosure }}
+{% endif %}
 {% endfor %}
 
 ---
@@ -20,6 +23,10 @@
 {% set data_persp = dashboard.get('data_perspective') or {} %}
 
 ## {{ e.signal_emoji }} {{ e.stock_name }} ({{ result.code }})
+
+{% if e.empty_news_disclosure %}
+{{ e.empty_news_disclosure }}
+{% endif %}
 
 {% if result.stock_profile and result.stock_profile.get('research_report') %}
 ### 🧭 {{ labels.stock_profile_heading }}

@@ -624,7 +624,7 @@ const getHotspotSummaryText = (detail: ScreeningHotspotDetail, hotspot?: Screeni
   const stage = summaryDetail.stage ?? hotspot?.stage ?? hotspot?.state;
   const rawLeaders = summaryDetail.leaders ?? hotspot?.leaders;
   const leaders = Array.isArray(rawLeaders)
-    ? rawLeaders.map((value) => String(value).trim()).filter(Boolean).slice(0, 3)
+    ? rawLeaders.map((value) => String(value).trim()).filter(Boolean).slice(0, 10)
     : [];
   const parts: string[] = [];
   if (heatScore != null && !Number.isNaN(Number(heatScore))) {
@@ -654,7 +654,7 @@ const buildHotspotPreviewDetail = (hotspot: ScreeningHotspot): ScreeningHotspotD
     descriptionParts.push(`阶段 ${stage}`);
   }
   if (leaders.length > 0) {
-    descriptionParts.push(`核心股 ${leaders.slice(0, 3).join('、')}`);
+    descriptionParts.push(`核心股 ${leaders.slice(0, 10).join('、')}`);
   }
   const stocks = (hotspot.leaderStocks || []).slice(0, 10);
   return {
@@ -715,9 +715,16 @@ const formatHotspotMetric = (value: unknown, digits = 1) => {
 };
 
 const getHotspotLeadersText = (item: ScreeningHotspot) => {
-  const leaders = (item.leaders || []).map((value) => String(value).trim()).filter(Boolean);
+  const leaders = [
+    ...(item.leaderStocks || []).map((stock) => stock.name || stock.code || ''),
+    ...(item.leaders || []),
+  ]
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 3);
   if (leaders.length > 0) {
-    return leaders.slice(0, 2).join('、');
+    return leaders.map((leader, index) => `龙${['一', '二', '三'][index]} ${leader}`).join('、');
   }
   return '观察中';
 };

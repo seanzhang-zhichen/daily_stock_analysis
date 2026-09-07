@@ -55,6 +55,7 @@ DSA_SCREENING_DATA_DIR = Path("data") / "screening"
 DSA_SCREENING_HOTSPOT_CACHE_PATH = DSA_SCREENING_DATA_DIR / "hotspots.json"
 DSA_SCREENING_HOTSPOT_HISTORY_PATH = DSA_SCREENING_DATA_DIR / "hotspot.history.jsonl"
 DSA_SCREENING_MIN_HOTSPOT_CACHE_COUNT = 3
+DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS = 10 * 60
 DSA_SCREENING_HOTSPOT_DETAIL_CACHE_TTL_SECONDS = 30 * 60
 DSA_SCREENING_HOTSPOT_EVENT_SUMMARY_MAX_CHARS = 90
 DSA_SCREENING_HOTSPOT_PREFETCH_DETAIL_COUNT = 8
@@ -184,6 +185,15 @@ def _load_screening_hotspot_detail_cache(
     payload = raw.get("payload") if isinstance(raw, dict) else None
     if not isinstance(payload, dict):
         return None
+    # Do not treat a degraded leader-only response as a complete detail cache.
+    # Such payloads are useful as an explicit stale fallback, but reusing them
+    # as fresh data makes every subsequent click appear to have one constituent.
+    if not allow_stale and (
+        bool(payload.get("fallback_used"))
+        or bool(payload.get("stale"))
+        or "live_stocks" in _list_text_values(payload.get("missing_fields"))
+    ):
+        return None
     cached_at = raw.get("cached_at") or payload.get("cached_at")
     cached_dt = _parse_cache_datetime(cached_at)
     if cached_dt is None:
@@ -267,7 +277,29 @@ def _extract_nested_hotspot_leader_stocks(payload: Dict[str, Any]) -> List[Any]:
     return []
 
 
-def _load_screening_hotspot_cache(*, provider: str, top: int) -> Optional[Dict[str, Any]]:
+def _screening_hotspot_cache_ttl_seconds() -> Optional[float]:
+    """Return the hotspot-list cache TTL; ``0`` disables fresh-cache reuse."""
+    raw = os.getenv("SCREENING_HOTSPOT_CACHE_TTL_SEC")
+    if raw is None or not raw.strip():
+        return float(DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS)
+    try:
+        ttl = float(raw.strip())
+    except (TypeError, ValueError):
+        logger.warning(
+            "SCREENING_HOTSPOT_CACHE_TTL_SEC=%r is not a valid number; falling back to %ss",
+            raw,
+            DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS,
+        )
+        return float(DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS)
+    return ttl if ttl > 0 else None
+
+
+def _load_screening_hotspot_cache(
+    *,
+    provider: str,
+    top: int,
+    allow_stale: bool = False,
+) -> Optional[Dict[str, Any]]:
     cache_path = _screening_hotspot_cache_path()
     try:
         raw = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -293,6 +325,16 @@ def _load_screening_hotspot_cache(*, provider: str, top: int) -> Optional[Dict[s
         )
         return None
 
+    cached_at = raw.get("cached_at") or payload.get("cached_at") or raw.get("generated_at")
+    cached_dt = _parse_cache_datetime(cached_at)
+    age_seconds: Optional[float] = None
+    if cached_dt is not None:
+        age_seconds = max(0.0, (datetime.now(timezone.utc) - cached_dt).total_seconds())
+    ttl_seconds = _screening_hotspot_cache_ttl_seconds()
+    stale = cached_dt is None or ttl_seconds is None or age_seconds > ttl_seconds
+    if stale and not allow_stale:
+        return None
+
     selected = hotspots[:top_count]
     cached = dict(payload)
     cached.update({
@@ -301,8 +343,13 @@ def _load_screening_hotspot_cache(*, provider: str, top: int) -> Optional[Dict[s
         "hotspots": selected,
         "hotspot_count": len(selected),
         "cache_used": True,
-        "cached_at": raw.get("cached_at") or payload.get("cached_at"),
+        "cached_at": cached_at,
+        "stale": stale,
+        "stale_age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "stale_age_hours": round(age_seconds / 3600, 3) if age_seconds is not None else None,
     })
+    if stale:
+        cached["fallback_used"] = True
     cached["source_errors"] = list(cached.get("source_errors") or [])
     return _remove_non_finite_json_values(cached)
 
@@ -983,10 +1030,6 @@ class ScreeningService:
             cached = _load_screening_hotspot_cache(provider=provider_name, top=top_count)
             if cached is not None:
                 return _attach_cached_hotspot_details(cached, provider=provider_name, top=top_count) if include_details else cached
-            return _empty_screening_hotspot_payload(
-                provider=provider_name,
-                message="No cached Screening hotspot snapshot. Click refresh to fetch live hotspots.",
-            )
 
         try:
             # Hotspot providers receive their runtime inputs explicitly. Do not
@@ -1002,7 +1045,11 @@ class ScreeningService:
         except HTTPException:
             raise
         except Exception as exc:
-            cached = _load_screening_hotspot_cache(provider=provider_name, top=top_count)
+            cached = _load_screening_hotspot_cache(
+                provider=provider_name,
+                top=top_count,
+                allow_stale=True,
+            )
             if cached is not None:
                 errors = list(cached.get("source_errors") or [])
                 errors.append(f"live refresh failed: {exc}")
@@ -1049,7 +1096,11 @@ class ScreeningService:
             cache_rows = _enrich_hotspot_rows_from_provider(cache_rows, provider_arg, top=cache_top_count)
         selected = cache_rows[:top_count]
         if not selected and source_errors:
-            cached = _load_screening_hotspot_cache(provider=provider_name, top=top_count)
+            cached = _load_screening_hotspot_cache(
+                provider=provider_name,
+                top=top_count,
+                allow_stale=True,
+            )
             if cached is not None:
                 errors = list(cached.get("source_errors") or [])
                 errors.extend(source_errors)
@@ -1343,7 +1394,7 @@ def _normalize_screening_hotspot_detail(detail: Any, *, provider: str, requested
         if isinstance(summary_text_value, str)
         else _build_screening_hotspot_summary_text(summary, topic=topic, canonical_topic=canonical_topic)
     )
-    return _ensure_hotspot_detail_compat_fields({
+    normalized = _ensure_hotspot_detail_compat_fields({
         "enabled": True,
         "provider": provider,
         "topic": topic,
@@ -1364,6 +1415,10 @@ def _normalize_screening_hotspot_detail(detail: Any, *, provider: str, requested
         "stale_age_hours": summary.get("stale_age_hours") or raw.get("stale_age_hours"),
         "resolver_candidates": _list_dict_values(summary.get("resolver_candidates") or raw.get("resolver_candidates")),
     })
+    # A leader-only fallback is a preview, not a complete constituent count.
+    if "live_stocks" in missing_fields:
+        normalized["stock_count"] = 0
+    return normalized
 
 
 def _list_text_values(value: Any) -> List[str]:
@@ -1931,6 +1986,7 @@ def _build_screening_runtime_env(config: Config, *, max_results: Optional[int] =
     put_default("SNAPSHOT_SOURCE_PRIORITY", _resolve_screening_snapshot_source_priority(config))
     screening_data_dir = _resolve_screening_data_dir()
     put_default("SCREENING_DATA_DIR", str(screening_data_dir))
+    put_default("SCREENING_HOTSPOT_CACHE_TTL_SEC", str(DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS))
     put_default("SCREENING_FALLBACK_SNAPSHOT_PATH", str(screening_data_dir / "snapshot.last_good.json"))
     put_default("SCREENING_DAILY_HISTORY_CACHE_DIR", str(screening_data_dir / "daily_history"))
     put_default("SCREENING_INDUSTRY_PROVIDER_CACHE_DIR", str(screening_data_dir / "industry_provider_cache"))
@@ -2818,6 +2874,8 @@ class DsaEastMoneyHotspotProvider:
             "name": name,
             "change_pct": None,
             "hot_stock_score": 60.0,
+            "fallback_used": True,
+            "source": "board_change_leader_fallback",
         }])
 
     def _related_hotspot_constituents(self, topic: str) -> Any:

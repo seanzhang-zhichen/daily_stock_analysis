@@ -46,6 +46,7 @@ from src.report_language import (
 )
 from bot.models import BotMessage
 from src.utils.data_processing import normalize_model_used
+from src.services.empty_news import empty_news_disclosure
 from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
@@ -748,6 +749,9 @@ class NotificationService(
                     f"{labels['score_label']} {r.sentiment_score} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
+                disclosure = empty_news_disclosure(r, report_language)
+                if disclosure:
+                    report_lines.append(disclosure)
         else:
             report_lines.extend([f"## 📈 {labels['report_title']}", ""])
             # 逐个股票的详细分析
@@ -766,6 +770,9 @@ class NotificationService(
                 ])
 
                 self._append_market_snapshot(report_lines, result)
+                disclosure = empty_news_disclosure(result, report_language)
+                if disclosure:
+                    report_lines.extend([disclosure, ""])
                 
                 # 核心看点
                 if hasattr(result, 'key_points') and result.key_points:
@@ -1298,6 +1305,9 @@ class NotificationService(
                     f"{labels['score_label']} {r.sentiment_score} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
+                disclosure = empty_news_disclosure(r, report_language)
+                if disclosure:
+                    lines.append(disclosure)
         else:
             for result in sorted_results:
                 signal_text, signal_emoji, _ = self._get_signal_level(result)
@@ -1312,6 +1322,9 @@ class NotificationService(
                 # 标题行：信号等级 + 股票名称
                 lines.append(f"### {signal_emoji} **{signal_text}** | {stock_name}({result.code})")
                 lines.append("")
+                disclosure = empty_news_disclosure(result, report_language)
+                if disclosure:
+                    lines.extend([disclosure, ""])
                 
                 # 核心决策（一句话）
                 one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
@@ -1535,6 +1548,9 @@ class NotificationService(
                 f"{localize_operation_advice(r.operation_advice, report_language)} | "
                 f"{labels['score_label']} {r.sentiment_score} | {one}"
             )
+            disclosure = empty_news_disclosure(r, report_language)
+            if disclosure:
+                lines.append(disclosure)
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
         models = self._collect_models_used(results)
@@ -1574,6 +1590,9 @@ class NotificationService(
         ]
 
         self._append_market_snapshot(lines, result)
+        disclosure = empty_news_disclosure(result, report_language)
+        if disclosure:
+            lines.extend([disclosure, ""])
         
         # 核心决策（一句话）
         one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary

@@ -162,6 +162,7 @@ daily_stock_analysis/
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|:----:|
 | `TUSHARE_TOKEN` | Tushare Pro Token | - | 可选 |
+| `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空使用官方 `http://api.tushare.pro`，填写时必须以 `http://` 或 `https://` 开头 | `http://api.tushare.pro` | 可选 |
 | `TICKFLOW_API_KEY` | TickFlow API Key；配置后 A 股大盘复盘指数优先尝试 TickFlow，若套餐支持标的池查询则市场统计也会优先尝试 TickFlow | - | 可选 |
 | `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key；配置后美股/港股的量比、换手率、PE 等 YFinance 缺失字段会自动从长桥补充 | - | 可选 |
 | `LONGBRIDGE_APP_SECRET` | Longbridge App Secret | - | 可选 |
@@ -216,6 +217,8 @@ daily_stock_analysis/
 | `TRUST_X_FORWARDED_FOR` | 单层可信反向代理部署时设为 `true`，取 `X-Forwarded-For` 最右值作为真实客户端 IP（用于登录限流等）；直连公网时保持 `false` 防伪造。多级代理/CDN 场景下限流 key 可能退化为边缘代理 IP，需额外评估 | `false` |
 | `MAX_WORKERS` | 并发线程数 | `3` |
 | `MARKET_REVIEW_ENABLED` | 启用大盘复盘 | `true` |
+| `DAILY_MARKET_CONTEXT_ENABLED` | 将当日 A 股大盘环境摘要注入个股分析，并在高风险/退潮环境软化激进买入建议 | `true` |
+| `TENCENT_PRIORITY` | 腾讯直连 A 股日 K 线兜底优先级，数值越大越晚尝试 | `5` |
 | `MARKET_REVIEW_REGION` | 大盘复盘市场区域：cn(A股)、hk(港股)、us(美股)、both(三市场)，us 适合仅关注美股的用户 | `cn` |
 | `MARKET_REVIEW_COLOR_SCHEME` | 大盘复盘指数涨跌颜色：`green_up`=绿涨红跌（默认），`red_up`=红涨绿跌 | `green_up` |
 | `TRADING_DAY_CHECK_ENABLED` | 交易日检查：默认 `true`，非交易日跳过执行；设为 `false` 或使用 `--force-run` 可强制执行（Issue #373） | `true` |

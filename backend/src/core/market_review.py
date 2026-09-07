@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 MARKET_REVIEW_HISTORY_CODE = "MARKET"
 MARKET_REVIEW_REPORT_TYPE = "market_review"
+_MARKET_REVIEW_MARKETS = [('cn', 'cn_title', 'A股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股'), ('jp', 'jp_title', '日股'), ('kr', 'kr_title', '韩股')]
 
 
 def _run_daily_review_with_snapshot(
@@ -67,10 +68,13 @@ def run_market_review(
     notifier: NotificationService,
     analyzer: Optional[GeminiAnalyzer] = None,
     search_service: Optional[SearchService] = None,
+    config: Optional[Any] = None,
     send_notification: bool = True,
     merge_notification: bool = False,
     override_region: Optional[str] = None,
     query_id: Optional[str] = None,
+    save_report_file: bool = True,
+    persist_history: bool = True,
 ) -> Optional[str]:
     """执行大盘复盘分析。
 
@@ -91,7 +95,7 @@ def run_market_review(
         复盘报告文本
     """
     logger.info("开始执行大盘复盘分析...")
-    config = get_config()
+    config = config or get_config()
     review_text = _get_market_review_text(getattr(config, "report_language", "zh"))
     region = (
         override_region
@@ -150,20 +154,23 @@ def run_market_review(
             # 保存报告到文件
             date_str = datetime.now().strftime('%Y%m%d')
             report_filename = f"market_review_{date_str}.md"
-            filepath = notifier.save_report_to_file(
-                f"{review_text['root_title']}\n\n{review_report}",
-                report_filename
-            )
+            filepath = None
+            if save_report_file:
+                filepath = notifier.save_report_to_file(
+                    f"{review_text['root_title']}\n\n{review_report}",
+                    report_filename
+                )
             logger.info(f"大盘复盘报告已保存: {filepath}")
 
-            _persist_market_review_history(
-                review_report=review_report,
-                markdown_report=f"{review_text['root_title']}\n\n{review_report}",
-                region=region,
-                config=config,
-                query_id=query_id,
-                market_light_snapshots=market_light_snapshots,
-            )
+            if persist_history:
+                _persist_market_review_history(
+                    review_report=review_report,
+                    markdown_report=f"{review_text['root_title']}\n\n{review_report}",
+                    region=region,
+                    config=config,
+                    query_id=query_id,
+                    market_light_snapshots=market_light_snapshots,
+                )
             
             # 推送通知（合并模式下跳过，由 main 层统一发送）
             if merge_notification and send_notification:

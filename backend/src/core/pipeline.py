@@ -32,6 +32,7 @@ from src.analyzer import (
     fill_price_position_if_needed,
     stabilize_decision_with_structure,
 )
+from src.daily_market_context_guardrail import apply_daily_market_context_guardrail
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.report_language import (
@@ -43,6 +44,18 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.search_service import SearchService
+from src.services.daily_market_context import (
+    DailyMarketContext,
+    DailyMarketContextService,
+    format_daily_market_context_prompt_section,
+)
+from src.services.market_structure_service import MarketStructureService
+from src.services.empty_news import news_evidence_present
+from src.agent.news_evidence import (
+    activate_news_evidence_scope,
+    get_current_news_evidence,
+    reset_news_evidence_scope,
+)
 from src.services.social_sentiment_service import SocialSentimentService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
@@ -94,6 +107,8 @@ class StockAnalysisPipeline:
         user_id: Optional[int] = None,
         analysis_phase: str = "auto",
         portfolio_context: Optional[Dict[str, Any]] = None,
+        daily_market_context_enabled: Optional[bool] = None,
+        daily_market_context_allow_generate: bool = True,
     ):
         """
         初始化调度器
@@ -119,10 +134,20 @@ class StockAnalysisPipeline:
             dict(portfolio_context) if isinstance(portfolio_context, dict) else None
         )
         self.user_id = user_id
+        self.daily_market_context_enabled = (
+            bool(getattr(self.config, "daily_market_context_enabled", True))
+            if daily_market_context_enabled is None
+            else bool(daily_market_context_enabled)
+        )
+        self.daily_market_context_allow_generate = daily_market_context_allow_generate
+        self._daily_market_context_service_lock = threading.Lock()
         
         # 初始化各模块
         self.db = get_db()
         self.fetcher_manager = DataFetcherManager()
+        self.market_structure_service = MarketStructureService(
+            fetcher_manager=self.fetcher_manager,
+        )
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
         self.analyzer = GeminiAnalyzer(config=self.config, skills=self.analysis_skills, user_id=user_id)
@@ -281,6 +306,8 @@ class StockAnalysisPipeline:
         """
         stock_name = code
         try:
+            market = get_market_for_stock(normalize_stock_code(code))
+            daily_market_context = self._load_daily_market_context(market)
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
             # 获取股票名称（先走轻量名称路径，后续若 realtime_quote 有 name 再覆盖）
             stock_name = self.fetcher_manager.get_stock_name(code, allow_realtime=False)
@@ -363,6 +390,13 @@ class StockAnalysisPipeline:
                 code,
                 fundamental_context,
             )
+            market_structure_context = self._build_market_structure_context(
+                code=code,
+                stock_name=stock_name,
+                market=market,
+                fundamental_context=fundamental_context,
+                daily_market_context=daily_market_context,
+            )
 
             # P0: write-only snapshot, fail-open, no read dependency on this table.
             try:
@@ -408,12 +442,16 @@ class StockAnalysisPipeline:
                     chip_data,
                     fundamental_context,
                     trend_result,
+                    daily_market_context=daily_market_context,
+                    market_structure_context=market_structure_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
+            news_result_count: Optional[int] = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
             if self.search_service is not None and self.search_service.is_available:
+                news_result_count = 0
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
 
                 # 使用多维度搜索（最多5次搜索）
@@ -429,6 +467,7 @@ class StockAnalysisPipeline:
                     total_results = sum(
                         len(r.results) for r in intel_results.values() if r.success
                     )
+                    news_result_count = total_results
                     logger.info(f"{stock_name}({code}) 情报搜索完成: 共 {total_results} 条结果")
                     logger.debug(f"{stock_name}({code}) 情报搜索结果:\n{news_context}")
 
@@ -490,6 +529,9 @@ class StockAnalysisPipeline:
                 stock_name,  # 传入股票名称
                 fundamental_context,
             )
+            enhanced_context["news_result_count"] = news_result_count
+            self._attach_daily_market_context(enhanced_context, daily_market_context)
+            enhanced_context["market_structure_context"] = market_structure_context
             if self.portfolio_context is not None:
                 enhanced_context["portfolio_context"] = dict(self.portfolio_context)
             enhanced_context["analysis_phase"] = self.analysis_phase
@@ -532,6 +574,9 @@ class StockAnalysisPipeline:
                 progress_callback=self._emit_progress,
                 stream_progress_callback=_on_llm_stream,
             )
+            if result:
+                result.news_result_count = news_result_count
+                result.news_evidence_present = news_evidence_present(news_result_count)
 
             # Step 7.5: 填充分析时的价格信息到 result
             if result:
@@ -549,7 +594,13 @@ class StockAnalysisPipeline:
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
+                apply_daily_market_context_guardrail(
+                    result,
+                    daily_market_context=enhanced_context.get("daily_market_context"),
+                    report_language=getattr(result, "report_language", "zh"),
+                )
                 result.stock_profile = deep_research_profile
+                result.market_structure_context = enhanced_context.get("market_structure_context")
 
             # Step 8: 保存分析历史记录
             if result and result.success:
@@ -746,6 +797,60 @@ class StockAnalysisPipeline:
 
         return enhanced
 
+    def _load_daily_market_context(
+        self,
+        market: str,
+        *,
+        target_date: Optional[date] = None,
+    ) -> Optional[DailyMarketContext]:
+        """Load the shared A-share market context without blocking analysis."""
+        if market != "cn" or not getattr(self, "daily_market_context_enabled", False):
+            return None
+        try:
+            service = getattr(self, "_daily_market_context_service", None)
+            if service is None:
+                service_lock = getattr(self, "_daily_market_context_service_lock", None)
+                if service_lock is None:
+                    service_lock = threading.Lock()
+                    self._daily_market_context_service_lock = service_lock
+                with service_lock:
+                    service = getattr(self, "_daily_market_context_service", None)
+                    if service is None:
+                        service = DailyMarketContextService(db_manager=self.db)
+                        self._daily_market_context_service = service
+            context_date = target_date or get_effective_trading_date(
+                market,
+                current_time=datetime.now(timezone.utc),
+            )
+            return service.get_context(
+                region="cn",
+                config=self.config,
+                notifier=self.notifier,
+                analyzer=self.analyzer,
+                search_service=self.search_service,
+                allow_generate=bool(getattr(self, "daily_market_context_allow_generate", True)),
+                persist_market_review_history=False,
+                target_date=context_date,
+                current_query_id=getattr(self, "query_id", None),
+            )
+        except Exception as exc:
+            logger.warning("%s A股大盘上下文获取失败，继续原分析流程: %s", market, exc)
+            return None
+
+    @staticmethod
+    def _attach_daily_market_context(
+        target_context: Dict[str, Any],
+        daily_market_context: Optional[DailyMarketContext],
+    ) -> None:
+        if daily_market_context is None:
+            return
+        safe_context = daily_market_context.to_safe_dict()
+        target_context["daily_market_context"] = safe_context
+        target_context["daily_market_context_summary"] = format_daily_market_context_prompt_section(
+            safe_context,
+            report_language=str(target_context.get("report_language") or "zh"),
+        )
+
     def _attach_belong_boards_to_fundamental_context(
         self,
         code: str,
@@ -797,6 +902,98 @@ class StockAnalysisPipeline:
         enriched_context["belong_boards"] = boards
         return enriched_context
 
+    def _build_market_structure_context(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+        market: str,
+        fundamental_context: Optional[Dict[str, Any]],
+        daily_market_context: Optional[DailyMarketContext] = None,
+    ) -> Dict[str, Any]:
+        """Build the shared A-share market-structure context fail-open."""
+        if str(market or "").strip().lower() != "cn":
+            return self._market_structure_not_supported_context(
+                code=code,
+                stock_name=stock_name,
+                market=market,
+            )
+        if isinstance(fundamental_context, dict) and str(
+            fundamental_context.get("status") or ""
+        ).strip().lower() in {"failed", "error"}:
+            # Do not start additional ranking requests when the upstream
+            # fundamental stage already failed; preserve the main flow's
+            # fail-open behavior and avoid avoidable provider timeouts.
+            return {}
+        service = getattr(self, "market_structure_service", None)
+        if service is None:
+            try:
+                service = MarketStructureService(fetcher_manager=self.fetcher_manager)
+                self.market_structure_service = service
+            except Exception as exc:
+                logger.debug("%s market structure service init failed: %s", code, exc)
+                return {}
+        try:
+            trade_date = None
+            if isinstance(fundamental_context, dict):
+                trade_date = fundamental_context.get("trade_date") or fundamental_context.get("date")
+            if trade_date is None and daily_market_context is not None:
+                trade_date = getattr(daily_market_context, "trade_date", None)
+            return service.build_context(
+                code=code,
+                stock_name=stock_name,
+                market=market,
+                fundamental_context=fundamental_context,
+                trade_date=trade_date,
+            )
+        except Exception as exc:
+            logger.warning("%s market structure context failed (fail-open): %s", code, exc)
+            return {}
+
+    @staticmethod
+    def _market_structure_not_supported_context(
+        *, code: str, stock_name: str, market: str
+    ) -> Dict[str, Any]:
+        """Return a stable non-CN marker without invoking A-share providers."""
+        return {
+            "schema_version": "market-structure-v1",
+            "status": "not_supported",
+            "market": str(market or "").strip().lower() or "unknown",
+            "market_theme_context": {
+                "schema_version": "market-theme-v1",
+                "status": "not_supported",
+                "market": str(market or "").strip().lower() or "unknown",
+                "active_themes": [],
+                "leading_industries": [],
+                "leading_concepts": [],
+                "lagging_themes": [],
+                "theme_breadth": {
+                    "active_count": 0,
+                    "leading_industry_count": 0,
+                    "leading_concept_count": 0,
+                    "lagging_count": 0,
+                },
+                "data_quality": {
+                    "status": "not_supported",
+                    "missing_fields": ["a_share_theme_context"],
+                    "sources": [],
+                    "errors": [],
+                },
+            },
+            "stock_market_position": {
+                "schema_version": "stock-market-position-v1",
+                "status": "not_supported",
+                "stock_code": code,
+                "stock_name": stock_name,
+                "market": str(market or "").strip().lower() or "unknown",
+                "related_boards": [],
+                "stock_role": "unknown",
+                "theme_phase": "unknown",
+                "risk_tags": [],
+                "missing_fields": ["a_share_theme_context"],
+            },
+        }
+
     def _ensure_agent_history(self, code: str, min_days: int = 240) -> None:
         """Ensure at least *min_days* of K-line history is in DB for agent tools."""
         from src.services.history_loader import get_frozen_target_date
@@ -827,6 +1024,8 @@ class StockAnalysisPipeline:
         chip_data: Optional[ChipDistribution],
         fundamental_context: Optional[Dict[str, Any]] = None,
         trend_result: Optional[TrendAnalysisResult] = None,
+        daily_market_context: Optional[DailyMarketContext] = None,
+        market_structure_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -851,11 +1050,13 @@ class StockAnalysisPipeline:
                 "report_language": report_language,
                 "fundamental_context": fundamental_context,
                 "analysis_phase": self.analysis_phase,
+                "market_structure_context": market_structure_context,
             }
             if self.portfolio_context is not None:
                 initial_context["portfolio_context"] = dict(self.portfolio_context)
             if self.analysis_skills is not None:
                 initial_context["skills"] = self.analysis_skills
+            self._attach_daily_market_context(initial_context, daily_market_context)
             
             if realtime_quote:
                 initial_context["realtime_quote"] = self._safe_to_dict(realtime_quote)
@@ -895,7 +1096,12 @@ class StockAnalysisPipeline:
                 message = f"Analyze stock {code} ({stock_name}) and return the full decision dashboard JSON in English."
             else:
                 message = f"请分析股票 {code} ({stock_name})，并生成决策仪表盘报告。"
-            agent_result = executor.run(message, context=initial_context)
+            news_evidence_token = activate_news_evidence_scope()
+            news_evidence = get_current_news_evidence()
+            try:
+                agent_result = executor.run(message, context=initial_context)
+            finally:
+                reset_news_evidence_scope(news_evidence_token)
 
             # 转换为 AnalysisResult
             result = self._agent_result_to_analysis_result(
@@ -906,6 +1112,14 @@ class StockAnalysisPipeline:
                 query_id,
                 trend_result=trend_result,
             )
+            if result and news_evidence is not None:
+                result.news_result_count = news_evidence.resolve(
+                    search_available=bool(
+                        self.search_service is not None and self.search_service.is_available
+                    )
+                )
+                result.news_evidence_present = news_evidence_present(result.news_result_count)
+                initial_context["news_result_count"] = result.news_result_count
             if result:
                 result.query_id = query_id
             # Agent weak integrity: placeholder fill only, no LLM retry
@@ -931,7 +1145,13 @@ class StockAnalysisPipeline:
                     result.current_price = realtime_data.get("price")
                     result.change_pct = realtime_data.get("change_pct")
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
+                apply_daily_market_context_guardrail(
+                    result,
+                    daily_market_context=initial_context.get("daily_market_context"),
+                    report_language=getattr(result, "report_language", "zh"),
+                )
                 result.stock_profile = deep_research_profile
+                result.market_structure_context = initial_context.get("market_structure_context")
 
             resolved_stock_name = result.name if result and result.name else stock_name
 

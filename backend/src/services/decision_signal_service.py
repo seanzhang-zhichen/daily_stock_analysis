@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.market_context import detect_market
 from src.storage import AnalysisHistory, DatabaseManager, DecisionSignalRecord
+from src.utils.data_processing import extract_market_structure_context
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,12 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
     battle_plan = _json_object(dashboard.get("battle_plan"))
     position_strategy = _json_object(battle_plan.get("position_strategy"))
     position_advice = _json_object(core.get("position_advice"))
+    market_structure = payload.get("market_structure_context")
+    if not isinstance(market_structure, dict):
+        market_structure = extract_market_structure_context(record.context_snapshot)
+    market_theme = _json_object(market_structure.get("market_theme_context"))
+    stock_position = _json_object(market_structure.get("stock_market_position"))
+    primary_theme = _json_object(stock_position.get("primary_theme"))
 
     score = payload.get("sentiment_score", record.sentiment_score)
     action = _action(
@@ -216,6 +223,10 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
         "report_language": payload.get("report_language"),
         "trend_prediction": record.trend_prediction,
         "position_advice": position_advice or None,
+        "market_structure_status": market_structure.get("status") if isinstance(market_structure, dict) else None,
+        "market_theme_status": market_theme.get("status"),
+        "stock_role": stock_position.get("stock_role"),
+        "primary_theme": primary_theme.get("name"),
     }
 
     return {
@@ -245,6 +256,12 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
             "trend_analysis": payload.get("trend_analysis"),
             "technical_analysis": payload.get("technical_analysis"),
             "fundamental_analysis": payload.get("fundamental_analysis"),
+            "market_structure": {
+                "status": market_structure.get("status"),
+                "theme_phase": stock_position.get("theme_phase"),
+                "stock_role": stock_position.get("stock_role"),
+                "primary_theme": primary_theme.get("name"),
+            },
         }),
         "data_quality_json": _dump_json({"data_sources": payload.get("data_sources")}),
         "metadata_json": _dump_json(metadata),

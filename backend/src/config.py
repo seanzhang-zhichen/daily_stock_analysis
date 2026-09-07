@@ -860,6 +860,7 @@ class Config:
     schedule_run_immediately: bool = True     # 启动时是否立即执行一次
     run_immediately: bool = True              # 启动时是否立即执行一次（非定时模式）
     market_review_enabled: bool = True        # 是否启用大盘复盘
+    daily_market_context_enabled: bool = True  # 是否将当日大盘摘要注入个股分析
     # 大盘复盘市场区域：cn(A股)、hk(港股)、us(美股)、both(三市场)，us 适合仅关注美股的用户
     market_review_region: str = "cn"
     market_review_color_scheme: str = "green_up"
@@ -1504,6 +1505,7 @@ class Config:
             schedule_run_immediately=schedule_run_immediately,
             run_immediately=schedule_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
+            daily_market_context_enabled=os.getenv('DAILY_MARKET_CONTEXT_ENABLED', 'true').lower() == 'true',
             market_review_region=cls._parse_market_review_region(
                 os.getenv('MARKET_REVIEW_REGION', 'cn')
             ),

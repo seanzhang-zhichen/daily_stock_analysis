@@ -69,6 +69,7 @@ from src.core.market_review_runtime import (
 )
 from src.report_language import get_localized_stock_name, normalize_report_language
 from src.services.name_to_code_resolver import resolve_name_to_code
+from src.services.empty_news import empty_news_disclosure_from_stored
 from src.services.stock_code_utils import is_code_like
 from src.services.task_queue import (
     get_task_queue,
@@ -80,6 +81,7 @@ from src.utils.data_processing import (
     parse_json_field,
     extract_fundamental_detail_fields,
     extract_board_detail_fields,
+    extract_market_structure_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,6 +210,18 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
     text = (raw_value or "").strip()
     if not text:
         return ""
+
+    # Preserve registered index identity (including CSI canonical IDs) before
+    # the legacy stock-code normalizer strips exchange information.
+    try:
+        from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+        target = parse_analysis_target(text)
+        if target.status == ParseStatus.INDEX:
+            return target.canonical_id
+        if target.status == ParseStatus.UNSUPPORTED:
+            raise _invalid_analysis_input_error()
+    except ImportError:
+        pass
 
     if is_code_like(text):
         return canonical_stock_code(text)
@@ -1000,9 +1014,16 @@ def get_analysis_status(
                 ),
                 details=ReportDetails(
                     news_content=getattr(record, "news_content", None),
+                    empty_news_disclosure=empty_news_disclosure_from_stored(
+                        raw_result, context_snapshot, report_language
+                    ),
                     raw_result=raw_result,
                     context_snapshot=context_snapshot,
                     stock_profile=raw_result.get("stock_profile") if isinstance(raw_result, dict) else None,
+                    market_structure_context=(
+                        extract_market_structure_context(context_snapshot)
+                        or (raw_result.get("market_structure_context") if isinstance(raw_result, dict) else None)
+                    ),
                 ),
             ).model_dump()
             return TaskStatus(
@@ -1161,18 +1182,26 @@ def _build_analysis_report(
         context_snapshot=context_snapshot,
         fallback_fundamental_payload=fallback_fundamental_payload,
     )
+    market_structure_context = (
+        extract_market_structure_context(context_snapshot)
+        or (details_data.get("market_structure_context") if isinstance(details_data, dict) else None)
+    )
     details = None
     has_board_details = bool(extracted_boards.get("belong_boards")) or extracted_boards.get("sector_rankings") is not None
     if (
         details_data
         or any(extracted_fundamental.values())
         or has_board_details
+        or market_structure_context is not None
         or context_snapshot is not None
         or price_history
         or details_data.get("stock_profile")
     ):
         details = ReportDetails(
             news_content=details_data.get("news_summary") or details_data.get("news_content"),
+            empty_news_disclosure=empty_news_disclosure_from_stored(
+                details_data, context_snapshot, report_language
+            ),
             raw_result=details_data,
             context_snapshot=context_snapshot,
             financial_report=extracted_fundamental.get("financial_report"),
@@ -1180,6 +1209,7 @@ def _build_analysis_report(
             stock_profile=details_data.get("stock_profile"),
             belong_boards=extracted_boards.get("belong_boards"),
             sector_rankings=extracted_boards.get("sector_rankings"),
+            market_structure_context=market_structure_context,
             price_history=price_history or [],
         )
 

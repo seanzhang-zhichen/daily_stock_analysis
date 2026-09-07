@@ -67,6 +67,24 @@ HK_PROFILE = MarketProfile(
     has_sector_rankings=False,
 )
 
+JP_PROFILE = MarketProfile(
+    region="jp",
+    mood_index_code="N225",
+    news_queries=["日本株 日経225", "Japan stock market Nikkei TOPIX", "日経225 東証指数"],
+    prompt_index_hint="分析日经225、东证指数等日本主要指数走势特征",
+    has_market_stats=False,
+    has_sector_rankings=False,
+)
+
+KR_PROFILE = MarketProfile(
+    region="kr",
+    mood_index_code="KS11",
+    news_queries=["韩国股市 KOSPI", "Korea stock market KOSPI KOSDAQ", "KOSPI KOSDAQ 行情"],
+    prompt_index_hint="分析 KOSPI、KOSDAQ 等韩国主要指数走势特征",
+    has_market_stats=False,
+    has_sector_rankings=False,
+)
+
 
 def get_profile(region: str) -> MarketProfile:
     """Return the configured MarketProfile, defaulting to CN for unknown values."""
@@ -74,4 +92,8 @@ def get_profile(region: str) -> MarketProfile:
         return US_PROFILE
     if region == "hk":
         return HK_PROFILE
+    if region == "jp":
+        return JP_PROFILE
+    if region == "kr":
+        return KR_PROFILE
     return CN_PROFILE

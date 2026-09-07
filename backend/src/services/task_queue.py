@@ -34,7 +34,15 @@ def _dedupe_stock_code_key(stock_code: str) -> str:
     The task queue should treat equivalent market code shapes as the same
     underlying stock, e.g. ``600519`` and ``600519.SH``.
     """
-    return canonical_stock_code(normalize_stock_code(stock_code))
+    raw = (stock_code or "").strip()
+    try:
+        from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+        target = parse_analysis_target(raw)
+        if target.status == ParseStatus.INDEX:
+            return target.canonical_id.casefold()
+    except Exception:
+        pass
+    return canonical_stock_code(normalize_stock_code(raw))
 
 
 def _dedupe_task_key(stock_code: str, user_id: Optional[int] = None) -> str:
@@ -404,10 +412,17 @@ class AnalysisTaskQueue:
         duplicates: List[DuplicateTaskError] = []
         created_task_ids: List[str] = []
 
-        canonical_codes = [
-            normalized for normalized in (canonical_stock_code(code) for code in stock_codes)
-            if normalized
-        ]
+        canonical_codes = []
+        for code in stock_codes:
+            raw = (code or "").strip()
+            try:
+                from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+                target = parse_analysis_target(raw)
+                normalized = target.canonical_id if target.status == ParseStatus.INDEX else canonical_stock_code(code)
+            except Exception:
+                normalized = canonical_stock_code(code)
+            if normalized:
+                canonical_codes.append(normalized)
 
         with self._data_lock:
             for stock_code in canonical_codes:

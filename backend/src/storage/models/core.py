@@ -34,6 +34,9 @@ class StockDaily(Base):
     
     # 股票代码（如 600519, 000001）
     code = Column(String(10), nullable=False, index=True)
+
+    # 稳定分析身份（如 sh000300 / sh600519）。可空以兼容存量数据库。
+    canonical_id = Column(String(32), nullable=True, index=True)
     
     # 交易日期
     date = Column(Date, nullable=False, index=True)
@@ -76,6 +79,7 @@ class StockDaily(Base):
         """转换为字典"""
         return {
             'code': self.code,
+            'canonical_id': self.canonical_id,
             'date': self.date,
             'open': self.open,
             'high': self.high,

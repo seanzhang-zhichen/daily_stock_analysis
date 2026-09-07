@@ -37,6 +37,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.services.history_service import HistoryService, MarkdownReportGenerationError
+from src.services.empty_news import empty_news_disclosure_from_stored
 from src.config import get_config
 from src.md2img import markdown_to_image
 from src.share_image import build_share_image_html, share_image_branding_from_config
@@ -44,6 +45,7 @@ from src.utils.data_processing import (
     normalize_model_used,
     extract_fundamental_detail_fields,
     extract_board_detail_fields,
+    extract_market_structure_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -352,9 +354,16 @@ def get_history_detail(
             context_snapshot=result.get("context_snapshot"),
             fallback_fundamental_payload=fallback_fundamental,
         )
+        market_structure_context = (
+            extract_market_structure_context(result.get("context_snapshot"))
+            or (raw_result.get("market_structure_context") if isinstance(raw_result, dict) else None)
+        )
 
         details = ReportDetails(
             news_content=result.get("news_content"),
+            empty_news_disclosure=empty_news_disclosure_from_stored(
+                raw_result, result.get("context_snapshot"), report_language
+            ),
             raw_result=result.get("raw_result"),
             context_snapshot=result.get("context_snapshot"),
             financial_report=extracted_fundamental.get("financial_report"),
@@ -362,6 +371,7 @@ def get_history_detail(
             stock_profile=raw_result.get("stock_profile") if isinstance(raw_result, dict) else None,
             belong_boards=extracted_boards.get("belong_boards"),
             sector_rankings=extracted_boards.get("sector_rankings"),
+            market_structure_context=market_structure_context,
             price_history=result.get("price_history") or [],
         )
         

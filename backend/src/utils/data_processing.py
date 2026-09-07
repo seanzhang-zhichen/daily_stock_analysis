@@ -192,3 +192,17 @@ def extract_board_detail_fields(
         "belong_boards": _normalize_belong_boards(fundamental_ctx.get("belong_boards")),
         "sector_rankings": _normalize_sector_rankings(sector_rankings),
     }
+
+
+def extract_market_structure_context(context_snapshot: Any) -> Optional[Dict[str, Any]]:
+    """Extract the versioned market-structure block from a persisted snapshot."""
+    snapshot_obj = parse_json_field(context_snapshot)
+    if not isinstance(snapshot_obj, dict):
+        return None
+    enhanced = snapshot_obj.get("enhanced_context")
+    if isinstance(enhanced, dict):
+        value = enhanced.get("market_structure_context")
+        if isinstance(value, dict):
+            return value
+    value = snapshot_obj.get("market_structure_context")
+    return value if isinstance(value, dict) else None

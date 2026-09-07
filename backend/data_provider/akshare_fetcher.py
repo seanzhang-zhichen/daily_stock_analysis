@@ -349,6 +349,7 @@ class AkshareFetcher(BaseFetcher):
         self.sleep_min = sleep_min
         self.sleep_max = sleep_max
         self._last_request_time: Optional[float] = None
+        self._history_call_timeout = _AKSHARE_HISTORY_CALL_TIMEOUT
         # 东财补丁开启才执行打补丁操作
         if get_config().enable_eastmoney_patch:
             eastmoney_patch()
@@ -414,6 +415,14 @@ class AkshareFetcher(BaseFetcher):
         5. 处理返回数据
         """
         # 根据代码类型选择不同的获取方法
+        try:
+            from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+            target = parse_analysis_target(stock_code)
+            if target.status == ParseStatus.INDEX:
+                return self._fetch_index_data(target, start_date, end_date)
+        except ImportError:
+            pass
+
         if _is_us_code(stock_code):
             # 美股：akshare 的 stock_us_daily 接口复权存在已知问题（参见 Issue #311）
             # 交由 YfinanceFetcher 处理，确保复权价格一致
@@ -427,6 +436,51 @@ class AkshareFetcher(BaseFetcher):
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
+    def _fetch_index_data(self, target, start_date: str, end_date: str) -> pd.DataFrame:
+        """Fetch a registered SH/SZ index from AkShare's index endpoint."""
+        import akshare as ak
+
+        exchange = (target.exchange or "").upper()
+        if exchange not in {"SH", "SZ"}:
+            raise DataFetchError(f"Akshare does not support CSI index daily data: {target.canonical_id}")
+        self._set_random_user_agent()
+        self._enforce_rate_limit()
+        try:
+            df = _akshare_call_with_timeout(
+                ak.stock_zh_index_daily_em,
+                timeout=self._history_call_timeout,
+                call_name="ak.stock_zh_index_daily_em",
+                symbol=target.canonical_id,
+                start_date=start_date.replace("-", ""),
+                end_date=end_date.replace("-", ""),
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if any(token in message for token in ("banned", "blocked", "rate", "频率", "限制")):
+                raise RateLimitError(f"Akshare index endpoint may be rate limited: {exc}") from exc
+            raise DataFetchError(f"Akshare index data failed: {exc}") from exc
+        if df is None:
+            return pd.DataFrame()
+        if not isinstance(df, pd.DataFrame):
+            raise DataFetchError(f"Akshare index endpoint returned {type(df).__name__}")
+        if df.empty:
+            return df
+        required = {"date", "open", "high", "low", "close", "volume"}
+        missing = sorted(required - set(df.columns))
+        if missing:
+            raise DataFetchError("Akshare index data missing columns: " + ", ".join(missing))
+        result = df.copy()
+        parsed = pd.to_datetime(result["date"], errors="coerce", format="mixed")
+        if parsed.isna().any():
+            raise DataFetchError("Akshare index data contains invalid dates")
+        result["date"] = parsed.dt.strftime("%Y-%m-%d")
+        result = result.sort_values("date", kind="stable").reset_index(drop=True)
+        if "pct_chg" not in result.columns:
+            result["pct_chg"] = pd.to_numeric(result["close"], errors="coerce").pct_change(fill_method=None).mul(100).fillna(0.0)
+        if "amount" not in result.columns:
+            result["amount"] = pd.NA
+        return result
+
     def _fetch_stock_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         获取普通 A 股历史数据
@@ -826,6 +880,14 @@ class AkshareFetcher(BaseFetcher):
         
         # 列名映射（Akshare 中文列名 -> 标准英文列名）
         column_mapping = {
+            'date': 'date',
+            'open': 'open',
+            'close': 'close',
+            'high': 'high',
+            'low': 'low',
+            'volume': 'volume',
+            'amount': 'amount',
+            'pct_chg': 'pct_chg',
             '日期': 'date',
             '开盘': 'open',
             '收盘': 'close',

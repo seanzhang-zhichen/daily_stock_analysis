@@ -12,12 +12,13 @@ interface ReportNewsProps {
   recordId?: number;  // 分析历史记录主键 ID
   limit?: number;
   language?: ReportLanguage;
+  emptyNewsDisclosure?: string;
 }
 
 /**
  * 资讯区组件 - 终端风格
  */
-export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, language = 'zh' }) => {
+export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, language = 'zh', emptyNewsDisclosure }) => {
   const reportLanguage = normalizeReportLanguage(language);
   const text = getReportText(reportLanguage);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,7 +49,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
     }
   }, [recordId, fetchNews]);
 
-  if (!recordId) {
+  if (!recordId && !emptyNewsDisclosure) {
     return null;
   }
 
@@ -75,10 +76,17 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
         />
       )}
 
-      {!isLoading && !error && items.length === 0 && (
+      {!recordId && emptyNewsDisclosure && (
         <DashboardStateBlock
           compact
-          title={text.noNews}
+          title={emptyNewsDisclosure}
+        />
+      )}
+
+      {recordId && !isLoading && !error && items.length === 0 && (
+        <DashboardStateBlock
+          compact
+          title={emptyNewsDisclosure || text.noNews}
           description={text.noNewsDescription}
           icon={(
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -88,7 +96,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ recordId, limit = 8, lan
         />
       )}
 
-      {!isLoading && !error && items.length > 0 && (
+      {recordId && !isLoading && !error && items.length > 0 && (
         <div className="space-y-3 text-left">
           {items.map((item, index) => (
             <div

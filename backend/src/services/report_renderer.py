@@ -22,6 +22,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.utils.data_processing import normalize_model_used
+from src.services.empty_news import empty_news_disclosure
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ def render(
             "stock_name": _escape_md(rn),
             "localized_operation_advice": localize_operation_advice(r.operation_advice, report_language),
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
+            "empty_news_disclosure": empty_news_disclosure(r, report_language),
         })
 
     buy_count = sum(1 for r in results if getattr(r, "decision_type", "") == "buy")

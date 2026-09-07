@@ -880,7 +880,7 @@ describe('StockScreeningPage', () => {
             changePct: 4.2,
             stage: '加速主升',
             sampleStockCount: 8,
-            leaders: ['中际旭创', '工业富联'],
+            leaders: ['中际旭创', '工业富联', '寒武纪'],
           },
         ],
         hotspotCount: 1,
@@ -892,14 +892,14 @@ describe('StockScreeningPage', () => {
     expect(await screen.findByText('选股已开启')).toBeInTheDocument();
     expandHotspotsIfNeeded();
     expect(await screen.findByText('强势领先')).toBeInTheDocument();
-    expect(screen.getByText(/中际旭创、工业富联/)).toBeInTheDocument();
+    expect(screen.getByText(/龙一 中际旭创、龙二 工业富联、龙三 寒武纪/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /刷新热点题材/ }));
 
     await waitFor(() => expect(getHotspots).toHaveBeenCalledWith({ provider: 'akshare', top: 12, refresh: true }));
     expect(await screen.findByText(/manual refresh failed/)).toBeInTheDocument();
     expect(screen.getByText('强势领先')).toBeInTheDocument();
-    expect(screen.getByText(/中际旭创、工业富联/)).toBeInTheDocument();
+    expect(screen.getByText(/龙一 中际旭创、龙二 工业富联、龙三 寒武纪/)).toBeInTheDocument();
     expect(screen.queryByText(/点击刷新后会拉取热点概念/)).not.toBeInTheDocument();
   });
 

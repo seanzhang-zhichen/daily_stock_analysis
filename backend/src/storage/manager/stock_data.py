@@ -8,7 +8,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -114,7 +114,8 @@ class StockDataMixin:
         self,
         df: pd.DataFrame,
         code: str,
-        data_source: str = "Unknown"
+        data_source: str = "Unknown",
+        canonical_id: Optional[str] = None,
     ) -> int:
         """
         保存日线数据到数据库
@@ -137,12 +138,25 @@ class StockDataMixin:
             return 0
 
         from datetime import datetime as _dt
+        if not canonical_id:
+            try:
+                from src.services.stock_list_parser import ParseStatus, parse_analysis_target
+                target = parse_analysis_target(code)
+                if target.status == ParseStatus.INDEX:
+                    canonical_id = target.canonical_id
+                elif target.exchange in {"SH", "SZ", "BJ"} and str(code).strip().isdigit():
+                    canonical_id = f"{target.exchange.casefold()}{str(code).strip()}"
+                else:
+                    canonical_id = target.canonical_id or None
+            except Exception:
+                canonical_id = None
         now = _dt.now()
         records_by_date: Dict[date, Dict[str, Any]] = {}
         for row in df.to_dict(orient='records'):
             row_date = self._normalize_daily_date(row.get('date'))
             records_by_date[row_date] = {
                 'code': code,
+                'canonical_id': canonical_id,
                 'date': row_date,
                 'open': self._normalize_sql_value(row.get('open')),
                 'high': self._normalize_sql_value(row.get('high')),
@@ -214,6 +228,7 @@ class StockDataMixin:
                                 'ma20': excluded.ma20,
                                 'volume_ratio': excluded.volume_ratio,
                                 'data_source': excluded.data_source,
+                                'canonical_id': func.coalesce(excluded.canonical_id, StockDaily.canonical_id),
                                 'updated_at': excluded.updated_at,
                             },
                         )
@@ -250,6 +265,8 @@ class StockDataMixin:
                     existing.ma20 = record['ma20']
                     existing.volume_ratio = record['volume_ratio']
                     existing.data_source = record['data_source']
+                    if record['canonical_id'] is not None:
+                        existing.canonical_id = record['canonical_id']
                     existing.updated_at = record['updated_at']
                 return new_count
 

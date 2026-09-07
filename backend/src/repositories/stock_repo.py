@@ -81,7 +81,8 @@ class StockRepository:
         self,
         df: pd.DataFrame,
         code: str,
-        data_source: str = "Unknown"
+        data_source: str = "Unknown",
+        canonical_id: Optional[str] = None,
     ) -> int:
         """
         保存 DataFrame 到数据库
@@ -95,7 +96,7 @@ class StockRepository:
             保存的记录数
         """
         try:
-            return self.db.save_daily_data(df, code, data_source)
+            return self.db.save_daily_data(df, code, data_source, canonical_id=canonical_id)
         except Exception as e:
             logger.error(f"保存日线数据失败: {e}")
             return 0

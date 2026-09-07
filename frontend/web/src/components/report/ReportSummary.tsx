@@ -6,6 +6,7 @@ import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
 import { ReportPriceHistory } from './ReportPriceHistory';
 import { ReportStockProfile } from './ReportStockProfile';
+import { MarketStructureCard } from './MarketStructureCard';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 
 interface ReportSummaryProps {
@@ -53,8 +54,15 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
       <ReportStockProfile profile={details?.stockProfile} language={reportLanguage} />
 
+      <MarketStructureCard context={details?.marketStructureContext} language={reportLanguage} />
+
       {/* 资讯区 */}
-      <ReportNews recordId={recordId} limit={8} language={reportLanguage} />
+      <ReportNews
+        recordId={recordId}
+        limit={8}
+        language={reportLanguage}
+        emptyNewsDisclosure={details?.emptyNewsDisclosure}
+      />
 
       {/* 透明度与追溯区 */}
       {showDiagnostics && <ReportDetails details={details} recordId={recordId} language={reportLanguage} />}

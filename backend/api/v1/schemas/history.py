@@ -148,6 +148,7 @@ class ReportStrategy(BaseModel):
 
 class ReportDetails(BaseModel):
     """Detailed evidence and raw context attached to an analysis report."""
+    empty_news_disclosure: Optional[str] = Field(None, description="新闻证据边界提示")
     
     news_content: Optional[str] = Field(None, description="新闻摘要")
     raw_result: Optional[Any] = Field(None, description="原始分析结果（JSON）")
@@ -157,6 +158,7 @@ class ReportDetails(BaseModel):
     stock_profile: Optional[Any] = Field(None, description="Deep Research 生成的股票基本情况")
     belong_boards: Optional[Any] = Field(None, description="关联板块列表")
     sector_rankings: Optional[Any] = Field(None, description="板块涨跌榜（结构 {top, bottom}）")
+    market_structure_context: Optional[Any] = Field(None, description="A股市场结构与题材上下文")
     price_history: List[Any] = Field(default_factory=list, description="历史股价（日线 OHLCV 与均线）")
 
 

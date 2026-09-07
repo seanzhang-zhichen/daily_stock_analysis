@@ -579,6 +579,11 @@ def get_hotspot_detail(
             stale=summary.stale,
             stale_age_hours=summary.stale_age_hours,
         )
+    if any(stock.fallback_used for stock in stocks):
+        summary.fallback_used = True
+        summary.sample_stock_count = 0
+        _add_missing_fields(summary, ["live_stocks"])
+        _finalize_summary_quality(summary, stock_count=0)
     _finalize_summary_quality(summary, stock_count=len(stocks))
 
     timeline: list[TimelineEvent] = []
@@ -950,7 +955,6 @@ def _load_scored_constituents(
     for stock in stocks:
         stock.source = stock.source or stock_source
         stock.source_confidence = stock.source_confidence if stock.source_confidence is not None else 1.0
-        stock.fallback_used = False
     return stocks
 
 
@@ -969,6 +973,8 @@ def _normalize_stock_rows(frame: pd.DataFrame) -> list[HotspotStock]:
         net_inflow = _safe_float(_row_value(row, ["net_inflow", "主力净流入", "主力净流入-净额"]))
         stock = HotspotStock(
             code=code,
+            source=_safe_text(row.get("source")),
+            fallback_used=_safe_bool(row.get("fallback_used")),
             name=_safe_text(_row_value(row, ["name", "名称", "股票名称"])),
             change_pct=change_pct,
             amount=amount,
@@ -1286,7 +1292,7 @@ def _leader_fallback_stocks(
     if stocks:
         return stocks
 
-    for idx, leader in enumerate(summary.leaders[:3]):
+    for idx, leader in enumerate(summary.leaders[:10]):
         text = _safe_text(leader)
         if not text:
             continue
@@ -1303,9 +1309,11 @@ def _leader_fallback_stocks(
 
 
 def _set_summary_leaders(summary: HotspotSummary, stocks: list[HotspotStock]) -> None:
-    selected = [stock for stock in stocks if stock.role == "核心龙头"][:3]
-    if not selected:
-        selected = stocks[:3]
+    core = [stock for stock in stocks if stock.role == "核心龙头"]
+    selected = core[:10]
+    if len(selected) < 10:
+        selected.extend(stock for stock in stocks if stock not in selected)
+        selected = selected[:10]
     summary.leader_stocks = [_copy_hotspot_stock(stock) for stock in selected]
     summary.leaders = [
         stock.name or stock.code
@@ -1409,11 +1417,11 @@ def _build_summary_route_item(
     *,
     max_description_chars: int,
 ) -> HotspotRouteItem:
-    leaders = summary.leaders or [stock.name for stock in stocks[:3] if stock.name]
+    leaders = summary.leaders or [stock.name for stock in stocks[:10] if stock.name]
     parts = [
         f"{summary.topic or summary.name}热度 {summary.heat_score:.1f}",
         f"阶段 {summary.stage}" if summary.stage else "",
-        "核心股 " + "、".join(leaders[:3]) if leaders else "",
+        "核心股 " + "、".join(leaders[:10]) if leaders else "",
     ]
     source = summary.provider_used or summary.source or "screening_hotspot"
     return HotspotRouteItem(
@@ -1423,7 +1431,7 @@ def _build_summary_route_item(
         source=source,
         event_type="summary",
         impact_score=round(_safe_float(summary.heat_score) or 0.0, 4),
-        related_codes=[stock.code for stock in stocks[:3] if stock.code],
+        related_codes=[stock.code for stock in stocks[:10] if stock.code],
     )
 
 
@@ -1739,5 +1747,3 @@ def _safe_bool(value: object) -> bool:
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
-
-

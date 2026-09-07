@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import unittest
+import json
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,7 +18,9 @@ from api.v1.endpoints.screening import router as screening_router
 from src.config import Config
 from src.core.config_registry import get_registered_field_keys
 from src.services.screening.strategy import list_strategies
+from src.services.screening.hotspot import HotspotStock, HotspotSummary, _set_summary_leaders
 from src.services.screening_service import ScreeningService
+from src.services import screening_service as screening_service_module
 from src.storage import DatabaseManager
 
 
@@ -94,6 +100,57 @@ class TestScreeningPort(unittest.TestCase):
         self.assertTrue(status.json()["available"])
         self.assertGreaterEqual(strategies.json()["strategy_count"], 10)
         self.assertEqual(history.json()["runs"][0]["run_id"], "screening-run-api")
+
+    def test_hotspot_cache_defaults_to_ten_minutes_and_expires(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SCREENING_HOTSPOT_CACHE_TTL_SEC", None)
+            self.assertEqual(screening_service_module._screening_hotspot_cache_ttl_seconds(), 600.0)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {"SCREENING_DATA_DIR": temp_dir, "SCREENING_HOTSPOT_CACHE_TTL_SEC": "600"},
+            clear=False,
+        ):
+            cached_at = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+            payload = {
+                "cached_at": cached_at,
+                "provider": "akshare",
+                "hotspots": [{"topic": f"topic-{i}", "heat_score": 80 - i} for i in range(3)],
+            }
+            with open(os.path.join(temp_dir, "hotspots.json"), "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+            self.assertIsNone(
+                screening_service_module._load_screening_hotspot_cache(provider="akshare", top=3)
+            )
+            stale = screening_service_module._load_screening_hotspot_cache(
+                provider="akshare", top=3, allow_stale=True
+            )
+            self.assertIsNotNone(stale)
+            self.assertTrue(stale["stale"])
+            self.assertTrue(stale["fallback_used"])
+
+    def test_hotspot_cache_ttl_zero_disables_fresh_cache_reuse(self) -> None:
+        with patch.dict(os.environ, {"SCREENING_HOTSPOT_CACHE_TTL_SEC": "0"}, clear=False):
+            self.assertIsNone(screening_service_module._screening_hotspot_cache_ttl_seconds())
+
+    def test_hotspot_summary_exposes_up_to_ten_leaders(self) -> None:
+        summary = HotspotSummary(topic="AI算力")
+        stocks = [
+            HotspotStock(
+                code=f"60000{i:02d}",
+                name=f"股票{i}",
+                role="核心龙头" if i == 0 else "助攻",
+                hot_stock_score=100 - i,
+            )
+            for i in range(12)
+        ]
+
+        _set_summary_leaders(summary, stocks)
+
+        self.assertEqual(len(summary.leader_stocks), 10)
+        self.assertEqual(len(summary.leaders), 10)
+        self.assertEqual(summary.leaders[-1], "股票9")
 
 
 if __name__ == "__main__":

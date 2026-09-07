@@ -122,6 +122,14 @@ class TestResolveNameToCode:
         assert resolve_name_to_code("贵州茅台") == "600519"
         assert resolve_name_to_code("腾讯控股") == "00700"
 
+    def test_normalizes_embedded_spaces(self):
+        assert resolve_name_to_code("贵州 茅台") == "600519"
+
+    @patch("src.services.name_to_code_resolver._get_akshare_name_to_code")
+    def test_normalizes_akshare_full_width_name(self, mock_akshare):
+        mock_akshare.return_value = {"京东方Ａ": "000725"}
+        assert resolve_name_to_code("京东方A") == "000725"
+
     def test_returns_none_for_empty_or_invalid_input(self):
         assert resolve_name_to_code("") is None
         assert resolve_name_to_code("   ") is None

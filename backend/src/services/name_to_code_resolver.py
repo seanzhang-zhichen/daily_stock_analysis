@@ -12,6 +12,7 @@ from __future__ import annotations
 import difflib
 import logging
 import time
+import unicodedata
 from typing import Dict, Optional, Set, Tuple
 
 from src.data.stock_mapping import STOCK_NAME_MAP
@@ -27,6 +28,11 @@ _AKSHARE_CACHE_TTL = 1800  # 30 MIN
 def _contains_cjk(text: str) -> bool:
     """Return True when text contains CJK characters."""
     return any("\u3400" <= ch <= "\u9fff" for ch in text)
+
+
+def _normalize_stock_name(name: str) -> str:
+    """Normalize user and provider names for stable A-share matching."""
+    return "".join(unicodedata.normalize("NFKC", str(name or "")).split())
 
 
 def _is_code_like(s: str) -> bool:
@@ -67,7 +73,7 @@ def _build_local_name_indexes(code_to_name: Dict[str, str]) -> Tuple[Dict[str, s
     for code, name in code_to_name.items():
         if not name or not code:
             continue
-        normalized_name = name.strip()
+        normalized_name = _normalize_stock_name(name)
         if not normalized_name:
             continue
         name_to_codes.setdefault(normalized_name, set()).add(code)
@@ -112,7 +118,7 @@ def _get_akshare_name_to_code() -> Optional[Dict[str, str]]:
                 base, suffix = code_str.rsplit(".", 1)
                 if suffix.upper() in ("SH", "SZ", "SS") and base.isdigit():
                     code_str = base
-            code_to_name[code_str] = str(name).strip()
+            code_to_name[code_str] = _normalize_stock_name(str(name))
         result = _build_reverse_map_no_duplicates(code_to_name)
         _akshare_cache = (now, result)
         logger.info(f"[NameResolver] AkShare cache loaded: {len(result)} name->code mappings")
@@ -155,9 +161,19 @@ def resolve_name_to_code(name: str) -> Optional[str]:
     """
     if not name or not isinstance(name, str):
         return None
-    s = name.strip()
+    s = _normalize_stock_name(name)
     if not s:
         return None
+
+    # Explicit A-share index identities are resolved before the stock map;
+    # codes such as 000001 can otherwise collide with a listed stock.
+    try:
+        from src.services.a_share_index_registry import get_a_share_index
+        index = get_a_share_index(s)
+        if index is not None:
+            return index.code
+    except Exception:
+        pass
 
     # 1. Input looks like code
     if _is_code_like(s):
@@ -201,6 +217,11 @@ def resolve_name_to_code(name: str) -> Optional[str]:
     all_name_to_code = dict(local_reverse)
     if akshare_map:
         all_name_to_code.update(akshare_map)
+    # A useful partial-name path for Chinese names (e.g. "茅台").
+    if sum(1 for ch in s if "\u3400" <= ch <= "\u9fff") >= 2:
+        substring_matches = [name for name in all_name_to_code if s in name]
+        if len(substring_matches) == 1:
+            return all_name_to_code[substring_matches[0]]
     # Skip fuzzy matching for very short inputs (<=2 chars) to avoid false positives,
     # e.g. '中国' matching arbitrary company names in a pool of 5000+ stocks.
     # Use a higher cutoff (0.8) to reduce mis-hits on longer inputs as well.

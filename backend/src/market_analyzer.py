@@ -94,6 +94,10 @@ class MarketOverview:
     bottom_sectors: List[Dict] = field(default_factory=list)  # 跌幅前5板块
 
 
+    top_concepts: List[Dict] = field(default_factory=list)
+    bottom_concepts: List[Dict] = field(default_factory=list)
+
+
 class MarketAnalyzer:
     """
     大盘复盘分析器
@@ -111,6 +115,7 @@ class MarketAnalyzer:
         search_service: Optional[SearchService] = None,
         analyzer=None,
         region: str = "cn",
+        config: Optional[Any] = None,
     ):
         """
         初始化大盘分析器
@@ -120,11 +125,11 @@ class MarketAnalyzer:
             analyzer: AI分析器实例（用于调用LLM）
             region: 市场区域 cn=A股 us=美股
         """
-        self.config = get_config()
+        self.config = config or get_config()
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
-        self.region = region if region in ("cn", "us", "hk") else "cn"
+        self.region = region if region in ("cn", "us", "hk", "jp", "kr") else "cn"
         self.profile: MarketProfile = get_profile(self.region)
         self.strategy = get_market_strategy_blueprint(self.region)
 
@@ -315,6 +320,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # 3. 获取板块涨跌榜（A 股有，美股暂无）
         if self.profile.has_sector_rankings:
             self._get_sector_rankings(overview)
+            self._get_concept_rankings(overview)
         
         # 4. 获取北向资金（可选）
         # self._get_north_flow(overview)
@@ -398,6 +404,17 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
         except Exception as e:
             logger.error(f"[大盘] 获取板块涨跌榜失败: {e}")
+
+    def _get_concept_rankings(self, overview: MarketOverview):
+        getter = getattr(self.data_manager, "get_concept_rankings", None)
+        if not callable(getter):
+            return
+        try:
+            top, bottom = getter(5)
+            overview.top_concepts = top or []
+            overview.bottom_concepts = bottom or []
+        except Exception as exc:
+            logger.warning(f"[大盘] 获取概念涨跌榜失败: {exc}")
     
     # def _get_north_flow(self, overview: MarketOverview):
     #     """获取北向资金流入"""
@@ -899,6 +916,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # 板块信息
         top_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.top_sectors[:3]])
         bottom_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.bottom_sectors[:3]])
+        top_concepts_text = ", ".join([f"{s.get('name', '')}({s.get('change_pct', 0):+.2f}%)" for s in overview.top_concepts[:3]])
+        bottom_concepts_text = ", ".join([f"{s.get('name', '')}({s.get('change_pct', 0):+.2f}%)" for s in overview.bottom_concepts[:3]])
         
         # 新闻信息 - 支持 SearchResult 对象或字典
         news_text = ""
@@ -927,9 +946,11 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 stats_block = "## Market Breadth\n(No equivalent advance/decline statistics are available for this market.)"
 
             if self.profile.has_sector_rankings:
-                sector_block = f"""## Sector Performance
-Leading: {top_sectors_text if top_sectors_text else "N/A"}
-Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
+                sector_block = f"""## Sector / Theme Performance
+Industry leading: {top_sectors_text if top_sectors_text else "N/A"}
+Industry lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}
+Concept leading: {top_concepts_text if top_concepts_text else "N/A"}
+Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
             else:
                 sector_block = "## Sector Performance\n(Sector data not available for this market.)"
         else:
@@ -942,9 +963,11 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
                 stats_block = "## 市场概况\n（该市场暂无涨跌家数等统计）"
 
             if self.profile.has_sector_rankings:
-                sector_block = f"""## 板块表现
-领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
-领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}"""
+                sector_block = f"""## 板块 / 题材表现
+行业领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
+行业领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}
+概念领涨: {top_concepts_text if top_concepts_text else "暂无数据"}
+概念领跌: {bottom_concepts_text if bottom_concepts_text else "暂无数据"}"""
             else:
                 sector_block = "## 板块表现\n（该市场暂无板块涨跌数据）"
 
@@ -1013,7 +1036,7 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
 (Interpret what turnover, participation, and flow signals imply.)
 
 ### 4. Sector Highlights
-(Analyze the drivers behind the leading and lagging sectors or themes.)
+(Distinguish industry-sector moves from concept/theme moves, then analyze drivers and persistence.)
 
 ### 5. Outlook
 (Provide the near-term outlook based on price action and news.)
