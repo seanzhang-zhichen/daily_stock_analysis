@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] Web 前端视觉焕新：提炼设计令牌（动效曲线、层级阴影、圆角尺度），净化背景氛围光，卡片增加顶部高光描边，按钮/快捷股票卡片新增悬浮与按压微交互，新增页面进入动效、全局焦点环与 prefers-reduced-motion 支持，统计数字启用等宽数字排版。
 - [改进] 日线数据新增可空 `canonical_id` 双写与 Alembic 迁移，显式 A 股指数与同码个股在历史存储中保持独立身份。
 - [修复] 接入 `TUSHARE_HTTP_URL` 自建网关配置，并修正东财 ETF 历史 K 线请求使用交易所 `secid`，避免 ETF 路由到错误证券。
 - [改进] 新闻检索为空时区分未配置搜索渠道与零命中，并在中英韩报告、历史详情和 Web 新闻区如实披露证据边界。

@@ -1,3 +1,12 @@
+/* =========================================================
+   Components — UI 组件样式库
+   命名规范：ui-{组件}-{部件|变体}（BEM 简化式）
+     .ui-button / .ui-button-primary / .ui-button-size-md
+     .ui-card   / .ui-card-hoverable / .ui-card-padding-md
+   页面级组件使用语义前缀：home-* / backtest-* / stock-profile-*
+   颜色、阴影、圆角、动效统一引用 styles/tokens.css 中的令牌。
+   ========================================================= */
+
 .ui-button {
   display: inline-flex;
   cursor: pointer;
@@ -8,11 +17,16 @@
   font-weight: 600;
   line-height: 1;
   transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* 按压反馈：点击时下沉 1px，增强可点击感 */
+.ui-button:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 .ui-button:focus-visible {
@@ -66,12 +80,17 @@
   border-color: hsl(var(--color-primary) / 0.88);
   background: linear-gradient(135deg, hsl(var(--color-primary)), hsl(205 82% 42%));
   color: hsl(var(--color-primary-foreground));
-  box-shadow: 0 10px 22px hsl(var(--color-primary) / 0.18);
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.2),
+    0 10px 22px hsl(var(--color-primary) / 0.2);
 }
 
 .ui-button-primary:hover:not(:disabled) {
   background: linear-gradient(135deg, hsl(190 90% 35%), hsl(209 84% 38%));
-  box-shadow: 0 12px 26px hsl(var(--color-primary) / 0.24);
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.22),
+    0 14px 30px hsl(var(--color-primary) / 0.26);
+  transform: translateY(-1px);
 }
 
 .ui-button-primary:disabled {
@@ -145,11 +164,11 @@
 .ui-card {
   position: relative;
   overflow: hidden;
-  border: 1px solid hsl(var(--color-border) / 0.76);
+  border: 1px solid hsl(var(--color-border) / 0.62);
   border-radius: var(--radius-xl);
   background:
-    linear-gradient(180deg, hsl(var(--color-surface) / 0.9), hsl(var(--color-surface-muted) / 0.26)),
-    hsl(var(--color-surface) / 0.88);
+    linear-gradient(180deg, hsl(var(--color-surface) / 0.92), hsl(var(--color-surface-muted) / 0.24)),
+    hsl(var(--color-surface) / 0.9);
   color: hsl(var(--color-foreground));
   box-shadow: var(--shadow-card);
   -webkit-backdrop-filter: blur(10px);
@@ -170,14 +189,14 @@
 .ui-card-hoverable {
   cursor: pointer;
   transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    transform var(--motion-duration-base) var(--motion-ease-emphasized),
+    border-color var(--motion-duration-base) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .ui-card-hoverable:hover {
-  transform: translateY(-1px);
-  border-color: hsl(var(--color-primary) / 0.3);
+  transform: translateY(-2px);
+  border-color: hsl(var(--color-primary) / 0.32);
   box-shadow: var(--shadow-popover);
 }
 
@@ -471,12 +490,22 @@
 .ui-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: 0.5rem;
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: hsl(var(--color-muted-foreground));
+}
+
+/* 品牌装饰短线，强化信息层级 */
+.ui-eyebrow::before {
+  content: '';
+  width: 0.875rem;
+  height: 2px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, hsl(var(--color-primary)), hsl(var(--color-primary) / 0.3));
 }
 
 .ui-input {
@@ -485,11 +514,11 @@
   border-radius: var(--radius-lg);
   background: hsl(var(--color-surface) / 0.94);
   color: hsl(var(--color-foreground));
-  box-shadow: var(--shadow-card);
+  box-shadow: 0 1px 2px hsl(222 30% 26% / 0.05);
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .ui-input::placeholder {
@@ -508,8 +537,8 @@
 .ui-input:focus,
 .ui-input:focus-within {
   outline: none;
-  border-color: hsl(var(--color-primary) / 0.42);
-  box-shadow: var(--shadow-card), 0 0 0 4px hsl(var(--color-focus-ring) / 0.14);
+  border-color: hsl(var(--color-primary) / 0.45);
+  box-shadow: 0 1px 2px hsl(222 30% 26% / 0.05), 0 0 0 4px hsl(var(--color-focus-ring) / 0.13);
 }
 
 .ui-input:disabled {
@@ -551,7 +580,7 @@ input[type='radio']:focus-visible {
 .ui-input-invalid:focus,
 .ui-input-invalid:focus-within {
   border-color: hsl(var(--color-danger) / 0.44);
-  box-shadow: var(--shadow-card), 0 0 0 4px hsl(var(--color-danger) / 0.1);
+  box-shadow: 0 1px 2px hsl(222 30% 26% / 0.05), 0 0 0 4px hsl(var(--color-danger) / 0.1);
 }
 
 .ui-input-login {
@@ -623,15 +652,15 @@ input[type='radio']:focus-visible {
   color: hsl(var(--color-danger-alert-text));
 }
 
+/* 空状态：虚线占位区保持扁平轻盈，不投阴影 */
 .ui-empty-state {
   border: 1px dashed hsl(var(--color-border) / 0.86);
   border-radius: var(--radius-xl);
   background:
-    linear-gradient(135deg, hsl(var(--color-surface) / 0.9), hsl(var(--color-surface-muted) / 0.48)),
-    hsl(var(--color-surface) / 0.78);
+    linear-gradient(135deg, hsl(var(--color-surface) / 0.9), hsl(var(--color-surface-muted) / 0.4)),
+    hsl(var(--color-surface) / 0.72);
   padding: clamp(2rem, 5vw, 3rem);
   text-align: center;
-  box-shadow: var(--shadow-card);
 }
 
 .ui-page-header {
@@ -696,13 +725,20 @@ input[type='radio']:focus-visible {
   border-color: hsl(var(--color-border) / 0.78);
   background: hsl(var(--color-surface) / 0.82);
   box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.38);
+  transition:
+    transform var(--motion-duration-base) var(--motion-ease-emphasized),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .home-quick-stock:hover:not(:disabled),
 .home-quick-stock:focus-visible {
-  border-color: hsl(var(--color-primary) / 0.34);
+  border-color: hsl(var(--color-primary) / 0.36);
   background: hsl(var(--color-primary-muted) / 0.08);
+  box-shadow: var(--shadow-card);
   outline: none;
+  transform: translateY(-2px);
 }
 
 .chat-composer {
@@ -1524,14 +1560,15 @@ input[type='radio']:focus-visible {
   border-radius: var(--radius-lg);
   background: linear-gradient(135deg, hsl(var(--color-primary)), hsl(205 82% 42%));
   color: hsl(var(--color-primary-foreground));
-  box-shadow: 0 10px 22px hsl(var(--color-primary) / 0.18);
+  box-shadow: 0 10px 22px hsl(var(--color-primary) / 0.2);
   transition:
-    background-color 0.18s ease,
-    transform 0.18s ease;
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .ui-sidebar-brand-mark:hover {
-  background: hsl(var(--color-primary) / 0.92);
+  box-shadow: 0 12px 26px hsl(var(--color-primary) / 0.28);
+  transform: scale(1.05);
 }
 
 .ui-sidebar-brand-title {
@@ -1580,10 +1617,10 @@ input[type='radio']:focus-visible {
   color: hsl(var(--color-subtle-foreground));
   font-size: 0.875rem;
   transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease,
-    box-shadow 0.16s ease;
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .ui-sidebar-link {

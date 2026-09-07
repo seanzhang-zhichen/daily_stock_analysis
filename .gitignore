@@ -88,3 +88,5 @@ static/
 /frontend/web/dist/
 docs/specs/
 .playwright-cli
+.workbuddy
+.ruff_cache

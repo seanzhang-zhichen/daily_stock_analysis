@@ -23,7 +23,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     )}>
       {icon ? (
         <div className="mb-5 flex justify-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/8 text-primary/70">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/8 text-primary/70 shadow-sm ring-4 ring-primary/5">
             {icon}
           </div>
         </div>

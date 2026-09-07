@@ -10,10 +10,12 @@
    1. THEME VARIABLES
    ========================================= */
 :root {
-  /* Typography */
+  /* Typography: Inter 覆盖拉丁字符，中文回退到系统中文字体 */
   font-family:
     "Inter",
-    "SF Pro Display",
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
     "Segoe UI",
     system-ui,
     -apple-system,
@@ -27,30 +29,30 @@
 
   /* HSL tokens used by Tailwind-based components */
 
-  --background: 213 28% 96%;
-  --foreground: 224 32% 12%;
+  --background: 216 30% 97%;
+  --foreground: 224 36% 11%;
   --card: 0 0% 100%;
   --card-foreground: 228 35% 12%;
   --popover: 0 0% 100%;
   --popover-foreground: 228 35% 12%;
   --primary: 192 88% 39%;
   --primary-foreground: 216 33% 97%;
-  --secondary: 214 32% 91%;
+  --secondary: 214 32% 92%;
   --secondary-foreground: 228 35% 16%;
-  --muted: 214 26% 92%;
-  --muted-foreground: 224 13% 41%;
+  --muted: 214 26% 93%;
+  --muted-foreground: 224 13% 42%;
   --accent: 173 26% 91%;
   --accent-foreground: 228 35% 16%;
   --destructive: 349 82% 56%;
   --destructive-foreground: 210 33% 98%;
-  --border: 217 24% 82%;
-  --input: 217 24% 82%;
+  --border: 217 24% 84%;
+  --input: 217 24% 84%;
   --ring: 192 88% 39%;
   --radius: 0.5rem;
   --elevated: 0 0% 100%;
-  --hover: 214 29% 90%;
-  --secondary-text: 224 18% 28%;
-  --muted-text: 224 12% 35%;
+  --hover: 214 29% 91%;
+  --secondary-text: 224 18% 29%;
+  --muted-text: 224 12% 36%;
 
   --color-cyan: hsl(var(--primary));
   --color-cyan-dim: hsl(var(--primary) / 0.8);
@@ -375,12 +377,46 @@
 
 /* ============ Base Styles ============ */
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     margin: 0;
     min-width: 320px;
     min-height: 100vh;
     background: hsl(var(--background));
     color: hsl(var(--foreground));
+  }
+
+  /* 原生表单控件跟随品牌色 */
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='range'],
+  progress {
+    accent-color: hsl(var(--primary));
+  }
+
+  /* 全局焦点环：为未自定义 focus 样式的交互元素兜底。
+     已有组件级样式（如 .ui-button:focus-visible）优先级更高，不受影响。 */
+  :where(a, button, [role='button'], [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring) / 0.55);
+    outline-offset: 2px;
+  }
+
+  /* 尊重用户的减弱动效偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 

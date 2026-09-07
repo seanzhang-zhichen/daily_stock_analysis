@@ -1,8 +1,12 @@
+/* =========================================================
+   Layouts — 应用壳层 / 侧边栏 / 页面容器 / 页面进入动效
+   ========================================================= */
+
 .app-shell {
   min-height: 100vh;
   background:
-    radial-gradient(ellipse at 24% 0%, hsl(var(--color-primary) / 0.1), transparent 30rem),
-    radial-gradient(ellipse at 100% 10%, hsl(var(--color-warning) / 0.08), transparent 26rem),
+    radial-gradient(56rem 30rem at 16% -8%, hsl(var(--color-primary) / 0.07), transparent 70%),
+    radial-gradient(48rem 28rem at 98% -4%, hsl(217 91% 60% / 0.05), transparent 70%),
     linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.42)),
     hsl(var(--color-background));
   color: hsl(var(--color-foreground));
@@ -27,15 +31,15 @@
   flex-shrink: 0;
   align-self: flex-start;
   overflow: visible;
-  border: 1px solid hsl(var(--color-border) / 0.72);
+  border: 1px solid hsl(var(--color-border) / 0.6);
   border-radius: calc(var(--radius-xl) + 0.125rem);
   background:
-    linear-gradient(180deg, hsl(var(--color-surface) / 0.88), hsl(var(--color-surface-muted) / 0.58)),
-    hsl(var(--color-surface) / 0.9);
+    linear-gradient(180deg, hsl(var(--color-surface) / 0.92), hsl(var(--color-surface-muted) / 0.6)),
+    hsl(var(--color-surface) / 0.92);
   padding: 0.625rem;
-  box-shadow: 0 18px 44px hsl(220 20% 24% / 0.1);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  backdrop-filter: blur(20px) saturate(1.15);
 }
 
 .app-shell-main {
@@ -116,6 +120,25 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-section);
+}
+
+/* ---- 页面进入动效：路由切换时轻微上浮淡入 ---- */
+@keyframes dsa-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-page,
+.standard-page-layout,
+.workspace-page-layout,
+.auth-layout {
+  animation: dsa-page-enter var(--motion-duration-slow) var(--motion-ease-emphasized) both;
 }
 
 @media (max-width: 639px) {

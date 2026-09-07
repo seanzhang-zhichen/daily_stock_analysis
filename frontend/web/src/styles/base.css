@@ -1,12 +1,19 @@
+/* =========================================================
+   Base — 页面级背景与全局基础样式
+   ========================================================= */
+
 html {
   background: hsl(var(--color-background));
 }
 
+/* 背景氛围：左上角品牌青光 + 右上角冷蓝微光 + 垂直渐变，
+   低饱和度、只作氛围衬托，不与卡片争对比度。 */
 body {
   background:
-    radial-gradient(ellipse at 18% 0%, hsl(var(--color-primary) / 0.1), transparent 34rem),
-    radial-gradient(ellipse at 85% 12%, hsl(var(--color-warning) / 0.08), transparent 30rem),
-    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.46));
+    radial-gradient(56rem 30rem at 10% -10%, hsl(var(--color-primary) / 0.07), transparent 70%),
+    radial-gradient(48rem 28rem at 95% -6%, hsl(217 91% 60% / 0.05), transparent 70%),
+    linear-gradient(180deg, hsl(var(--color-background)), hsl(var(--color-surface-muted) / 0.45));
+  background-attachment: fixed;
   color: hsl(var(--color-foreground));
 }
 
