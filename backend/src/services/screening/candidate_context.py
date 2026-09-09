@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Optional Top-K candidate news, announcement and fund-flow context."""
+"""可选的 Top-K 候选股上下文增强：新闻、公告与资金流向。
+
+为候选池补充舆情/公告/资金流等外部上下文，供 LLM 排序阶段使用。
+"""
 
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+# 负面事件关键词 -> 分类标签, 用于给 LLM 提示"是否要规避该候选"
 _NEGATIVE_EVENT_KEYWORDS = {
     "减持": ("减持", "拟减持", "被动减持"),
     "监管": ("处罚", "立案", "监管函", "问询函", "警示函", "调查"),
@@ -22,6 +26,7 @@ _NEGATIVE_EVENT_KEYWORDS = {
     "退市风险": ("退市", "ST", "*ST", "终止上市"),
     "诉讼风险": ("诉讼", "仲裁", "冻结", "质押"),
 }
+# 正面事件关键词 -> 分类标签
 _POSITIVE_EVENT_KEYWORDS = {
     "回购增持": ("回购", "增持"),
     "订单经营": ("中标", "合同", "订单", "定点", "合作"),
@@ -29,6 +34,7 @@ _POSITIVE_EVENT_KEYWORDS = {
     "股东回报": ("分红", "派息"),
     "激励": ("股权激励", "员工持股"),
 }
+# 公告类别关键词: 给公告文本做粗粒度分类, 提示"是否与基本面相关"
 _ANNOUNCEMENT_CATEGORY_KEYWORDS = {
     "业绩": ("业绩", "利润", "营收", "预增", "预亏", "扭亏", "年报", "季报"),
     "回购增持": ("回购", "增持"),
@@ -39,12 +45,14 @@ _ANNOUNCEMENT_CATEGORY_KEYWORDS = {
     "诉讼担保": ("诉讼", "仲裁", "担保", "冻结", "质押"),
     "股权激励": ("股权激励", "员工持股"),
 }
+# 各来源默认权重, 越高越可信(供来源覆盖率打分使用)
 _SOURCE_WEIGHTS = {
     "announcement": 1.0,
     "quote": 0.85,
     "news": 0.65,
     "fund_flow": 0.75,
 }
+# Top-K 候选内最大并发抓取数; 任务数较少时不强制触发多线程
 _DEFAULT_MAX_WORKERS = 4
 
 
@@ -59,19 +67,20 @@ def collect_candidate_context(
     cache_ttl_hours: int = 24,
     source_weights: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, object]], list[str]]:
-    """Collect candidate-level context rows keyed by stock code.
+    """按股票代码并发抓取 Top-K 候选的上下文素材, 返回 ``(rows, errors)``。
 
-    The function is optional and best-effort. It should never decide
-    eligibility; it only supplies LLM research material for already shortlisted
-    candidates.
+    注意: 该函数**不会影响候选资格**, 只是为已经入围的候选补充 LLM 研究素材。
+    任意来源失败都不会中断整体流程, 只会累加到 ``errors`` 列表。
     """
     if candidate_df.empty or "code" not in candidate_df.columns or max_rows <= 0:
         return [], []
 
     providers = _normalize_providers(providers or [])
     tasks: list[dict[str, str]] = []
+    # 仅取前 max_rows 行, 减少单轮 LLM 上下文的体积
     for _, candidate in candidate_df.head(max_rows).iterrows():
         code = _normalize_code(candidate.get("code", ""))
+        # 000000 是常见的"占位/异常"代码, 跳过避免无效请求
         if not code or code == "000000":
             continue
         tasks.append(
@@ -85,6 +94,7 @@ def collect_candidate_context(
         return [], []
 
     results: list[tuple[dict[str, object] | None, list[str]] | None] = [None] * len(tasks)
+    # 单任务时不启用线程池, 避免不必要的线程开销
     max_workers = min(_DEFAULT_MAX_WORKERS, len(tasks))
     if max_workers <= 1:
         for index, task in enumerate(tasks):
@@ -117,6 +127,7 @@ def collect_candidate_context(
                 try:
                     results[index] = future.result()
                 except Exception as exc:
+                    # 抓取异常被降到单条 errors, 不影响其它候选
                     results[index] = (None, [f"{tasks[index]['code']} context: {exc}"])
 
     rows: list[dict[str, object]] = []
@@ -141,17 +152,20 @@ def _collect_candidate_context_row(
     cache_ttl_hours: int,
     source_weights: dict[str, float] | None,
 ) -> tuple[dict[str, object] | None, list[str]]:
+    """对单只股票执行"读缓存 -> 抓四类来源 -> 写回缓存"流程。"""
     code = candidate["code"]
     errors: list[str] = []
     try:
         cached = _read_cache(cache_dir, code, providers, cache_ttl_hours=cache_ttl_hours)
         if cached is not None:
+            # 命中缓存也要保证拥有最新计算字段(权重分/事件标签等)
             _ensure_context_row_enrichment(
                 cached,
                 requested_sources=providers,
                 source_weights=source_weights,
             )
             return cached, []
+        # 新建空 row, 由各来源分别填字段
         row: dict[str, object] = {
             "code": code,
             "name": candidate.get("name", ""),
@@ -165,6 +179,7 @@ def _collect_candidate_context_row(
             except Exception as exc:
                 errors.append(f"{code} news: {exc}")
         if "announcement" in providers or "announcements" in providers:
+            # 兼容历史/现行两种命名
             try:
                 row["announcement"] = fetch_stock_announcement_summary(code, limit=announcement_limit)
                 if row["announcement"]:
@@ -185,6 +200,7 @@ def _collect_candidate_context_row(
                     successful_sources.append("quote")
             except Exception as exc:
                 errors.append(f"{code} quote: {exc}")
+        # 至少要有一种来源拉到了非空字段, 否则视为空 row 丢弃
         if any(value for key, value in row.items() if key not in {"code", "name"}):
             row["source_count"] = len(successful_sources)
             row["source_confidence"] = _source_confidence(successful_sources, providers)
@@ -210,6 +226,7 @@ def _collect_candidate_context_row(
 
 
 def fetch_stock_news_summary(code: str, *, limit: int = 3) -> str:
+    """通过 akshare 抓取最近 ``limit`` 条个股新闻并拼接为紧凑文本。"""
     import akshare as ak
 
     df = ak.stock_news_em(symbol=str(code).zfill(6))
@@ -227,8 +244,10 @@ def fetch_stock_news_summary(code: str, *, limit: int = 3) -> str:
 
 
 def fetch_stock_announcement_summary(code: str, *, limit: int = 3) -> str:
+    """通过巨潮 cninfo 抓取最近 ``limit`` 条公告并拼接。"""
     import akshare as ak
 
+    # 只看最近 45 天, 公告基本不会更长时效影响当日决策
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=45)).strftime("%Y%m%d")
     df = ak.stock_zh_a_disclosure_report_cninfo(
@@ -249,6 +268,7 @@ def fetch_stock_announcement_summary(code: str, *, limit: int = 3) -> str:
 
 
 def fetch_stock_fund_flow_summary(code: str) -> str:
+    """抓取个股最近一日的资金流(主力/超大单/大单净流入等)文本摘要。"""
     import akshare as ak
 
     market = _market_for_code(code)
@@ -261,6 +281,7 @@ def fetch_stock_fund_flow_summary(code: str) -> str:
     fields = []
     for column in df.columns:
         name = str(column)
+        # 仅保留常见的有信息量字段, 避免截图式表格被吐进 LLM
         if any(keyword in name for keyword in ["日期", "主力净流入", "超大单净流入", "大单净流入", "净占比"]):
             value = _safe_text(row.get(column))
             if value:
@@ -269,7 +290,7 @@ def fetch_stock_fund_flow_summary(code: str) -> str:
 
 
 def fetch_stock_quote_summary(code: str) -> str:
-    """Fetch lightweight Tencent quote/fundamental context for one candidate."""
+    """从腾讯接口取一档实时行情与估值的轻量摘要(供软排序用)。"""
     symbol = _tencent_symbol_for_code(code)
     if not symbol:
         return ""
@@ -286,6 +307,7 @@ def fetch_stock_quote_summary(code: str) -> str:
     parts = body.split("~")
     if len(parts) < 46:
         return ""
+    # 腾讯接口字段顺序固定, 下标含义见接口文档
     fields = [
         ("名称", _part(parts, 1)),
         ("现价", _part(parts, 3)),
@@ -305,7 +327,7 @@ def fetch_stock_quote_summary(code: str) -> str:
 
 
 def classify_context_events(row: dict[str, object]) -> list[str]:
-    """Return coarse event tags from already collected candidate context."""
+    """从候选上下文文本里提取正面 / 负面事件标签(粗粒度关键词匹配)。"""
     text = _row_text(row)
     tags: list[str] = []
     for label, keywords in _POSITIVE_EVENT_KEYWORDS.items():
@@ -318,7 +340,7 @@ def classify_context_events(row: dict[str, object]) -> list[str]:
 
 
 def classify_negative_events(row: dict[str, object]) -> list[str]:
-    """Return negative event categories detected in candidate context."""
+    """只提取负面事件分类(便于在过滤阶段拦截)。"""
     text = _row_text(row)
     flags = [
         label
@@ -329,7 +351,7 @@ def classify_negative_events(row: dict[str, object]) -> list[str]:
 
 
 def classify_announcement_categories(row: dict[str, object]) -> list[str]:
-    """Return coarse announcement categories from candidate context."""
+    """从公告字段中提取粗粒度公告类别(业绩/合同/监管问询等)。"""
     text = " ".join(
         str(row.get(key) or "")
         for key in ("announcement", "announcements")
@@ -350,6 +372,7 @@ def _ensure_context_row_enrichment(
     successful_sources: list[str] | None = None,
     source_weights: dict[str, float] | None = None,
 ) -> None:
+    """保证 row 拥有 source_weight_score、event_tags 等下游 LLM 期望字段。"""
     successful_sources = successful_sources or _successful_sources_from_row(row)
     requested_sources = requested_sources or successful_sources
     if source_weights is not None or not isinstance(row.get("source_weight_score"), (int, float)):
@@ -385,6 +408,7 @@ def _ensure_context_row_enrichment(
 
 
 def _market_for_code(code: str) -> str:
+    """根据股票代码前缀推测 ``akshare`` 期望的市场字段(sh / sz)。"""
     code = _normalize_code(code)
     if code.startswith("6"):
         return "sh"
@@ -394,21 +418,25 @@ def _market_for_code(code: str) -> str:
 
 
 def _tencent_symbol_for_code(code: str) -> str:
+    """把股票代码转成腾讯 qt.gtimg 接口的 ``sh/sz/bj`` 前缀形式。"""
     code = _normalize_code(code)
     if code.startswith(("6", "5", "9")):
         return f"sh{code}"
     if code.startswith(("0", "3")):
         return f"sz{code}"
     if code.startswith(("4", "8", "920")):
+        # 920 开头为北交所; 4/8 是历史北交所代码前缀
         return f"bj{code}"
     return ""
 
 
 def _part(parts: list[str], index: int) -> str:
+    """安全地取腾讯接口字段下标, 越界返回空字符串。"""
     return _safe_text(parts[index] if index < len(parts) else "", max_len=80)
 
 
 def _first_value(row: pd.Series, columns: list[str]) -> str:
+    """从多语言备选列名里挑首个非空值(给不同数据源适配)。"""
     for column in columns:
         if column in row.index:
             value = _safe_text(row.get(column))
@@ -418,6 +446,7 @@ def _first_value(row: pd.Series, columns: list[str]) -> str:
 
 
 def _safe_text(value: object, *, max_len: int = 240) -> str:
+    """把任意值归一化为短文本, 自动屏蔽 NaN/None/<NA>。"""
     if value is None:
         return ""
     text = str(value).strip()
@@ -427,13 +456,16 @@ def _safe_text(value: object, *, max_len: int = 240) -> str:
 
 
 def _normalize_code(value: object) -> str:
+    """把可能带 ``.0`` / 含其它字符的代码归一化为 6 位数字字符串。"""
     text = _safe_text(value, max_len=80)
     if not text:
         return ""
+    # 去掉 pandas/CSV 常见 ``000001.0`` 形式
     if text.endswith(".0") and text[:-2].isdigit():
         text = text[:-2]
     if text.isdigit():
         return text.zfill(6)[-6:]
+    # 退路: 从任意字符串中抽取连续 6 位数字(优先放在括号或边界外的)
     match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
     if match:
         return match.group(1)
@@ -442,6 +474,7 @@ def _normalize_code(value: object) -> str:
 
 
 def _normalize_providers(providers: list[str]) -> list[str]:
+    """统一 provider 命名, 去重并保留先后顺序(如 ``fundflow`` -> ``fund_flow``)。"""
     aliases = {"announcements": "announcement", "fundflow": "fund_flow"}
     result = []
     seen = set()
@@ -454,6 +487,7 @@ def _normalize_providers(providers: list[str]) -> list[str]:
 
 
 def _source_confidence(successful_sources: list[str], requested_sources: list[str]) -> float:
+    """把"成功来源 / 请求来源"覆盖率转成 0-1 的 confidence。"""
     requested = set(requested_sources)
     if not requested:
         return 0.0
@@ -467,6 +501,7 @@ def _source_weight_score(
     *,
     source_weights: dict[str, float] | None = None,
 ) -> float:
+    """按各来源权重计算加权的"来源可信度", 用作综合打分输入。"""
     requested = _normalize_providers(requested_sources)
     successful = set(_normalize_providers(successful_sources))
     weights = _normalized_source_weights(source_weights)
@@ -478,6 +513,7 @@ def _source_weight_score(
 
 
 def _normalized_source_weights(source_weights: dict[str, float] | None) -> dict[str, float]:
+    """用户自定义权重覆盖默认权重, 缺失来源保留默认, 权重钳到非负。"""
     result = dict(_SOURCE_WEIGHTS)
     for key, value in (source_weights or {}).items():
         normalized = _normalize_providers([str(key)])
@@ -491,6 +527,7 @@ def _normalized_source_weights(source_weights: dict[str, float] | None) -> dict[
 
 
 def _summarize_row_context(row: dict[str, object]) -> str:
+    """把 row 的几个素材字段拼成一段"压缩摘要", 供 LLM 一次性消化。"""
     parts = []
     for key, label in (
         ("news", "新闻"),
@@ -514,6 +551,7 @@ def _summarize_row_context(row: dict[str, object]) -> str:
 
 
 def _row_text(row: dict[str, object]) -> str:
+    """把 row 里所有可用文本字段拼成一段, 作为关键词匹配的输入。"""
     fields = []
     for key in ("news", "announcement", "announcements", "fund_flow", "quote", "summary", "context", "text"):
         value = row.get(key)
@@ -523,6 +561,7 @@ def _row_text(row: dict[str, object]) -> str:
 
 
 def _successful_sources_from_row(row: dict[str, object]) -> list[str]:
+    """从已存在的 row 反推哪些来源拉到了非空文本(用于权重重算)。"""
     sources = []
     if row.get("news"):
         sources.append("news")
@@ -536,6 +575,7 @@ def _successful_sources_from_row(row: dict[str, object]) -> list[str]:
 
 
 def _compress_text(value: object, *, max_len: int) -> str:
+    """压缩文本到 ``max_len`` 以内, 优先在分隔符处截断, 保留可读性。"""
     text = _safe_text(value, max_len=max(max_len * 2, 240))
     if not text:
         return ""
@@ -543,6 +583,7 @@ def _compress_text(value: object, *, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     cut = text[:max_len]
+    # 优先在中点之后寻找分隔符截断, 避免把半句话留在末尾
     for delimiter in (" | ", "；", "。", "，", " "):
         idx = cut.rfind(delimiter)
         if idx >= max_len * 0.55:
@@ -551,6 +592,7 @@ def _compress_text(value: object, *, max_len: int) -> str:
 
 
 def _cache_path(cache_dir: str | Path | None, code: str, providers: list[str]) -> Path | None:
+    """按 (代码, 提供方序列) 生成缓存文件路径, 关闭缓存时返回 None。"""
     if cache_dir is None:
         return None
     key = "_".join(providers) or "none"
@@ -564,6 +606,7 @@ def _read_cache(
     *,
     cache_ttl_hours: int,
 ) -> dict[str, object] | None:
+    """读取缓存, 过期或解析失败都视作未命中。"""
     path = _cache_path(cache_dir, code, providers)
     if path is None or not path.is_file() or cache_ttl_hours <= 0:
         return None
@@ -575,6 +618,7 @@ def _read_cache(
         row = data.get("row")
         return row if isinstance(row, dict) else None
     except Exception:
+        # 任何解析异常都视作未命中, 避免脏缓存污染
         return None
 
 
@@ -584,6 +628,7 @@ def _write_cache(
     providers: list[str],
     row: dict[str, object],
 ) -> None:
+    """把 row 序列化写入缓存文件, 创建目录(自动创建父目录)。"""
     path = _cache_path(cache_dir, code, providers)
     if path is None:
         return
@@ -593,6 +638,7 @@ def _write_cache(
 
 
 def _dedupe(items: list[str]) -> list[str]:
+    """按内容去重, 保留首次出现的非空元素。"""
     seen = set()
     result = []
     for item in items:

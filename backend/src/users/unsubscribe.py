@@ -134,7 +134,7 @@ def verify_unsubscribe_token(
 
 
 def get_public_base_url() -> str:
-    """Return the public API base URL without a trailing slash."""
+    """返回公开 API 基础地址（去掉末尾斜杠）。"""
     raw = (os.getenv("USER_PUBLIC_BASE_URL") or "").strip()
     if raw:
         return raw.rstrip("/")
@@ -142,7 +142,7 @@ def get_public_base_url() -> str:
 
 
 def get_frontend_public_base_url() -> str:
-    """Return the public frontend base URL without a trailing slash."""
+    """返回公开前端基础地址（去掉末尾斜杠）。"""
     raw = (os.getenv("USER_FRONTEND_BASE_URL") or "").strip()
     if raw:
         return raw.rstrip("/")

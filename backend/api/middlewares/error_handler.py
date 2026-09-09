@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Global API error handling helpers.
+"""全局 API 错误处理工具。
 
-这里同时提供 Starlette middleware 和 FastAPI exception handlers。middleware
-兜住调用链中未被 handler 捕获的异常；exception handlers 负责把常见异常转成
-前端统一消费的 ``{"error", "message", "detail"}`` 响应结构。
+本模块同时提供 Starlette middleware 与 FastAPI exception handlers。
+
+- ``ErrorHandlerMiddleware`` 作为兜底中间件，捕获调用链中未被任何 exception
+  handler 处理的异常，并把响应统一转换为 ``{"error", "message", "detail"}`` 结构。
+- ``add_error_handlers`` 注册多个细粒度的 exception handler，保证
+  ``HTTPException``、``RequestValidationError`` 等常见异常返回一致的 JSON 结构。
 """
 
 import logging
@@ -18,18 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):
-    """Catch unhandled request exceptions and return a normalized 500 body."""
-    
+    """兜底中间件：将请求链中未处理的异常转换为标准 500 JSON 响应。"""
+
     async def dispatch(
-        self, 
-        request: Request, 
+        self,
+        request: Request,
         call_next: Callable
     ) -> Response:
-        """Run the next handler and convert unexpected exceptions to JSON."""
+        """执行下游 handler 并把未预期异常序列化为统一 JSON 响应。"""
         try:
             response = await call_next(request)
             return response
-            
+
         except Exception as e:
             # 记录完整上下文，避免生产环境响应体隐藏细节后日志也缺少定位信息。
             logger.error(
@@ -38,7 +41,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 f"请求方法: {request.method}\n"
                 f"堆栈: {traceback.format_exc()}"
             )
-            
+
             # 响应体保持稳定结构，detail 只在 DEBUG 日志级别下暴露异常文本。
             return JSONResponse(
                 status_code=500,
@@ -51,13 +54,13 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
 
 
 def add_error_handlers(app) -> None:
-    """Attach exception handlers that keep API error payloads consistent."""
+    """注册异常 handler，使 API 错误响应体结构保持一致。"""
     from fastapi import HTTPException
     from fastapi.exceptions import RequestValidationError
-    
+
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        """Handle explicit HTTPException raised by endpoints/dependencies."""
+        """处理 endpoint / 依赖中显式抛出的 ``HTTPException``。"""
         # endpoint 可直接传入标准错误 dict；此处保留原样，避免二次包装破坏字段。
         if isinstance(exc.detail, dict) and "error" in exc.detail and "message" in exc.detail:
             return JSONResponse(
@@ -73,10 +76,10 @@ def add_error_handlers(app) -> None:
                 "detail": None
             }
         )
-    
+
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        """Handle request validation errors from FastAPI/Pydantic."""
+        """处理 FastAPI/Pydantic 抛出的请求参数校验错误。"""
         return JSONResponse(
             status_code=422,
             content={
@@ -85,10 +88,10 @@ def add_error_handlers(app) -> None:
                 "detail": exc.errors()
             }
         )
-    
+
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        """Handle any remaining exception not matched by a narrower handler."""
+        """处理未被前面更具体的 handler 捕获的所有其它异常。"""
         logger.error(
             f"未处理的异常: {exc}\n"
             f"请求路径: {request.url.path}\n"

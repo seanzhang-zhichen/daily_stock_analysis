@@ -40,6 +40,15 @@ vi.mock('../../api/history', () => ({
     getNews: vi.fn().mockResolvedValue({ total: 0, items: [] }),
     getMarkdown: vi.fn().mockResolvedValue('# report'),
     getShareImage: vi.fn(),
+    getRunFlow: vi.fn().mockResolvedValue({
+      taskId: 'test-task',
+      stockCode: '600519',
+      status: 'success',
+      lanes: [],
+      nodes: [],
+      edges: [],
+      events: [],
+    }),
   },
 }));
 
@@ -223,7 +232,7 @@ describe('HomePage', () => {
     expect(within(reportToolbar).getByText('标准')).toBeInTheDocument();
     expect(
       within(reportToolbar).getAllByRole('button').map((button) => button.getAttribute('data-variant')),
-    ).toEqual(['outline', 'outline', 'outline', 'secondary']);
+    ).toEqual(['outline', 'outline', 'outline', 'outline', 'secondary']);
     const shareButton = within(reportToolbar).getByRole('button', { name: '分享' });
     expect(shareButton).toBeInTheDocument();
     expect(within(reportToolbar).queryByRole('button', { name: '导出 PDF' })).not.toBeInTheDocument();

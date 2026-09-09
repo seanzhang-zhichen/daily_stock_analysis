@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Shared text sanitizers for logs, diagnostics, and API payloads."""
+"""日志、诊断信息与 API payload 共享的文本脱敏工具。
+
+统一负责把 Authorization / Cookie / Token / Webhook / 各类凭据类字符串从
+诊断输出、决策信号文本与持久化 payload 中清洗掉，避免泄漏到日志、数据库或前端响应。
+供日志模块、决策信号序列化模块、API 响应组装模块复用。
+
+主要能力：
+- 文本/字符串中的密钥与 URL 脱敏（sanitize_diagnostic_text / sanitize_decision_signal_text）
+- 字典/列表结构按敏感键递归脱敏（redact_sensitive_mapping / sanitize_decision_signal_payload）
+- 针对常见 Webhook 域名与 token 形态的内置启发式识别
+"""
 
 from __future__ import annotations
 
@@ -75,6 +85,15 @@ _TOKEN_LIKE_PATTERN = re.compile(
 
 
 def sanitize_diagnostic_text(text: Any, *, max_length: int = 300) -> str:
+    """脱敏诊断文本中的常见密钥与 URL，并按字节上限截断。
+
+    Args:
+        text: 任意可被 str() 的对象。
+        max_length: 返回字符串的最大长度。
+
+    Returns:
+        脱敏并截断后的字符串；空输入返回空串。
+    """
     """Redact common secrets and URLs from diagnostic text."""
     sanitized = str(text or "").strip()
     if not sanitized:
@@ -88,6 +107,18 @@ def sanitize_diagnostic_text(text: Any, *, max_length: int = 300) -> str:
 
 
 def redact_sensitive_mapping(obj: Any) -> Any:
+    """按键名递归脱敏映射/列表中的敏感字段。
+
+    Args:
+        obj: 任意 dict/list/标量。
+
+    Returns:
+        与 obj 结构对应的脱敏副本；标量原样返回。
+
+    Notes:
+        该函数仅基于键名做启发式判断，不会对任意字符串值做正则扫描。
+        早期只为 `AnalysisContextPack` 字典提供一个确定的序列化路径（P1 范围）。
+    """
     """Recursively redact sensitive values from mappings by key name only.
 
     This helper intentionally does not inspect arbitrary string values. P1 only
@@ -107,6 +138,7 @@ def redact_sensitive_mapping(obj: Any) -> Any:
 
 
 def sanitize_decision_signal_text(text: Any) -> str:
+    """脱敏决策信号文本中明显的密钥，但不做长度截断。"""
     """Redact obvious secrets from persisted decision-signal text without truncating."""
     sanitized = str(text or "").strip()
     if not sanitized:
@@ -121,12 +153,14 @@ def sanitize_decision_signal_text(text: Any) -> str:
 
 
 def sanitize_decision_signal_payload(obj: Any) -> Any:
+    """对决策信号 JSON payload 同时按敏感键与字符串内容做清洗。"""
     """Redact decision-signal JSON payloads by sensitive keys and string values."""
     redacted = redact_sensitive_mapping(obj)
     return _sanitize_decision_signal_payload_values(redacted)
 
 
 def _sanitize_decision_signal_payload_values(obj: Any) -> Any:
+    """递归遍历 obj，把所有字符串走 sanitize_decision_signal_text。"""
     if isinstance(obj, dict):
         return {
             key: _sanitize_decision_signal_payload_values(value)
@@ -140,6 +174,7 @@ def _sanitize_decision_signal_payload_values(obj: Any) -> Any:
 
 
 def _redact_sensitive_url_match(match: re.Match[str]) -> str:
+    """对 URL 正则匹配项做敏感判定后返回脱敏或原文。"""
     url = match.group(0)
     if _is_sensitive_url(url):
         return "[REDACTED_URL]"
@@ -147,6 +182,7 @@ def _redact_sensitive_url_match(match: re.Match[str]) -> str:
 
 
 def _is_sensitive_url(url: str) -> bool:
+    """判断 URL 是否含令牌、账号口令、Webhook 或敏感参数等敏感信息。"""
     if _TOKEN_LIKE_PATTERN.search(url):
         return True
     try:
@@ -164,6 +200,7 @@ def _is_sensitive_url(url: str) -> bool:
 
 
 def _is_webhook_url(hostname: str, path: str) -> bool:
+    """判断给定 hostname + path 是否为已知的 Webhook 端点形态。"""
     hostname = str(hostname or "").lower().strip(".")
     normalized_path = f"/{path.lstrip('/').lower()}"
     path_segments = [segment for segment in normalized_path.split("/") if segment]
@@ -188,6 +225,7 @@ def _is_webhook_url(hostname: str, path: str) -> bool:
 
 
 def _has_sensitive_url_params(params_text: str) -> bool:
+    """判断 URL query/fragment 是否包含敏感键或形似 token 的值。"""
     if not params_text:
         return False
     try:
@@ -204,6 +242,7 @@ def _has_sensitive_url_params(params_text: str) -> bool:
 
 
 def _is_sensitive_mapping_key(key: Any) -> bool:
+    """判断键名是否落在敏感字段词表内（含下划线/连字符/大小写归一）。"""
     key_text = str(key or "").strip()
     if not key_text:
         return False
@@ -214,6 +253,7 @@ def _is_sensitive_mapping_key(key: Any) -> bool:
 
 
 def _has_sensitive_phrase(normalized_key: str) -> bool:
+    """判断归一化后的键名是否包含任一敏感词组（支持下划线/紧凑形态/正则匹配）。"""
     padded_key = f"_{normalized_key}_"
     if any(f"_{phrase}_" in padded_key for phrase in _SENSITIVE_KEY_PHRASES):
         return True
@@ -224,6 +264,7 @@ def _has_sensitive_phrase(normalized_key: str) -> bool:
 
 
 def _mapping_key_parts(key_text: str) -> list[str]:
+    """把 camelCase、kebab-case、snake_case 形式的键名拆分为小写词片段。"""
     split_camel = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key_text)
     return [
         part.lower()

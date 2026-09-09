@@ -101,11 +101,14 @@ def test_downgrades_buy_near_resistance_without_fund_confirmation() -> None:
     )
 
     assert result.decision_type == "hold"
+    assert result.decision_action == "watch"
     assert result.sentiment_score <= 59
     assert result.operation_advice == "震荡观望"
     assert result.dashboard["decision_stability"]["applied"] is True
     assert "不宜仅因短线反弹追买" in result.risk_warning
     assert result.dashboard["core_conclusion"]["signal_type"] == "🟡持有观望"
+    assert result.decision_guardrails[-1]["reason"] == "buy_near_resistance"
+    assert result.decision_guardrails[-1]["after_action"] == "watch"
 
 
 def test_downgrades_buy_mid_range_with_neutral_fund_flow() -> None:

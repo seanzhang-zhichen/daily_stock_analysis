@@ -37,9 +37,7 @@ STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 
 
 
 def unwrap_exception(exc: Exception) -> Exception:
-    """
-    Follow chained exceptions and return the deepest non-cyclic cause.
-    """
+    """沿异常链向下追溯，返回最深层的非循环根因异常。"""
     current = exc
     visited = set()
 
@@ -54,9 +52,7 @@ def unwrap_exception(exc: Exception) -> Exception:
 
 
 def summarize_exception(exc: Exception) -> Tuple[str, str]:
-    """
-    Build a stable summary for logs while preserving the application-layer message.
-    """
+    """构造稳定的日志摘要，同时保留应用层错误消息。"""
     root = unwrap_exception(exc)
     error_type = type(root).__name__
     message = str(exc).strip() or str(root).strip() or error_type
@@ -65,47 +61,47 @@ def summarize_exception(exc: Exception) -> Tuple[str, str]:
 
 def normalize_stock_code(stock_code: str) -> str:
     """
-    Normalize stock code by stripping exchange prefixes/suffixes.
+    标准化股票代码：去除交易所前后缀。
 
-    Accepted formats and their normalized results:
-    - '600519'      -> '600519'   (already clean)
-    - 'SH600519'    -> '600519'   (strip SH prefix)
-    - 'SZ000001'    -> '000001'   (strip SZ prefix)
-    - 'BJ920748'    -> '920748'   (strip BJ prefix, BSE)
-    - 'sh600519'    -> '600519'   (case-insensitive)
-    - '600519.SH'   -> '600519'   (strip .SH suffix)
-    - '000001.SZ'   -> '000001'   (strip .SZ suffix)
-    - '920748.BJ'   -> '920748'   (strip .BJ suffix, BSE)
-    - 'HK00700'     -> 'HK00700'  (keep HK prefix for HK stocks)
-    - '1810.HK'     -> 'HK01810'  (normalize HK suffix to canonical prefix form)
-    - 'AAPL'        -> 'AAPL'     (keep US stock ticker as-is)
+    支持的输入格式及标准化结果：
+    - '600519'      -> '600519'   （已是干净代码）
+    - 'SH600519'    -> '600519'   （去除 SH 前缀）
+    - 'SZ000001'    -> '000001'   （去除 SZ 前缀）
+    - 'BJ920748'    -> '920748'   （去除 BJ 前缀，北交所）
+    - 'sh600519'    -> '600519'   （大小写不敏感）
+    - '600519.SH'   -> '600519'   （去除 .SH 后缀）
+    - '000001.SZ'   -> '000001'   （去除 .SZ 后缀）
+    - '920748.BJ'   -> '920748'   （去除 .BJ 后缀，北交所）
+    - 'HK00700'     -> 'HK00700'  （港股保留 HK 前缀）
+    - '1810.HK'     -> 'HK01810'  （港股后缀规范化为统一前缀形式）
+    - 'AAPL'        -> 'AAPL'     （美股代码原样保留）
 
-    This function is applied at the DataProviderManager layer so that
-    all individual fetchers receive a clean 6-digit code (for A-shares/ETFs).
+    该函数在 DataProviderManager 层调用，确保每个具体数据源拿到的都是
+    干净的 6 位代码（针对 A 股/ETF）。
     """
     code = stock_code.strip()
     upper = code.upper()
 
-    # Normalize HK prefix to a canonical 5-digit form (e.g. hk1810 -> HK01810)
+    # 将 HK 前缀规范化为统一的 5 位形式（如 hk1810 -> HK01810）
     if upper.startswith('HK') and not upper.startswith('HK.'):
         candidate = upper[2:]
         if candidate.isdigit() and 1 <= len(candidate) <= 5:
             return f"HK{candidate.zfill(5)}"
 
-    # Strip SH/SZ prefix (e.g. SH600519 -> 600519)
+    # 去除 SH/SZ 前缀（如 SH600519 -> 600519）
     if upper.startswith(('SH', 'SZ')) and not upper.startswith('SH.') and not upper.startswith('SZ.'):
         candidate = code[2:]
-        # Only strip if the remainder looks like a valid numeric code
+        # 仅当剩余部分看起来是合法数字代码时才去除
         if candidate.isdigit() and len(candidate) in (5, 6):
             return candidate
 
-    # Strip BJ prefix (e.g. BJ920748 -> 920748)
+    # 去除 BJ 前缀（如 BJ920748 -> 920748）
     if upper.startswith('BJ') and not upper.startswith('BJ.'):
         candidate = code[2:]
         if candidate.isdigit() and len(candidate) == 6:
             return candidate
 
-    # Strip .SH/.SZ/.BJ suffix (e.g. 600519.SH -> 600519, 920748.BJ -> 920748)
+    # 去除 .SH/.SZ/.BJ 后缀（如 600519.SH -> 600519, 920748.BJ -> 920748）
     if '.' in code:
         base, suffix = code.rsplit('.', 1)
         if suffix.upper() == 'HK' and base.isdigit() and 1 <= len(base) <= 5:
@@ -166,14 +162,14 @@ def _market_tag(code: str) -> str:
 
 def is_bse_code(code: str) -> bool:
     """
-    Check if the code is a Beijing Stock Exchange (BSE) A-share code.
+    判断是否为北交所（BSE）A 股代码。
 
-    BSE rules (2026):
-    - New format (2024+): 92xxxx main trading codes
-    - Historical ranges: 43xxxx, 83xxxx, 87xxxx, 88xxxx
-    - Special instruments: 81xxxx convertible bonds, 82xxxx preferred shares
-    - Subscription codes: 889xxx
-    Note: 900xxx are Shanghai B-shares and must return False.
+    北交所规则（2026）：
+    - 新格式（2024+）：92xxxx 主交易代码
+    - 历史区间：43xxxx、83xxxx、87xxxx、88xxxx
+    - 特殊品种：81xxxx 可转债、82xxxx 优先股
+    - 申购代码：889xxx
+    注意：900xxx 是上交所 B 股，必须返回 False。
     """
     c = (code or "").strip().split(".")[0]
     if len(c) != 6 or not c.isdigit():
@@ -185,21 +181,20 @@ def is_bse_code(code: str) -> bool:
     return c.startswith(("92", "43", "81", "82", "83", "87", "88"))
 
 def is_st_stock(name: str) -> bool:
-    """
-    Check if the stock is an ST or *ST stock based on its name.
+    """根据名称判断是否为 ST / *ST 股票。
 
-    ST stocks have special trading rules and typically a ±5% limit.
+    ST 股票实行特别交易规则，通常有 ±5% 涨跌幅限制。
     """
     n = (name or "").upper()
     return 'ST' in n
 
 def is_kc_cy_stock(code: str) -> bool:
     """
-    Check if the stock is a STAR Market (科创板) or ChiNext (创业板) stock based on its code.
+    根据代码判断是否为科创板或创业板股票。
 
-    - STAR Market: Codes starting with 688
-    - ChiNext: Codes starting with 300
-    Both have a ±20% limit.
+    - 科创板：688 开头
+    - 创业板：300 开头
+    两者涨跌幅限制均为 ±20%。
     """
     c = (code or "").strip().split(".")[0]
     return c.startswith("688") or c.startswith("30")
@@ -207,16 +202,16 @@ def is_kc_cy_stock(code: str) -> bool:
 
 def canonical_stock_code(code: str) -> str:
     """
-    Return the canonical (uppercase) form of a stock code.
+    返回股票代码的规范（大写）形式。
 
-    This is a display/storage layer concern, distinct from normalize_stock_code
-    which strips exchange prefixes. Apply at system input boundaries to ensure
-    consistent case across BOT, WEB UI, API, and CLI paths (Issue #355).
+    这是展示/存储层的关注点，区别于 normalize_stock_code（后者会去除
+    交易所前缀）。在系统输入边界调用，确保 BOT、WEB UI、API、CLI 各
+    路径下大小写一致（Issue #355）。
 
-    Examples:
+    示例：
         'aapl'    -> 'AAPL'
         'AAPL'    -> 'AAPL'
-        '600519'  -> '600519'  (digits are unchanged)
+        '600519'  -> '600519'  （纯数字不变）
         'hk00700' -> 'HK00700'
     """
     return (code or "").strip().upper()
@@ -560,7 +555,7 @@ class DataFetcherManager:
         self._fundamental_timeout_slots = BoundedSemaphore(self._fundamental_timeout_worker_limit)
 
     def _ensure_concurrency_guards(self) -> None:
-        """Lazily initialize thread-safety primitives for test scaffolds using __new__."""
+        """为使用 __new__ 构造的测试脚手架延迟初始化线程安全原语。"""
         if not hasattr(self, "_fetchers_lock") or self._fetchers_lock is None:
             self._fetchers_lock = RLock()
         if not hasattr(self, "_fetchers_by_name") or self._fetchers_by_name is None:
@@ -575,17 +570,17 @@ class DataFetcherManager:
             self._stock_name_cache_lock = RLock()
 
     def _get_fetchers_snapshot(self) -> List[BaseFetcher]:
-        """Return a stable copy of registered fetchers under the manager lock."""
+        """在管理器锁保护下返回已注册数据源的稳定副本。"""
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
             return list(getattr(self, "_fetchers", []))
 
     def _refresh_fetcher_indexes_locked(self) -> None:
-        """Rebuild the name-to-fetcher index while the fetcher lock is held."""
+        """在持有数据源锁的前提下重建名称到数据源的索引。"""
         self._fetchers_by_name = {fetcher.name: fetcher for fetcher in self._fetchers}
 
     def _get_fetcher_by_name(self, fetcher_name: str, capability: str = "") -> Optional[BaseFetcher]:
-        """Look up an available fetcher by name, refreshing stale indexes if needed."""
+        """按名称查找可用数据源，必要时刷新过期索引。"""
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
             fetcher = self._fetchers_by_name.get(fetcher_name)
@@ -600,7 +595,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _call_availability_probe(fetcher: BaseFetcher, probe_name: str, capability: str) -> Optional[bool]:
-        """Call one optional availability probe and normalize failures to False."""
+        """调用单个可选的可用性探测方法，并将失败归一化为 False。"""
         probe = getattr(fetcher, probe_name, None)
         if not callable(probe):
             return None
@@ -622,7 +617,7 @@ class DataFetcherManager:
 
     @classmethod
     def _is_fetcher_available(cls, fetcher: BaseFetcher, capability: str = "") -> bool:
-        """Return whether a fetcher can currently serve the requested capability."""
+        """判断数据源当前是否能为请求的 capability 提供服务。"""
         for probe_name in ("is_available_for_request", "is_available", "_is_available"):
             result = cls._call_availability_probe(fetcher, probe_name, capability)
             if result is not None:
@@ -630,7 +625,7 @@ class DataFetcherManager:
         return True
 
     def _get_fetcher_call_lock(self, fetcher: BaseFetcher) -> RLock:
-        """Return the per-fetcher lock used to serialize mutable client access."""
+        """返回每个数据源专属锁，用于串行化对可变客户端的访问。"""
         self._ensure_concurrency_guards()
         fetcher_id = id(fetcher)
         with self._fetcher_call_locks_lock:
@@ -641,7 +636,7 @@ class DataFetcherManager:
             return lock
 
     def _call_fetcher_method(self, fetcher: BaseFetcher, method_name: str, *args, **kwargs):
-        """Serialize shared fetcher state access through manager-owned per-instance locks."""
+        """通过管理器持有的每实例锁串行化共享数据源状态的访问。"""
         method = getattr(fetcher, method_name)
         with self._get_fetcher_call_lock(fetcher):
             return method(*args, **kwargs)
@@ -652,7 +647,7 @@ class DataFetcherManager:
         fetchers: List[BaseFetcher],
         market: str,
     ) -> List[BaseFetcher]:
-        """Skip built-in daily fetchers that are known not to support a market."""
+        """跳过已知不支持某市场的内置日线数据源。"""
         if market not in {"cn", "hk", "us"}:
             return fetchers
 
@@ -679,7 +674,7 @@ class DataFetcherManager:
         fetchers: List[BaseFetcher],
         capability: str,
     ) -> List[BaseFetcher]:
-        """Skip request-time unavailable fetchers before entering route-specific loops."""
+        """进入路由循环前，先跳过请求时不可用的数据源。"""
         kept: List[BaseFetcher] = []
         skipped: List[str] = []
 
@@ -699,13 +694,13 @@ class DataFetcherManager:
         return kept
 
     def _get_cached_stock_name(self, stock_code: str) -> Optional[str]:
-        """Read the in-memory stock name cache under its lock."""
+        """在锁保护下读取内存中的股票名称缓存。"""
         self._ensure_concurrency_guards()
         with self._stock_name_cache_lock:
             return self._stock_name_cache.get(stock_code)
 
     def _cache_stock_name(self, stock_code: str, name: Optional[str]) -> Optional[str]:
-        """Store a resolved stock name and return it for call-site chaining."""
+        """缓存已解析的股票名称并返回，便于调用点链式使用。"""
         if name is None:
             return None
         self._ensure_concurrency_guards()
@@ -714,7 +709,7 @@ class DataFetcherManager:
         return name
 
     def _get_tickflow_fetcher(self):
-        """Lazily create a TickFlow fetcher for market-review-only calls."""
+        """惰性创建 TickFlow 数据源，仅用于市场复盘类调用。"""
         from src.config import get_config
 
         config = get_config()
@@ -760,7 +755,7 @@ class DataFetcherManager:
                 return None
 
     def close(self) -> None:
-        """Best-effort release of manager-owned resources."""
+        """尽力释放管理器持有的资源。"""
         if not hasattr(self, "_tickflow_lock") or self._tickflow_lock is None:
             self._tickflow_lock = RLock()
 
@@ -776,11 +771,11 @@ class DataFetcherManager:
                 logger.debug("[TickFlowFetcher] 关闭管理器资源失败: %s", exc)
 
     def __del__(self) -> None:
-        """Release manager-owned resources during best-effort object finalization."""
+        """在对象析构的尽力清理阶段释放管理器持有的资源。"""
         try:
             self.close()
         except Exception:
-            # Best-effort cleanup during interpreter shutdown.
+            # 解释器关闭期间的尽力清理。
             pass
 
     def _get_fundamental_cache_key(self, stock_code: str, budget_seconds: Optional[float] = None) -> str:
@@ -792,12 +787,12 @@ class DataFetcherManager:
             budget = max(0.0, float(budget_seconds))
         except (TypeError, ValueError):
             budget = 0.0
-        # 100ms bucket to balance cache reuse and scenario isolation.
+        # 按 100ms 分桶，兼顾缓存复用与场景隔离。
         budget_bucket = int(round(budget * 10))
         return f"{normalized_code}|budget={budget_bucket}"
 
     def _prune_fundamental_cache(self, ttl_seconds: int, max_entries: int) -> None:
-        """Prune expired and overflow fundamental cache items."""
+        """清理过期的和超出容量的基本面缓存条目。"""
         with self._fundamental_cache_lock:
             if not self._fundamental_cache:
                 return
@@ -824,7 +819,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _try_scalar_isna(value: Any, context: str) -> Optional[bool]:
-        """Return scalar ``pd.isna`` result, or ``None`` when callers should use fallback logic."""
+        """返回标量 ``pd.isna`` 结果，无法判断时返回 ``None`` 交由调用方降级处理。"""
         if isinstance(value, (dict, list, tuple, set, pd.DataFrame, pd.Series, pd.Index)):
             return None
 
@@ -876,7 +871,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _is_missing_board_value(value: Any) -> bool:
-        """Return True when a board field value should be treated as missing."""
+        """当板块字段值应视为缺失时返回 True。"""
         if value is None:
             return True
         is_missing = DataFetcherManager._try_scalar_isna(value, "board_value")
@@ -887,7 +882,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _normalize_belong_boards(raw_data: Any) -> List[Dict[str, Any]]:
-        """Normalize belong-board results from heterogeneous providers."""
+        """归一化异构数据源返回的所属板块结果。"""
         if DataFetcherManager._is_missing_board_value(raw_data):
             return []
 
@@ -1096,12 +1091,11 @@ class DataFetcherManager:
         end_date: Optional[str],
         days: int,
     ) -> Tuple[pd.DataFrame, str]:
-        """Fetch an explicit A-share index through index-capable providers.
+        """通过支持指数的数据源获取显式的 A 股指数日线数据。
 
-        Index symbols must stay exchange-qualified.  In particular, sending
-        ``000300`` to a normal stock endpoint can return a different security
-        (or silently empty data), so the provider chain is deliberately small
-        and receives ``target.canonical_id`` unchanged.
+        指数代码必须保留交易所限定后缀。特别地，把 ``000300`` 发给普通股票
+        接口可能返回另一只证券（或静默返回空数据），因此这里刻意收敛数据源
+        链，并将 ``target.canonical_id`` 原样传入。
         """
         if not start_date or not end_date:
             end = datetime.now().date()
@@ -1114,8 +1108,8 @@ class DataFetcherManager:
             fetcher = available.get(name)
             if fetcher is None or not self._is_fetcher_available(fetcher, capability="daily_data"):
                 continue
-            # CSI indices are not accepted by Tencent/YFinance in this
-            # project; AkShare is retained in the chain for future support.
+            # 本项目 Tencent/YFinance 不接受中证指数；
+            # 保留 AkShare 在链中以备未来支持。
             if (getattr(target, "exchange", "") or "").upper() == "CSI" and name != "AkshareFetcher":
                 continue
             try:
@@ -1166,8 +1160,7 @@ class DataFetcherManager:
         """
         from .us_index_mapping import is_us_index_code, is_us_stock_code
 
-        # Preserve explicit registered index identity; bare numeric inputs keep
-        # the historical stock semantics.
+        # 保留显式注册的指数身份；纯数字输入沿用历史的股票语义。
         raw_stock_code = (stock_code or "").strip()
         index_target = None
         try:
@@ -1214,8 +1207,8 @@ class DataFetcherManager:
             raise DataFetchError(error_summary)
 
         # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环
-        # Failover chain: Finnhub(P2) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
-        # When Longbridge preferred: Longbridge -> Finnhub -> AlphaVantage -> Yfinance
+        # 兜底链：Finnhub(P2) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
+        # 长桥为首选时：Longbridge -> Finnhub -> AlphaVantage -> Yfinance
         if is_us:
             prefer_lb = self._longbridge_preferred(capability="daily_data") and not is_us_index
             if is_us_index:
@@ -1331,7 +1324,7 @@ class DataFetcherManager:
         Returns:
             预取的股票数量（0 表示跳过预取）
         """
-        # Normalize stocks while preserving explicit index identities.
+        # 标准化股票代码，同时保留显式指数身份。
         normalized_codes = []
         for code in stock_codes:
             try:
@@ -1450,8 +1443,8 @@ class DataFetcherManager:
             return None
 
         if index_target is not None:
-            # Index quotes must retain their exchange-qualified identity so
-            # 000001 (stock) cannot collide with sh000001 (index).
+            # 指数行情必须保留交易所限定身份，避免 000001（股票）与
+            # sh000001（指数）发生冲突。
             for source in ("tencent", "sina", "em"):
                 fetcher = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
                 if fetcher is None:
@@ -1511,8 +1504,8 @@ class DataFetcherManager:
         source_priority = config.realtime_source_priority.split(',')
         
         errors = []
-        # primary_quote holds the first successful result; we may supplement
-        # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
+        # primary_quote 保存首个成功结果；后续数据源可补充缺失字段
+        # （如 volume_ratio、turnover_rate 等）。
         primary_quote = None
         
         for source in source_priority:
@@ -1548,17 +1541,17 @@ class DataFetcherManager:
                 
                 if quote is not None and quote.has_basic_data():
                     if primary_quote is None:
-                        # First successful source becomes primary
+                        # 首个成功的数据源成为主结果
                         primary_quote = quote
                         logger.info(f"[实时行情] {stock_code} 成功获取 (来源: {source})")
-                        # If all key supplementary fields are present, return early
+                        # 若所有关键补充字段都已齐全，则提前返回
                         if not self._quote_needs_supplement(primary_quote):
                             return primary_quote
-                        # Otherwise, continue to try later sources for missing fields
+                        # 否则继续尝试后续数据源补充缺失字段
                         logger.debug(f"[实时行情] {stock_code} 部分字段缺失，尝试从后续数据源补充")
                         supplement_attempts = 0
                     else:
-                        # Supplement missing fields from this source (limit attempts)
+                        # 从该数据源补充缺失字段（限制尝试次数）
                         supplement_attempts += 1
                         if supplement_attempts > 1:
                             logger.debug(f"[实时行情] {stock_code} 补充尝试已达上限，停止继续")
@@ -1566,7 +1559,7 @@ class DataFetcherManager:
                         merged = self._merge_quote_fields(primary_quote, quote)
                         if merged:
                             logger.info(f"[实时行情] {stock_code} 从 {source} 补充了缺失字段: {merged}")
-                        # Stop supplementing once all key fields are filled
+                        # 关键字段补齐后即停止补充
                         if not self._quote_needs_supplement(primary_quote):
                             break
                     
@@ -1576,7 +1569,7 @@ class DataFetcherManager:
                 errors.append(error_msg)
                 continue
         
-        # Return primary even if some fields are still missing
+        # 即使仍有字段缺失也返回主结果
         if primary_quote is not None:
             return primary_quote
 
@@ -1589,8 +1582,8 @@ class DataFetcherManager:
 
         return None
 
-    # Fields worth supplementing from secondary sources when the primary
-    # source returns None for them. Ordered by importance.
+    # 当主数据源对以下字段返回 None 时，值得从次数据源补充的字段列表。
+    # 按重要性排序。
     _SUPPLEMENT_FIELDS = [
         'volume_ratio', 'turnover_rate',
         'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
@@ -1599,7 +1592,7 @@ class DataFetcherManager:
 
     @classmethod
     def _quote_needs_supplement(cls, quote) -> bool:
-        """Check if any key supplementary field is still None."""
+        """检查是否存在仍为 None 的关键补充字段。"""
         for f in cls._SUPPLEMENT_FIELDS:
             if getattr(quote, f, None) is None:
                 return True
@@ -1607,9 +1600,9 @@ class DataFetcherManager:
 
     @classmethod
     def _merge_quote_fields(cls, primary, secondary) -> list:
-        """
-        Copy non-None fields from *secondary* into *primary* where
-        *primary* has None. Returns list of field names that were filled.
+        """把 *secondary* 中非 None 的字段回填到 *primary* 的空字段上。
+
+        返回实际被填充的字段名列表。
         """
         filled = []
         for f in cls._SUPPLEMENT_FIELDS:
@@ -1621,10 +1614,10 @@ class DataFetcherManager:
         return filled
 
     def _longbridge_preferred(self, capability: str = "realtime_quote") -> bool:
-        """Return True when Longbridge keys are configured and available.
+        """配置了长桥凭据且可用时返回 True。
 
-        When True, non-A-share routing (US & HK) uses Longbridge as the
-        primary data source with Yfinance/AkShare as fallback.
+        为 True 时，非 A 股路由（美股与港股）使用长桥作为首选数据源，
+        以 Yfinance/AkShare 作为兜底。
         """
         return self._get_fetcher_by_name(
             "LongbridgeFetcher",
@@ -1632,7 +1625,7 @@ class DataFetcherManager:
         ) is not None
 
     def _try_fetcher_quote(self, stock_code: str, fetcher_name: str, **kw):
-        """Try to get a realtime quote from a named fetcher; returns quote or None."""
+        """尝试从指定名称的数据源获取实时行情；返回行情对象或 None。"""
         fetcher = self._get_fetcher_by_name(fetcher_name, capability="realtime_quote")
         if fetcher is None or not hasattr(fetcher, 'get_realtime_quote'):
             return None
@@ -1645,10 +1638,10 @@ class DataFetcherManager:
         return None
 
     def _supplement_quote(self, stock_code: str, primary_quote, fetcher_name: str, **kw):
-        """Supplement *primary_quote* with data from *fetcher_name*.
+        """用来自 *fetcher_name* 的数据补充 *primary_quote*。
 
-        If *primary_quote* is None, try *fetcher_name* as the sole source.
-        Returns the (potentially enriched) quote, or None.
+        若 *primary_quote* 为 None，则把 *fetcher_name* 当作唯一数据源尝试。
+        返回（可能被增强的）行情对象，或 None。
         """
         if primary_quote is not None:
             if not self._quote_needs_supplement(primary_quote):
@@ -1669,7 +1662,7 @@ class DataFetcherManager:
         return q
 
     def _supplement_from_longbridge(self, stock_code: str, primary_quote):
-        """Shortcut kept for backward-compat with A-share general loop."""
+        """为兼容 A 股通用循环保留的快捷方法。"""
         return self._supplement_quote(stock_code, primary_quote, "LongbridgeFetcher")
 
     def get_chip_distribution(self, stock_code: str):
@@ -1688,7 +1681,7 @@ class DataFetcherManager:
         Returns:
             ChipDistribution 对象，失败则返回 None
         """
-        # Normalize code (strip SH/SZ prefix etc.)
+        # 标准化代码（去除 SH/SZ 前缀等）
         stock_code = normalize_stock_code(stock_code)
 
         from .realtime_types import get_chip_circuit_breaker
@@ -1762,7 +1755,7 @@ class DataFetcherManager:
                 return index_target.matched_index.name
         except ImportError:
             pass
-        # Normalize code (strip SH/SZ prefix etc.)
+        # 标准化代码（去除 SH/SZ 前缀等）
         stock_code = normalize_stock_code(stock_code)
         static_name = STOCK_NAME_MAP.get(stock_code)
 
@@ -1813,10 +1806,10 @@ class DataFetcherManager:
         return ""
 
     def get_belong_boards(self, stock_code: str) -> List[Dict[str, Any]]:
-        """
-        Get stock membership boards through capability probing.
+        """通过能力探测获取股票所属板块列表。
 
-        Keep this at manager layer to avoid changing BaseFetcher abstraction.
+        保持在 manager 层实现，避免改动 BaseFetcher 抽象；
+        仅对 A 股生效，按数据源顺序探测 get_belong_board 能力。
         """
         stock_code = normalize_stock_code(stock_code)
         if _market_tag(stock_code) != "cn":
@@ -1836,15 +1829,14 @@ class DataFetcherManager:
         return []
 
     def prefetch_stock_names(self, stock_codes: List[str], use_bulk: bool = False) -> None:
-        """
-        Pre-fetch stock names into cache before parallel analysis (Issue #455).
+        """在并行分析前把股票名称预取进缓存（Issue #455）。
 
-        When use_bulk=False, only calls get_stock_name per code (no get_stock_list),
-        avoiding full-market fetch. Sequential execution to avoid rate limits.
+        默认（use_bulk=False）只逐个调用 get_stock_name，不拉全市场股票列表，
+        避免全量抓取；串行执行以规避数据源限流。
 
         Args:
-            stock_codes: Stock codes to prefetch.
-            use_bulk: If True, may use get_stock_list (full fetch). Default False.
+            stock_codes: 需要预取名称的股票代码列表。
+            use_bulk: 为 True 时允许走 get_stock_list 全量抓取。默认 False。
         """
         if not stock_codes:
             return
@@ -1863,8 +1855,7 @@ class DataFetcherManager:
             self.batch_get_stock_names(stock_codes)
             return
         for code in stock_codes:
-            # Skip realtime lookup to avoid triggering expensive full-market quote
-            # requests during the prefetch phase.
+            # 跳过实时查询，避免在预取阶段触发昂贵的全市场行情请求。
             self.get_stock_name(code, allow_realtime=False)
 
     def batch_get_stock_names(self, stock_codes: List[str]) -> Dict[str, str]:
@@ -1990,7 +1981,7 @@ class DataFetcherManager:
         task_name: str,
     ) -> Tuple[Optional[Any], Optional[str], int]:
         """
-        Execute a task in a short-lived thread and enforce a timeout.
+        在短生命周期线程中执行任务并强制超时控制。
 
         Returns:
             (result, error, duration_ms)
@@ -2006,7 +1997,7 @@ class DataFetcherManager:
             return None, f"{task_name} timeout worker pool exhausted", int(timeout_value * 1000)
 
         def runner() -> None:
-            """Run the timeout-wrapped task and always release the worker slot."""
+            """执行带超时包装的任务，并始终释放工作槽。"""
             try:
                 result_holder["value"] = task()
             except Exception as exc:
@@ -2040,7 +2031,7 @@ class DataFetcherManager:
         task_name: str,
     ) -> Tuple[Optional[Any], Optional[str], int]:
         """
-        Execute a task with bounded budget and best-effort retries.
+        在有界时间预算内执行任务，并进行尽力而为（best-effort）重试。
 
         Returns:
             (result, error, total_duration_ms)
@@ -2066,7 +2057,7 @@ class DataFetcherManager:
         return None, last_error, total_cost_ms
 
     def _get_fundamental_config(self):
-        """Load runtime configuration lazily to keep imports side-effect light."""
+        """惰性加载运行时配置，以降低导入副作用。"""
         from src.config import get_config
         return get_config()
 
@@ -2077,7 +2068,7 @@ class DataFetcherManager:
         result: str,
         duration_ms: int,
     ) -> List[Dict[str, Any]]:
-        """Normalize free-form source chain entries to structured dict list."""
+        """将自由格式的数据源链条目归一化为结构化字典列表。"""
         if entries is None:
             return [{"provider": provider, "result": result, "duration_ms": duration_ms}]
 
@@ -2111,7 +2102,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _block_status(payload: Dict[str, Any], available: bool = True) -> str:
-        """Infer a coarse block status from payload presence and support flag."""
+        """根据载荷是否存在与支持标志推断粗略的块状态。"""
         if not available:
             return "not_supported"
         if not payload:
@@ -2125,7 +2116,7 @@ class DataFetcherManager:
         source_chain: Optional[List[Dict[str, Any]]] = None,
         errors: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Wrap a fundamental payload in the common block contract."""
+        """将基本面载荷包装为统一的块契约结构。"""
         return {
             "status": status,
             "coverage": {"status": status},
@@ -2136,7 +2127,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _has_meaningful_payload(payload: Any) -> bool:
-        """Return whether a nested payload contains any non-empty business value."""
+        """判断嵌套载荷是否包含任意非空的业务值。"""
         if payload is None:
             return False
         if isinstance(payload, str):
@@ -2169,7 +2160,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _infer_block_status(payload: Any, fallback_status: str) -> str:
-        """Promote meaningful payloads to ok, otherwise preserve explicit fallbacks."""
+        """有意义的载荷提升为 ok，否则保留显式回退状态。"""
         if DataFetcherManager._has_meaningful_payload(payload):
             return "ok"
         if fallback_status in ("failed", "partial", "not_supported"):
@@ -2178,7 +2169,7 @@ class DataFetcherManager:
 
     @staticmethod
     def _should_cache_fundamental_context(context: Any) -> bool:
-        """Cache only successful or partially useful fundamental contexts."""
+        """仅缓存成功或部分有用的基本面上下文。"""
         if not isinstance(context, dict):
             return False
         status = str(context.get("status", "")).strip().lower()
@@ -2201,7 +2192,7 @@ class DataFetcherManager:
         return False
 
     def _build_market_not_supported(self, market: str, reason: str) -> Dict[str, Any]:
-        """Build a full fundamental context for markets outside pipeline support."""
+        """为超出流水线支持范围的市场构造完整的基本面上下文。"""
         blocks = {
             "valuation": self._build_fundamental_block(
                 "partial" if market == "etf" else "not_supported",
@@ -2258,7 +2249,7 @@ class DataFetcherManager:
         }
 
     def build_failed_fundamental_context(self, stock_code: str, reason: str) -> Dict[str, Any]:
-        """Build a consistent failed-context payload for caller-side fallback."""
+        """为调用方降级构造一致的失败上下文载荷。"""
         market = _market_tag(stock_code)
         block_names = (
             "valuation",
@@ -2293,7 +2284,7 @@ class DataFetcherManager:
         budget_seconds: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Aggregate fundamental blocks with fail-open semantics.
+        以 fail-open 语义聚合各基本面数据块。
         """
         from src.config import get_config
 
@@ -2350,7 +2341,7 @@ class DataFetcherManager:
         start_ts = time.time()
 
         def _consume_budget(consumed_ms: int) -> None:
-            """Subtract a completed stage duration from the remaining stage budget."""
+            """从剩余阶段预算中扣除已完成阶段的耗时。"""
             nonlocal remaining_seconds
             remaining_seconds = max(0.0, remaining_seconds - consumed_ms / 1000.0)
 
@@ -2389,7 +2380,7 @@ class DataFetcherManager:
             [valuation_err] if valuation_err else [],
         )
 
-        # growth / earnings / institution (one AkShare call)
+        # growth / earnings / institution 三块共用一次 AkShare 调用
         if remaining_seconds <= 0:
             bundle_status = "failed"
             bundle_payload: Dict[str, Any] = {}
@@ -2440,7 +2431,7 @@ class DataFetcherManager:
         else:
             institution_payload = dict(institution_payload)
 
-        # Derive TTM dividend yield from already-fetched quote price; avoid extra quote calls.
+        # 用已获取的行情价格推导 TTM 股息率，避免额外的行情调用。
         earnings_extra_errors: List[str] = []
         dividend_payload = earnings_payload.get("dividend")
         if isinstance(dividend_payload, dict):
@@ -2504,7 +2495,7 @@ class DataFetcherManager:
             institution_errors,
         )
 
-        # capital flow
+        # 资金流向块
         if is_etf:
             result_ctx["capital_flow"] = self._build_fundamental_block(
                 "not_supported",
@@ -2570,7 +2561,7 @@ class DataFetcherManager:
             result_ctx["source_chain"].extend(result_ctx[block].get("source_chain", []))
 
         if is_etf:
-            # Keep ETF downgrade semantics for overall status even when valuation is available.
+            # 即使估值可用，整体状态仍保留 ETF 降级语义。
             result_ctx["status"] = (
                 "not_supported" if all(value == "not_supported" for value in block_statuses.values()) else "partial"
             )
@@ -2729,7 +2720,7 @@ class DataFetcherManager:
             )
 
         def task() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], str]:
-            """Fetch board rankings through the fallback-aware helper."""
+            """通过带兜底的辅助方法获取板块排行。"""
             return self._get_sector_rankings_with_meta(5)
 
         rankings, err, cost_ms = self._run_with_retry(task, timeout, "boards")
@@ -2768,7 +2759,7 @@ class DataFetcherManager:
             self,
             n: int = 5,
         ) -> Tuple[List[Dict], List[Dict], List[Dict[str, Any]], str]:
-            """Get sector rankings with ordered fallback chain metadata."""
+            """获取板块排行，并附带有序的兜底链元数据。"""
             source_chain: List[Dict[str, Any]] = []
             last_error = ""
 

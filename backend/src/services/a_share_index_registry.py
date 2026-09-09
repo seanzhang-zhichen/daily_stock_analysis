@@ -1,4 +1,4 @@
-"""Explicit registry for commonly analysed A-share indices."""
+"""常用 A 股指数的显式注册表。"""
 
 from __future__ import annotations
 
@@ -9,12 +9,15 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class AShareIndex:
+    """一条 A 股指数注册项：代码、名称、别名与规范化 ID。"""
+
     code: str
     name: str
     aliases: tuple[str, ...] = ()
     canonical_id: str = ""
 
     def __post_init__(self) -> None:
+        """构造后自动补齐缺失的 canonical_id。"""
         if self.canonical_id:
             return
         prefix = "csi" if self.code.startswith("93") else "sz" if self.code.startswith(("3",)) else "sh"
@@ -22,6 +25,7 @@ class AShareIndex:
 
     @property
     def exchange(self) -> str:
+        """根据代码前缀推断所属交易所（CSI / SZ / SH）。"""
         canonical = self.canonical_id.casefold()
         if canonical.startswith("csi") or self.code.startswith("93"):
             return "CSI"
@@ -31,10 +35,12 @@ class AShareIndex:
 
     @property
     def bare_code(self) -> str:
+        """返回不带任何前缀的纯代码。"""
         return self.code
 
     @property
     def display_name(self) -> str:
+        """返回用于展示的名称。"""
         return self.name
 
 
@@ -75,6 +81,7 @@ _ENTRIES = (
 
 
 def _normalize(value: str) -> str:
+    """把指数代码/名称归一化：NFKC 全半角折叠 + 去空白 + 小写。"""
     return "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold()
 
 
@@ -87,7 +94,7 @@ _BY_NAME = {
 
 
 def get_a_share_index(code_or_name: str) -> Optional[AShareIndex]:
-    """Resolve an explicit A-share index code or registered display name."""
+    """解析一个显式的 A 股指数代码或已注册的展示名称。"""
     value = _normalize(code_or_name)
     if value.startswith(("sh", "sz")):
         value = value[2:]
@@ -101,10 +108,12 @@ def get_a_share_index(code_or_name: str) -> Optional[AShareIndex]:
 
 
 def is_a_share_index_code(code: str) -> bool:
+    """判断给定代码/名称是否命中已注册的 A 股指数。"""
     return get_a_share_index(code) is not None
 
 
 def list_a_share_indices() -> tuple[AShareIndex, ...]:
+    """返回全部已注册的 A 股指数。"""
     return _ENTRIES
 
 

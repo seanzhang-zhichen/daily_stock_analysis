@@ -1,4 +1,4 @@
-"""Patch Eastmoney-bound requests with browser-like headers and cached NID cookies."""
+"""为发往东方财富的请求打补丁：注入类浏览器请求头并缓存 NID cookie。"""
 
 import hashlib
 import random
@@ -19,10 +19,10 @@ ua = UserAgent()
 
 
 class AuthCache:
-    """Thread-safe cache state for the short-lived Eastmoney NID token."""
+    """东财 NID 短期令牌的线程安全缓存状态。"""
 
     def __init__(self):
-        """Initialize empty token state and its expiry guard."""
+        """初始化空令牌状态及其过期保护。"""
         self.data = None
         self.expire_at = 0
         self.lock = threading.Lock()
@@ -33,18 +33,18 @@ _cache = AuthCache()
 
 
 class PatchSign:
-    """Track whether the global requests patch has already been installed."""
+    """记录全局 requests 补丁是否已经安装。"""
 
     def __init__(self):
-        """Initialize the patch marker as not installed."""
+        """初始化补丁标记为未安装。"""
         self.patched = False
 
     def set_patch(self, patched):
-        """Update the global patch installation marker."""
+        """更新全局补丁安装标记。"""
         self.patched = patched
 
     def is_patched(self):
-        """Return whether the Eastmoney request patch is already active."""
+        """返回东财请求补丁是否已生效。"""
         return self.patched
 
 
@@ -158,12 +158,12 @@ def _get_nid(user_agent):
 
 
 def eastmoney_patch():
-    """Install the idempotent Eastmoney request patch on ``requests.Session``."""
+    """在 ``requests.Session`` 上安装幂等的东财请求补丁。"""
     if _patch_sign.is_patched():
         return
 
     def patched_request(self, method, url, **kwargs):
-        """Inject Eastmoney anti-bot headers/cookies before delegating requests."""
+        """在转发请求前注入东财反爬请求头/cookie。"""
         # 排除非目标域名
         is_target = any(
             d in (url or "")

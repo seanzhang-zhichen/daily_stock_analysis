@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Specialised agents for the multi-agent pipeline.
+多 Agent 流水线中的各类专用 Agent。
 
-Each agent class inherits from :class:`BaseAgent` and implements
-a focused analysis scope (technical, intelligence, decision, risk).
+每个 Agent 类都继承自 :class:`BaseAgent`，实现专注的分析范围
+（技术面、情报、决策、风险）。
 """
 
 from src.agent.agents.base_agent import BaseAgent

@@ -47,10 +47,12 @@ from src.report_language import (
 from bot.models import BotMessage
 from src.utils.data_processing import normalize_model_used
 from src.services.empty_news import empty_news_disclosure
+from src.market_phase_summary import format_public_market_status_line
 from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
     DiscordSender,
+    DingtalkSender,
     EmailSender,
     FeishuSender,
     GotifySender,
@@ -87,12 +89,13 @@ class NotificationChannel(Enum):
     DISCORD = "discord"    # Discord 机器人 (Bot)
     SLACK = "slack"        # Slack
     ASTRBOT = "astrbot"
+    DINGTALK = "dingtalk"
     UNKNOWN = "unknown"    # 未知
 
 
 @dataclass
 class ChannelAttemptResult:
-    """Structured result for one notification channel attempt."""
+    """单个通知渠道一次投递尝试的结构化结果。"""
 
     channel: str
     success: bool
@@ -104,7 +107,7 @@ class ChannelAttemptResult:
 
 @dataclass
 class NotificationDispatchResult:
-    """Structured notification dispatch result consumed by alert history."""
+    """结构化通知投递结果，供告警历史记录消费。"""
 
     dispatched: bool
     success: bool
@@ -137,6 +140,7 @@ class ChannelDetector:
             NotificationChannel.DISCORD: "Discord机器人",
             NotificationChannel.SLACK: "Slack",
             NotificationChannel.ASTRBOT: "ASTRBOT机器人",
+            NotificationChannel.DINGTALK: "钉钉",
             NotificationChannel.UNKNOWN: "未知渠道",
         }
         return names.get(channel, "未知渠道")
@@ -146,6 +150,7 @@ class NotificationService(
     AstrbotSender,
     CustomWebhookSender,
     DiscordSender,
+    DingtalkSender,
     EmailSender,
     FeishuSender,
     GotifySender,
@@ -227,13 +232,13 @@ class NotificationService(
             logger.info(f"已配置 {len(channel_names)} 个通知渠道：{', '.join(channel_names)}")
 
     def _normalize_report_type(self, report_type: Any) -> ReportType:
-        """Normalize string/enum input into ReportType."""
+        """把字符串或枚举入参统一归一化成 ReportType。"""
         if isinstance(report_type, ReportType):
             return report_type
         return ReportType.from_str(report_type)
 
     def _get_report_language(self, payload: Optional[Any] = None) -> str:
-        """Resolve report language from result payload or global config."""
+        """解析报告语言：优先取结果负载上的语言，其次回退到全局配置。"""
         if isinstance(payload, list):
             for item in payload:
                 language = getattr(item, "report_language", None)
@@ -247,18 +252,21 @@ class NotificationService(
         return normalize_report_language(getattr(get_config(), "report_language", "zh"))
 
     def _get_labels(self, payload: Optional[Any] = None) -> Dict[str, str]:
-        """Return localized report labels for a result payload or global config."""
+        """返回与结果负载（或全局配置）语言匹配的本地化报告文案。"""
         return get_report_labels(self._get_report_language(payload))
 
     def _get_display_name(self, result: AnalysisResult, language: Optional[str] = None) -> str:
-        """Return localized and markdown-escaped stock display name."""
+        """返回本地化并完成 Markdown 转义的股票展示名。"""
         report_language = normalize_report_language(language or self._get_report_language(result))
         return self._escape_md(
             get_localized_stock_name(result.name, result.code, report_language)
         )
 
     def _get_history_compare_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
-        """Fetch and cache history comparison data for markdown rendering."""
+        """获取并缓存历史对比数据，供 Markdown 渲染使用。
+
+        按“对比条数 + 股票代码与 query_id 组合”做缓存键，避免同一批报告重复查库。
+        """
         config = get_config()
         history_compare_n = getattr(config, 'report_history_compare_n', 0)
         if history_compare_n <= 0 or not results:
@@ -298,14 +306,14 @@ class NotificationService(
         report_type: Any,
         report_date: Optional[str] = None,
     ) -> str:
-        """Generate the aggregate report content used by merge/save/push paths."""
+        """生成聚合报告内容，供合并 / 保存 / 推送等路径共用。"""
         normalized_type = self._normalize_report_type(report_type)
         if normalized_type == ReportType.BRIEF:
             return self.generate_brief_report(results, report_date=report_date)
         return self.generate_dashboard_report(results, report_date=report_date)
 
     def _collect_models_used(self, results: List[AnalysisResult]) -> List[str]:
-        """Collect unique non-placeholder LLM model names used by analysis results."""
+        """收集分析结果中使用到的非占位 LLM 模型名（去重、保持顺序）。"""
         if not self._should_show_llm_model():
             return []
         models: List[str] = []
@@ -316,24 +324,33 @@ class NotificationService(
         return list(dict.fromkeys(models))
 
     def _should_show_llm_model(self) -> bool:
-        """Return whether reports should include LLM model attribution."""
+        """返回报告中是否需要展示 LLM 模型署名。"""
         return bool(getattr(self._config, "report_show_llm_model", self._report_show_llm_model))
     
     @staticmethod
     def detect_configured_channels(config: Config) -> List[NotificationChannel]:
         """
-        Detect statically configured notification channels from Config.
+        从 Config 中检测静态配置的全部通知渠道。
 
-        This intentionally mirrors sender availability without instantiating
-        sender objects, so diagnostics and runtime use the same channel truth.
-        Runtime-only context channels are handled by instance methods.
+        这里刻意只做配置判断而不实例化 sender 对象，
+        以保证诊断与运行时使用的是同一套渠道判定结果。
+        仅运行期存在的上下文渠道（如会话回复）由实例方法单独处理。
         """
         channels = []
 
         if getattr(config, "wechat_webhook_url", None):
             channels.append(NotificationChannel.WECHAT)
 
-        if getattr(config, "feishu_webhook_url", None):
+        # 飞书既支持群 Webhook，也支持以应用身份发送文件（需 app 凭据 + chat_id）
+        if (
+            getattr(config, "feishu_webhook_url", None)
+            or (
+                getattr(config, "feishu_send_as_file", False)
+                and getattr(config, "feishu_app_id", None)
+                and getattr(config, "feishu_app_secret", None)
+                and getattr(config, "feishu_chat_id", None)
+            )
+        ):
             channels.append(NotificationChannel.FEISHU)
 
         if (
@@ -388,6 +405,8 @@ class NotificationService(
 
         if getattr(config, "astrbot_url", None):
             channels.append(NotificationChannel.ASTRBOT)
+        if getattr(config, "dingtalk_webhook_url", None):
+            channels.append(NotificationChannel.DINGTALK)
 
         return channels
 
@@ -413,12 +432,11 @@ class NotificationService(
         route_type: Optional[str],
         channels: Optional[List[NotificationChannel]] = None,
     ) -> List[NotificationChannel]:
-        """Return channels allowed for a route type.
+        """返回指定路由类型允许使用的渠道。
 
-        ``route_type=None`` keeps the legacy behavior and returns all supplied
-        static channels. Empty route config also keeps all supplied channels.
-        Non-empty route config that matches no enabled channel returns an empty
-        list.
+        ``route_type=None`` 保持旧行为，直接返回传入的全部静态渠道；
+        路由配置为空时同样返回全部渠道；
+        路由配置非空但没有任何已启用渠道命中时返回空列表。
         """
         target_channels = list(channels if channels is not None else self._available_channels)
         if route_type is None:
@@ -460,7 +478,7 @@ class NotificationService(
         dedup_key: Optional[str] = None,
         cooldown_key: Optional[str] = None,
     ) -> NotificationNoiseDecision:
-        """Evaluate static-channel notification noise controls."""
+        """对静态渠道评估通知降噪策略（去重 / 冷却 / 静默时段 / 级别）。"""
         return evaluate_notification_noise(
             self._config,
             content=content,
@@ -472,15 +490,15 @@ class NotificationService(
 
     @staticmethod
     def record_noise_control(decision: NotificationNoiseDecision) -> None:
-        """Record static-channel notification noise state after a successful send."""
+        """发送成功后记录静态渠道的降噪状态（去重 / 冷却生效）。"""
         record_notification_noise(decision)
 
     @staticmethod
     def release_noise_control(decision: NotificationNoiseDecision) -> None:
-        """Release static-channel in-flight noise reservation after send failure."""
+        """发送失败后释放静态渠道在飞行中的降噪预留，避免误判为已发送。"""
         release_notification_noise(decision)
 
-    # ===== Context channel =====
+    # ===== 上下文渠道（依赖触发消息，非静态配置）=====
     def _has_context_channel(self) -> bool:
         """判断是否存在基于消息上下文的临时渠道（如钉钉会话、飞书会话）"""
         return (
@@ -632,7 +650,7 @@ class NotificationService(
         import time
         
         def get_bytes(s: str) -> int:
-            """Return UTF-8 byte length for Feishu Stream chunk budgeting."""
+            """返回字符串的 UTF-8 字节数，用于飞书 Stream 分块预算。"""
             return len(s.encode('utf-8'))
         
         # 按段落或分隔线分割
@@ -900,12 +918,12 @@ class NotificationService(
     
     @staticmethod
     def _escape_md(name: str) -> str:
-        """Escape markdown special characters in stock names (e.g. *ST → \\*ST)."""
+        """转义股票名称中的 Markdown 特殊字符（如 *ST → \\*ST）。"""
         return name.replace('*', r'\*') if name else name
 
     @staticmethod
     def _clean_sniper_value(value: Any) -> str:
-        """Normalize sniper point values and remove redundant label prefixes."""
+        """归一化狙击点位取值，并去掉重复的中文/英文标签前缀。"""
         if value is None:
             return 'N/A'
         if isinstance(value, (int, float)):
@@ -923,7 +941,7 @@ class NotificationService(
         return value
 
     def _get_signal_level(self, result: AnalysisResult) -> tuple:
-        """Get localized signal level and color based on operation advice."""
+        """根据操作建议返回本地化的信号等级文本与配色。"""
         return get_signal_level(
             result.operation_advice,
             result.sentiment_score,
@@ -1099,6 +1117,11 @@ class NotificationService(
                     ])
 
                 self._append_market_snapshot(report_lines, result)
+                self._append_market_status(report_lines, result)
+                self._append_financial_summary(report_lines, result)
+                self._append_market_structure(report_lines, result)
+                self._append_phase_decision(report_lines, dashboard)
+                self._append_data_sources(report_lines, result)
                 
                 # ========== 数据透视 ==========
                 data_persp = dashboard.get('data_perspective', {}) if dashboard else {}
@@ -1499,14 +1522,14 @@ class NotificationService(
         report_date: Optional[str] = None,
     ) -> str:
         """
-        Generate brief report (3-5 sentences per stock) for mobile/push.
+        生成精简版报告（每只股票 3-5 句话），适合手机 / 推送场景。
 
         Args:
-            results: Analysis results list (use [result] for single stock).
-            report_date: Report date (default: today).
+            results: 分析结果列表（单只股票时传 [result]）。
+            report_date: 报告日期（默认今天）。
 
         Returns:
-            Brief markdown content.
+            精简版 Markdown 内容。
         """
         if report_date is None:
             report_date = datetime.now().strftime('%Y-%m-%d')
@@ -1524,7 +1547,7 @@ class NotificationService(
             )
             if out:
                 return out
-        # Fallback: brief summary from dashboard report
+        # 兜底路径：渲染器不可用时，从仪表盘报告中提炼精简摘要
         if not results:
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
@@ -1590,6 +1613,11 @@ class NotificationService(
         ]
 
         self._append_market_snapshot(lines, result)
+        self._append_market_status(lines, result)
+        self._append_financial_summary(lines, result)
+        self._append_market_structure(lines, result)
+        self._append_phase_decision(lines, dashboard)
+        self._append_data_sources(lines, result)
         disclosure = empty_news_disclosure(result, report_language)
         if disclosure:
             lines.extend([disclosure, ""])
@@ -1679,7 +1707,7 @@ class NotificationService(
 
         return "\n".join(lines)
 
-    # Display name mapping for realtime data sources
+    # 实时行情数据源的展示名映射（按报告语言区分中英文）
     _SOURCE_DISPLAY_NAMES = {
         "tencent": {"zh": "腾讯财经", "en": "Tencent Finance"},
         "akshare_em": {"zh": "东方财富", "en": "Eastmoney"},
@@ -1694,7 +1722,7 @@ class NotificationService(
     }
 
     def _get_source_display_name(self, source: Any, language: Optional[str]) -> str:
-        """Localize market snapshot source labels when a mapping is known."""
+        """把行情快照的数据源标识本地化；无映射时原样返回。"""
         raw_source = str(source or "N/A")
         mapping = self._SOURCE_DISPLAY_NAMES.get(raw_source)
         if not mapping:
@@ -1702,7 +1730,7 @@ class NotificationService(
         return mapping[normalize_report_language(language)]
 
     def _append_market_snapshot(self, lines: List[str], result: AnalysisResult) -> None:
-        """Append a localized market snapshot table to report markdown lines."""
+        """向报告行列表追加本地化的行情快照表格。"""
         snapshot = getattr(result, 'market_snapshot', None)
         if not snapshot:
             return
@@ -1734,15 +1762,157 @@ class NotificationService(
 
         lines.append("")
 
+    @staticmethod
+    def _append_market_status(lines: List[str], result: AnalysisResult) -> None:
+        """仅在管线产出安全的 A 股阶段摘要时，展示一行市场状态。"""
+        summary = getattr(result, "market_phase_summary", None)
+        if not isinstance(summary, dict) or str(summary.get("market") or "").lower() != "cn":
+            return
+        line = format_public_market_status_line(
+            summary,
+            report_language=getattr(result, "report_language", "zh"),
+        )
+        if line:
+            lines.extend([line, ""])
+
+    @staticmethod
+    def _append_data_sources(lines: List[str], result: AnalysisResult) -> None:
+        """当管线提供了 A 股分析输入清单时，披露数据来源。"""
+        data_sources = str(getattr(result, "data_sources", "") or "").strip()
+        if data_sources:
+            lines.extend([f"*📋 数据来源：{data_sources}*", ""])
+
+    @staticmethod
+    def _append_financial_summary(lines: List[str], result: AnalysisResult) -> None:
+        """从仅运行时可用的上下文中渲染经核验的 A 股财务事实。"""
+        context = getattr(result, "fundamental_context", None)
+        if not isinstance(context, dict) or str(context.get("market") or "").lower() != "cn":
+            return
+        earnings = context.get("earnings")
+        earnings_data = earnings.get("data") if isinstance(earnings, dict) else None
+        financial = earnings_data.get("financial_report") if isinstance(earnings_data, dict) else None
+        growth = context.get("growth")
+        growth_data = growth.get("data") if isinstance(growth, dict) else {}
+        if not isinstance(financial, dict):
+            financial = {}
+        if not isinstance(growth_data, dict):
+            growth_data = {}
+
+        def amount(value: Any) -> str:
+            """把数值格式化为中文金额：>=1 亿显示亿元，否则显示万元。"""
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return "N/A"
+            if number != number:
+                return "N/A"
+            sign = "-" if number < 0 else ""
+            absolute = abs(number)
+            return f"{sign}{absolute / 1e8:.2f}亿元" if absolute >= 1e8 else f"{sign}{absolute / 1e4:.2f}万元"
+
+        def percent(value: Any) -> str:
+            """把数值格式化为保留两位小数的百分数字符串。"""
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return "N/A"
+            return "N/A" if number != number else f"{number:.2f}%"
+
+        values = {
+            "报告期": str(financial.get("report_date") or "N/A"),
+            "营收": amount(financial.get("revenue")),
+            "归母净利润": amount(financial.get("net_profit_parent")),
+            "ROE": percent(financial.get("roe") if financial.get("roe") is not None else growth_data.get("roe")),
+            "营收同比": percent(growth_data.get("revenue_yoy")),
+            "净利同比": percent(growth_data.get("net_profit_yoy")),
+        }
+        if all(value == "N/A" for value in values.values()):
+            return
+        lines.extend([
+            "### 💼 财务摘要",
+            "",
+            "| 报告期 | 营收 | 归母净利润 | ROE | 营收同比 | 净利同比 |",
+            "|:------:|-------:|-------:|------:|------:|------:|",
+            f"| {values['报告期']} | {values['营收']} | {values['归母净利润']} | {values['ROE']} | {values['营收同比']} | {values['净利同比']} |",
+            "",
+        ])
+
+    @staticmethod
+    def _append_phase_decision(lines: List[str], dashboard: Dict[str, Any]) -> None:
+        """渲染 A 股市场上下文护栏（阶段决策），缺失数据不臆造。
+
+        只有阶段决策确实携带了可展示字段（操作窗口/立即动作/下次检查/
+        观察条件/置信依据/数据限制）时才追加对应章节。
+        """
+        phase = dashboard.get("phase_decision") if isinstance(dashboard, dict) else None
+        if not isinstance(phase, dict):
+            return
+        action_window = str(phase.get("action_window") or "").strip()
+        immediate_action = str(phase.get("immediate_action") or "").strip()
+        next_check_time = str(phase.get("next_check_time") or "").strip()
+        confidence_reason = str(phase.get("confidence_reason") or "").strip()
+        watch_conditions = [str(item).strip() for item in phase.get("watch_conditions", []) if str(item).strip()] if isinstance(phase.get("watch_conditions"), list) else []
+        limitations = [str(item).strip() for item in phase.get("data_limitations", []) if str(item).strip()] if isinstance(phase.get("data_limitations"), list) else []
+        if not any((action_window, immediate_action, next_check_time, confidence_reason, watch_conditions, limitations)):
+            return
+
+        lines.extend([
+            "### 🛡️ 阶段决策",
+            "",
+            "| 操作窗口 | 立即动作 | 下次检查 |",
+            "|---------|---------|---------|",
+            f"| {action_window or 'N/A'} | {immediate_action or 'N/A'} | {next_check_time or 'N/A'} |",
+            "",
+        ])
+        if watch_conditions:
+            lines.append("**观察条件**：")
+            lines.extend(f"- {item}" for item in watch_conditions)
+            lines.append("")
+        if confidence_reason:
+            lines.extend([f"**置信依据**：{confidence_reason}", ""])
+        if limitations:
+            lines.append("**数据限制**：")
+            lines.extend(f"- {item}" for item in limitations)
+            lines.append("")
+
+    @staticmethod
+    def _append_market_structure(lines: List[str], result: AnalysisResult) -> None:
+        """从已有快照中渲染关联的 A 股行业/概念板块（最多 5 个）。"""
+        context = getattr(result, "market_structure_context", None)
+        if not isinstance(context, dict) or str(context.get("market") or "cn").lower() != "cn":
+            return
+        position = context.get("stock_market_position")
+        if not isinstance(position, dict):
+            return
+        boards = position.get("related_boards")
+        if not isinstance(boards, list):
+            return
+        rendered = []
+        for board in boards[:5]:
+            if not isinstance(board, dict):
+                continue
+            name = str(board.get("name") or "").strip()
+            if not name:
+                continue
+            board_type = str(board.get("type") or "概念").strip()
+            change_pct = board.get("change_pct")
+            try:
+                suffix = f"（{board_type} {float(change_pct):+.2f}%）" if change_pct is not None else f"（{board_type}）"
+            except (TypeError, ValueError):
+                suffix = f"（{board_type}）"
+            rendered.append(f"- {name}{suffix}")
+        if rendered:
+            lines.extend(["### 🧩 关联板块", "", *rendered, ""])
+
     def _should_use_image_for_channel(
         self, channel: NotificationChannel, image_bytes: Optional[bytes]
     ) -> bool:
         """
-        Decide whether to send as image for the given channel (Issue #289).
+        判断指定渠道是否改用图片发送（Issue #289）。
 
-        Fallback rules (send as Markdown text instead of image):
-        - image_bytes is None: conversion failed / imgkit not installed / content over max_chars
-        - WeChat: image exceeds ~2MB limit
+        回退规则（改为按 Markdown 文本发送）：
+        - image_bytes is None：转换失败 / imgkit 未安装 / 内容超过 max_chars
+        - 企业微信：图片超过约 2MB 限制
         """
         if channel.value not in self._markdown_to_image_channels or image_bytes is None:
             return False
@@ -1769,11 +1939,10 @@ class NotificationService(
 
         遍历所有已配置的渠道，逐一发送消息
 
-        Fallback rules (Markdown-to-image, Issue #289):
-        - When image_bytes is None (conversion failed / imgkit not installed /
-          content over max_chars): all channels configured for image will send
-          as Markdown text instead.
-        - When WeChat image exceeds ~2MB: that channel falls back to Markdown text.
+        Markdown 转图片的回退规则（Issue #289）：
+        - image_bytes is None（转换失败 / imgkit 未安装 / 内容超过 max_chars）时：
+          所有配置为图片发送的渠道都改为按 Markdown 文本发送。
+        - 企业微信图片超过约 2MB 时：该渠道回退为 Markdown 文本。
 
         Args:
             content: 消息内容（Markdown 格式）
@@ -1815,12 +1984,13 @@ class NotificationService(
             logger.info(noise_decision.message)
             return context_success
 
-        # Markdown to image (Issue #289): convert once if any channel needs it.
-        # Per-channel decision via _should_use_image_for_channel (see send() docstring for fallback rules).
+        # Markdown 转图片（Issue #289）：只要有渠道需要就只转换一次，避免重复耗时。
+        # 是否真正走图片由 _should_use_image_for_channel 逐渠道决定（回退规则见 send() 文档）。
         image_bytes = None
         channels_needing_image = {
             ch for ch in target_channels
             if ch.value in self._markdown_to_image_channels
+            # ntfy / Gotify 只能承载文本，不参与图片转换
             and ch not in {NotificationChannel.NTFY, NotificationChannel.GOTIFY}
         }
         if channels_needing_image:
@@ -1862,7 +2032,17 @@ class NotificationService(
                     else:
                         result = self.send_to_wechat(content)
                 elif channel == NotificationChannel.FEISHU:
-                    result = self.send_to_feishu(content)
+                    if (
+                        getattr(self, '_feishu_send_as_file', False)
+                        and route_type == 'report'
+                        and self.can_send_as_file()
+                    ):
+                        result = self.save_and_send_feishu_file(
+                            content,
+                            filename=f"a-share-report-{datetime.now().strftime('%Y%m%d')}.md",
+                        )
+                    else:
+                        result = self.send_to_feishu(content)
                 elif channel == NotificationChannel.TELEGRAM:
                     if use_image:
                         result = self._send_telegram_photo(image_bytes)
@@ -1908,6 +2088,8 @@ class NotificationService(
                         result = self.send_to_slack(content)
                 elif channel == NotificationChannel.ASTRBOT:
                     result = self.send_to_astrbot(content)
+                elif channel == NotificationChannel.DINGTALK:
+                    result = self.send_to_dingtalk(content)
                 else:
                     logger.warning(f"不支持的通知渠道: {channel}")
                     result = False
@@ -1922,10 +2104,12 @@ class NotificationService(
                 fail_count += 1
 
         logger.info(f"通知发送完成：成功 {success_count} 个，失败 {fail_count} 个")
+        # 仅发送成功才固化降噪状态；全部失败则释放预留，避免后续同类通知被误拦截
         if success_count > 0:
             self.record_noise_control(noise_decision)
         else:
             self.release_noise_control(noise_decision)
+        # 静态渠道全失败但上下文会话已送达时，整体仍视为推送成功
         return success_count > 0 or context_success
    
     def send_with_results(
@@ -1939,12 +2123,10 @@ class NotificationService(
         cooldown_key: Optional[str] = None,
         structured_payload: Optional[Dict[str, Any]] = None,
     ) -> NotificationDispatchResult:
-        """Send through the existing gateway and expose a structured attempt.
+        """复用现有通知网关发送，并对外暴露结构化的投递尝试结果。
 
-        The target repository's notification gateway still reports one aggregate
-        boolean. Keeping that gateway intact preserves all channel routing and
-        noise-control behavior while allowing alert delivery history to record a
-        stable attempt result.
+        通知网关本身仍只返回一个聚合布尔值。保持该网关不变，
+        可以完整保留渠道路由与降噪行为，同时让告警投递历史记录到稳定的尝试结果。
         """
         started_at = time.monotonic()
         try:

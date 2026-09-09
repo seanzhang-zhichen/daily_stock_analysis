@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Gotify notification sender."""
+"""Gotify 通知发送器。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_gotify_message_endpoint(gotify_url: Optional[str]) -> Optional[str]:
-    """Resolve GOTIFY_URL server base into the fixed /message endpoint."""
+    """把 GOTIFY_URL 服务器根地址解析为固定的 /message 端点。"""
     raw_url = (gotify_url or "").strip().rstrip("/")
     if not raw_url:
         return None
@@ -44,20 +44,20 @@ def resolve_gotify_message_endpoint(gotify_url: Optional[str]) -> Optional[str]:
 
 
 class GotifySender:
-    """Send Markdown text notifications through Gotify's message API."""
+    """通过 Gotify 的 message API 发送 Markdown 文本通知。"""
 
     def __init__(self, config: Config):
-        """Store Gotify endpoint, token and TLS verification options."""
+        """保存 Gotify 端点、令牌与 TLS 校验选项。"""
         self._gotify_url = getattr(config, "gotify_url", None)
         self._gotify_token = getattr(config, "gotify_token", None)
         self._webhook_verify_ssl = getattr(config, "webhook_verify_ssl", True)
 
     def _is_gotify_configured(self) -> bool:
-        """Return whether Gotify URL and app token are both configured."""
+        """返回 Gotify URL 与应用令牌是否均已配置。"""
         return bool((self._gotify_url or "").strip() and (self._gotify_token or "").strip())
 
     def _resolve_gotify_endpoint(self) -> Optional[str]:
-        """Resolve the configured Gotify server URL to its message endpoint."""
+        """把已配置的 Gotify 服务器 URL 解析为其 message 端点。"""
         return resolve_gotify_message_endpoint(self._gotify_url)
 
     def send_to_gotify(
@@ -67,7 +67,7 @@ class GotifySender:
         *,
         timeout_seconds: Optional[float] = None,
     ) -> bool:
-        """Publish a notification to Gotify using JSON and header auth."""
+        """使用 JSON 与 header 鉴权向 Gotify 发布一条通知。"""
         if not self._is_gotify_configured():
             logger.warning("Gotify 配置不完整，跳过推送")
             return False

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Credit package ordering and fulfillment.
+"""积分套餐订购与履约服务。
 
-Credit purchases share payment gateways with subscription billing, but keep
-their catalog, order table, callback ledger, and fulfillment semantics separate.
+积分购买与订阅计费共用支付网关，但目录、订单表、回调账本与
+履约语义彼此独立，因此单独成模块管理。
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ from src.users.credits import grant_credit_purchase
 
 logger = logging.getLogger(__name__)
 
+# 允许的状态流转白名单：(当前状态, 目标状态)。
+# 未列出的流转一律拒绝，防止已支付订单被回滚或重复支付
 VALID_CREDIT_ORDER_TRANSITIONS: set[tuple[str, str]] = {
     ("created", "pending"),
     ("created", "closed"),
@@ -43,11 +45,11 @@ CREDIT_ORDER_EXPIRE_MINUTES = 15
 
 
 class InvalidCreditOrderTransitionError(ValueError):
-    """Raised when a credit order attempts an invalid status transition."""
+    """积分订单试图做非法状态流转时抛出。"""
 
 
 def _assert_credit_transition(current: str, new: str) -> None:
-    """Validate credit-order status transitions against the whitelist."""
+    """在积分订单状态流转白名单内做合法性校验，越权时抛 InvalidCreditOrderTransitionError。"""
     if (current, new) not in VALID_CREDIT_ORDER_TRANSITIONS:
         raise InvalidCreditOrderTransitionError(
             f"credit order status cannot change from {current!r} to {new!r}"
@@ -55,14 +57,14 @@ def _assert_credit_transition(current: str, new: str) -> None:
 
 
 def _gen_credit_order_no() -> str:
-    """Generate a human-readable unique-ish credit order number."""
+    """生成可读的积分订单号：``DSAC`` + 日期 + 10 位随机大写字母数字。"""
     today = datetime.now().strftime("%Y%m%d")
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
     return f"DSAC{today}{suffix}"
 
 
 def serialize_credit_package(package: AppCreditPackage) -> dict:
-    """Serialize a credit package catalog row for API responses."""
+    """把积分套餐目录行序列化为 API 响应字典。"""
     return {
         "code": package.code,
         "name": package.name,
@@ -75,7 +77,7 @@ def serialize_credit_package(package: AppCreditPackage) -> dict:
 
 
 def serialize_credit_order(order: AppCreditOrder) -> dict:
-    """Serialize a credit order row without exposing internal ledger details."""
+    """序列化积分订单行，不暴露内部账本（ledger）细节。"""
     return {
         "orderNo": order.order_no,
         "packageCode": order.package_code,
@@ -96,7 +98,14 @@ def serialize_credit_order(order: AppCreditOrder) -> dict:
 
 @dataclass
 class CreditCallbackOutcome:
-    """Structured result of processing a credit payment callback."""
+    """积分支付回调的结构化处理结果。
+
+    Attributes:
+        event: 已落库的回调事件记录。
+        fulfilled: 本次是否真正完成了积分发放。
+        already_processed: 该事件此前是否已处理过（幂等命中）。
+        reason: 未履约的原因，如 signature_invalid / amount_mismatch。
+    """
 
     event: AppCreditPaymentEvent
     fulfilled: bool = False
@@ -105,17 +114,17 @@ class CreditCallbackOutcome:
 
 
 class CreditOrderService:
-    """Manage credit package orders and idempotent payment fulfillment."""
+    """管理积分套餐订单与支付履约（幂等）。"""
 
     def list_packages(self, db: Session, *, include_inactive: bool = False) -> List[AppCreditPackage]:
-        """List active credit packages by display/order price."""
+        """列出积分套餐；默认只返回上架的，按排序号与价格升序。"""
         q = db.query(AppCreditPackage)
         if not include_inactive:
             q = q.filter(AppCreditPackage.is_active.is_(True))
         return q.order_by(AppCreditPackage.sort_order.asc(), AppCreditPackage.price_cents.asc()).all()
 
     def get_package(self, db: Session, package_code: str) -> Optional[AppCreditPackage]:
-        """Return one active package by code."""
+        """按 code 返回单个上架套餐，不存在或未上架时返回 None。"""
         return (
             db.query(AppCreditPackage)
             .filter(AppCreditPackage.code == package_code, AppCreditPackage.is_active.is_(True))
@@ -133,7 +142,7 @@ class CreditOrderService:
         coupon_code: Optional[str] = None,
         expire_minutes: int = CREDIT_ORDER_EXPIRE_MINUTES,
     ) -> AppCreditOrder:
-        """Create or reuse an unexpired credit order for one user/package."""
+        """为同一用户/套餐复用或新建一笔未过期的积分订单。"""
         now = datetime.utcnow()
         existing = (
             db.query(AppCreditOrder)
@@ -157,10 +166,12 @@ class CreditOrderService:
             raise ValueError("credit package must have a positive credit amount")
 
         amount = int(package.price_cents or 0)
+        # 优惠券抵扣尚未实现，discount 恒为 0；coupon_code 仅落库留待后续对账
         discount = 0
         if coupon_code:
             pass
 
+        # 下单时冻结价格快照，后续套餐调价不影响已创建订单的金额
         quote = {
             "packageCode": package.code,
             "packageName": package.name,
@@ -194,14 +205,14 @@ class CreditOrderService:
         return order
 
     def get_order(self, db: Session, order_no: str, user_id: Optional[int] = None) -> Optional[AppCreditOrder]:
-        """Fetch one credit order, optionally scoped to its owner."""
+        """按订单号查询积分订单；传入 user_id 时额外限定归属，防止越权访问。"""
         q = db.query(AppCreditOrder).filter(AppCreditOrder.order_no == order_no)
         if user_id is not None:
             q = q.filter(AppCreditOrder.user_id == user_id)
         return q.first()
 
     def list_orders(self, db: Session, user_id: int, limit: int = 50) -> List[AppCreditOrder]:
-        """List a user's recent credit orders."""
+        """列出指定用户最近的积分订单。"""
         return (
             db.query(AppCreditOrder)
             .filter(AppCreditOrder.user_id == user_id)
@@ -211,7 +222,7 @@ class CreditOrderService:
         )
 
     def mark_pending(self, db: Session, order: AppCreditOrder) -> AppCreditOrder:
-        """Move a freshly created credit order into pending payment state."""
+        """把刚创建的积分订单置为待支付（pending）状态。"""
         _assert_credit_transition(order.status, "pending")
         order.status = "pending"
         order.updated_at = datetime.utcnow()
@@ -220,7 +231,7 @@ class CreditOrderService:
         return order
 
     def cancel_order(self, db: Session, order: AppCreditOrder) -> AppCreditOrder:
-        """Close an unpaid credit order."""
+        """关闭一笔未支付的积分订单。"""
         _assert_credit_transition(order.status, "closed")
         order.status = "closed"
         order.updated_at = datetime.utcnow()
@@ -234,7 +245,7 @@ class CreditOrderService:
         order: AppCreditOrder,
         provider_trade_no: Optional[str] = None,
     ) -> AppCreditOrder:
-        """Mark a credit order paid and grant purchased credits idempotently."""
+        """把订单标记为已支付并幂等发放所购积分。"""
         if order.status == "paid":
             return order
         _assert_credit_transition(order.status, "paid")
@@ -271,7 +282,7 @@ class CreditOrderService:
         signature: Optional[str] = None,
         signature_valid: bool = False,
     ) -> AppCreditPaymentEvent:
-        """Record a raw payment callback event idempotently by provider event id."""
+        """按 provider_event_id 幂等地落库一条原始回调事件（重复回调直接返回旧记录）。"""
         existing = (
             db.query(AppCreditPaymentEvent)
             .filter(AppCreditPaymentEvent.provider_event_id == provider_event_id)
@@ -299,7 +310,19 @@ class CreditOrderService:
         result: CallbackResult,
         signature_raw: Optional[str] = None,
     ) -> Optional[CreditCallbackOutcome]:
-        """Process a verified gateway callback and fulfill the matching order."""
+        """处理已验签的支付回调，并在校验通过时履约发放积分。
+
+        校验顺序：订单存在 → 事件去重 → 签名有效 → 状态为 paid → 金额一致。
+        任一步不满足都只记录事件并返回 reason，不抛异常，避免渠道反复重试。
+
+        Args:
+            db: 数据库会话。
+            result: gateway 验签后的回调结果。
+            signature_raw: 原始签名字串，留档便于事后排查。
+
+        Returns:
+            :class:`CreditCallbackOutcome`；订单号缺失或订单不存在时返回 None。
+        """
         order_no = result.out_trade_no or ""
         if not order_no:
             return None
@@ -342,7 +365,7 @@ class CreditOrderService:
         return CreditCallbackOutcome(event=event, fulfilled=True)
 
     def _mark_event_processed(self, db: Session, event: AppCreditPaymentEvent) -> None:
-        """Mark a credit payment event as processed."""
+        """把回调事件标记为已处理，避免渠道重复通知时重复履约。"""
         if event.processed:
             return
         event.processed = True

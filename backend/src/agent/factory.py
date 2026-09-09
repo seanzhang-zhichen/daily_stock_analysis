@@ -1,22 +1,18 @@
 # -*- coding: utf-8 -*-
-"""
-Shared factory for building fully-configured AgentExecutor instances.
+"""用于构建完整配置 AgentExecutor 实例的共享工厂。
 
-Centralises construction to eliminate boilerplate duplicated across
-api/v1/endpoints/agent.py, bot/commands/chat.py, bot/commands/ask.py,
-and src/core/pipeline.py.
+将构造逻辑集中管理，消除在 api/v1/endpoints/agent.py、bot/commands/chat.py、
+bot/commands/ask.py 以及 src/core/pipeline.py 中重复的样板代码。
 
-Performance notes
------------------
-* ``ToolRegistry`` is built once and cached at module level — tool
-  registrations are immutable after setup so the object is safe to share
-  across every request.
-* ``SkillManager`` is expensive to create (loads YAML files from disk).
-  A prototype is built on first use and cheap ``deepcopy`` clones are
-  returned for each request, preserving thread-safety (``activate()``
-  mutates internal state).
+性能说明
+--------
+* ``ToolRegistry`` 只构建一次并在模块级缓存 —— 工具注册在初始化后不可变，
+  因此该对象可安全地在所有请求之间共享。
+* ``SkillManager`` 创建成本高（需从磁盘加载 YAML 文件）。首次使用时构建一个
+  原型，之后每次请求通过廉价的 ``deepcopy`` 克隆返回，以保持线程安全
+  （``activate()`` 会修改内部状态）。
 
-Usage::
+用法::
 
     from src.agent.factory import build_agent_executor
 
@@ -34,21 +30,21 @@ from src.config import AGENT_MAX_STEPS_DEFAULT
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level caches
+# 模块级缓存
 # ---------------------------------------------------------------------------
 _TOOL_REGISTRY = None
 _SKILL_MANAGER_PROTOTYPE = None
-# Sentinel used as initial value so None (i.e. no custom dir) compares as "changed"
-# on the very first call, forcing a build rather than accidentally skipping it.
+# 作为初始值的哨兵，让 None（即未配置自定义目录）在首次调用时被视为“已变化”，
+# 从而强制构建一次，而不是被意外跳过。
 _SENTINEL = object()
-# Track which custom_dir the prototype was built with so we can invalidate
-# the cache if AGENT_SKILL_DIR changes at runtime (e.g. via config reload).
+# 记录构建原型时使用的 custom_dir，以便在 AGENT_SKILL_DIR 运行时变化
+# （例如通过配置重载）时使缓存失效。
 _SKILL_MANAGER_CUSTOM_DIR: object = _SENTINEL
 
 
 @dataclass
 class SkillPromptState:
-    """Resolved skill activation + prompt fragments for analysis entrypoints."""
+    """供分析入口使用的、已解析的技能激活状态与提示词片段。"""
 
     skill_manager: object
     skills_to_activate: List[str]
@@ -64,7 +60,7 @@ def _normalize_skill_ids(
     *,
     available_skill_ids: set[str],
 ) -> tuple[List[str], List[str]]:
-    """Return validated skill ids plus unknown ids, preserving input order."""
+    """返回校验通过的技能 id 以及未知 id，同时保留输入顺序。"""
     normalized: List[str] = []
     unknown: List[str] = []
 
@@ -88,6 +84,20 @@ def _normalize_skill_ids(
     return normalized, unknown
 
 
+def normalize_requested_skill_ids(config, skill_ids: List[str]) -> List[str]:
+    """校验用户提供的技能选择，但不应用默认值。"""
+    skill_manager = get_skill_manager(config)
+    available_skill_ids = {
+        str(skill.name).strip()
+        for skill in skill_manager.list_skills()
+        if getattr(skill, "user_invocable", True)
+    }
+    normalized, unknown = _normalize_skill_ids(skill_ids, available_skill_ids=available_skill_ids)
+    if unknown:
+        logger.warning("[AgentFactory] Ignoring unknown requested skill ids: %s", unknown)
+    return normalized
+
+
 def _resolve_selected_skill_ids(
     *,
     requested_skills: Optional[List[str]],
@@ -95,7 +105,7 @@ def _resolve_selected_skill_ids(
     default_skills: List[str],
     available_skill_ids: set[str],
 ) -> tuple[List[str], bool]:
-    """Resolve active skill ids and whether they came from a valid explicit selection."""
+    """解析生效的技能 id，以及它们是否来自有效的显式选择。"""
     selection_source = None
     raw_skill_ids = None
     if requested_skills is not None:
@@ -135,7 +145,7 @@ def _should_use_legacy_default_prompt(
     explicit_skill_selection: bool,
     skill_catalog: List[object],
 ) -> bool:
-    """Keep the legacy prompt only for the implicit built-in bull_trend fallback."""
+    """仅当回退到隐式内置 bull_trend 时，才沿用旧版提示词。"""
     if explicit_skill_selection or skills_to_activate != ["bull_trend"]:
         return False
 
@@ -150,20 +160,28 @@ def _should_use_legacy_default_prompt(
     return getattr(bull_trend_skill, "source", None) == "builtin"
 
 
-def get_tool_registry():
-    """Return a cached ToolRegistry (built once, shared across requests)."""
+def get_tool_registry(config=None):
+    """返回缓存的 ToolRegistry（只构建一次，跨请求共享）。"""
     global _TOOL_REGISTRY
     if _TOOL_REGISTRY is not None:
         return _TOOL_REGISTRY
 
     from src.agent.tools.registry import ToolRegistry
+    if config is None:
+        from src.config import get_config
+        config = get_config()
     from src.agent.tools.data_tools import ALL_DATA_TOOLS
     from src.agent.tools.analysis_tools import ALL_ANALYSIS_TOOLS
     from src.agent.tools.search_tools import ALL_SEARCH_TOOLS
     from src.agent.tools.market_tools import ALL_MARKET_TOOLS
     from src.agent.tools.backtest_tools import ALL_BACKTEST_TOOLS
 
-    registry = ToolRegistry()
+    registry = ToolRegistry(category_timeouts={
+        "data": getattr(config, "agent_data_tool_timeout_s", 0.0),
+        "search": getattr(config, "agent_search_tool_timeout_s", 0.0),
+        "analysis": getattr(config, "agent_analysis_tool_timeout_s", 0.0),
+        "action": getattr(config, "agent_action_tool_timeout_s", 0.0),
+    })
     for tool_fn in ALL_DATA_TOOLS + ALL_ANALYSIS_TOOLS + ALL_SEARCH_TOOLS + ALL_MARKET_TOOLS + ALL_BACKTEST_TOOLS:
         registry.register(tool_fn)
 
@@ -173,15 +191,14 @@ def get_tool_registry():
 
 
 def get_skill_manager(config=None):
-    """Return a deepcopy-clone of the cached SkillManager prototype.
+    """返回缓存 SkillManager 原型的深拷贝克隆。
 
-    The prototype is initialised from disk on first call; subsequent calls
-    return ``copy.deepcopy(prototype)`` which is ~10× faster than re-reading
-    YAML files.  Each clone is independent so ``.activate()`` calls do not
-    bleed between requests.
+    原型在首次调用时从磁盘初始化；后续调用返回 ``copy.deepcopy(prototype)``，
+    比重复读取 YAML 文件快约 10 倍。每个克隆相互独立，因此 ``.activate()``
+    的调用不会在请求之间相互串扰。
 
-    Cache invalidation: if ``config.agent_skill_dir`` changes at runtime
-    (e.g. via the web settings reload), the prototype is rebuilt automatically.
+    缓存失效：若 ``config.agent_skill_dir`` 在运行时变化（例如通过 Web 设置重载），
+    原型会被自动重建。
     """
     global _SKILL_MANAGER_PROTOTYPE, _SKILL_MANAGER_CUSTOM_DIR
 
@@ -215,7 +232,7 @@ def get_skill_manager(config=None):
 
 
 def resolve_skill_prompt_state(config=None, skills: Optional[List[str]] = None) -> SkillPromptState:
-    """Resolve active skills and prompt fragments for analyzer / agent entrypoints."""
+    """为分析器/智能体入口解析生效的技能与提示词片段。"""
     if config is None:
         from src.config import get_config
         config = get_config()
@@ -272,21 +289,18 @@ def resolve_skill_prompt_state(config=None, skills: Optional[List[str]] = None) 
 
 
 def build_agent_executor(config=None, skills: Optional[List[str]] = None, user_id: Optional[int] = None):
-    """Build and return a configured AgentExecutor (or future orchestrator).
+    """构建并返回一个配置完成的 AgentExecutor（或多智能体编排器）。
 
-    When ``AGENT_ARCH=multi``, this returns an orchestrator that manages
-    multiple specialised agents. Otherwise it returns the legacy single-agent
-    executor.
+    当 ``AGENT_ARCH=multi`` 时，返回管理多个专用智能体的编排器；
+    否则返回旧版单智能体 executor。
 
     Args:
-        config: Application config object.  When *None*, ``get_config()`` is
-                called automatically.
-        skills: Skill ids to activate.  When *None* falls back to
-                ``config.agent_skills``; if that is also empty falls back to
-                the central default skill set.
+        config: 应用配置对象。为 *None* 时自动调用 ``get_config()``。
+        skills: 需要激活的技能 id。为 *None* 时回退到 ``config.agent_skills``；
+                若该项也为空，则回退到集中的默认技能集。
 
     Returns:
-        A ready-to-call :class:`src.agent.executor.AgentExecutor` instance.
+        一个可直接调用的 :class:`src.agent.executor.AgentExecutor` 实例。
     """
     if config is None:
         from src.config import get_config
@@ -331,10 +345,10 @@ def build_agent_executor(config=None, skills: Optional[List[str]] = None, user_i
 
 
 def _build_orchestrator(config, registry, llm_adapter, skill_manager, *, technical_skill_policy: str = ""):
-    """Build and return an :class:`AgentOrchestrator` (multi-agent mode).
+    """构建并返回 :class:`AgentOrchestrator`（多智能体模式）。
 
-    The orchestrator presents the same ``run()`` / ``chat()`` interface as
-    :class:`AgentExecutor` so callers need no changes.
+    编排器对外呈现与 :class:`AgentExecutor` 相同的 ``run()`` / ``chat()`` 接口，
+    因此调用方无需任何改动。
     """
     from src.agent.orchestrator import AgentOrchestrator
 
@@ -353,5 +367,5 @@ def _build_orchestrator(config, registry, llm_adapter, skill_manager, *, technic
     )
 
 
-# Keep legacy alias so any external callers using the old name still work.
+# 保留旧名别名，确保使用旧名称的外部调用方仍能正常工作。
 build_executor = build_agent_executor

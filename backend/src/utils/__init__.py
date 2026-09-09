@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-"""Shared utility package for backend data normalization helpers."""
+"""后端数据规范化辅助函数的共享工具包。"""

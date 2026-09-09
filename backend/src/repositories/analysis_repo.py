@@ -4,9 +4,10 @@
 分析历史数据访问层
 ===================================
 
-职责：
-1. 封装分析历史数据的数据库操作
-2. 提供 CRUD 接口
+封装 ``AnalysisHistory`` 表的查询与持久化操作，供 API 与 Agent 等上层调用。
+
+``user_id`` 用于 To C 多用户隔离，调用方按当前 ``AppUser`` 注入；单租户模式
+下传 ``None`` 即不过滤。
 """
 
 import logging
@@ -20,34 +21,35 @@ logger = logging.getLogger(__name__)
 
 class AnalysisRepository:
     """
-    分析历史数据访问层
-    
-    封装 AnalysisHistory 表的数据库操作
+    分析历史数据访问层。
+
+    封装 ``AnalysisHistory`` 表的数据库操作，主要提供按 ``query_id`` / 时间窗
+    / 用户维度的查询，以及分析历史条目的保存与计数能力。
     """
-    
+
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         """
-        初始化数据访问层
-        
+        初始化数据访问层。
+
         Args:
-            db_manager: 数据库管理器（可选，默认使用单例）
+            db_manager: 数据库管理器（可选，默认使用单例）。
         """
         self.db = db_manager or DatabaseManager.get_instance()
-    
+
     def get_by_query_id(
         self,
         query_id: str,
         user_id: Optional[int] = None,
     ) -> Optional[AnalysisHistory]:
         """
-        根据 query_id 获取分析记录
+        根据 ``query_id`` 获取单条分析记录（取最新一条）。
 
         Args:
-            query_id: 查询 ID
-            user_id: To C 模式下传入限定归属用户; 关闭时传 ``None``
+            query_id: 查询 ID。
+            user_id: To C 模式下传入限定归属用户；关闭时传 ``None``。
 
         Returns:
-            AnalysisHistory 对象，不存在返回 None
+            ``AnalysisHistory`` 对象，不存在返回 ``None``。
         """
         try:
             records = self.db.get_analysis_history(
@@ -68,16 +70,16 @@ class AnalysisRepository:
         user_id: Optional[int] = None,
     ) -> List[AnalysisHistory]:
         """
-        获取分析记录列表
+        获取分析记录列表。
 
         Args:
-            code: 股票代码筛选
-            days: 时间范围（天）
-            limit: 返回数量限制
-            user_id: To C 模式下传入限定归属用户; 关闭时传 ``None``
+            code: 股票代码筛选。
+            days: 时间范围（天）。
+            limit: 返回数量限制。
+            user_id: To C 模式下传入限定归属用户；关闭时传 ``None``。
 
         Returns:
-            AnalysisHistory 对象列表
+            ``AnalysisHistory`` 对象列表。
         """
         try:
             return self.db.get_analysis_history(
@@ -100,18 +102,18 @@ class AnalysisRepository:
         user_id: Optional[int] = None,
     ) -> int:
         """
-        保存分析结果
+        保存一条分析结果历史。
 
         Args:
-            result: 分析结果对象
-            query_id: 查询 ID
-            report_type: 报告类型
-            news_content: 新闻内容
-            context_snapshot: 上下文快照
-            user_id: To C 模式下绑定归属用户; 关闭时传 ``None`` 保持单租户行为
+            result: 分析结果对象。
+            query_id: 查询 ID。
+            report_type: 报告类型。
+            news_content: 新闻内容。
+            context_snapshot: 上下文快照。
+            user_id: To C 模式下绑定归属用户；关闭时传 ``None`` 保持单租户行为。
 
         Returns:
-            保存的记录数
+            实际写入的记录数；失败时返回 0。
         """
         try:
             return self.db.save_analysis_history(
@@ -133,15 +135,15 @@ class AnalysisRepository:
         user_id: Optional[int] = None,
     ) -> int:
         """
-        统计指定股票的分析记录数
+        统计指定股票在时间窗内的分析记录数。
 
         Args:
-            code: 股票代码
-            days: 时间范围（天）
-            user_id: To C 模式下限定归属用户
+            code: 股票代码。
+            days: 时间范围（天）。
+            user_id: To C 模式下限定归属用户；关闭时传 ``None``。
 
         Returns:
-            记录数量
+            记录数量；查询失败返回 0。
         """
         try:
             records = self.db.get_analysis_history(

@@ -39,7 +39,16 @@ _TIMESTAMP_TOLERANCE_SECONDS = 10 * 60  # 支付宝异步通知一般在 10min �
 
 
 class AlipayGateway(PaymentGateway):
-    """支付宝 PC 网站支付 gateway。"""
+    """支付宝支付 gateway（PC 网站支付 / 当面付扫码）。
+
+    实现 :class:`~src.services.billing.gateways.base.PaymentGateway` 接口，
+    由计费模块按 ``provider="alipay"`` 选择路由。核心能力：
+
+    - 异步通知验签（RSA2 + 平台公钥，含 app_id 归属校验）
+    - ``alipay.trade.precreate`` 下单，返回收款二维码链接
+    - ``alipay.trade.refund`` 退款
+    - ``alipay.bill.downloadurl.query`` 拉取对账单并解析为 ChannelSettlement
+    """
 
     provider = "alipay"
 
@@ -51,7 +60,7 @@ class AlipayGateway(PaymentGateway):
         notify_url: Optional[str] = None,
         return_url: Optional[str] = None,
     ) -> None:
-        """Store Alipay credentials and callback URLs."""
+        """保存支付宝凭据与回调地址。"""
         self.app_id = app_id
         self.alipay_public_key_pem = alipay_public_key_pem
         self.app_private_key_pem = app_private_key_pem
@@ -61,7 +70,7 @@ class AlipayGateway(PaymentGateway):
     # ── 内部: 平台公钥加载 ─────────────────────────────────────────────────
 
     def _load_alipay_public_key(self):  # type: ignore[no-untyped-def]
-        """Load the configured Alipay public key or certificate PEM."""
+        """加载配置中的支付宝公钥或证书 PEM。"""
         from cryptography.hazmat.primitives.serialization import (
             load_pem_public_key,
         )
@@ -78,7 +87,20 @@ class AlipayGateway(PaymentGateway):
     # ── 验签 ───────────────────────────────────────────────────────────────
 
     def verify_callback(self, headers: dict, body: bytes) -> CallbackResult:
-        """Verify and normalize an Alipay async notification callback."""
+        """校验并规范化支付宝异步通知。
+
+        依次完成：表单解析 → notify_time 偏差检查（仅告警）→ app_id 归属校验
+        → 构造待签串并用平台公钥验签（RSA2/RSA-SHA256）→ 映射为标准
+        ``CallbackResult`` 业务字段。任何一步失败都返回
+        ``signature_valid=False`` 的结果对象而不抛异常，由上层按幂等处理。
+
+        Args:
+            headers: 原始请求头（本实现不使用，签名只覆盖表单 body）。
+            body: 原始通知 body，form-urlencoded 字节串。
+
+        Returns:
+            规范化后的 :class:`CallbackResult`；验签失败时 ``signature_valid`` 为 False。
+        """
         body_text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
 
         # urllib.parse.parse_qsl 已经做了 URL decode
@@ -95,6 +117,7 @@ class AlipayGateway(PaymentGateway):
             )
 
         params = {k: v for k, v in pairs}
+        # sign / sign_type 必须从待签串中剔除，否则无法还原支付宝原始签名内容
         sign_b64 = params.pop("sign", "")
         sign_type = params.pop("sign_type", "RSA2") or "RSA2"
 
@@ -266,6 +289,8 @@ class AlipayGateway(PaymentGateway):
             body_err = exc.read().decode("utf-8", errors="replace")
             raise GatewayError(f"Alipay API HTTP {exc.code}: {body_err}") from exc
 
+        # 支付宝响应形如 {"alipay_trade_precreate_response": {...}}，
+        # 内层 key 由 method 的点号替换为下划线 + "_response" 推导
         resp_json = json.loads(raw)
         resp_key = method.replace(".", "_") + "_response"
         inner = resp_json.get(resp_key) or {}
@@ -415,6 +440,7 @@ def _parse_alipay_bill_csv(raw_bytes: bytes, date_str: str) -> List[ChannelSettl
         logger.warning("alipay bill: not a valid ZIP file (date=%s)", date_str)
         return []
 
+    # 先尝试排除"汇总"文件只取明细；若账单结构不含汇总则退回全部 CSV
     detail_names = [
         n for n in zf.namelist()
         if not n.lower().startswith("汇总") and n.endswith(".csv")
@@ -439,6 +465,7 @@ def _parse_alipay_bill_csv(raw_bytes: bytes, date_str: str) -> List[ChannelSettl
             if not header:
                 header = stripped
                 continue
+            # 账单 CSV 尾部带 "-----" 分隔行与"合计/总计"汇总行，不是交易记录，跳过
             if stripped[0].startswith("------") or stripped[0].startswith("合计") or stripped[0].startswith("总计"):
                 continue
             record = dict(zip(header, stripped))

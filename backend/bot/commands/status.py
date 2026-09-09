@@ -150,7 +150,7 @@ class StatusCommand(BotCommand):
         """格式化状态信息"""
         # 状态图标
         def icon(enabled: bool) -> str:
-            """Return a compact availability icon for status rows."""
+            """返回状态行中用于标识可用性的紧凑图标。"""
             return "✅" if enabled else "❌"
         
         lines = [

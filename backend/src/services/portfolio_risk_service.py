@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Portfolio risk service for concentration, drawdown and stop-loss proximity.
+"""组合风险服务：集中度、回撤与止损位接近度。
 
-Risk blocks are computed from replayed portfolio snapshots. The service may
-backfill missing daily snapshots for the requested lookback window so drawdown
-metrics remain meaningful even if the risk endpoint is opened infrequently.
+风险块基于回放（replay）的组合快照计算。服务可能为请求的回看窗口回填缺失的
+日快照，即使风险接口打开频率不高也能保证回撤指标有意义。
 """
 
 from __future__ import annotations
@@ -19,11 +18,12 @@ from src.services.decision_signal_summary import summarize_decision_signal
 from src.services.portfolio_service import PortfolioService
 
 logger = logging.getLogger(__name__)
+# 在风险块里统计的"防御性动作"; 这些 AI 建议意味着持仓需要被警惕
 DEFENSIVE_DECISION_SIGNAL_ACTIONS = ("sell", "reduce", "alert")
 
 
 class PortfolioRiskService:
-    """Compute portfolio risk blocks on top of replayed snapshot data."""
+    """在重放快照之上计算组合层面的风险块。"""
 
     def __init__(
         self,
@@ -33,11 +33,12 @@ class PortfolioRiskService:
         decision_signal_service: Optional[DecisionSignalService] = None,
         config: Optional[Config] = None,
     ):
-        """Initialize repository/service dependencies and lazy data manager state."""
+        """初始化仓库与服务依赖, 并延迟创建数据管理器(避免冷启动开销)。"""
         self.repo = repo or PortfolioRepository()
         self.portfolio_service = portfolio_service or PortfolioService(repo=self.repo)
         self.decision_signal_service = decision_signal_service or DecisionSignalService(portfolio_repo=self.repo)
         self.config = config or get_config()
+        # 懒加载: 数据管理器只有在真正用到板块归属时才会实例化
         self._data_manager = None
         self._data_manager_init_error = ""
 
@@ -50,7 +51,7 @@ class PortfolioRiskService:
         owner_id: Optional[str] = None,
         include_realtime: bool = True,
     ) -> Dict[str, Any]:
-        """Build all configured portfolio risk blocks for one account scope/date."""
+        """按账户与日期口径输出全套配置的风险块(concentration / drawdown / ...)。"""
         as_of_date = as_of or date.today()
         snapshot = self.portfolio_service.get_portfolio_snapshot(
             account_id=account_id,
@@ -60,6 +61,7 @@ class PortfolioRiskService:
             include_realtime=include_realtime,
         )
 
+        # 阈值默认与既有行为保持一致; 通过 config 覆写以满足灰度实验
         thresholds = {
             "concentration_alert_pct": float(getattr(self.config, "portfolio_risk_concentration_alert_pct", 35.0)),
             "drawdown_alert_pct": float(getattr(self.config, "portfolio_risk_drawdown_alert_pct", 15.0)),
@@ -78,6 +80,7 @@ class PortfolioRiskService:
             thresholds["concentration_alert_pct"],
             as_of_date=as_of_date,
         )
+        # 回撤计算依赖完整快照序列, 先按窗口补齐缺失日期再构造指标
         self._ensure_drawdown_snapshot_window(
             account_id=account_id,
             as_of_date=as_of_date,
@@ -116,7 +119,7 @@ class PortfolioRiskService:
         *,
         owner_id: Optional[str],
     ) -> Dict[str, Any]:
-        """Count active defensive AI signals for currently held positions."""
+        """统计持仓上"防御性 AI 信号"的数量与清单。"""
         empty = {
             "available": True,
             "total": 0,
@@ -144,6 +147,7 @@ class PortfolioRiskService:
                         page=1,
                         page_size=100,
                     )
+                    # 在 100 条内找一条防御性 action; 找不到则该持仓不计入
                     signal = next(
                         (item for item in response.get("items", [])
                          if str(item.get("action") or "") in DEFENSIVE_DECISION_SIGNAL_ACTIONS),
@@ -169,6 +173,7 @@ class PortfolioRiskService:
             empty["items"] = risk_items
             return empty
         except Exception:
+            # 任何异常都不能让整个风险报告失败, 降级为不可用状态
             logger.exception("[PortfolioRiskService] Decision signal risk unavailable")
             empty["available"] = False
             return empty
@@ -183,7 +188,7 @@ class PortfolioRiskService:
         owner_id: Optional[str] = None,
         include_realtime: bool = True,
     ) -> None:
-        """Backfill missing daily snapshots needed for drawdown calculations."""
+        """按回看窗口把缺失的日级快照补齐, 确保回撤曲线在历史段也有数据。"""
         if lookback_days <= 0:
             return
 
@@ -228,6 +233,7 @@ class PortfolioRiskService:
         existing_pairs = {(int(row.account_id), row.snapshot_date) for row in existing_rows}
         current_date = start_date
         while current_date <= as_of_date:
+            # 只要有一个账户缺失该日快照, 就重新生成全账户快照(底层实现一次写多个账户)
             if not all((aid, current_date) in existing_pairs for aid in account_ids):
                 self.portfolio_service.get_portfolio_snapshot(
                     account_id=None,
@@ -248,10 +254,11 @@ class PortfolioRiskService:
         lookback_days: int,
         owner_id: Optional[str] = None,
     ) -> date:
-        """Start backfill no earlier than lookback start or first account activity."""
+        """补齐起始日期取"回看窗口起点"和"账户首次活动日"中更晚者。"""
         window_start = as_of_date - timedelta(days=lookback_days)
         if account_id is not None:
             first_activity = self.repo.get_first_activity_date(account_id=account_id, as_of=as_of_date)
+            # 没有活动记录时直接用 as_of, 避免无意义的回看
             return max(window_start, first_activity or as_of_date)
 
         first_activity_candidates: List[date] = []
@@ -261,10 +268,11 @@ class PortfolioRiskService:
                 first_activity_candidates.append(first_activity)
         if not first_activity_candidates:
             return as_of_date
+        # 跨账户视角: 取"最早活动日"作为整体起点, 避免回看无效段
         return max(window_start, min(first_activity_candidates))
 
     def _build_concentration(self, snapshot: Dict[str, Any], threshold_pct: float, *, as_of_date: date) -> Dict[str, Any]:
-        """Compute single-symbol concentration weights in the base currency."""
+        """按基础货币计算单只标的的集中度占比及是否触发告警。"""
         total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)
         exposure_by_symbol: Dict[str, float] = {}
         for account in snapshot.get("accounts", []):
@@ -274,6 +282,7 @@ class PortfolioRiskService:
                     continue
                 market_value = float(pos.get("market_value_base") or 0.0)
                 valuation_currency = str(pos.get("valuation_currency") or account.get("base_currency") or "CNY")
+                # 把不同币种的市值汇总到 CNY, 避免单一币种占比被夸大
                 converted, _, _ = self.portfolio_service.convert_amount(
                     amount=market_value,
                     from_currency=valuation_currency,
@@ -310,7 +319,7 @@ class PortfolioRiskService:
         *,
         as_of_date: date,
     ) -> Dict[str, Any]:
-        """Compute sector/board concentration, classifying CN holdings best-effort."""
+        """按"行业/板块"维度计算集中度, A 股尽力识别, 海外/无法识别则记 UNCLASSIFIED。"""
         total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)
         sector_exposure: Dict[str, float] = {}
         sector_symbols: Dict[str, set] = {}
@@ -381,12 +390,13 @@ class PortfolioRiskService:
         coverage: Dict[str, int],
         errors: List[str],
     ) -> str:
-        """Resolve one position into its primary sector with per-report caching."""
+        """把单个持仓解析到主行业, 并把结果按 (symbol, market) 缓存避免重复 IO。"""
         cache_key = (symbol, market)
         if cache_key in board_cache:
             return board_cache[cache_key]
 
         if market != "cn":
+            # 非 A 股市场没有稳定的"行业"概念, 直接记 UNCLASSIFIED
             coverage["unclassified_count"] += 1
             board_cache[cache_key] = "UNCLASSIFIED"
             return board_cache[cache_key]
@@ -407,7 +417,7 @@ class PortfolioRiskService:
         return board_cache[cache_key]
 
     def _fetch_belong_boards(self, symbol: str) -> List[Dict[str, Any]]:
-        """Fetch board membership from the data provider when available."""
+        """调用数据源获取个股归属板块列表, 缺源时返回空数组。"""
         manager = self._get_data_manager()
         if manager is None:
             return []
@@ -418,7 +428,7 @@ class PortfolioRiskService:
 
     @staticmethod
     def _pick_primary_board_name(boards: List[Dict[str, Any]]) -> Optional[str]:
-        """Prefer industry board names over generic concepts when possible."""
+        """优先选"行业"类型板块, 退化到通用概念, 保证至少有一条可用名。"""
         if not boards:
             return None
 
@@ -433,13 +443,14 @@ class PortfolioRiskService:
             if fallback is None:
                 fallback = name
             type_text = str(item.get("type") or "").strip().lower()
+            # 优先选"行业"类板块, 比通用概念更稳
             if "行业" in type_text or "industry" in type_text:
                 preferred = name
                 break
         return preferred or fallback
 
     def _get_data_manager(self):
-        """Lazily initialize DataFetcherManager and fail open on import/setup errors."""
+        """懒加载 DataFetcherManager, 任何初始化错误都缓存并 fail-open。"""
         if self._data_manager is not None:
             return self._data_manager
         if self._data_manager_init_error:
@@ -450,6 +461,7 @@ class PortfolioRiskService:
             self._data_manager = DataFetcherManager()
             return self._data_manager
         except Exception as exc:  # pragma: no cover - fail-open initialization
+            # 缓存错误字符串, 避免每次都重新尝试, 同时保留调试信息
             self._data_manager_init_error = str(exc)
             return None
 
@@ -463,7 +475,7 @@ class PortfolioRiskService:
         lookback_days: int,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Compute max/current drawdown from stored daily equity snapshots."""
+        """从日级权益快照序列计算最大 / 当前回撤。"""
         rows = self.repo.list_daily_snapshots_for_risk(
             as_of=as_of_date,
             cost_method=cost_method,
@@ -480,6 +492,7 @@ class PortfolioRiskService:
                 "fx_stale": False,
             }
 
+        # 多账户场景按日汇总权益, 并保留汇率是否过期的标记
         grouped: Dict[str, float] = {}
         stale_flag = False
         for row in rows:
@@ -500,6 +513,7 @@ class PortfolioRiskService:
         for _, equity in series:
             peak = max(peak, equity)
             if peak <= 0:
+                # 历史权益为零或负时无法计算百分比回撤, 视作 0
                 drawdown = 0.0
             else:
                 drawdown = (peak - equity) / peak * 100.0
@@ -516,7 +530,7 @@ class PortfolioRiskService:
 
     @staticmethod
     def _build_stop_loss(snapshot: Dict[str, Any], thresholds: Dict[str, Any]) -> Dict[str, Any]:
-        """Find positions near or beyond the configured cost-based loss threshold."""
+        """根据成本价 / 最新价计算"近止损 / 已止损"两种命中。"""
         stop_loss_pct = float(thresholds["stop_loss_alert_pct"])
         near_ratio = float(thresholds["stop_loss_near_ratio"])
         near_threshold = stop_loss_pct * near_ratio
@@ -527,6 +541,7 @@ class PortfolioRiskService:
                 avg_cost = float(pos.get("avg_cost", 0.0) or 0.0)
                 last_price = float(pos.get("last_price", 0.0) or 0.0)
                 if avg_cost <= 0:
+                    # 成本缺失一般是新增持仓尚未结算, 跳过避免误警
                     continue
                 loss_pct = max(0.0, (avg_cost - last_price) / avg_cost * 100.0)
                 if loss_pct < near_threshold:

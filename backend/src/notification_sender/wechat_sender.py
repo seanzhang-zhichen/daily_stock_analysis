@@ -14,17 +14,17 @@ import time
 from typing import Optional
 
 from src.config import Config
-from src.formatters import chunk_content_by_max_bytes
+from src.formatters import chunk_markdown_preserving_blocks, utf8_len
 
 
 logger = logging.getLogger(__name__)
 
 
-# WeChat Work image msgtype limit ~2MB (base64 payload)
+# 企业微信图片消息 msgtype 上限约 2MB（base64 负载）
 WECHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 
 class WechatSender:
-    """Send notifications through WeChat Work robot webhooks."""
+    """通过企业微信机器人 Webhook 发送通知。"""
     
     def __init__(self, config: Config):
         """
@@ -94,7 +94,7 @@ class WechatSender:
             return False
 
     def _send_wechat_image(self, image_bytes: bytes) -> bool:
-        """Send image via WeChat Work webhook msgtype image (Issue #289)."""
+        """通过企业微信 webhook 以 msgtype=image 发送图片（Issue #289）。"""
         if not self._wechat_url:
             return False
         if len(image_bytes) > WECHAT_IMAGE_MAX_BYTES:
@@ -162,7 +162,12 @@ class WechatSender:
         Returns:
             是否全部发送成功
         """
-        chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
+        chunks = chunk_markdown_preserving_blocks(
+            content,
+            max_bytes,
+            len_fn=utf8_len,
+            add_page_marker=True,
+        )
         total_chunks = len(chunks)
         success_count = 0
         for i, chunk in enumerate(chunks):

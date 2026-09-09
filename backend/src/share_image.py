@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Decision-first HTML posters for Markdown stock and market reports.
+"""把个股 / 大盘 / 决策仪表盘报告渲染成“结论优先”的 1080px HTML 分享海报。
 
-The notification pipeline currently owns a Markdown string, rather than the
-original Pydantic/dataclass payload.  This module therefore extracts only the
-stable, renderer-generated Markdown contract and turns it into a compact share
-card.  Missing fields are hidden; no price, score, signal, or market statistic
-is inferred.
+通知链路拿到的是渲染后的 Markdown 字符串，而不是原始的 Pydantic/dataclass 负载，
+因此本模块只解析渲染器生成的稳定 Markdown 契约，再压缩成一张分享卡片。
+缺失字段直接隐藏，绝不臆造价格、评分、信号或任何市场统计量。
+
+主要能力：
+- 从 Markdown / 结构化 JSON 中提取个股海报（StockPoster）与大盘海报（MarketPoster）数据
+- 多语言海报文案（zh / en / ko）与涨绿跌红配色适配
+- 结构化字段优先、Markdown 兜底的合并策略，输出可直接转图的完整 HTML
 """
 
 from __future__ import annotations
@@ -155,6 +158,13 @@ _MARKET_LABEL_PATTERNS = (
 
 @dataclass
 class Table:
+    """Markdown 表格的解析结果。
+
+    Attributes:
+        headers: 表头单元格（已清洗）。
+        rows: 数据行（已清洗，长度按表头补齐/截断）。
+        raw_rows: 未经清洗的原始数据行，用于保留涨跌表情等判定色值的原始标记。
+    """
     headers: list[str]
     rows: list[list[str]]
     raw_rows: list[list[str]] = field(default_factory=list)
@@ -162,17 +172,17 @@ class Table:
 
 @dataclass(frozen=True)
 class ShareImageBranding:
-    """Optional deployment-owned social branding for share posters."""
+    """由部署方配置的分享海报社交账号品牌信息（全部可选）。"""
 
     xiaohongshu_url: str = ""
     xiaohongshu_handle: str = ""
-    # Kept for compatibility with persisted configs. The poster deliberately
-    # renders only the public nickname/handle below the QR code.
+    # 仅为兼容已持久化的旧配置而保留；海报刻意只在二维码下方展示公开的昵称 / 账号
     xiaohongshu_id: str = ""
     xiaohongshu_qr_path: str = ""
 
     @property
     def has_xiaohongshu(self) -> bool:
+        """是否存在任意一项可用的社交账号信息。"""
         return any((
             self.xiaohongshu_url.strip(),
             self.xiaohongshu_handle.strip(),
@@ -181,13 +191,14 @@ class ShareImageBranding:
 
 
 def share_image_branding_from_config(_config: object) -> ShareImageBranding:
-    """Return the project-owned poster branding without social account defaults."""
+    """返回项目自带的海报品牌信息（不注入任何社交账号默认值）。"""
 
     return ShareImageBranding()
 
 
 @dataclass
 class StockPoster:
+    """个股分享海报的数据模型；字段为空表示该区块不渲染。"""
     title: str
     language: str = "zh"
     code: str = ""
@@ -213,6 +224,7 @@ class StockPoster:
 
 @dataclass
 class MarketPoster:
+    """大盘复盘分享海报的数据模型；字段为空表示该区块不渲染。"""
     title: str
     language: str = "zh"
     report_date: str = ""
@@ -237,11 +249,13 @@ class MarketPoster:
 
 @dataclass
 class MarketSegment:
+    """多市场复盘中的单个市场分块（标题 + 该分块的 Markdown 原文）。"""
     title: str
     markdown: str
 
 
 def _asset_path(path_value: str) -> Optional[Path]:
+    """按相对路径 / 当前工作目录 / 包目录 / PyInstaller 临时目录的顺序定位资源文件。"""
     if not path_value.strip():
         return None
 
@@ -261,6 +275,7 @@ def _asset_path(path_value: str) -> Optional[Path]:
 
 
 def _asset_data_uri(path_value: str) -> str:
+    """把图片资源转成内联 data URI；找不到或读取失败时返回空字符串。"""
     asset_path = _asset_path(path_value)
     if asset_path is None:
         return ""
@@ -274,6 +289,7 @@ def _asset_data_uri(path_value: str) -> str:
 
 
 def _plain(value: object) -> str:
+    """把任意值压成单行纯文本：去掉图片/链接语法、HTML 标签与 Markdown 强调符号。"""
     text = str(value or "")
     text = re.sub(r"!\[([^]]*)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", text)
@@ -284,6 +300,7 @@ def _plain(value: object) -> str:
 
 
 def _clean_value(value: object, *, limit: int = 90) -> str:
+    """清洗取值：去掉点位类标签前缀、把占位值归一为空串，并按 limit 截断。"""
     text = _plain(value)
     text = re.sub(
         r"^(?:理想买入点|次优买入点|止损位?|目标位?|ideal entry|secondary entry|stop loss|target)\s*[:：]\s*",
@@ -299,7 +316,7 @@ def _clean_value(value: object, *, limit: int = 90) -> str:
 
 
 def _compact_text(value: object, *, limit: int = 46) -> str:
-    """Keep poster copy scannable without changing the underlying report."""
+    """把长文案压缩成可扫读的短句，但不改变底层报告内容。"""
 
     text = _clean_value(value, limit=max(limit * 2, 90))
     text = re.sub(r"^[✅⚠️❌🔴🟢🟡]+\s*", "", text)
@@ -313,6 +330,7 @@ def _compact_text(value: object, *, limit: int = 46) -> str:
 
 
 def _nested_mapping(value: object, *keys: str) -> Mapping[str, Any]:
+    """按 key 路径逐层下钻嵌套字典；任一层缺失或类型不符时返回空字典。"""
     current: object = value
     for key in keys:
         if not isinstance(current, Mapping):
@@ -325,7 +343,7 @@ def _poster_language(
     markdown_text: str,
     payload: Optional[Mapping[str, Any]] = None,
 ) -> str:
-    """Resolve poster chrome language from the persisted contract or report."""
+    """解析海报界面语言：优先取持久化契约，其次按 Markdown 文字特征推断。"""
 
     if isinstance(payload, Mapping):
         raw_language = payload.get("report_language") or payload.get("language")
@@ -348,10 +366,12 @@ def _poster_language(
 
 
 def _poster_text(language: str, key: str) -> str:
+    """取指定语言的海报文案；目标语言缺失时回退到中文，再缺失则返回 key 本身。"""
     return _POSTER_TEXT.get(language, _POSTER_TEXT["zh"]).get(key, _POSTER_TEXT["zh"].get(key, key))
 
 
 def _poster_label(language: str, label: str) -> str:
+    """把指标名等短标签本地化；"观察 N" 这类动态标签需单独拼前缀。"""
     translated = _POSTER_LABELS.get(language, {}).get(label)
     if translated:
         return translated
@@ -366,6 +386,7 @@ def _metric_value(
     items: Iterable[tuple[str, str, str]],
     *labels: str,
 ) -> str:
+    """按标签名（精确匹配）从指标三元组中取值，取不到返回空字符串。"""
     for label, value, _tone in items:
         if any(candidate == label for candidate in labels) and value:
             return value
@@ -376,7 +397,7 @@ def _merge_metrics(
     existing: Iterable[tuple[str, str, str]],
     overlay: Iterable[tuple[str, str, str]],
 ) -> list[tuple[str, str, str]]:
-    """Overlay populated metric cards without erasing Markdown fallbacks."""
+    """用结构化字段覆盖同名指标卡，但不丢掉 Markdown 兜底出来的其它指标。"""
 
     merged = list(existing)
     positions = {label: index for index, (label, _value, _tone) in enumerate(merged)}
@@ -399,7 +420,7 @@ def _merge_compact_list(
     limit_items: int = 2,
     limit_chars: int = 36,
 ) -> list[str]:
-    """Prefer structured list items without erasing Markdown fallback entries."""
+    """优先采用结构化列表项，同时保留 Markdown 兜底条目并去重。"""
 
     if not isinstance(overlay, list):
         return [str(item) for item in existing if _clean_value(item)][:limit_items]
@@ -422,16 +443,18 @@ def _merge_compact_list(
 
 
 def _market_light_overlay_allowed(payload: Mapping[str, Any]) -> bool:
-    """Skip fabricated market-light snapshots that were persisted as unavailable."""
+    """跳过被持久化为 unavailable 的、由兜底逻辑捏造的大盘快照数据。"""
 
     return str(payload.get("data_quality") or "").strip().lower() != "unavailable"
 
 
 def _normalize_index_name(value: object) -> str:
+    """把指数名归一化成小写键，用于结构化数据与 Markdown 卡片的对齐。"""
     return _plain(_clean_value(value, limit=28)).strip().lower()
 
 
 def _normalize_ranking_name(value: object) -> str:
+    """把板块名归一化成小写键，用于结构化数据与 Markdown 排行的对齐。"""
     return _plain(_clean_value(value, limit=28)).strip().lower()
 
 
@@ -442,7 +465,7 @@ def _merge_index_cards(
     positive_tone: str,
     negative_tone: str,
 ) -> list[tuple[str, str, str, str]]:
-    """Merge structured index fields into Markdown-parsed cards without dropping fallbacks."""
+    """把结构化指数字段合并进 Markdown 解析结果，不丢兜底条目；最多保留 4 张卡。"""
 
     merged = list(existing)
     positions = {
@@ -498,7 +521,7 @@ def _merge_sector_rankings(
     negative_tone: str,
     default_tone: str,
 ) -> list[tuple[str, str, str]]:
-    """Merge structured sector rows into Markdown rankings without dropping fallbacks."""
+    """把结构化板块行合并进 Markdown 排行，不丢兜底条目；最多保留 3 行。"""
 
     merged = list(existing)
     positions = {
@@ -550,6 +573,7 @@ def _merge_sector_rankings(
 
 
 def _number_text(value: object, *, suffix: str = "") -> str:
+    """把数值渲染为最多两位小数的字符串并可选加后缀；非数值按短文本清洗。"""
     if value is None or isinstance(value, bool):
         return ""
     try:
@@ -561,7 +585,7 @@ def _number_text(value: object, *, suffix: str = "") -> str:
 
 
 def _compact_turnover(value: object, unit: object) -> str:
-    """Render large CNY turnover figures without forcing narrow cards to wrap."""
+    """渲染大额成交额，避免窄卡片换行：超过 1 万亿时换算成“万亿”。"""
 
     unit_text = _clean_value(unit, limit=8)
     try:
@@ -575,6 +599,7 @@ def _compact_turnover(value: object, unit: object) -> str:
 
 
 def _signed_percent(value: object) -> str:
+    """把涨跌幅渲染成带符号的百分比（+1.23%）；非数值时尽量补上 %。"""
     if value is None or isinstance(value, bool):
         return ""
     try:
@@ -586,13 +611,18 @@ def _signed_percent(value: object) -> str:
 
 
 def _price_tokens(value: object) -> list[str]:
+    """提取文本中的价格数字。
+
+    MA5/MA10 这类指标标签本身不是价格，因此排除紧跟字母的数字；
+    但形如 ``MA10（55.13）`` 中括号内的数值依然算有效价格。
+    """
     text = _plain(value)
-    # Indicator labels such as MA5/MA10 are not prices; nearby parenthesized
-    # values (for example ``MA10（55.13）``) remain eligible.
+    # 排除紧跟在字母后面的数字（指标名的一部分），括号内数值仍可被提取
     return re.findall(r"(?<![A-Za-z\d])(\d+(?:\.\d+)?)(?!\d|%)", text)
 
 
 def _compact_sniper_value(key: str, value: object) -> str:
+    """把狙击点位压缩成卡片可容纳的短值：目标位取区间，其余取首个价格。"""
     text = _clean_value(value, limit=120)
     if not text:
         return ""
@@ -607,6 +637,7 @@ def _compact_sniper_value(key: str, value: object) -> str:
 
 
 def _compact_position(value: object, *, holding: bool) -> str:
+    """把持仓建议长句压成“减仓/止损”或“等待企稳”这类可扫读的短指令。"""
     text = _clean_value(value, limit=150)
     if not text:
         return ""
@@ -631,10 +662,12 @@ def _compact_position(value: object, *, holding: bool) -> str:
 
 
 def _escape(value: object) -> str:
+    """HTML 转义（含引号），防止报告内容破坏海报结构。"""
     return html.escape(str(value or ""), quote=True)
 
 
 def _extract_sections(markdown_text: str) -> list[tuple[str, str, int]]:
+    """按标题切分 Markdown，返回 (标题, 正文, 标题层级) 列表。"""
     matches = list(_HEADING_RE.finditer(markdown_text or ""))
     sections: list[tuple[str, str, int]] = []
     for index, match in enumerate(matches):
@@ -645,6 +678,7 @@ def _extract_sections(markdown_text: str) -> list[tuple[str, str, int]]:
 
 
 def _section(markdown_text: str, *terms: str) -> str:
+    """提取首个标题包含任一关键词的章节正文（截至同级或更高级标题）。"""
     matches = list(_HEADING_RE.finditer(markdown_text or ""))
     for index, match in enumerate(matches):
         title = _plain(match.group(2)).lower()
@@ -661,6 +695,7 @@ def _section(markdown_text: str, *terms: str) -> str:
 
 
 def _parse_tables(markdown_text: str) -> list[Table]:
+    """把 Markdown 表格解析为 Table 列表（含表头、行与原始单元格）。"""
     lines = (markdown_text or "").splitlines()
     tables: list[Table] = []
     index = 0
@@ -688,6 +723,7 @@ def _parse_tables(markdown_text: str) -> list[Table]:
 
 
 def _table_map(table: Table) -> dict[str, str]:
+    """将表格转为“首列小写键 → 第二列清洗值”的字典。"""
     return {
         _plain(row[0]).lower(): _clean_value(row[1], limit=120)
         for row in table.rows
@@ -696,6 +732,7 @@ def _table_map(table: Table) -> dict[str, str]:
 
 
 def _find_table(markdown_text: str, *header_terms: str) -> Optional[Table]:
+    """按表头与正文同时命中全部关键词查找对应表格。"""
     for table in _parse_tables(markdown_text):
         header = " ".join(table.headers).lower()
         body = " ".join(" ".join(row) for row in table.rows).lower()
@@ -705,6 +742,7 @@ def _find_table(markdown_text: str, *header_terms: str) -> Optional[Table]:
 
 
 def _mapped_value(mapping: dict[str, str], *labels: str) -> str:
+    """在映射字典里按标签模糊匹配，返回首个非空清洗值。"""
     for key, value in mapping.items():
         if any(label.lower() in key for label in labels) and _clean_value(value):
             return _clean_value(value)
@@ -712,6 +750,7 @@ def _mapped_value(mapping: dict[str, str], *labels: str) -> str:
 
 
 def _opposite_color(color: str) -> str:
+    """返回颜色的相反语义色（green↔red），未知返回空。"""
     if color == "green":
         return "red"
     if color == "red":
@@ -720,6 +759,7 @@ def _opposite_color(color: str) -> str:
 
 
 def _marker_color(raw_change: str) -> str:
+    """依据涨跌 emoji（🟢/🔴）推断语义色，无标记返回空。"""
     if "🟢" in (raw_change or ""):
         return "green"
     if "🔴" in (raw_change or ""):
@@ -728,6 +768,7 @@ def _marker_color(raw_change: str) -> str:
 
 
 def _positive_color_from_change(raw_change: str, change: str) -> str:
+    """结合标记色与带符号涨跌幅，判断正向语义色（涨绿/跌红）。"""
     marker_color = _marker_color(raw_change)
     if not marker_color:
         return ""
@@ -736,6 +777,7 @@ def _positive_color_from_change(raw_change: str, change: str) -> str:
 
 
 def _ranking_change_tone(change: str, *, positive_tone: str, negative_tone: str, default_tone: str) -> str:
+    """根据涨跌幅首字符（+/-）选择对应语气文案。"""
     normalized_change = (change or "").strip()
     if normalized_change.startswith("+"):
         return positive_tone
@@ -745,6 +787,7 @@ def _ranking_change_tone(change: str, *, positive_tone: str, negative_tone: str,
 
 
 def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
+    """判断章节是否含有效内容（去除免责声明等样板文案后非空）。"""
     section = _section(markdown_text, *terms)
     if not section:
         return False
@@ -761,6 +804,7 @@ def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
 
 
 def _meaningful_market_subsection_count(markdown_text: str) -> int:
+    """统计三级标题下含有效内容的子章节数量。"""
     count = 0
     for _title, body, level in _extract_sections(markdown_text):
         if level == 3 and _clean_value(body, limit=400):
@@ -769,6 +813,7 @@ def _meaningful_market_subsection_count(markdown_text: str) -> int:
 
 
 def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
+    """从“标签：值”行中提取首个匹配标签的值。"""
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
         rf"(?:\*{{0,2}}(?:{joined})\*{{0,2}})\s*[:：]\s*(.+?)(?=\s*\||\n|$)",
@@ -779,6 +824,7 @@ def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
 
 
 def _labeled_line(text: str, *labels: str, limit: int = 100) -> str:
+    """从“标签：值”所在行提取首个匹配标签的值（行内）。"""
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
         rf"(?:\*{{0,2}}(?:{joined})\*{{0,2}})\s*[:：]\s*(.+?)(?=\n|$)",
@@ -789,6 +835,7 @@ def _labeled_line(text: str, *labels: str, limit: int = 100) -> str:
 
 
 def _list_after_label(text: str, *labels: str, limit: int = 3) -> list[str]:
+    """提取某个标签之后的列表项，作为要点列表返回（限制条数）。"""
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
         rf"(?:\*{{0,2}}[^\n]*(?:{joined})[^\n]*\*{{0,2}})\s*[:：]?\s*\n(?P<body>.*?)(?=\n\s*\*{{1,2}}[^\n]+\*{{1,2}}\s*[:：]|\n#|\Z)",
@@ -808,6 +855,7 @@ def _list_after_label(text: str, *labels: str, limit: int = 3) -> list[str]:
 
 
 def _section_items(text: str, *, limit: int = 3) -> list[str]:
+    """提取章节内的列表项，过滤免责声明，限制条数。"""
     items: list[str] = []
     for line in (text or "").splitlines():
         if not re.match(r"^\s*(?:[-*+]\s+|\d+[.)、]\s*)", line):
@@ -821,6 +869,7 @@ def _section_items(text: str, *, limit: int = 3) -> list[str]:
 
 
 def _sentences(text: str, *, limit: int = 2) -> list[str]:
+    """把文本拆成句子并清洗，返回前若干条非空句子。"""
     clean = _plain(re.sub(r"^\s*(?:[-*+]\s+|\d+[.)、]\s*)", "", text or "", flags=re.MULTILINE))
     clean = re.sub(r"#{1,4}\s*", "", clean)
     pieces = re.split(r"(?<=[。！？!?])\s*", clean)
@@ -829,11 +878,13 @@ def _sentences(text: str, *, limit: int = 2) -> list[str]:
 
 
 def _extract_date(markdown_text: str, fallback: date) -> str:
+    """从文本中用正则提取日期，失败回退到给定日期。"""
     match = _DATE_RE.search(markdown_text or "")
     return match.group(1) if match else fallback.isoformat()
 
 
 def _market_label(text: str) -> str:
+    """依据市场标签正则模式匹配，返回市场中文标签。"""
     scope = _plain(text)
     for label, pattern in _MARKET_LABEL_PATTERNS:
         if pattern.search(scope):
@@ -842,11 +893,13 @@ def _market_label(text: str) -> str:
 
 
 def _market_region_hint(markdown_text: str) -> str:
+    """提取 `[dsa-market-region]` 引用中的市场区域提示。"""
     match = _MARKET_REGION_REF_RE.search(markdown_text or "")
     return match.group(1).strip().lower() if match else ""
 
 
 def _market_label_for_region(region: str) -> str:
+    """把区域代码（cn/hk/us…）映射为中文市场名称。"""
     return {
         "cn": "A股",
         "hk": "港股",
@@ -857,11 +910,14 @@ def _market_label_for_region(region: str) -> str:
 
 
 def _stock_heading_entry(raw_title: str) -> Optional[tuple[str, str]]:
+    """从个股标题中解析出（名称, 代码）对，兼容前后置代码写法。"""
     def _heading_name(fragment: str) -> str:
+        """从标题片段提取股票名称，去除空白/括号与“分析报告”等后缀噪声。"""
         name = _plain(fragment).strip(" -—()（）")
         return re.sub(r"\b(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
 
     def _is_parenthesized(match: re.Match[str]) -> bool:
+        """判断正则匹配是否处于半角/全角括号之内。"""
         start, end = match.span(1)
         return start > 0 and raw_title[start - 1] in "(（" and end < len(raw_title) and raw_title[end] in ")）"
 
@@ -884,6 +940,7 @@ def _stock_heading_entry(raw_title: str) -> Optional[tuple[str, str]]:
 
 
 def _stock_headings(markdown_text: str) -> list[tuple[str, str]]:
+    """提取文档中所有个股标题，返回（名称, 代码）列表。"""
     found: list[tuple[str, str]] = []
     for raw_title, _body, level in _extract_sections(markdown_text):
         if level > 2 or _MARKET_RE.search(raw_title) or _DASHBOARD_RE.search(raw_title):
@@ -895,14 +952,17 @@ def _stock_headings(markdown_text: str) -> list[tuple[str, str]]:
 
 
 def _is_market_review_title(title: str) -> bool:
+    """判断标题是否属于大盘复盘类。"""
     return bool(_MARKET_RE.search(_plain(title)))
 
 
 def _has_market_scope(title: str) -> bool:
+    """判断标题是否显式带有市场范围（A股/港股/美股…）。"""
     return bool(_MARKET_SCOPE_RE.search(_plain(title)))
 
 
 def _market_segments(markdown_text: str) -> list[MarketSegment]:
+    """把多市场复盘拆分为各市场的独立分段。"""
     top_level_matches = [
         match
         for match in _HEADING_RE.finditer(markdown_text or "")
@@ -931,6 +991,7 @@ def _market_segments(markdown_text: str) -> list[MarketSegment]:
 
 
 def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
+    """从 Markdown 解析出单只个股的海报数据（StockPoster）。"""
     headings = _stock_headings(markdown_text)
     if headings:
         name, code = headings[0]
@@ -1105,7 +1166,7 @@ def _stock_data_from_payload(
     markdown_text: str,
     generated_on: date,
 ) -> StockPoster:
-    """Prefer the analysis JSON contract and retain Markdown as a field fallback."""
+    """优先使用分析 JSON 契约，Markdown 仅作为字段级兜底。"""
 
     poster = _stock_data(markdown_text, generated_on)
     poster.language = _poster_language(markdown_text, payload)
@@ -1245,8 +1306,7 @@ def _stock_data_from_payload(
         _compact_position(position_advice.get("has_position"), holding=True)
         or poster.has_position
     )
-    # The full report keeps sizing, entry and risk-control prose.  The share
-    # poster intentionally shows only the two user states above.
+    # 完整报告保留了仓位、建仓与风控的详细描述；分享海报刻意只展示上面两种持仓状态。
     poster.position_size = ""
     poster.entry_plan = ""
     poster.risk_control = ""
@@ -1254,6 +1314,7 @@ def _stock_data_from_payload(
 
 
 def _market_title(markdown_text: str) -> str:
+    """推断大盘复盘海报的标题，按语言与市场标签回退到默认值。"""
     first_title = next((title for title, _body, _level in _extract_sections(markdown_text)), "")
     language = _poster_language(markdown_text)
     if language in {"en", "ko"} and _is_market_review_title(first_title):
@@ -1273,6 +1334,7 @@ def _market_title(markdown_text: str) -> str:
 
 
 def _parsed_breadth_metrics(overview: str) -> list[tuple[str, str]]:
+    """从盘面总览中解析涨跌家数、涨跌停与成交额等指标。"""
     metrics: list[tuple[str, str]] = []
     advance_match = re.search(
         r"Advancers\s+([^/;\n]+?)\s*/\s*Decliners\s+([^/;\n]+?)(?:\s*/\s*Flat\s+([^;\n]+?))?(?=$|;|\n)",
@@ -1311,6 +1373,7 @@ def _parsed_breadth_metrics(overview: str) -> list[tuple[str, str]]:
 
 
 def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
+    """把指数列表条目解析为（名称, 现价, 涨跌幅, 颜色）四元组。"""
     indices: list[tuple[str, str, str, str]] = []
     for line in (index_section or "").splitlines():
         match = re.match(
@@ -1334,7 +1397,7 @@ def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
 
 
 def _direction_items(value: object, *, limit: int = 2) -> list[str]:
-    """Extract short sector/theme labels from a verbose plan sentence."""
+    """从冗长的计划句中抽取简短的板块/主题标签。"""
 
     text = _clean_value(value, limit=220)
     if not text:
@@ -1364,6 +1427,7 @@ def _direction_items(value: object, *, limit: int = 2) -> list[str]:
 
 
 def _market_fund_metrics(markdown_text: str) -> list[tuple[str, str, str]]:
+    """从“资金与情绪”章节解析涨跌比、增量成交与资金风格。"""
     section = _section(markdown_text, "资金与情绪", "fund flows", "liquidity & sentiment")
     if not section:
         return []
@@ -1385,6 +1449,7 @@ def _market_fund_metrics(markdown_text: str) -> list[tuple[str, str, str]]:
 
 
 def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
+    """从 Markdown 解析出大盘海报数据（MarketPoster）。"""
     overview = _section(markdown_text, "盘面总览", "market summary", "breadth & liquidity", "시장 요약")
     score_match = re.search(
         r"(?:盘面信号|市场信号|market signal|시장 신호)\*{0,2}\s*[:：]\s*(\d{1,3})/100(?:\s*[（(]([^，,)]+)[，,]\s*([^）)]+)[）)])?",
@@ -1568,7 +1633,7 @@ def _market_data_from_payload(
     markdown_text: str,
     generated_on: date,
 ) -> MarketPoster:
-    """Overlay exact market metrics from the persisted market-review payload."""
+    """用持久化的大盘复盘负载覆盖精确市场指标。"""
 
     poster = _market_data(markdown_text, generated_on)
     poster.language = _poster_language(markdown_text, payload)
@@ -1679,6 +1744,7 @@ def _market_data_from_payload(
 
 
 def _should_keep_market_fallback(markdown_text: str, data: MarketPoster) -> bool:
+    """判断结构化字段不足时是否保留原始 Markdown 兜底内容。"""
     expected_sections = (
         (
             _has_meaningful_section(markdown_text, "盘面总览", "market summary", "breadth & liquidity", "시장 요약"),
@@ -1711,14 +1777,13 @@ def _should_keep_market_fallback(markdown_text: str, data: MarketPoster) -> bool
     unmapped_subsections = max(
         0, _meaningful_market_subsection_count(markdown_text) - mapped_subsections
     )
-    # A normal report may contain one explanatory detail section such as
-    # “资金与情绪”.  That should not duplicate the entire report in a share
-    # poster.  Keep the full fallback only when most localized sections remain
-    # outside the structured contract.
+    # 普通报告可能包含一个说明性细节章节（如“资金与情绪”），但这不应让分享海报重复
+    # 整篇报告。仅当多数本地化章节仍未被结构化契约覆盖时，才保留完整兜底内容。
     return unmapped_subsections > max(1, mapped_subsections)
 
 
 def _tone_for_action(action: str) -> str:
+    """根据操作动作（买/卖等）返回语义色调（positive/negative/primary）。"""
     normalized = (action or "").lower()
     if any(term in normalized for term in ("买", "加仓", "buy", "add")):
         return "positive"
@@ -1728,6 +1793,7 @@ def _tone_for_action(action: str) -> str:
 
 
 def _tone_for_score(score: str) -> str:
+    """按评分高低返回语义色调（>60 positive，<40 negative，否则 warning）。"""
     try:
         value = float(score)
     except (TypeError, ValueError):
@@ -1740,6 +1806,7 @@ def _tone_for_score(score: str) -> str:
 
 
 def _tone_for_trend(trend: str) -> str:
+    """根据趋势描述（看多/看空等）返回语义色调。"""
     normalized = (trend or "").lower()
     if any(term in normalized for term in ("看多", "bull", "uptrend")):
         return "positive"
@@ -1749,6 +1816,7 @@ def _tone_for_trend(trend: str) -> str:
 
 
 def _stock_positive_tone(code: str) -> str:
+    """依据股票代码市场判定涨用红色还是绿色（A股/港股涨红）。"""
     normalized = (code or "").strip().upper()
     red_up_market = bool(
         re.fullmatch(r"\d{6}", normalized)
@@ -1764,6 +1832,7 @@ def _metric_cards(
     *,
     language: str = "zh",
 ) -> str:
+    """把（标签, 值, 色调）指标渲染为卡片 HTML 片段。"""
     cards = []
     for label, value, tone in items:
         classes = " ".join(part for part in ("metric", class_name, tone) if part)
@@ -1774,6 +1843,7 @@ def _metric_cards(
 
 
 def _list_html(items: Iterable[str], empty: str = "") -> str:
+    """把字符串列表渲染成无序列表 HTML，空时返回占位或空串。"""
     values = [value for value in items if value]
     if not values:
         return f'<p class="muted">{_escape(empty)}</p>' if empty else ""
@@ -1781,12 +1851,14 @@ def _list_html(items: Iterable[str], empty: str = "") -> str:
 
 
 def _section_html(title: str, icon: str, content: str, class_name: str = "") -> str:
+    """把标题、图标与内容渲染为一个海报分区 section HTML。"""
     if not content:
         return ""
     return f'<section class="poster-section {class_name}"><h2><b>{_escape(icon)}</b>{_escape(title)}</h2>{content}</section>'
 
 
 def _render_markdown_fragment(markdown_text: str) -> str:
+    """把 Markdown 片段渲染为 HTML（开启表格等扩展并转义）。"""
     return markdown2.markdown(
         markdown_text,
         extras=["tables", "fenced-code-blocks", "break-on-newline", "cuddled-lists"],
@@ -1795,6 +1867,7 @@ def _render_markdown_fragment(markdown_text: str) -> str:
 
 
 def _stock_body(data: StockPoster, fallback_html: str) -> str:
+    """拼装个股海报的完整 HTML 主体（信号、结论、快照等）。"""
     language = data.language
     tone = _tone_for_action(data.action)
     score_tone = _tone_for_score(data.score)
@@ -1841,6 +1914,7 @@ def _stock_body(data: StockPoster, fallback_html: str) -> str:
 
 
 def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> str:
+    """拼装大盘海报的完整 HTML 主体（信号、指数、板块等）。"""
     language = data.language
     signal = ""
     if data.score:
@@ -1923,10 +1997,12 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
 
 
 def _generic_body(report_html: str) -> str:
+    """把通用报告 HTML 包进兜底 section 容器。"""
     return f'<section class="report-fallback"><article class="report-content">{report_html}</article></section>'
 
 
 def _market_region_for_segment(segment: MarketSegment) -> str:
+    """由分段标题或正文推断其所属市场区域代码（cn/hk/us…）。"""
     label = _market_label(segment.title) or _market_label(segment.markdown[:500])
     return {
         "A股": "cn",
@@ -1942,6 +2018,7 @@ def _multi_market_body(
     generated_on: date,
     structured_payload: Optional[Mapping[str, Any]] = None,
 ) -> str:
+    """把多市场分段分别渲染后拼接成一张合并海报。"""
     blocks: list[str] = []
     markets = structured_payload.get("markets") if isinstance(structured_payload, Mapping) else None
     market_payloads = markets if isinstance(markets, Mapping) else {}
@@ -1973,11 +2050,13 @@ def _multi_market_body(
 
 
 def _safe_web_url(value: str) -> str:
+    """校验并返回合法的 http(s) 链接，否则返回空串。"""
     url = value.strip()
     return url if re.match(r"^https?://", url, re.IGNORECASE) else ""
 
 
 def _xiaohongshu_card(branding: ShareImageBranding, language: str) -> str:
+    """渲染小红书二维码/账号卡片，无配置时返回空串。"""
     if not branding.has_xiaohongshu:
         return ""
 
@@ -2004,6 +2083,7 @@ def _xiaohongshu_card(branding: ShareImageBranding, language: str) -> str:
 
 
 def _footer(branding: ShareImageBranding, source_line: str, language: str) -> str:
+    """渲染海报页脚（品牌、开源信息、小红书卡片与免责声明）。"""
     social_card = _xiaohongshu_card(branding, language)
     brand_class = "footer-brand" if social_card else "footer-brand full"
     return f"""
@@ -2029,11 +2109,10 @@ def build_share_image_html(
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
 ) -> str:
-    """Build a deterministic 1080px stock, market, or dashboard share poster.
+    """生成确定性的 1080px 个股 / 大盘 / 决策仪表盘分享海报。
 
-    Structured analysis JSON is preferred when available; stable Markdown remains
-    the compatibility fallback. Unknown fields are omitted. Optional social
-    branding is supplied by deployment config and never fetched at render time.
+    优先使用结构化分析 JSON，稳定的 Markdown 作为兼容兜底；未知字段直接忽略。
+    可选的社交品牌信息由部署配置提供，渲染时不发起任何外部请求。
     """
 
     generated = generated_on or date.today()

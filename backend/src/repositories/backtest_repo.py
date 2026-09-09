@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Backtest repository.
+"""回测（Backtest）数据访问层。
 
-Provides database access helpers for backtest tables.
+负责回测结果（``BacktestResult``）与回测汇总（``BacktestSummary``）的查询、写入
+与汇总指标计算所需的全部数据库操作，并提供候选分析记录挑选、批量保存与
+分页 API 数据组装。
+
+主要被 ``backend/src/services/backtest`` 编排的回测任务调用，并对外提供
+``backend/api/v1/endpoints/backtest.py`` 所需的分页结果/汇总查询接口。
 """
 
 from __future__ import annotations
@@ -17,14 +22,15 @@ from src.storage import BacktestResult, BacktestSummary, DatabaseManager, Analys
 
 logger = logging.getLogger(__name__)
 
+# ``market_review`` 类型的分析记录不参与回测评估（用于大盘复盘类报告）。
 MARKET_REVIEW_REPORT_TYPE = "market_review"
 
 
 class BacktestRepository:
-    """DB access layer for backtesting."""
+    """回测域的数据访问层。"""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
-        """Use an injected manager in tests or the process-wide singleton in runtime."""
+        """测试时注入 ``db_manager``，运行时使用进程级单例。"""
         self.db = db_manager or DatabaseManager.get_instance()
 
     def get_candidates(
@@ -38,7 +44,12 @@ class BacktestRepository:
         force: bool,
         user_id: Optional[int] = None,
     ) -> List[AnalysisHistory]:
-        """Return AnalysisHistory rows eligible for backtest."""
+        """挑选有资格参与本次回测的 ``AnalysisHistory`` 记录。
+
+        候选需满足：创建时间早于 ``min_age_days`` 前的截止时间、非大盘复盘类报告；
+        当 ``force=False`` 时排除已存在同窗口/引擎版本回测结果的记录。
+        """
+        # 取「至少 N 天前」截止时间, 让结论已经经历完整评估窗口
         cutoff_dt = datetime.now() - timedelta(days=min_age_days)
 
         with self.db.get_session() as session:
@@ -47,6 +58,7 @@ class BacktestRepository:
                 conditions.append(AnalysisHistory.code == code)
             if user_id is not None:
                 conditions.append(AnalysisHistory.user_id == user_id)
+            # 大盘复盘类报告不参与个股方向回测
             conditions.append(
                 or_(
                     AnalysisHistory.report_type.is_(None),
@@ -70,13 +82,17 @@ class BacktestRepository:
             return list(rows)
 
     def save_result(self, result: BacktestResult) -> None:
-        """Persist a single backtest result row."""
+        """持久化单条回测结果行。"""
         with self.db.get_session() as session:
             session.add(result)
             session.commit()
 
     def save_results_batch(self, results: List[BacktestResult], *, replace_existing: bool = False) -> int:
-        """Persist a batch, optionally replacing matching engine/window evaluations first."""
+        """批量保存回测结果；``replace_existing`` 时先清空同引擎/窗口的旧记录。
+
+        Returns:
+            实际写入的记录数；批次为空时直接返回 0。
+        """
         if not results:
             return 0
 
@@ -119,7 +135,11 @@ class BacktestRepository:
         limit: int,
         user_id: Optional[int] = None,
     ) -> Tuple[List[Tuple[BacktestResult, Optional[str], Optional[str], Optional[datetime]]], int]:
-        """Return backtest result rows joined with analysis display fields for API pages."""
+        """分页查询回测结果，并拼接对应分析记录的展示字段。
+
+每条返回元素为 ``(BacktestResult, name, trend_prediction, created_at)`` 四元组，
+方便 API 层直接渲染列表。
+        """
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -166,7 +186,7 @@ class BacktestRepository:
         days: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> int:
-        """Return the number of matching BacktestResult rows without loading them."""
+        """统计匹配的 ``BacktestResult`` 行数，不取回任何记录。"""
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -196,7 +216,7 @@ class BacktestRepository:
         limit: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> List[BacktestResult]:
-        """Return matching result rows for summary calculation or export paths."""
+        """拉取匹配的回测结果行，供汇总计算或导出使用。"""
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -222,7 +242,7 @@ class BacktestRepository:
             return list(rows)
 
     def upsert_summary(self, summary: BacktestSummary) -> None:
-        """Insert or replace summary row by unique key."""
+        """按唯一键 upsert 一条回测汇总行。"""
         with self.db.get_session() as session:
             existing = session.execute(
                 select(BacktestSummary)
@@ -275,7 +295,7 @@ class BacktestRepository:
         eval_window_days: Optional[int] = None,
         engine_version: str,
     ) -> Optional[BacktestSummary]:
-        """Fetch the newest summary for a scope/code/window/engine tuple."""
+        """取指定 scope/code/窗口/引擎版本下的最新汇总记录。"""
         with self.db.get_session() as session:
             conditions = [
                 BacktestSummary.scope == scope,
@@ -295,7 +315,7 @@ class BacktestRepository:
 
     @staticmethod
     def parse_analysis_date_from_snapshot(context_snapshot: Optional[str]) -> Optional[date]:
-        """Extract the original analysis date from stored context JSON when present."""
+        """从历史 ``context_snapshot`` JSON 中提取原始的分析日期；解析失败返回 ``None``。"""
         if not context_snapshot:
             return None
 
@@ -329,7 +349,7 @@ class BacktestRepository:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> List[int]:
-        """Return sorted distinct eval_window_days for matching results."""
+        """返回匹配条件下所有去重后的 ``eval_window_days``，按升序排列。"""
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -362,7 +382,7 @@ class BacktestRepository:
         analysis_date_to: Optional[date],
         days: Optional[int],
     ) -> List[object]:
-        """Build SQLAlchemy filters shared by list/count/window queries."""
+        """构造 list/count/窗口查询共用的 SQLAlchemy 过滤条件。"""
         conditions = []
         if code:
             conditions.append(BacktestResult.code == code)

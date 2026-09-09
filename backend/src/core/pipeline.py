@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Core stock-analysis pipeline.
+"""核心股票分析流水线（pipeline）。
 
-``StockAnalysisPipeline`` coordinates market data, technical analysis, optional
-search/Agent research, persistence, report generation, and notifications. Keep
-side-effect boundaries visible in this file: fetch/store/analyze/notify each
-call into dedicated services, while this module owns orchestration and fallback
-policy.
+``StockAnalysisPipeline`` 负责协调行情数据、技术分析、可选的搜索/Agent 研究、持久化、
+报告生成与通知。本文件刻意让副作用边界清晰可见：抓取/存储/分析/通知各自调用独立服务，
+而本模块只负责编排与兜底（fallback）策略。
 """
 
 import logging
@@ -51,6 +49,13 @@ from src.services.daily_market_context import (
 )
 from src.services.market_structure_service import MarketStructureService
 from src.services.empty_news import news_evidence_present
+from src.services.run_diagnostics import (
+    activate_run_diagnostic_context,
+    current_diagnostic_snapshot,
+    get_current_diagnostic_context,
+    record_history_run,
+    reset_run_diagnostic_context,
+)
 from src.agent.news_evidence import (
     activate_news_evidence_scope,
     get_current_news_evidence,
@@ -60,11 +65,13 @@ from src.services.social_sentiment_service import SocialSentimentService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.core.trading_calendar import (
+    build_market_phase_context,
     get_effective_trading_date,
     get_market_for_stock,
     get_market_now,
     is_market_open,
 )
+from src.market_phase_summary import MARKET_PHASE_SUMMARY_KEY, render_market_phase_summary
 from data_provider.us_index_mapping import is_us_stock_code
 from bot.models import BotMessage
 
@@ -76,18 +83,31 @@ logger = logging.getLogger(__name__)
 _SINGLE_STOCK_NOTIFY_LOCK_INIT_GUARD = threading.Lock()
 
 
+def _a_share_intelligence_scope_values(code: str) -> List[str]:
+    """返回 6 位 A 股代码对应的已持久化新闻作用域别名集合。"""
+    raw = str(code or "").strip()
+    digits = raw[-6:] if len(raw) >= 6 and raw[-6:].isdigit() else ""
+    if not digits:
+        return []
+    exchange = "SH" if digits.startswith(("5", "6", "9")) else "SZ"
+    values = (
+        digits, digits.upper(), digits.lower(), f"{exchange}{digits}",
+        f"{exchange.lower()}{digits}", f"{digits}.{exchange}", f"{digits}.{exchange.lower()}",
+    )
+    return list(dict.fromkeys(values))
+
+
 class StockAnalysisPipeline:
     """股票分析主流程调度器。
 
-    The pipeline is used by CLI, scheduled jobs, API background tasks, and Bot
-    entrypoints. Optional constructor values such as ``query_id``,
-    ``source_message``, and ``user_id`` carry request ownership across those
-    surfaces without changing the core analysis flow.
-    
+    该流水线被 CLI、定时任务、API 后台任务与 Bot 入口共用。``query_id``、
+    ``source_message``、``user_id`` 等可选构造参数用于在这些入口间传递请求归属信息，
+    而不改动核心分析流程。
+
     职责：
-    1. 管理整个分析流程
+    1. 统筹管理整个分析流程
     2. 协调数据获取、存储、搜索、分析、通知等模块
-    3. 实现并发控制和异常处理
+    3. 实现并发控制与异常处理
     """
     _STOCK_PROFILE_META_LINE_PATTERN = re.compile(
         r"^\s*(?:如果你愿意|如需我|我可以|我还能|下一步我可以|下一步可以|是否需要我|Would you like|I can|If you want|Next[, ]+I can)",
@@ -100,6 +120,7 @@ class StockAnalysisPipeline:
         max_workers: Optional[int] = None,
         source_message: Optional[BotMessage] = None,
         query_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
         query_source: Optional[str] = None,
         save_context_snapshot: Optional[bool] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
@@ -123,6 +144,7 @@ class StockAnalysisPipeline:
         self.max_workers = max_workers or self.config.max_workers
         self.source_message = source_message
         self.query_id = query_id
+        self.trace_id = trace_id or query_id
         self.query_source = self._resolve_query_source(query_source)
         self.save_context_snapshot = (
             self.config.save_context_snapshot if save_context_snapshot is None else save_context_snapshot
@@ -207,7 +229,7 @@ class StockAnalysisPipeline:
             self.social_sentiment_service = None
 
     def _emit_progress(self, progress: int, message: str) -> None:
-        """Best-effort bridge from pipeline stages to task SSE progress."""
+        """尽力将流水线各阶段进度桥接到任务的 SSE 进度推送（best-effort）。"""
         callback = getattr(self, "progress_callback", None)
         if callback is None:
             return
@@ -284,7 +306,13 @@ class StockAnalysisPipeline:
             logger.error(f"{stock_name}({code}) {error_msg}")
             return False, error_msg
     
-    def analyze_stock(self, code: str, report_type: ReportType, query_id: str) -> Optional[AnalysisResult]:
+    def analyze_stock(
+        self,
+        code: str,
+        report_type: ReportType,
+        query_id: str,
+        current_time: Optional[datetime] = None,
+    ) -> Optional[AnalysisResult]:
         """
         分析单只股票（增强版：含量比、换手率、筹码分析、多维度情报）
         
@@ -307,6 +335,16 @@ class StockAnalysisPipeline:
         stock_name = code
         try:
             market = get_market_for_stock(normalize_stock_code(code))
+            market_phase_summary = None
+            if market == "cn":
+                market_phase_summary = render_market_phase_summary(
+                    build_market_phase_context(
+                        market=market,
+                        current_time=current_time,
+                        trigger_source=getattr(self, "query_source", "system"),
+                        analysis_phase=getattr(self, "analysis_phase", "auto"),
+                    ).to_dict()
+                )
             daily_market_context = self._load_daily_market_context(market)
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
             # 获取股票名称（先走轻量名称路径，后续若 realtime_quote 有 name 再覆盖）
@@ -350,18 +388,16 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 获取筹码分布失败: {e}")
 
-            # If agent mode is explicitly enabled, or specific agent skills are configured, use the Agent analysis pipeline.
-            # NOTE: use config.agent_mode (explicit opt-in) instead of
-            # config.is_agent_available() so that users who only configured an
-            # API Key for the traditional analysis path are not silently
-            # switched to Agent mode (which is slower and more expensive).
+            # 只有当 Agent 模式被显式开启、或配置了具体 Agent 技能时，才走 Agent 分析链路。
+            # 注意：这里刻意用 config.agent_mode（显式 opt-in）而非 config.is_agent_available()，
+            # 避免只为传统分析路径配了 API Key 的用户被静默切到更慢、更贵的 Agent 模式。
             use_agent = getattr(self.config, 'agent_mode', False)
             if not use_agent:
                 if self.analysis_skills:
                     use_agent = True
                     logger.info(f"{stock_name}({code}) Auto-enabled agent mode due to request skills: {self.analysis_skills}")
             if not use_agent:
-                # Auto-enable agent mode when specific skills are configured (e.g., scheduled task with strategy)
+                # 配置了具体技能（如带策略的定时任务）时自动启用 Agent 模式；['all'] 视为未指定
                 configured_skills = getattr(self.config, 'agent_skills', [])
                 if configured_skills and configured_skills != ['all']:
                     use_agent = True
@@ -396,9 +432,10 @@ class StockAnalysisPipeline:
                 market=market,
                 fundamental_context=fundamental_context,
                 daily_market_context=daily_market_context,
+                market_phase_summary=market_phase_summary,
             )
 
-            # P0: write-only snapshot, fail-open, no read dependency on this table.
+            # P0：该快照只写不读（write-only），失败必须放行，主流程不得依赖这张表
             try:
                 self.db.save_fundamental_snapshot(
                     query_id=query_id,
@@ -417,11 +454,11 @@ class StockAnalysisPipeline:
                 _mkt = get_market_for_stock(normalize_stock_code(code))
                 frozen = get_frozen_target_date()
                 end_date = frozen if frozen else get_market_now(_mkt).date()
-                start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
+                start_date = end_date - timedelta(days=89)  # 89 个自然日约合 60 个交易日，满足 MA60 样本量
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
-                    # Issue #234: Augment with realtime for intraday MA calculation
+                    # Issue #234：盘中用实时行情补齐当日 Bar，否则 MA 会停留在昨收口径
                     if self.config.enable_realtime_quote and realtime_quote:
                         df = self._augment_historical_with_realtime(df, realtime_quote, code)
                     trend_result = self.trend_analyzer.analyze(df, code)
@@ -444,6 +481,7 @@ class StockAnalysisPipeline:
                     trend_result,
                     daily_market_context=daily_market_context,
                     market_structure_context=market_structure_context,
+                    market_phase_summary=market_phase_summary,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
@@ -489,7 +527,14 @@ class StockAnalysisPipeline:
             else:
                 logger.info(f"{stock_name}({code}) 搜索服务不可用，跳过情报搜索")
 
-            # Step 4.5: Social sentiment intelligence (US stocks only)
+            persisted_intelligence_context = self._load_persisted_intelligence_context(
+                code=code,
+                stock_name=stock_name,
+            )
+            if persisted_intelligence_context:
+                news_context = f"{news_context}\n\n{persisted_intelligence_context}" if news_context else persisted_intelligence_context
+
+            # Step 4.5: 社交舆情情报（仅美股）
             if self.social_sentiment_service is not None and self.social_sentiment_service.is_available and is_us_stock_code(code):
                 try:
                     social_context = self.social_sentiment_service.get_social_context(code)
@@ -532,6 +577,7 @@ class StockAnalysisPipeline:
             enhanced_context["news_result_count"] = news_result_count
             self._attach_daily_market_context(enhanced_context, daily_market_context)
             enhanced_context["market_structure_context"] = market_structure_context
+            enhanced_context[MARKET_PHASE_SUMMARY_KEY] = market_phase_summary
             if self.portfolio_context is not None:
                 enhanced_context["portfolio_context"] = dict(self.portfolio_context)
             enhanced_context["analysis_phase"] = self.analysis_phase
@@ -556,8 +602,10 @@ class StockAnalysisPipeline:
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
             llm_progress_state = {"last_progress": 64}
 
+            # 流式回调：按已接收字符数推算进度，使长时间生成阶段不至于看起来卡住
             def _on_llm_stream(chars_received: int) -> None:
-                """Update task progress as streamed LLM characters arrive."""
+                """随 LLM 流式返回的字符数累加，更新任务进度。"""
+                # 每 80 字符推进 1 个百分点，上限 28，整体进度封顶 92（留出保存阶段余量）
                 dynamic_progress = min(92, 64 + min(chars_received // 80, 28))
                 if dynamic_progress <= llm_progress_state["last_progress"]:
                     return
@@ -586,21 +634,33 @@ class StockAnalysisPipeline:
                 result.current_price = realtime_data.get('price')
                 result.change_pct = realtime_data.get('change_pct')
 
-            # Step 7.6: chip_structure fallback (Issue #589)
+            # Step 7.6: 筹码结构兜底填充（Issue #589）——LLM 未输出时用真实筹码数据补齐
             if result and chip_data:
                 fill_chip_structure_if_needed(result, chip_data)
 
-            # Step 7.7: price_position fallback
+            # Step 7.7: 价格位置兜底填充，并用技术面/基本面稳定最终决策
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
+                from src.schemas.decision_scale import apply_score_action_scale
+                apply_score_action_scale(result)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
-                apply_daily_market_context_guardrail(
+                market_adjustments = apply_daily_market_context_guardrail(
                     result,
                     daily_market_context=enhanced_context.get("daily_market_context"),
                     report_language=getattr(result, "report_language", "zh"),
                 )
+                if market_adjustments:
+                    result.decision_guardrails.extend(
+                        {"type": "daily_market_context", "adjustment": adjustment}
+                        for adjustment in market_adjustments
+                    )
+                if isinstance(result.dashboard, dict):
+                    result.dashboard["decision_action"] = result.decision_action
+                    result.dashboard["decision_guardrails"] = list(result.decision_guardrails)
                 result.stock_profile = deep_research_profile
                 result.market_structure_context = enhanced_context.get("market_structure_context")
+                result.market_phase_summary = enhanced_context.get(MARKET_PHASE_SUMMARY_KEY)
+                result.fundamental_context = fundamental_context
 
             # Step 8: 保存分析历史记录
             if result and result.success:
@@ -612,7 +672,8 @@ class StockAnalysisPipeline:
                         realtime_quote=realtime_quote,
                         chip_data=chip_data
                     )
-                    self.db.save_analysis_history(
+                    context_snapshot["diagnostics"] = current_diagnostic_snapshot()
+                    saved_history_id = self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
                         report_type=report_type.value,
@@ -620,8 +681,24 @@ class StockAnalysisPipeline:
                         context_snapshot=context_snapshot,
                         save_snapshot=self.save_context_snapshot,
                         user_id=self.user_id,
+                        return_id=True,
+                    )
+                    # Persist the structured decision signal alongside the report.
+                    # The service is best-effort and idempotent, so a signal failure
+                    # must not turn a successful analysis into a failed run.
+                    if saved_history_id:
+                        try:
+                            from src.services.decision_signal_service import DecisionSignalService
+                            DecisionSignalService(self.db).sync_analysis_history(user_id=self.user_id, limit=1)
+                        except Exception as signal_exc:  # noqa: BLE001
+                            logger.warning("%s(%s) decision signal extraction failed: %s", stock_name, code, signal_exc)
+                    record_history_run(
+                        report_saved=bool(saved_history_id),
+                        metadata_saved=bool(saved_history_id),
+                        analysis_history_id=saved_history_id if isinstance(saved_history_id, int) else None,
                     )
                 except Exception as e:
+                    record_history_run(report_saved=False, metadata_saved=False, error_message=e)
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
 
             return result
@@ -715,8 +792,9 @@ class StockAnalysisPipeline:
                 'risk_factors': trend_result.risk_factors,
             }
 
-        # Issue #234: Override today with realtime OHLC + trend MA for intraday analysis
-        # Guard: trend_result.ma5 > 0 ensures MA calculation succeeded (data sufficient)
+        # Issue #234：盘中用实时 OHLC 覆盖 today，并用趋势分析算出的均线替换库内均线。
+        # 守卫条件 trend_result.ma5 > 0 用于确认均线确实算出来了（历史数据充足），
+        # 否则用实时价覆盖昨收口径的 today 反而会引入错误的技术指标。
         if realtime_quote and trend_result and trend_result.ma5 > 0:
             price = getattr(realtime_quote, 'price', None)
             if price is not None and price > 0:
@@ -780,12 +858,12 @@ class StockAnalysisPipeline:
                         except (TypeError, ValueError):
                             pass
 
-        # ETF/index flag for analyzer prompt (Fixes #274)
+        # ETF/指数标记，供 analyzer 的提示词区分指数型标的（Fixes #274）
         enhanced['is_index_etf'] = SearchService.is_index_or_etf(
             context.get('code', ''), enhanced.get('stock_name', stock_name)
         )
 
-        # P0: append unified fundamental block; keep as additional context only
+        # P0：统一附加基本面数据块，仅作为额外上下文，不改变既有技术面/新闻字段
         enhanced["fundamental_context"] = (
             fundamental_context
             if isinstance(fundamental_context, dict)
@@ -803,7 +881,7 @@ class StockAnalysisPipeline:
         *,
         target_date: Optional[date] = None,
     ) -> Optional[DailyMarketContext]:
-        """Load the shared A-share market context without blocking analysis."""
+        """加载共享的 A股大盘上下文，且不阻塞个股分析流程。"""
         if market != "cn" or not getattr(self, "daily_market_context_enabled", False):
             return None
         try:
@@ -842,6 +920,11 @@ class StockAnalysisPipeline:
         target_context: Dict[str, Any],
         daily_market_context: Optional[DailyMarketContext],
     ) -> None:
+        """把 A股大盘上下文挂载到个股分析上下文中。
+
+        同时写入结构化字典与已格式化的提示词段落：前者供护栏（guardrail）逻辑读取，
+        后者供 LLM 提示词直接拼接使用。
+        """
         if daily_market_context is None:
             return
         safe_context = daily_market_context.to_safe_dict()
@@ -857,10 +940,9 @@ class StockAnalysisPipeline:
         fundamental_context: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Attach A-share board membership as a top-level supplemental field.
+        将 A股所属板块（belong_boards）作为顶层补充字段附加到基本面上下文。
 
-        Keep this as a shallow copy so cached fundamental contexts are not
-        mutated in place after retrieval.
+        采用浅拷贝，避免取出后的缓存基本面上下文被就地（in place）修改。
         """
         if isinstance(fundamental_context, dict):
             enriched_context = dict(fundamental_context)
@@ -910,8 +992,9 @@ class StockAnalysisPipeline:
         market: str,
         fundamental_context: Optional[Dict[str, Any]],
         daily_market_context: Optional[DailyMarketContext] = None,
+        market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Build the shared A-share market-structure context fail-open."""
+        """构建共享的 A股市场结构上下文，采用 fail-open（放行）策略。"""
         if str(market or "").strip().lower() != "cn":
             return self._market_structure_not_supported_context(
                 code=code,
@@ -921,9 +1004,8 @@ class StockAnalysisPipeline:
         if isinstance(fundamental_context, dict) and str(
             fundamental_context.get("status") or ""
         ).strip().lower() in {"failed", "error"}:
-            # Do not start additional ranking requests when the upstream
-            # fundamental stage already failed; preserve the main flow's
-            # fail-open behavior and avoid avoidable provider timeouts.
+            # 上游基本面阶段已失败时不再发起额外的排名请求：既保持主流程的 fail-open 行为，
+            # 也避免明知会超时的数据提供方调用拖慢整体分析。
             return {}
         service = getattr(self, "market_structure_service", None)
         if service is None:
@@ -945,6 +1027,7 @@ class StockAnalysisPipeline:
                 market=market,
                 fundamental_context=fundamental_context,
                 trade_date=trade_date,
+                market_phase_summary=market_phase_summary,
             )
         except Exception as exc:
             logger.warning("%s market structure context failed (fail-open): %s", code, exc)
@@ -954,7 +1037,7 @@ class StockAnalysisPipeline:
     def _market_structure_not_supported_context(
         *, code: str, stock_name: str, market: str
     ) -> Dict[str, Any]:
-        """Return a stable non-CN marker without invoking A-share providers."""
+        """返回稳定的"非 A股"标记结构，且不调用任何 A股数据提供方。"""
         return {
             "schema_version": "market-structure-v1",
             "status": "not_supported",
@@ -995,12 +1078,13 @@ class StockAnalysisPipeline:
         }
 
     def _ensure_agent_history(self, code: str, min_days: int = 240) -> None:
-        """Ensure at least *min_days* of K-line history is in DB for agent tools."""
+        """确保数据库中存在至少 *min_days* 根 K 线历史，供 Agent 工具调用。"""
         from src.services.history_loader import get_frozen_target_date
 
         target = get_frozen_target_date()
         if target is None:
             target = self._resolve_resume_target_date(code)
+        # 回看窗口按目标交易日数的 1.8 倍折算为自然日，覆盖周末与休市日
         start = target - timedelta(days=int(min_days * 1.8))
         bars = self.db.get_data_range(code, start, target)
         if bars and len(bars) >= min(min_days, 200):
@@ -1014,6 +1098,60 @@ class StockAnalysisPipeline:
         except Exception as e:
             logger.warning("[%s] Agent history prefetch failed: %s", code, e)
 
+    def _load_persisted_intelligence_context(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+        limit: int = 6,
+    ) -> Optional[str]:
+        """先取 A 股个股证据再取市场证据，全程不阻塞分析主流程。"""
+        if not _a_share_intelligence_scope_values(code):
+            return None
+        try:
+            from src.services.intelligence_service import IntelligenceService
+
+            service = IntelligenceService(config=self.config)
+            service.refresh_auto_sources()
+            days = max(1, int(self.config.get_effective_news_window_days()))
+            collected: List[Dict[str, Any]] = []
+            seen_urls: set[str] = set()
+            scopes = [
+                {"scope_type": "symbol", "scope_value": value}
+                for value in _a_share_intelligence_scope_values(code)
+            ] + [{"scope_type": "market"}]
+            for filters in scopes:
+                payload = service.list_items(days=days, page=1, page_size=limit, **filters)
+                for item in payload.get("items", []):
+                    if not isinstance(item, dict):
+                        continue
+                    key = str(item.get("url") or item.get("title") or "").strip()
+                    if not key or key in seen_urls:
+                        continue
+                    seen_urls.add(key)
+                    collected.append(item)
+                    if len(collected) >= limit:
+                        break
+                if len(collected) >= limit:
+                    break
+            if not collected:
+                return None
+
+            lines = [f"## 本地资讯证据池（{stock_name}/{code}）"]
+            for index, item in enumerate(collected, 1):
+                title = str(item.get("title") or "未命名资讯").strip()
+                summary = str(item.get("summary") or "").strip()
+                source = str(item.get("source") or item.get("source_name") or "本地资讯").strip()
+                published = str(item.get("published_at") or "").strip()
+                meta = " / ".join(part for part in (source, published) if part)
+                lines.append(f"{index}. {title}" + (f"（{meta}）" if meta else ""))
+                if summary:
+                    lines.append(f"   摘要：{summary[:220]}")
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.debug("读取本地资讯证据失败，继续分析: %s", exc)
+            return None
+
     def _analyze_with_agent(
         self, 
         code: str, 
@@ -1026,9 +1164,14 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult] = None,
         daily_market_context: Optional[DailyMarketContext] = None,
         market_structure_context: Optional[Dict[str, Any]] = None,
+        market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
+
+        与传统路径的区别：由 Agent executor 自行编排工具调用，本方法负责预置上下文、
+        执行后把 AgentResult 归一化为 AnalysisResult，并补齐筹码/价格位置/大盘护栏等
+        兜底字段后落库。全部异常在本方法内收敛，失败返回 ``None``。
         """
         try:
             from src.agent.factory import build_agent_executor
@@ -1039,10 +1182,10 @@ class StockAnalysisPipeline:
                 if self.analysis_skills is not None
                 else (getattr(self.config, 'agent_skills', None) or None)
             )
-            # Build executor from shared factory (ToolRegistry and SkillManager prototype are cached)
+            # 通过共享工厂构建 executor（ToolRegistry 与 SkillManager 原型在其中被缓存复用）
             executor = build_agent_executor(self.config, requested_skills, user_id=self.user_id)
 
-            # Build initial context to avoid redundant tool calls
+            # 预置初始上下文，避免 Agent 再重复调用工具取这些已知数据
             initial_context = {
                 "stock_code": code,
                 "stock_name": stock_name,
@@ -1051,6 +1194,7 @@ class StockAnalysisPipeline:
                 "fundamental_context": fundamental_context,
                 "analysis_phase": self.analysis_phase,
                 "market_structure_context": market_structure_context,
+                MARKET_PHASE_SUMMARY_KEY: market_phase_summary,
             }
             if self.portfolio_context is not None:
                 initial_context["portfolio_context"] = dict(self.portfolio_context)
@@ -1065,9 +1209,16 @@ class StockAnalysisPipeline:
             if trend_result:
                 initial_context["trend_result"] = self._safe_to_dict(trend_result)
 
-            # Agent path: inject social sentiment as news_context so both
-            # executor (_build_user_message) and orchestrator (ctx.set_data)
-            # can consume it through the existing news_context channel
+            persisted_intelligence_context = self._load_persisted_intelligence_context(
+                code=code,
+                stock_name=stock_name,
+            )
+            if persisted_intelligence_context:
+                initial_context["news_context"] = persisted_intelligence_context
+                logger.info("[%s] Agent mode: local intelligence evidence injected into news_context", code)
+
+            # Agent 路径：把社交舆情注入 news_context，这样 executor（_build_user_message）
+            # 与 orchestrator（ctx.set_data）都能沿用既有的 news_context 通道消费它
             if self.social_sentiment_service is not None and self.social_sentiment_service.is_available and is_us_stock_code(code):
                 try:
                     social_context = self.social_sentiment_service.get_social_context(code)
@@ -1081,7 +1232,7 @@ class StockAnalysisPipeline:
                 except Exception as e:
                     logger.warning(f"[{code}] Agent mode: social sentiment fetch failed: {e}")
 
-            # Issue #1066: ensure deep history is in DB before agent tools run
+            # Issue #1066：Agent 工具会直接查库取历史，必须先确保深度历史已落库
             self._ensure_agent_history(code)
             deep_research_profile = self._build_deep_research_stock_profile(
                 code,
@@ -1122,7 +1273,7 @@ class StockAnalysisPipeline:
                 initial_context["news_result_count"] = result.news_result_count
             if result:
                 result.query_id = query_id
-            # Agent weak integrity: placeholder fill only, no LLM retry
+            # Agent 弱完整性模式：仅做占位补全，不触发 LLM 重试（重试成本高且不稳定）
             if result and getattr(self.config, "report_integrity_enabled", False):
                 from src.analyzer import check_content_integrity, apply_placeholder_fill
 
@@ -1133,25 +1284,37 @@ class StockAnalysisPipeline:
                         "[LLM完整性] integrity_mode=agent_weak 必填字段缺失 %s，已占位补全",
                         missing,
                     )
-            # chip_structure fallback (Issue #589), before save_analysis_history
+            # 筹码结构兜底（Issue #589），必须早于 save_analysis_history 执行
             if result and chip_data:
                 fill_chip_structure_if_needed(result, chip_data)
 
-            # price_position fallback (same as non-agent path Step 7.7)
+            # 价格位置兜底（与非 Agent 路径的 Step 7.7 保持一致）
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
                 realtime_data = initial_context.get("realtime_quote", {})
                 if isinstance(realtime_data, dict):
                     result.current_price = realtime_data.get("price")
                     result.change_pct = realtime_data.get("change_pct")
+                from src.schemas.decision_scale import apply_score_action_scale
+                apply_score_action_scale(result)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
-                apply_daily_market_context_guardrail(
+                market_adjustments = apply_daily_market_context_guardrail(
                     result,
                     daily_market_context=initial_context.get("daily_market_context"),
                     report_language=getattr(result, "report_language", "zh"),
                 )
+                if market_adjustments:
+                    result.decision_guardrails.extend(
+                        {"type": "daily_market_context", "adjustment": adjustment}
+                        for adjustment in market_adjustments
+                    )
+                if isinstance(result.dashboard, dict):
+                    result.dashboard["decision_action"] = result.decision_action
+                    result.dashboard["decision_guardrails"] = list(result.decision_guardrails)
                 result.stock_profile = deep_research_profile
                 result.market_structure_context = initial_context.get("market_structure_context")
+                result.market_phase_summary = initial_context.get(MARKET_PHASE_SUMMARY_KEY)
+                result.fundamental_context = fundamental_context
 
             resolved_stock_name = result.name if result and result.name else stock_name
 
@@ -1184,7 +1347,8 @@ class StockAnalysisPipeline:
                     initial_context["stock_name"] = resolved_stock_name
                     persisted_agent_context = dict(initial_context)
                     persisted_agent_context.pop("portfolio_context", None)
-                    self.db.save_analysis_history(
+                    persisted_agent_context["diagnostics"] = current_diagnostic_snapshot()
+                    saved_history_id = self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
                         report_type=report_type.value,
@@ -1192,7 +1356,17 @@ class StockAnalysisPipeline:
                         context_snapshot=persisted_agent_context,
                         save_snapshot=self.save_context_snapshot,
                         user_id=self.user_id,
+                        return_id=True,
                     )
+                    skill_opinions = getattr(agent_result, "skill_opinions", [])
+                    if saved_history_id and skill_opinions:
+                        from src.services.skill_opinion_sample_service import SkillOpinionSampleService
+
+                        SkillOpinionSampleService().persist(
+                            analysis_history_id=saved_history_id,
+                            stock_code=code,
+                            opinions=skill_opinions,
+                        )
                 except Exception as e:
                     logger.warning(f"[{code}] 保存 Agent 分析历史失败: {e}")
 
@@ -1204,7 +1378,7 @@ class StockAnalysisPipeline:
             return None
 
     def _is_deep_research_profile_requested(self) -> bool:
-        """Return whether pre-report Deep Research should run for stock profile."""
+        """判断是否在生成报告前运行 Deep Research 以产出股票基本情况。"""
         is_available = getattr(self.config, "is_agent_available", None)
         if callable(is_available):
             return bool(is_available())
@@ -1216,12 +1390,10 @@ class StockAnalysisPipeline:
         stock_name: str,
         context: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """Generate a detailed stock-profile section before the final report.
+        """在最终报告前生成详细的股票基本情况（stock profile）章节。
 
-        This is an optional enrichment path. If Agent mode is unavailable the
-        method returns ``None``; if Agent mode is requested but fails during
-        execution, the exception is propagated so the caller can decide whether
-        to continue with a lighter report.
+        这是一条可选的增强路径。若 Agent 模式不可用则返回 ``None``；若已请求 Agent 模式
+        但执行中失败，则向上抛出异常，交由调用方决定是否以更轻量的报告继续。
         """
         if not self._is_deep_research_profile_requested():
             return None
@@ -1304,7 +1476,7 @@ class StockAnalysisPipeline:
 
     @classmethod
     def _clean_stock_profile_report(cls, report: str) -> str:
-        """Strip LLM meta/follow-up lines from a stock profile body."""
+        """剔除股票基本情况正文里的 LLM 元话术/跟进话术行（meta/follow-up）。"""
         text = str(report or "").strip()
         if not text:
             return ""
@@ -1328,6 +1500,9 @@ class StockAnalysisPipeline:
     ) -> AnalysisResult:
         """
         将 AgentResult 转换为 AnalysisResult。
+
+        Agent 成功且带 dashboard 时逐字段取值，缺失或为占位符时用技术分析（trend_result）
+        的兜底值补齐并标记数据源；Agent 失败时整条走技术面兜底路径，保证下游仍拿到可展示结果。
         """
         report_language = normalize_report_language(getattr(self.config, "report_language", "zh"))
         result = AnalysisResult(
@@ -1394,7 +1569,7 @@ class StockAnalysisPipeline:
             )
             extracted_advice = ""
             if isinstance(raw_advice, dict):
-                # LLM may return {"no_position": "...", "has_position": "..."}
+                # LLM 可能按持仓状态返回 {"no_position": "...", "has_position": "..."} 的结构化建议
                 extracted_advice = self._extract_advice_text_from_dict(raw_advice)
                 if extracted_advice:
                     result.operation_advice = localize_operation_advice(
@@ -1479,10 +1654,9 @@ class StockAnalysisPipeline:
                 result.analysis_summary = str(raw_summary)
             else:
                 result.analysis_summary = self._summary_fallback_from_result(result, report_language)
-            # The AI returns a top-level dict that contains a nested 'dashboard' sub-key
-            # with core_conclusion / battle_plan / intelligence.  AnalysisResult's helper
-            # methods (get_sniper_points, get_core_conclusion, etc.) expect that inner
-            # structure, so we unwrap it here.
+            # AI 返回的顶层字典里可能还嵌了一层 dashboard 子键（含 core_conclusion /
+            # battle_plan / intelligence）。AnalysisResult 的辅助方法（get_sniper_points、
+            # get_core_conclusion 等）期望的正是这层内部结构，因此在这里做一次解包。
             result.dashboard = nested_dashboard or dash
             self._backfill_agent_dashboard_fields(result, trend_result, report_language)
         else:
@@ -1508,7 +1682,7 @@ class StockAnalysisPipeline:
         allow_dict: bool = False,
         expect_text: bool = False,
     ) -> Any:
-        """Read a scalar from top-level agent payload, then nested dashboard fallback."""
+        """先从顶层 Agent 负载读取标量，缺失时回退到嵌套 dashboard 同名键。"""
         value = dash.get(key) if isinstance(dash, dict) else None
         if isinstance(nested_dashboard, dict) and StockAnalysisPipeline._is_agent_field_missing(
             value,
@@ -1528,7 +1702,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _extract_advice_text_from_dict(raw_advice: dict) -> str:
-        """Pick the first usable advice text from a structured Agent payload."""
+        """从结构化的 Agent 负载中取第一条可用的操作建议文本。"""
         for field in ("has_position", "no_position"):
             if isinstance(raw_advice.get(field), str):
                 text = raw_advice[field].strip()
@@ -1545,7 +1719,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _is_agent_placeholder_text(text: str) -> bool:
-        """Return whether Agent output is a placeholder rather than a real value."""
+        """判断 Agent 输出是否为占位符（placeholder）而非真实取值。"""
         if not text:
             return True
         return text.lower() in {"n/a", "na", "none", "null", "unknown", "tbd"} or text in {
@@ -1563,12 +1737,10 @@ class StockAnalysisPipeline:
         allow_dict: bool = False,
         expect_text: bool = False,
     ) -> bool:
-        """Validate whether an Agent dashboard field should be backfilled.
+        """校验某个 Agent dashboard 字段是否需要回填（backfill）。
 
-        Agent providers may return top-level scalars, nested dashboard fields,
-        dictionaries for position-specific advice, or placeholder strings. This
-        helper centralizes those shape checks so fallback behavior stays
-        consistent across result fields.
+        Agent 提供方可能返回顶层标量、嵌套 dashboard 字段、针对持仓的结构化字典或占位符字符串。
+        该辅助函数集中处理这些形状判断，使各结果字段的兜底行为保持一致。
         """
         if scalar and isinstance(value, dict):
             if not allow_dict or not value:
@@ -1592,7 +1764,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _trend_score_fallback(trend_result: Optional[TrendAnalysisResult]) -> Optional[int]:
-        """Use technical-analysis signal score when Agent score is missing."""
+        """当 Agent 评分缺失时，使用技术分析的信号评分作为兜底。"""
         if trend_result is None:
             return None
         try:
@@ -1606,7 +1778,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str = "zh",
     ) -> str:
-        """Return localized trend text from technical analysis as Agent fallback."""
+        """从技术分析返回本地化的趋势文案，作为 Agent 的兜底取值。"""
         if trend_result is None:
             return ""
         trend_status = getattr(trend_result, "trend_status", None)
@@ -1620,7 +1792,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str = "zh",
     ) -> str:
-        """Return localized operation advice from technical-analysis signal."""
+        """从技术分析的买卖信号返回本地化的操作建议，作为 Agent 兜底。"""
         if trend_result is None:
             return ""
         buy_signal = getattr(trend_result, "buy_signal", None)
@@ -1629,7 +1801,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _trend_decision_fallback(trend_result: Optional[TrendAnalysisResult]) -> Optional[str]:
-        """Map technical-analysis buy/sell enum names to dashboard decisions."""
+        """将技术分析的买/卖枚举名映射为 dashboard 的决策值（buy/hold/sell）。"""
         if trend_result is None:
             return None
         signal_name = getattr(getattr(trend_result, "buy_signal", None), "name", "").lower()
@@ -1644,7 +1816,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _mark_trend_fallback_source(result: AnalysisResult) -> None:
-        """Append a data-source marker when fields were filled from trend logic."""
+        """当字段由趋势逻辑填充时，追加一个数据源标记（data-source marker）。"""
         if "trend:fallback" in (result.data_sources or ""):
             return
         result.data_sources = (
@@ -1655,7 +1827,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _summary_fallback_from_result(result: AnalysisResult, report_language: str) -> str:
-        """Build a one-line summary from normalized trend/advice fields."""
+        """从归一化后的趋势/建议字段拼出一句摘要（单行）。"""
         trend = (result.trend_prediction or "").strip()
         advice = (result.operation_advice or "").strip()
         if trend and advice:
@@ -1670,11 +1842,10 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> None:
-        """Backfill missing Agent dashboard fields from normalized result values.
+        """用归一化后的结果值回填（backfill）Agent dashboard 缺失字段。
 
-        The web UI expects a reasonably complete dashboard object. When the LLM
-        omits optional fields, technical-analysis fallback values keep the API
-        response useful without pretending they came from the Agent.
+        Web 前端期望一个相对完整的 dashboard 对象。当 LLM 省略可选字段时，用技术分析的
+        兜底值填充，使 API 响应保持可用，同时不冒充这些值来自 Agent。
         """
         if not isinstance(result.dashboard, dict):
             result.dashboard = {}
@@ -1738,7 +1909,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> Any:
-        """Use the nearest technical support level as fallback stop-loss hint."""
+        """用最近的技术支撑位作为止损提示的兜底取值。"""
         levels = getattr(trend_result, "support_levels", None) if trend_result else None
         if levels:
             return levels[0]
@@ -1750,7 +1921,7 @@ class StockAnalysisPipeline:
         trend_result: Optional[TrendAnalysisResult],
         report_language: str,
     ) -> None:
-        """Populate core ``AnalysisResult`` fields when Agent output is unusable."""
+        """当 Agent 输出不可用时，填充 ``AnalysisResult`` 的核心字段（用趋势兜底）。"""
         if trend_result is None:
             result.sentiment_score = 50
             result.operation_advice = "Watch" if report_language == "en" else "观望"
@@ -1794,7 +1965,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _is_placeholder_stock_name(name: str, code: str) -> bool:
-        """Return True when the stock name is missing or placeholder-like."""
+        """当股票名为空或类似占位符时返回 True。"""
         if not name:
             return True
         normalized = str(name).strip()
@@ -1846,8 +2017,9 @@ class StockAnalysisPipeline:
     @staticmethod
     def _compute_ma_status(close: float, ma5: float, ma10: float, ma20: float) -> str:
         """
-        Compute MA alignment status from price and MA values.
-        Logic mirrors storage._analyze_ma_status (Issue #234).
+        根据价格与各均线值计算均线多空排列状态。
+
+        逻辑与 storage._analyze_ma_status 保持一致（Issue #234）。
         """
         close = close or 0
         ma5 = ma5 or 0
@@ -1868,8 +2040,10 @@ class StockAnalysisPipeline:
         self, df: pd.DataFrame, realtime_quote: Any, code: str
     ) -> pd.DataFrame:
         """
-        Augment historical OHLCV with today's realtime quote for intraday MA calculation.
-        Issue #234: Use realtime price instead of yesterday's close for technical indicators.
+        用当日实时行情补齐历史 OHLCV，供盘中均线（MA）计算使用。
+
+        Issue #234：技术指标应基于实时价而非昨收，否则盘中分析会沿用过期口径。
+        非交易日或开关关闭时直接返回原 DataFrame（fail-open）。
         """
         if df is None or df.empty or 'close' not in df.columns:
             return df
@@ -1879,7 +2053,7 @@ class StockAnalysisPipeline:
         if price is None or not (isinstance(price, (int, float)) and price > 0):
             return df
 
-        # Optional: skip augmentation on non-trading days (fail-open)
+        # 可选开关：非交易日/关闭实时技术指标时跳过补齐（fail-open 返回原数据）
         enable_realtime_tech = getattr(
             self.config, 'enable_realtime_technical_indicators', True
         )
@@ -1906,7 +2080,7 @@ class StockAnalysisPipeline:
         pct = getattr(realtime_quote, 'change_pct', None)
 
         if last_date >= market_today:
-            # Update last row with realtime close (copy to avoid mutating caller's df)
+            # 当日已有 Bar：就地更新最后一行为实时 OHLC（先 copy，避免改动调用方的 df）
             df = df.copy()
             idx = df.index[-1]
             df.loc[idx, 'close'] = price
@@ -1923,7 +2097,7 @@ class StockAnalysisPipeline:
             if pct is not None:
                 df.loc[idx, 'pct_chg'] = pct
         else:
-            # Append virtual today row
+            # 当日尚无 Bar：追加一根由实时行情构造的"虚拟当日"行，使均线能纳入今天
             new_row = {
                 'code': code,
                 'date': market_today,
@@ -1947,7 +2121,9 @@ class StockAnalysisPipeline:
         chip_data: Optional[ChipDistribution]
     ) -> Dict[str, Any]:
         """
-        构建分析上下文快照
+        构建落库的上下文快照。
+
+        快照前会剔除 ``portfolio_context``：持仓属于用户隐私数据，不应随分析记录持久化。
         """
         persisted_context = dict(enhanced_context)
         persisted_context.pop("portfolio_context", None)
@@ -1957,6 +2133,8 @@ class StockAnalysisPipeline:
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
             "chip_distribution_raw": self._safe_to_dict(chip_data),
         }
+        if MARKET_PHASE_SUMMARY_KEY in persisted_context:
+            snapshot[MARKET_PHASE_SUMMARY_KEY] = persisted_context[MARKET_PHASE_SUMMARY_KEY]
         if self.analysis_skills is not None:
             snapshot["skills"] = list(self.analysis_skills)
         return snapshot
@@ -1966,7 +2144,9 @@ class StockAnalysisPipeline:
         code: str, current_time: Optional[datetime] = None
     ) -> date:
         """
-        Resolve the trading date used by checkpoint/resume checks.
+        解析断点续传（checkpoint/resume）检查所依据的交易日。
+
+        复用交易日历把"今天"折算成最新可复用的交易日，避免休市日反复触发网络抓取。
         """
         market = get_market_for_stock(normalize_stock_code(code))
         return get_effective_trading_date(market, current_time=current_time)
@@ -2073,6 +2253,15 @@ class StockAnalysisPipeline:
         from src.services.history_loader import set_frozen_target_date, reset_frozen_target_date
         frozen_td = self._resolve_resume_target_date(code, current_time=current_time)
         token = set_frozen_target_date(frozen_td)
+        effective_query_id = analysis_query_id or self.query_id or uuid.uuid4().hex
+        diagnostic_token = None
+        if get_current_diagnostic_context() is None:
+            diagnostic_token = activate_run_diagnostic_context(
+                trace_id=self.trace_id or effective_query_id,
+                query_id=effective_query_id,
+                stock_code=code,
+                trigger_source=self.query_source,
+            )
         try:
             self._emit_progress(12, f"{code}：正在准备分析任务")
             # Step 1: 获取并保存数据
@@ -2091,7 +2280,6 @@ class StockAnalysisPipeline:
                 logger.info(f"[{code}] 跳过 AI 分析（dry-run 模式）")
                 return None
             
-            effective_query_id = analysis_query_id or self.query_id or uuid.uuid4().hex
             result = self.analyze_stock(code, report_type, query_id=effective_query_id)
             
             if result and result.success:
@@ -2119,6 +2307,7 @@ class StockAnalysisPipeline:
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
             return None
         finally:
+            reset_run_diagnostic_context(diagnostic_token)
             reset_frozen_target_date(token)
     
     def run(
@@ -2406,7 +2595,7 @@ class StockAnalysisPipeline:
                 }
 
                 def _get_md2img_hint() -> str:
-                    """Return an install hint for the configured markdown renderer."""
+                    """返回当前配置的 Markdown 渲染引擎对应的安装提示。"""
                     try:
                         engine = getattr(get_config(), "md2img_engine", "wkhtmltoimage")
                     except Exception:
@@ -2417,7 +2606,7 @@ class StockAnalysisPipeline:
                     )
 
                 def _send_channel_safely(channel_label: str, send_func: Callable[[], bool]) -> bool:
-                    """Send one channel and convert exceptions into a failed result."""
+                    """发送单个渠道，并把异常转换为"该渠道失败"的结果。"""
                     try:
                         return bool(send_func())
                     except Exception as e:
@@ -2448,7 +2637,7 @@ class StockAnalysisPipeline:
                 wechat_success = False
                 if NotificationChannel.WECHAT in channels:
                     def _send_wechat_report() -> bool:
-                        """Send Enterprise WeChat with its shorter dashboard payload."""
+                        """发送企业微信：使用其专属的精简版仪表盘内容。"""
                         if report_type == ReportType.BRIEF:
                             dashboard_content = self.notifier.generate_brief_report(results)
                         else:
@@ -2491,7 +2680,7 @@ class StockAnalysisPipeline:
                         ) or non_wechat_success
                     elif channel == NotificationChannel.TELEGRAM:
                         def _send_telegram_report() -> bool:
-                            """Send Telegram as image when configured, otherwise text."""
+                            """发送 Telegram：配置为图片模式时发图，否则发文本。"""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2526,7 +2715,7 @@ class StockAnalysisPipeline:
                                     group_results=group_results,
                                     receivers=receivers,
                                 ) -> bool:
-                                    """Send one stock-specific email recipient group."""
+                                    """发送某一个按股票分组的邮件收件人组。"""
                                     grp_report = self._generate_aggregate_report(group_results, report_type)
                                     subject = self._build_email_subject(group_results)
                                     grp_image_bytes = None
@@ -2560,7 +2749,7 @@ class StockAnalysisPipeline:
                                 ) or non_wechat_success
                         else:
                             def _send_email_report() -> bool:
-                                """Send the default aggregate email report."""
+                                """发送默认的汇总邮件报告。"""
                                 subject = self._build_email_subject(results)
                                 use_image = self.notifier._should_use_image_for_channel(
                                     channel, image_bytes
@@ -2578,7 +2767,7 @@ class StockAnalysisPipeline:
                             ) or non_wechat_success
                     elif channel == NotificationChannel.CUSTOM:
                         def _send_custom_report() -> bool:
-                            """Send custom webhook content with image fallback support."""
+                            """发送自定义 Webhook 内容，支持图片发送并在失败时回退为文本。"""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2629,7 +2818,7 @@ class StockAnalysisPipeline:
                         ) or non_wechat_success
                     elif channel == NotificationChannel.SLACK:
                         def _send_slack_report() -> bool:
-                            """Send Slack message or file upload depending on credentials."""
+                            """发送 Slack：凭据完整时上传图片，否则发送文本消息。"""
                             use_image = self.notifier._should_use_image_for_channel(
                                 channel, image_bytes
                             )
@@ -2679,7 +2868,7 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _build_email_subject(results: List[AnalysisResult]) -> str:
-        """Build a concise email subject, including stock label for single reports."""
+        """构建简洁的邮件标题；仅单只股票时附带股票名称与代码。"""
         date_str = datetime.now().strftime('%Y-%m-%d')
         if len(results) == 1:
             result = results[0]
@@ -2697,7 +2886,7 @@ class StockAnalysisPipeline:
         results: List[AnalysisResult],
         report_type: ReportType,
     ) -> str:
-        """Generate aggregate report with backward-compatible notifier fallback."""
+        """生成汇总报告，并保持对旧版 notifier 的向后兼容。"""
         generator = getattr(self.notifier, "generate_aggregate_report", None)
         if callable(generator):
             return generator(results, report_type)

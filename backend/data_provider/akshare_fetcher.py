@@ -143,15 +143,15 @@ def _is_hk_code(stock_code: str) -> bool:
 
 def is_hk_stock_code(stock_code: str) -> bool:
     """
-    Public API: determine if a stock code is a Hong Kong stock.
+    公开 API：判断股票代码是否为港股。
 
-    Delegates to _is_hk_code for internal compatibility.
+    内部委托给 _is_hk_code 以保持兼容。
 
     Args:
-        stock_code: Stock code (e.g. '00700', 'hk00700')
+        stock_code: 股票代码（如 '00700'、'hk00700'）
 
     Returns:
-        True if HK stock, False otherwise
+        是港股返回 True，否则返回 False
     """
     return _is_hk_code(stock_code)
 
@@ -182,11 +182,11 @@ def _is_us_code(stock_code: str) -> bool:
 
 
 def _to_sina_tx_symbol(stock_code: str) -> str:
-    """Convert 6-digit A-share code to sh/sz/bj prefixed symbol for Sina/Tencent APIs."""
+    """将 6 位 A 股代码转换为新浪/腾讯接口所需的 sh/sz/bj 前缀形式。"""
     base = (stock_code.strip().split(".")[0] if "." in stock_code else stock_code).strip()
     if is_bse_code(base):
         return f"bj{base}"
-    # Shanghai: 60xxxx, 5xxxx (ETF), 90xxxx (B-shares)
+    # 上交所：60xxxx、5xxxx（ETF）、90xxxx（B 股）
     if base.startswith(("6", "5", "90")):
         return f"sh{base}"
     return f"sz{base}"
@@ -194,7 +194,7 @@ def _to_sina_tx_symbol(stock_code: str) -> str:
 
 def _classify_realtime_http_error(exc: Exception) -> Tuple[str, str]:
     """
-    Classify Sina/Tencent realtime quote failures into stable categories.
+    将新浪/腾讯实时行情失败归类为稳定的错误类别。
     """
     detail = str(exc).strip() or type(exc).__name__
     lowered = detail.lower()
@@ -248,7 +248,7 @@ def _build_realtime_failure_message(
     elapsed: float,
     error_type: str,
 ) -> str:
-    """Build a structured realtime quote failure message for logs and callers."""
+    """为日志和调用方构造结构化的实时行情失败消息。"""
     return (
         f"{source_name} 实时行情接口失败: endpoint={endpoint}, stock_code={stock_code}, "
         f"symbol={symbol}, category={category}, error_type={error_type}, "
@@ -263,7 +263,7 @@ def _akshare_call_with_timeout(
     call_name: str = "akshare",
     **kwargs,
 ):
-    """Run an AkShare call in a subprocess with a bounded wait time."""
+    """在子进程中执行 AkShare 调用，并设置有限的等待时间。"""
     wait_seconds = _AKSHARE_HISTORY_CALL_TIMEOUT if timeout is None else float(timeout)
 
     multiprocessing.freeze_support()
@@ -299,6 +299,7 @@ def _akshare_call_with_timeout(
 
 
 def _akshare_timeout_worker(conn, func, args, kwargs) -> None:
+    """在子进程中执行目标函数，并通过管道回传结果或异常。"""
     try:
         conn.send((True, func(*args, **kwargs)))
     except BaseException as exc:
@@ -314,6 +315,7 @@ def _akshare_timeout_worker(conn, func, args, kwargs) -> None:
 
 
 def _terminate_akshare_process(process) -> None:
+    """先终止再强杀仍存活的子进程，确保超时任务被彻底清理。"""
     if process.is_alive():
         process.terminate()
         process.join(_AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE)
@@ -437,7 +439,7 @@ class AkshareFetcher(BaseFetcher):
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
     def _fetch_index_data(self, target, start_date: str, end_date: str) -> pd.DataFrame:
-        """Fetch a registered SH/SZ index from AkShare's index endpoint."""
+        """从 AkShare 指数接口获取已注册的沪/深指数日线数据。"""
         import akshare as ak
 
         exchange = (target.exchange or "").upper()
@@ -1889,7 +1891,7 @@ class AkshareFetcher(BaseFetcher):
         import akshare as ak
 
         def _get_rank_top_n(df: pd.DataFrame, change_col: str, industry_name: str, n: int) -> Tuple[list, list]:
-            """Return top and bottom sector rankings after coercing change values."""
+            """将涨跌幅列转为数值后，返回涨幅前 n 与跌幅前 n 的板块排行。"""
             df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
             df = df.dropna(subset=[change_col])
 
@@ -2126,7 +2128,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _normalize_limit_time_value(value: Any) -> str:
-        """Normalize AkShare HHMMSS-like seal time values to zero-padded HHMMSS."""
+        """将 AkShare 类 HHMMSS 的封板时间值规范化为补零的 HHMMSS。"""
         try:
             if pd.isna(value):
                 return ""
@@ -2155,7 +2157,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
-        """Convert numeric-like AkShare values to float, returning None on failure."""
+        """将类数值的 AkShare 值转换为 float，失败时返回 None。"""
         try:
             if pd.isna(value):
                 return None
@@ -2165,7 +2167,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _safe_int(value: Any) -> int:
-        """Convert numeric-like AkShare values to int, defaulting invalid values to zero."""
+        """将类数值的 AkShare 值转换为 int，无效值默认归零。"""
         try:
             if pd.isna(value):
                 return 0
@@ -2175,7 +2177,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _find_first_column(df: pd.DataFrame, candidates: Tuple[str, ...]) -> Optional[str]:
-        """Find the first exact column-name match from the candidate list."""
+        """从候选列表中找出第一个精确匹配的列名。"""
         columns = [str(col) for col in df.columns]
         for candidate in candidates:
             if candidate in columns:
@@ -2184,7 +2186,7 @@ class AkshareFetcher(BaseFetcher):
 
     @staticmethod
     def _find_column_containing(df: pd.DataFrame, keywords: Tuple[str, ...]) -> Optional[str]:
-        """Find the first dataframe column whose name contains all keywords."""
+        """找出第一个列名包含所有关键字的 DataFrame 列。"""
         for col in df.columns:
             col_text = str(col)
             if all(keyword in col_text for keyword in keywords):

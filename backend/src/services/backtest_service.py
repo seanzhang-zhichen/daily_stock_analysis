@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Backtest orchestration service.
+"""回测编排服务。
 
-This service bridges stored analysis history, daily OHLC data, the pure
-``BacktestEngine``, and summary rollups. It owns database fetch/save behavior;
-the scoring rules themselves stay in ``src.core.backtest_engine``.
+负责桥接已存储的分析历史、日线 OHLC 数据、纯逻辑 ``BacktestEngine`` 与汇总统计；
+数据库的抓取/保存行为归本服务所有，评分规则本身保留在
+``src.core.backtest_engine`` 中。
 """
 
 from __future__ import annotations
@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 class BacktestService:
-    """Service layer to run and query backtests."""
+    """回测调度服务: 运行评估、查询结果、汇总指标。"""
 
+    # 动态日期汇总的最大行数, 超过此值直接拒绝, 避免交互式接口拖死数据库
     MAX_DYNAMIC_SUMMARY_ROWS = 2000
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
-        """Initialize repositories over the shared database manager."""
+        """在共享 DatabaseManager 上构建两个 Repository。"""
         self.db = db_manager or DatabaseManager.get_instance()
         self.repo = BacktestRepository(self.db)
         self.stock_repo = StockRepository(self.db)
@@ -45,11 +46,10 @@ class BacktestService:
         limit: int = 200,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Evaluate eligible historical analyses and persist backtest results.
+        """对满足条件的分析历史做评估并把结果落库。
 
-        ``force`` replaces existing evaluations for the same window/version.
-        Missing daily bars are filled best-effort through data providers before a
-        record is marked ``insufficient_data``.
+        ``force=True`` 时先删除同窗口/版本的旧结果再插入, 便于回测规则迭代。
+        若日线缺失会按窗口长度尽最大努力补全, 补不到才标记 ``insufficient_data``。
         """
         config = get_config()
 
@@ -93,6 +93,7 @@ class BacktestService:
                 analysis_date = self._resolve_analysis_date(analysis)
                 if analysis_date is None:
                     errors += 1
+                    # 解析不到分析日期时也要占位, 避免下游看不出"评估失败"还是"漏评估"
                     results_to_save.append(
                         BacktestResult(
                             analysis_history_id=analysis.id,
@@ -108,6 +109,7 @@ class BacktestService:
                 start_daily = self.stock_repo.get_start_daily(code=analysis.code, analysis_date=analysis_date)
 
                 if start_daily is None or start_daily.close is None:
+                    # 起点日线缺失: 先尝试向数据源补一轮, 再判断是否真的不可评
                     self._try_fill_daily_data(code=analysis.code, analysis_date=analysis_date, eval_window_days=eval_window_days)
                     start_daily = self.stock_repo.get_start_daily(code=analysis.code, analysis_date=analysis_date)
 
@@ -134,6 +136,7 @@ class BacktestService:
                 )
 
                 if len(forward_bars) < int(eval_window_days):
+                    # 前向日线数量不足: 再补一次, 覆盖窗口期 + 缓冲天数
                     self._try_fill_daily_data(code=analysis.code, analysis_date=start_daily.date, eval_window_days=eval_window_days)
                     forward_bars = self.stock_repo.get_forward_bars(
                         code=analysis.code,
@@ -212,6 +215,7 @@ class BacktestService:
         if results_to_save:
             saved = self.repo.save_results_batch(results_to_save, replace_existing=force)
 
+        # 落库后立即刷一遍汇总, 确保前端的回测统计与最新明细一致
         if saved:
             self._recompute_summaries(
                 touched_codes=sorted(touched_codes),
@@ -238,12 +242,11 @@ class BacktestService:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Return paginated evaluation rows with optional stock/date filtering."""
+        """分页查询评估结果, 支持按股票代码和分析日期过滤。"""
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
 
-        # When date filters are active and no explicit window is requested,
-        # infer the smallest available window to stay aligned with summary metrics.
+        # 没有显式 window 且带日期过滤时, 自动用最小的 window 对齐汇总口径
         if eval_window_days is None and (analysis_date_from is not None or analysis_date_to is not None):
             windows = self.repo.get_distinct_eval_windows(
                 code=code,
@@ -280,9 +283,10 @@ class BacktestService:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Return stored summary metrics or a bounded dynamic date-filter summary."""
+        """返回存储的汇总指标, 或在日期范围内临时计算一份动态汇总。"""
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
+        # overall 范围的 code 用 sentinel 占位, 避免与具体股票汇总冲突
         lookup_code = OVERALL_SENTINEL_CODE if scope == "overall" else code
 
         if analysis_date_from is not None or analysis_date_to is not None:
@@ -296,6 +300,7 @@ class BacktestService:
                 user_id=user_id,
             )
             if count > self.MAX_DYNAMIC_SUMMARY_ROWS:
+                # 行数过多走临时聚合会拖垮前端, 直接抛错让调用方收窄条件
                 raise ValueError(
                     "Date-filtered summary matches too many rows; narrow the analysis date range or stock code."
                 )
@@ -327,52 +332,54 @@ class BacktestService:
         return self._summary_to_dict(summary)
 
     def get_global_summary(self, *, eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Return overall backtest metrics normalized for Agent memory consumers."""
+        """返回总体回测指标, 已转成 Agent 学习所需的归一化格式。"""
         return self._normalize_learning_summary(
             self.get_summary(scope="overall", code=None, eval_window_days=eval_window_days)
         )
 
     def get_stock_summary(self, code: str, *, eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Return per-stock backtest metrics normalized for Agent memory consumers."""
+        """返回单只股票的回测指标, 已转成 Agent 学习所需的归一化格式。"""
         return self._normalize_learning_summary(
             self.get_summary(scope="stock", code=code, eval_window_days=eval_window_days)
         )
 
     def get_skill_summary(self, skill_id: str, *, eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Return skill-like summary metrics for Agent memory consumers.
+        """为 Agent 学习提供"按技能"摘要的入口。
 
-        The current backtest storage layer only persists overall / per-stock rollups.
-        Re-using the overall rollup here would fabricate skill-specific performance
-        and mislead auto-weighting. Until real skill-tagged summaries exist, return
-        ``None`` so downstream callers fall back to neutral weighting.
+        当前存储层只持久化 overall 与 per-stock 两种滚动汇总,
+        复用 overall 会伪造技能专属表现并误导自动权重。
+        在真正按技能标签聚合的汇总存在前, 此入口返回 ``None``,
+        让上游回落到中性权重, 避免被错误信号污染。
         """
         return None
 
     def get_strategy_summary(self, strategy_id: str, *, eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Compatibility wrapper for legacy strategy-based callers."""
+        """兼容旧的"按策略"调用路径。"""
         summary = self.get_skill_summary(strategy_id, eval_window_days=eval_window_days)
         if summary is None:
             return None
         normalized = dict(summary)
+        # 保留 strategy_id 字段, 老接口调用方可继续按策略识别
         normalized["strategy_id"] = strategy_id
         return normalized
 
     def _resolve_analysis_date(self, analysis) -> Optional[date]:
-        """Resolve the trade date represented by an analysis history record."""
+        """从分析历史中解析其代表的具体交易日。"""
         parsed = self.repo.parse_analysis_date_from_snapshot(analysis.context_snapshot)
         if parsed:
             return parsed
         if getattr(analysis, "created_at", None):
+            # snapshot 缺失时退回到创建时间, 同时发警告让运维感知
             return analysis.created_at.date()
         logger.warning(f"无法确定分析日期，跳过记录: {analysis.code}#{getattr(analysis, 'id', '?')}")
         return None
 
     def _try_fill_daily_data(self, *, code: str, analysis_date: date, eval_window_days: int) -> None:
-        """Fetch and store missing daily bars needed by one backtest window."""
+        """尽力补齐回测窗口所需的日线数据, 失败仅记 warning 不抛错。"""
         try:
             from data_provider.base import DataFetcherManager
 
-            # fetch a window that covers start + forward bars
+            # 拉取起点 + 前向窗口, 并预留余量避免刚开盘缺数据
             end_date = analysis_date + timedelta(days=max(eval_window_days * 2, 30))
             manager = DataFetcherManager()
             df, source = manager.get_daily_data(
@@ -388,9 +395,9 @@ class BacktestService:
             logger.warning(f"补全日线数据失败({code}): {exc}")
 
     def _recompute_summaries(self, *, touched_codes: List[str], eval_window_days: int, engine_version: str) -> None:
-        """Rebuild overall and per-stock summary rows after saving evaluations."""
+        """在评估写入后重新计算总体与逐只股票两种汇总行。"""
         with self.db.get_session() as session:
-            # overall
+            # overall: 整个窗口的全局汇总
             overall_rows = session.execute(
                 select(BacktestResult).where(
                     and_(
@@ -410,6 +417,7 @@ class BacktestService:
             self.repo.upsert_summary(overall_summary)
 
             for code in touched_codes:
+                # 按只重算本次涉及到的股票, 避免对全表所有股票做无谓扫描
                 rows = session.execute(
                     select(BacktestResult).where(
                         and_(
@@ -431,7 +439,7 @@ class BacktestService:
 
     @staticmethod
     def _build_summary_model(summary_data: Dict[str, Any]) -> BacktestSummary:
-        """Convert engine summary dict into a persistable ORM model."""
+        """把引擎产出的汇总 dict 转成 ORM 模型, 便于持久化。"""
         return BacktestSummary(
             scope=summary_data.get("scope"),
             code=summary_data.get("code"),
@@ -465,7 +473,7 @@ class BacktestService:
         stock_name: Optional[str] = None,
         trend_prediction: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Serialize one backtest result row for API responses."""
+        """把单条回测结果序列化, 供 API 直接返回。"""
         return {
             "analysis_history_id": row.analysis_history_id,
             "code": row.code,
@@ -483,6 +491,7 @@ class BacktestService:
             "max_high": row.max_high,
             "min_low": row.min_low,
             "stock_return_pct": row.stock_return_pct,
+            # 同时返回旧字段名 actual_* 以保持旧接口兼容
             "actual_return_pct": row.stock_return_pct,
             "actual_movement": BacktestService._actual_movement_from_return(row.stock_return_pct),
             "direction_expected": row.direction_expected,
@@ -503,9 +512,10 @@ class BacktestService:
 
     @staticmethod
     def _summary_to_dict(row: BacktestSummary) -> Dict[str, Any]:
-        """Serialize one stored summary row for API responses."""
+        """把持久化的汇总行反序列化为 API 返回结构。"""
         return {
             "scope": row.scope,
+            # 把哨兵码还原为 None, 让前端不必了解底层占位
             "code": None if row.code == OVERALL_SENTINEL_CODE else row.code,
             "eval_window_days": row.eval_window_days,
             "engine_version": row.engine_version,
@@ -533,11 +543,12 @@ class BacktestService:
 
     @staticmethod
     def _normalize_learning_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Normalize summary metrics to the ratio-based shape expected by Agent memory."""
+        """把百分制指标转成 Agent 学习层使用的比例形式 (0-1)。"""
         if summary is None:
             return None
 
         normalized = dict(summary)
+        # 0.5 作为中性默认: 让学习层在缺失数据时不会偏向任一侧
         normalized["win_rate"] = BacktestService._pct_to_ratio(summary.get("win_rate_pct"), default=0.5)
         normalized["direction_accuracy"] = BacktestService._pct_to_ratio(
             summary.get("direction_accuracy_pct"),
@@ -546,13 +557,14 @@ class BacktestService:
 
         avg_return_pct = summary.get("avg_simulated_return_pct")
         if avg_return_pct is None:
+            # 模拟收益缺失时退化为股票实际收益, 至少保留一个"表现"信号
             avg_return_pct = summary.get("avg_stock_return_pct")
         normalized["avg_return"] = BacktestService._pct_to_ratio(avg_return_pct, default=0.0)
         return normalized
 
     @staticmethod
     def _pct_to_ratio(value: Optional[float], default: float = 0.0) -> float:
-        """Convert percent values into ratios used by learning summaries."""
+        """百分数转比例, 默认 0.0(中性)。"""
         try:
             return float(value) / 100.0
         except (TypeError, ValueError):
@@ -560,7 +572,7 @@ class BacktestService:
 
     @staticmethod
     def _actual_movement_from_return(value: Optional[float]) -> Optional[str]:
-        """Bucket realized return into up/down/flat for Agent learning memory."""
+        """把实际收益率分桶成 up / down / flat, 供 Agent 学习记忆使用。"""
         if value is None:
             return None
         try:
@@ -583,15 +595,16 @@ class BacktestService:
         engine_version: str,
         max_rows: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Compute a transient summary for date-filtered API queries.
+        """为带日期过滤的查询临时计算一份汇总, 不持久化。
 
-        Dynamic summaries are capped by ``MAX_DYNAMIC_SUMMARY_ROWS`` to avoid a
-        heavy full-table aggregation on interactive API requests.
+        行数受到 ``MAX_DYNAMIC_SUMMARY_ROWS`` 限制, 防止交互式请求触发全表聚合。
         """
+        # 仅聚合匹配当前引擎版本的结果, 与持久化汇总的口径保持一致
         filtered_rows = [row for row in rows if getattr(row, "engine_version", None) == engine_version]
         if eval_window_days is not None:
             summary_window_days = int(eval_window_days)
         else:
+            # 多个 window 混存时, 取最小的 window 做汇总, 并打日志提示聚合粒度
             window_values = sorted({
                 int(row.eval_window_days)
                 for row in filtered_rows
@@ -614,6 +627,7 @@ class BacktestService:
             row for row in filtered_rows if getattr(row, "eval_window_days", None) == summary_window_days
         ]
 
+        # 再做一次硬性行数限制兜底, 与入口处的 count 检查构成两道防线
         if max_rows is not None and len(filtered_rows) > max_rows:
             raise ValueError(
                 "Date-filtered summary matches too many rows; narrow the analysis date range or stock code."
@@ -626,6 +640,7 @@ class BacktestService:
             eval_window_days=summary_window_days,
             engine_version=engine_version,
         )
+        # overall sentinel 在 API 层统一还原成 None
         summary["code"] = None if summary.get("code") == OVERALL_SENTINEL_CODE else summary.get("code")
         summary["computed_at"] = datetime.now().isoformat()
         return summary

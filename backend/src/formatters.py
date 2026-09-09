@@ -8,24 +8,28 @@
 """
 
 import re
-from typing import List
+from typing import Callable, List, Optional
 
 import markdown2
 
 TRUNCATION_SUFFIX = "\n\n...(本段内容过长已截断)"
 PAGE_MARKER_PREFIX = f"\n\n📄"
-PAGE_MARKER_SAFE_BYTES = 16 # "\n\n📄 9999/9999"
-PAGE_MARKER_SAFE_LEN = 13   # "\n\n📄 9999/9999"
+PAGE_MARKER_SAFE_BYTES = 16  # 形如 "\n\n📄 9999/9999" 的预留字节数
+PAGE_MARKER_SAFE_LEN = 13   # 形如 "\n\n📄 9999/9999" 的预留字符数
 MIN_MAX_WORDS = 10
 MIN_MAX_BYTES = 40
+HIDDEN_MARKDOWN_METADATA_RE = re.compile(
+    r"^\[dsa-[^\]]+\]:\s+#\s+\([^)\n]*\)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
-# Unicode code point ranges for special characters.
+# 特殊字符的 Unicode 码点范围。
 _SPECIAL_CHAR_RANGE = (0x10000, 0xFFFFF)
 _SPECIAL_CHAR_REGEX = re.compile(r'[\U00010000-\U000FFFFF]')
 
 
 def _page_marker(i: int, total: int) -> str:
-    """Return a compact page marker for chunked notification messages."""
+    """生成分块通知消息中紧凑的页码标记（如“📄 3/10”）。"""
     return f"{PAGE_MARKER_PREFIX} {i+1}/{total}"
 
 
@@ -51,7 +55,7 @@ def _count_special_chars(s: str) -> int:
     Args:
         s: 字符串
     """
-    # reg find all (0x10000, 0xFFFFF)
+    # 使用正则匹配 (0x10000, 0xFFFFF) 范围内的特殊字符
     match = _SPECIAL_CHAR_REGEX.findall(s)
     return len(match)
 
@@ -97,17 +101,16 @@ def _slice_at_effective_len(s: str, effective_len: int, special_char_len: int = 
 
 
 def markdown_to_html_document(markdown_text: str) -> str:
-    """
-    Convert Markdown to a complete HTML document (for email, md2img, etc.).
+    """把 Markdown 转换为完整的 HTML 文档（供邮件、md2img 等渠道使用）。
 
-    Uses markdown2 with table and code block support, wraps with inline CSS
-    for compact, readable layout. Reused by notification email and md2img.
+    基于 markdown2 并开启表格与代码块支持，内联紧凑易读的 CSS 排版；
+    被通知邮件与 md2img 共用。
 
     Args:
-        markdown_text: Raw Markdown content.
+        markdown_text: 原始 Markdown 内容。
 
     Returns:
-        Full HTML document string with DOCTYPE, head, and body.
+        含 DOCTYPE / head / body 的完整 HTML 文档字符串。
     """
     html_content = markdown2.markdown(
         markdown_text,
@@ -261,13 +264,180 @@ def markdown_to_plain_text(markdown_text: str) -> str:
     return text.strip()
 
 
+def strip_hidden_markdown_metadata(markdown_text: str) -> str:
+    """移除绝不能进入通知渠道的内部 Markdown 元数据。"""
+
+    return HIDDEN_MARKDOWN_METADATA_RE.sub("", markdown_text)
+
+
 def _bytes(s: str) -> int:
-    """Return UTF-8 byte length for notification payload budgeting."""
+    """返回字符串的 UTF-8 字节长度，用于通知负载预算控制。"""
     return len(s.encode('utf-8'))
 
 
+def utf8_len(s: str) -> int:
+    """返回字符串 UTF-8 编码的字节长度，用于渠道负载预算控制。"""
+
+    return len(s.encode("utf-8"))
+
+
+def _custom_unit_to_index(text: str, budget: int, len_fn: Callable[[str], int]) -> int:
+    """在自定义单位（如字节数）预算内，返回安全的 Python 字符串最大下标。
+
+    通过二分查找定位切点，保证 len_fn(text[:idx]) 不超过预算。
+    """
+
+    if len_fn(text) <= budget:
+        return len(text)
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len_fn(text[:mid]) <= budget:
+            low = mid
+        else:
+            high = mid - 1
+    return low
+
+
+def _has_unclosed_inline_code(text: str) -> bool:
+    """判断候选切点是否落在单个反引号的行内代码区间内。"""
+
+    escaped = False
+    count = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and not escaped:
+            escaped = True
+            index += 1
+            continue
+        if char == "`" and not escaped:
+            if text[index:index + 3] == "```":
+                index += 3
+                escaped = False
+                continue
+            count += 1
+        escaped = False
+        index += 1
+    return count % 2 == 1
+
+
+def _last_unclosed_markdown_link_start(text: str) -> int:
+    """当 Markdown 行内链接跨越了拟定切点时，返回其起始位置。"""
+
+    last_open_paren = text.rfind("](")
+    if last_open_paren > text.rfind(")"):
+        return max(text.rfind("[", 0, last_open_paren), last_open_paren)
+    if text.rfind("[") > text.rfind("]"):
+        return text.rfind("[")
+    return -1
+
+
+def chunk_markdown_preserving_blocks(
+    content: str,
+    max_units: int,
+    *,
+    len_fn: Optional[Callable[[str], int]] = None,
+    add_page_marker: bool = False,
+) -> List[str]:
+    """切分 Markdown，保证不把链接、行内代码或代码围栏切在闭合之前。
+
+    ``len_fn`` 让发送端可以使用协议真实的负载度量。A 股 webhook 通道使用
+    :func:`utf8_len`，因为它们的限制按字节计算。
+    """
+
+    measure = len_fn or len
+    if max_units < MIN_MAX_WORDS:
+        raise ValueError(f"max_units={max_units} < {MIN_MAX_WORDS}, 可能陷入无限递归。")
+    if measure(content) <= max_units:
+        return [content]
+
+    marker_reserve = measure(_page_marker(9998, 9998)) if add_page_marker else 0
+    indicator_reserve = measure("\n\n(9999/9999)")
+    fence_close = "\n```"
+    chunks: List[str] = []
+    remaining = content
+    carry_language: Optional[str] = None
+
+    while remaining:
+        prefix = f"```{carry_language}\n" if carry_language is not None else ""
+        # headroom 预留 marker/indicator/前缀/代码围栏关闭符，避免最后一段被切断
+        headroom = max_units - marker_reserve - indicator_reserve - measure(prefix) - measure(fence_close)
+        if headroom < MIN_MAX_WORDS:
+            headroom = max(MIN_MAX_WORDS, max_units - marker_reserve - indicator_reserve - measure(prefix))
+        if headroom <= 0:
+            raise ValueError("max_units is too small for markdown-preserving chunking")
+
+        if measure(prefix) + measure(remaining) <= max_units - marker_reserve - indicator_reserve:
+            chunks.append(prefix + remaining)
+            break
+
+        split_limit = _custom_unit_to_index(remaining, headroom, measure)
+        region = remaining[:split_limit]
+        # 优先按段落/换行/空格回退，保证切分点尽量自然
+        split_at = region.rfind("\n\n")
+        if split_at < split_limit // 2:
+            split_at = region.rfind("\n")
+        if split_at < split_limit // 2:
+            split_at = region.rfind(" ")
+        if split_at < 1:
+            split_at = split_limit
+
+        candidate = remaining[:split_at]
+        unsafe_start = len(candidate)
+        if _has_unclosed_inline_code(candidate):
+            unsafe_start = min(unsafe_start, candidate.rfind("`"))
+        link_start = _last_unclosed_markdown_link_start(candidate)
+        if link_start >= 0:
+            unsafe_start = min(unsafe_start, link_start)
+        if unsafe_start < len(candidate):
+            # 把切点回退到最近的空格/换行，避免切在未闭合的代码或链接里
+            safe_split = max(candidate.rfind(" ", 0, unsafe_start), candidate.rfind("\n", 0, unsafe_start))
+            if safe_split > 0:
+                split_at = safe_split
+
+        chunk_body = remaining[:split_at].rstrip()
+        in_code = carry_language is not None
+        language = carry_language or ""
+        # 扫描当前块体判断是否落在代码围栏内部，以便把围栏延续到下一段
+        for line in chunk_body.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if in_code:
+                    in_code = False
+                    language = ""
+                else:
+                    in_code = True
+                    language = (stripped[3:].strip().split() or [""])[0]
+
+        remaining = remaining[split_at:]
+        if remaining.startswith("\n"):
+            remaining = remaining[1:]
+        elif not in_code and remaining.startswith(" "):
+            remaining = remaining[1:]
+
+        full_chunk = prefix + chunk_body
+        if in_code:
+            full_chunk += fence_close
+            carry_language = language
+        else:
+            carry_language = None
+        chunks.append(full_chunk)
+
+    if len(chunks) > 1:
+        total = len(chunks)
+        for index, chunk in enumerate(chunks):
+            suffix = f"\n\n({index + 1}/{total})"
+            if add_page_marker:
+                suffix += _page_marker(index, total)
+            chunks[index] = chunk + suffix
+    elif add_page_marker:
+        chunks[0] = chunks[0] + _page_marker(0, 1)
+    return chunks
+
+
 def _chunk_by_max_bytes(content: str, max_bytes: int) -> List[str]:
-    """Force-split content into byte-limited chunks with truncation markers."""
+    """无法按自然分隔切分时，强制按字节上限切分并在块尾附截断标记。"""
     if _bytes(content) <= max_bytes:
         return [content]
     if max_bytes < MIN_MAX_BYTES:
@@ -304,7 +474,7 @@ def chunk_content_by_max_bytes(content: str, max_bytes: int, add_page_marker: bo
         分割后的区块列表
     """
     def _chunk(content: str, max_bytes: int) -> List[str]:
-        """Recursively split content by natural separators under a byte limit."""
+        """在字节上限内按自然分隔符递归切分内容。"""
         # 优先按分隔线/标题分割，保证分页自然
         if max_bytes < MIN_MAX_BYTES:
             raise ValueError(f"max_bytes={max_bytes} < {MIN_MAX_BYTES}, 可能陷入无限递归。")
@@ -598,7 +768,7 @@ def chunk_content_by_max_words(
         分割后的区块列表
     """
     def _chunk(content: str, max_words: int, special_char_len: int = 2) -> list[str]:
-        """Recursively split content by natural separators under a word budget."""
+        """在字数预算内，按自然分隔符递归切分内容。"""
         if max_words < MIN_MAX_WORDS:
             # Safe guard，避免无限递归
             # 理论上，max_words在每次递归中可以减小到无限小，但实际中不太可能发生，

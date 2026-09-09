@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""LiteLLM generation-parameter compatibility helpers."""
+"""LiteLLM 生成参数兼容性辅助工具。
+
+负责处理不同模型/供应商对生成参数（尤其是 temperature）的差异约束，
+并提供参数修复（param recovery）的学习与缓存能力。
+"""
 
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ _FIXED_TEMPERATURE_LITELLM_MODELS: Dict[str, Dict[str, float]] = {
 
 @dataclass(frozen=True)
 class TemperatureDirective:
-    """Request-scoped temperature strategy for one LiteLLM model call."""
+    """单次 LiteLLM 模型调用的请求级 temperature 策略。"""
 
     temperature: Optional[float] = None
     omit_temperature: bool = False
@@ -34,7 +38,7 @@ class TemperatureDirective:
 
 @dataclass(frozen=True)
 class GenerationParamRecovery:
-    """A learned request-parameter repair for a LiteLLM model call."""
+    """针对 LiteLLM 模型调用学习到的请求参数修复。"""
 
     omit_params: Tuple[str, ...] = ()
     set_params: Mapping[str, Any] = field(default_factory=dict)
@@ -78,7 +82,7 @@ def _resolve_litellm_model_list_entry(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return the Router model_list entry matching the configured alias."""
+    """返回与配置别名匹配的 Router model_list 条目。"""
     entries = _resolve_litellm_model_list_entries(model, model_list)
     return entries[0] if entries else None
 
@@ -87,7 +91,7 @@ def _resolve_litellm_model_list_entries(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Return Router model_list entries matching the configured alias."""
+    """返回与配置别名匹配的 Router model_list 条目列表。"""
     normalized_model = (model or "").strip()
     if not normalized_model or not model_list:
         return []
@@ -107,7 +111,7 @@ def resolve_litellm_wire_model(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Resolve a router alias to its underlying LiteLLM wire model."""
+    """把路由别名解析为其底层 LiteLLM 线上模型名。"""
     normalized_model = (model or "").strip()
     if not normalized_model or not model_list:
         return normalized_model
@@ -124,7 +128,7 @@ def resolve_litellm_wire_model(
 
 
 def _extract_thinking_config(payload: Optional[Dict[str, Any]]) -> Any:
-    """Extract a thinking-mode flag from LiteLLM-style request kwargs."""
+    """从 LiteLLM 风格的请求参数中提取思考模式（thinking）开关。"""
     if not isinstance(payload, dict):
         return None
     extra_body = payload.get("extra_body")
@@ -136,7 +140,7 @@ def _extract_thinking_config(payload: Optional[Dict[str, Any]]) -> Any:
 
 
 def _parse_thinking_enabled(value: Any) -> Optional[bool]:
-    """Parse thinking-mode config into True/False/unknown."""
+    """把思考模式配置解析为 True/False/未知。"""
     if value is None:
         return None
     if isinstance(value, bool):
@@ -161,7 +165,7 @@ def resolve_litellm_thinking_enabled(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
-    """Resolve whether the outgoing LiteLLM request explicitly enables thinking."""
+    """解析发出的 LiteLLM 请求是否显式启用了思考模式。"""
     thinking_config = None
     model_entry = _resolve_litellm_model_list_entry(model, model_list)
     if model_entry:
@@ -178,17 +182,17 @@ def resolve_litellm_thinking_enabled(
 
 
 def _model_parts(model: str) -> List[str]:
-    """Split provider/model aliases into lowercase family-identifying tokens."""
+    """把供应商/模型别名拆分为小写的族标识 token。"""
     return [part for part in re.split(r"[/:\s]+", (model or "").lower()) if part]
 
 
 def _matches_model_family(model: str, family: str) -> bool:
-    """Return whether a model token equals or is prefixed by the given family."""
+    """返回某个模型 token 是否等于或以给定族名为前缀。"""
     return any(part == family or part.startswith(f"{family}-") for part in _model_parts(model))
 
 
 def _should_omit_litellm_temperature(model: str) -> bool:
-    """Return whether a model family should rely on the provider default temperature."""
+    """返回某模型族是否应依赖供应商默认的 temperature。"""
     return any(
         part.startswith(("gpt-5", "gpt5"))
         or part in {"o1", "o3", "o4"}
@@ -202,7 +206,7 @@ def get_fixed_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
-    """Return a provider-mandated temperature for known strict models."""
+    """为已知的严格模型返回供应商强制要求的 temperature。"""
     normalized_model = resolve_litellm_wire_model(model, model_list).lower()
     if not normalized_model:
         return None
@@ -228,7 +232,7 @@ def resolve_litellm_temperature_directive(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> TemperatureDirective:
-    """Resolve the request-scoped temperature directive for a LiteLLM model."""
+    """解析某 LiteLLM 模型的请求级 temperature 指令。"""
     fixed_temperature = get_fixed_litellm_temperature(
         model,
         model_list=model_list,
@@ -257,7 +261,7 @@ def normalize_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> float:
-    """Return the legacy float temperature normalization for callers that need it."""
+    """为需要的调用方返回旧式的 float 型 temperature 归一化。"""
     fixed_temperature = get_fixed_litellm_temperature(
         model,
         model_list=model_list,
@@ -271,7 +275,7 @@ def normalize_litellm_temperature(
 
 
 def _redact_recovery_cache_value(param_name: str, value: Any) -> Any:
-    """Redact secrets while preserving stable non-secret cache fingerprints."""
+    """脱敏敏感字段，同时保留非敏感字段的稳定缓存指纹。"""
     if param_name.strip().lower() in _SECRET_CACHE_FIELD_NAMES:
         return "<set>" if value else "<empty>"
     if isinstance(value, Mapping):
@@ -285,7 +289,7 @@ def _redact_recovery_cache_value(param_name: str, value: Any) -> Any:
 
 
 def _stable_recovery_cache_json(value: Mapping[str, Any]) -> str:
-    """Serialize routing parameters deterministically for recovery cache keys."""
+    """确定性地序列化路由参数，作为参数修复缓存的键。"""
     redacted = {
         key: _redact_recovery_cache_value(key, val)
         for key, val in sorted(value.items())
@@ -294,7 +298,7 @@ def _stable_recovery_cache_json(value: Mapping[str, Any]) -> str:
 
 
 def _filter_litellm_routing_params(params: Mapping[str, Any]) -> Dict[str, Any]:
-    """Keep only LiteLLM routing and endpoint parameters relevant to recovery scope."""
+    """只保留与参数修复作用域相关的 LiteLLM 路由与端点参数。"""
     return {
         key: params[key]
         for key in _LITELLM_ROUTING_PARAM_KEYS
@@ -303,7 +307,7 @@ def _filter_litellm_routing_params(params: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _request_endpoint_cache_scope(request_overrides: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Build an endpoint cache scope from request-level routing overrides."""
+    """从请求级路由覆盖构建端点缓存作用域。"""
     if not isinstance(request_overrides, Mapping):
         return None
     routing_params = _filter_litellm_routing_params(request_overrides)
@@ -316,7 +320,7 @@ def _model_list_endpoint_cache_scope(
     model: str,
     model_list: Optional[List[Dict[str, Any]]],
 ) -> Optional[str]:
-    """Build an endpoint cache scope from matching LiteLLM router entries."""
+    """从匹配的 LiteLLM 路由条目构建端点缓存作用域。"""
     entries = _resolve_litellm_model_list_entries(model, model_list)
     if not entries:
         return "default"
@@ -342,7 +346,7 @@ def _recovery_cache_key(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
-    """Build the cache key for learned generation-parameter recovery."""
+    """为学习到的生成参数修复构造缓存键。"""
     wire_model = resolve_litellm_wire_model(model, model_list).strip().lower()
     thinking_enabled = resolve_litellm_thinking_enabled(
         model,
@@ -365,7 +369,7 @@ def apply_litellm_param_recovery(
     call_kwargs: Dict[str, Any],
     recovery: GenerationParamRecovery,
 ) -> Dict[str, Any]:
-    """Return kwargs with a learned parameter recovery applied."""
+    """返回应用了学习到的参数修复后的 kwargs。"""
     updated = dict(call_kwargs)
     for param in recovery.omit_params:
         updated.pop(param, None)
@@ -380,7 +384,7 @@ def get_cached_litellm_generation_param_recovery(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[GenerationParamRecovery]:
-    """Return a process-local parameter recovery learned for this model call shape."""
+    """返回为这种模型调用形态学习到的进程内参数修复。"""
     key = _recovery_cache_key(
         model,
         model_list=model_list,
@@ -398,7 +402,7 @@ def remember_litellm_generation_param_recovery(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Remember a successful parameter recovery for later requests in this process."""
+    """记住一次成功的参数修复，供本进程后续请求复用。"""
     key = _recovery_cache_key(
         model,
         model_list=model_list,
@@ -410,7 +414,7 @@ def remember_litellm_generation_param_recovery(
 
 
 def clear_litellm_generation_param_recovery_cache() -> None:
-    """Clear process-local learned parameter recoveries. Intended for tests."""
+    """清空进程内学习到的参数修复（主要供测试使用）。"""
     _GENERATION_PARAM_RECOVERY_CACHE.clear()
 
 
@@ -423,7 +427,7 @@ def apply_litellm_generation_params(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Return kwargs with model-compatible generation parameters applied."""
+    """返回应用了与模型兼容的生成参数后的 kwargs。"""
     updated = dict(call_kwargs)
     effective_overrides = request_overrides if request_overrides is not None else updated
     directive = resolve_litellm_temperature_directive(

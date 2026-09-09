@@ -24,7 +24,7 @@ _TEXT_LIMIT = 39000
 
 
 class SlackSender:
-    """Send notifications through Slack incoming webhook or bot APIs."""
+    """通过 Slack Incoming Webhook 或 Bot API 发送通知。"""
 
     def __init__(self, config: Config):
         """

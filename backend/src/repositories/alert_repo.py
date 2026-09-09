@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Alert repository.
+"""告警中心（Alert Center）P1 API 表的数据访问层。
 
-Provides DB access helpers for alert-center P1 API tables.
+提供告警规则（``AlertRuleRecord``）、触发历史（``AlertTriggerRecord``）、
+发送流水（``AlertNotificationRecord``）以及去重冷却状态
+（``AlertCooldownRecord``）的 CRUD 与查询能力。
+
+主要被 ``backend/api/v1/endpoints/alert*.py`` 调用；写侧（P2+）由告警调度
+服务在运行时填充触发与发送流水。
 """
 
 from __future__ import annotations
@@ -21,12 +26,14 @@ from src.storage import (
 
 
 class AlertRepository:
-    """DB access layer for alert rules and read-only alert history."""
+    """告警规则与只读告警历史的数据访问层。"""
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        """支持测试时注入自定义 ``db_manager``，运行时使用全局单例。"""
         self.db = db_manager or DatabaseManager.get_instance()
 
     def create_rule(self, fields: Dict[str, Any]) -> AlertRuleRecord:
+        """创建一条告警规则并返回持久化后的 ORM 行。"""
         with self.db.get_session() as session:
             row = AlertRuleRecord(**fields)
             session.add(row)
@@ -35,6 +42,7 @@ class AlertRepository:
             return row
 
     def get_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> Optional[AlertRuleRecord]:
+        """按 ID 取单条告警规则；传入 ``user_id`` 时限定为该用户的规则。"""
         with self.db.get_session() as session:
             conditions = [AlertRuleRecord.id == rule_id]
             if user_id is not None:
@@ -44,6 +52,7 @@ class AlertRepository:
             ).scalar_one_or_none()
 
     def update_rule(self, rule_id: int, fields: Dict[str, Any], *, user_id: Optional[int] = None) -> Optional[AlertRuleRecord]:
+        """按字段集更新告警规则；规则不存在或不属于当前用户时返回 ``None``。"""
         with self.db.get_session() as session:
             conditions = [AlertRuleRecord.id == rule_id]
             if user_id is not None:
@@ -61,6 +70,7 @@ class AlertRepository:
             return row
 
     def delete_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> bool:
+        """删除一条告警规则；返回是否真的删除了一行。"""
         with self.db.get_session() as session:
             conditions = [AlertRuleRecord.id == rule_id]
             if user_id is not None:
@@ -81,6 +91,7 @@ class AlertRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertRuleRecord], int]:
+        """分页列出告警规则，支持按启用状态、类型、对象、来源、用户过滤。"""
         conditions = []
         if enabled is not None:
             conditions.append(AlertRuleRecord.enabled.is_(enabled))
@@ -111,6 +122,8 @@ class AlertRepository:
             return list(rows), int(total)
 
     def list_enabled_rules(self, *, limit: int = 1000) -> List[AlertRuleRecord]:
+        """拉取所有启用中的告警规则，供调度器遍历触发评估。"""
+        # 防止调用方传超大 limit 拖垮数据库
         safe_limit = max(1, min(int(limit), 1000))
         with self.db.get_session() as session:
             rows = session.execute(
@@ -122,6 +135,7 @@ class AlertRepository:
             return list(rows)
 
     def create_trigger(self, fields: Dict[str, Any]) -> AlertTriggerRecord:
+        """写入一条告警触发历史行；缺少必要字段时抛 ``ValueError``。"""
         self._validate_trigger_fields(fields)
 
         with self.db.get_session() as session:
@@ -132,11 +146,11 @@ class AlertRepository:
             return row
 
     def create_trigger_if_absent(self, fields: Dict[str, Any]) -> Tuple[AlertTriggerRecord, bool]:
-        """Create a triggered history row unless the same DB signal already exists.
+        """仅当 ``(rule_id, target, data_timestamp, status='triggered')`` 未存在时写入。
 
-        Callers must use this only after they have decided the trigger is safe to
-        deduplicate. Non-triggered or timestamp-less history should use
-        ``create_trigger`` so audit rows are not silently reclassified as deduped.
+        返回 ``(row, created)``：``created=True`` 表示本次新插入，否则复用已有行。
+        调用方应在确认本次触发已通过去重判定后再调用本方法，避免把非去重审计行
+        错误归并。
         """
         self._validate_trigger_fields(fields)
 
@@ -155,6 +169,7 @@ class AlertRepository:
                 AlertTriggerRecord.data_timestamp == data_timestamp,
             )
             data_source = fields.get("data_source")
+            # data_source 为 None 时需要单独处理, 否则会被解释为 ``data_source = NULL`` 失效
             if data_source is None:
                 query = query.where(AlertTriggerRecord.data_source.is_(None))
             else:
@@ -174,12 +189,14 @@ class AlertRepository:
 
     @staticmethod
     def _validate_trigger_fields(fields: Dict[str, Any]) -> None:
+        """校验触发记录的必填字段；缺失时抛出 ``ValueError``。"""
         if not fields.get("target"):
             raise ValueError("alert trigger target is required")
         if not fields.get("status"):
             raise ValueError("alert trigger status is required")
 
     def record_notification_attempt(self, fields: Dict[str, Any]) -> AlertNotificationRecord:
+        """写入一条告警发送流水；channel 必填。"""
         if not fields.get("channel"):
             raise ValueError("alert notification channel is required")
 
@@ -198,6 +215,7 @@ class AlertRepository:
         severity: Optional[str],
         now: Optional[datetime] = None,
     ) -> Optional[AlertCooldownRecord]:
+        """获取当前仍处于冷却期内的告警冷却记录；不存在则返回 ``None``。"""
         now_value = now or datetime.now()
         with self.db.get_session() as session:
             return session.execute(
@@ -225,6 +243,7 @@ class AlertRepository:
         reason: Optional[str] = None,
         state: str = "active",
     ) -> AlertCooldownRecord:
+        """按 ``(rule_id, target, severity)`` upsert 一条告警冷却状态。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(AlertCooldownRecord)
@@ -260,6 +279,7 @@ class AlertRepository:
         target: str,
         severity: Optional[str],
     ) -> Optional[AlertCooldownRecord]:
+        """取规则/对象/严重度对应的最新一条告警冷却记录（用于展示）。"""
         with self.db.get_session() as session:
             return session.execute(
                 select(AlertCooldownRecord)
@@ -282,6 +302,7 @@ class AlertRepository:
         page_size: int = 20,
         user_id: Optional[int] = None,
     ) -> Tuple[List[AlertTriggerRecord], int]:
+        """分页列出告警触发历史；可按规则、对象、状态、用户过滤。"""
         conditions = []
         if rule_id is not None:
             conditions.append(AlertTriggerRecord.rule_id == rule_id)
@@ -298,6 +319,7 @@ class AlertRepository:
             count_query = select(func.count(AlertTriggerRecord.id)).select_from(AlertTriggerRecord)
             rows_query = select(AlertTriggerRecord)
             if user_id is not None:
+                # 仅返回所属用户规则的触发历史, 通过 JOIN 规则表过滤
                 count_query = count_query.join(
                     AlertRuleRecord, AlertTriggerRecord.rule_id == AlertRuleRecord.id
                 )
@@ -324,6 +346,7 @@ class AlertRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertNotificationRecord], int]:
+        """分页列出告警发送流水，可按触发 ID、渠道、是否成功、用户过滤。"""
         conditions = []
         if trigger_id is not None:
             conditions.append(AlertNotificationRecord.trigger_id == trigger_id)
@@ -342,6 +365,7 @@ class AlertRepository:
             )
             rows_query = select(AlertNotificationRecord)
             if user_id is not None:
+                # 多表 JOIN, 让通知按其触发的规则所属用户隔离
                 count_query = count_query.join(
                     AlertTriggerRecord,
                     AlertNotificationRecord.trigger_id == AlertTriggerRecord.id,

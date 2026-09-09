@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Jinja2 report renderer used by notification/report generation paths.
+"""供通知/报告生成链路使用的 Jinja2 报告渲染器。
 
-The renderer is optional: missing templates, missing Jinja2, or render errors
-return ``None`` so callers can fall back to their built-in report generator.
-Expensive data preparation should be injected through ``extra_context``.
+渲染器是可选的：模板缺失、Jinja2 未安装或渲染出错时统一返回 ``None``，
+让调用方回退到内置的报告生成器；耗时的数据准备应通过 ``extra_context`` 注入。
 """
 
 import logging
@@ -23,19 +22,20 @@ from src.report_language import (
 )
 from src.utils.data_processing import normalize_model_used
 from src.services.empty_news import empty_news_disclosure
+from src.market_phase_summary import format_public_market_status_line
 
 logger = logging.getLogger(__name__)
 
 
 def _escape_md(text: str) -> str:
-    """Escape markdown special chars (*ST etc)."""
+    """转义 Markdown 特殊字符（*、_ 等），避免报告中文本被误解析为强调语法。"""
     if not text:
         return ""
     return text.replace("*", "\\*").replace("_", "\\_")
 
 
 def _clean_sniper_value(val: Any) -> str:
-    """Format sniper point value for display (strip label prefixes)."""
+    """把狙击点位值清洗为展示文本（剥离“理想买入点：”等标签前缀）。"""
     if val is None:
         return "N/A"
     if isinstance(val, (int, float)):
@@ -55,7 +55,7 @@ def _clean_sniper_value(val: Any) -> str:
 
 
 def _resolve_templates_dir() -> Path:
-    """Resolve template directory relative to project root."""
+    """解析模板目录：优先使用配置的绝对路径，否则相对于项目根目录拼接。"""
     config = get_config()
     base = Path(__file__).resolve().parents[3]
     templates_dir = Path(config.report_templates_dir)
@@ -72,17 +72,17 @@ def render(
     extra_context: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """
-    Render report using Jinja2 template.
+    使用 Jinja2 模板渲染报告。
 
     Args:
-        platform: One of: markdown, wechat, brief
-        results: List of AnalysisResult
-        report_date: Report date string (default: today)
-        summary_only: Whether to output summary only
-        extra_context: Additional template context
+        platform: 模板平台（markdown / wechat / brief 等）。
+        results: :class:`AnalysisResult` 列表。
+        report_date: 报告日期字符串，默认今天。
+        summary_only: 是否只输出摘要。
+        extra_context: 额外的模板上下文。
 
     Returns:
-        Rendered string, or None on error (caller should fallback).
+        渲染好的字符串；模板缺失/Jinja2 未装/渲染失败时返回 None，调用方可降级到内置渲染器。
     """
     from datetime import datetime
 
@@ -112,7 +112,7 @@ def render(
     )
     labels = get_report_labels(report_language)
 
-    # Build template context with pre-computed signal levels (sorted by score)
+    # 构建模板上下文：预计算信号等级，并按 sentiment_score 降序排列
     sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
     sorted_enriched = []
     for r in sorted_results:
@@ -126,6 +126,11 @@ def render(
             "localized_operation_advice": localize_operation_advice(r.operation_advice, report_language),
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
             "empty_news_disclosure": empty_news_disclosure(r, report_language),
+            "market_status_line": format_public_market_status_line(
+                getattr(r, "market_phase_summary", None),
+                report_language=report_language,
+            ) if isinstance(getattr(r, "market_phase_summary", None), dict)
+            and str(r.market_phase_summary.get("market") or "").lower() == "cn" else "",
         })
 
     buy_count = sum(1 for r in results if getattr(r, "decision_type", "") == "buy")
@@ -143,14 +148,14 @@ def render(
     report_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def failed_checks(checklist: List[str]) -> List[str]:
-        """Expose only failed/warning checklist items to templates."""
+        """只把失败/警告的清单项暴露给模板。"""
         return [c for c in (checklist or []) if c.startswith("❌") or c.startswith("⚠️")]
 
     context: Dict[str, Any] = {
         "report_date": report_date,
         "report_timestamp": report_timestamp,
         "results": sorted_results,
-        "enriched": sorted_enriched,  # Sorted by sentiment_score desc
+        "enriched": sorted_enriched,  # 已按 sentiment_score 降序排列
         "summary_only": summary_only,
         "buy_count": buy_count,
         "sell_count": sell_count,

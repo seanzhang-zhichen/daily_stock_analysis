@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Search tools — wraps SearchService methods as agent-callable tools.
+搜索工具 —— 把 SearchService 的方法包装成可被 Agent 调用的工具。
 
-Tools:
-- search_stock_news: search latest stock news
-- search_comprehensive_intel: multi-dimensional intelligence search
+工具清单：
+- search_stock_news：检索个股最新新闻
+- search_comprehensive_intel：多维情报综合检索
 """
 
 import logging
@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 
 
 def _get_db():
-    """Lazy import for DatabaseManager."""
+    """惰性导入 DatabaseManager。"""
     from src.storage import get_db
     return get_db()
 
 
 def _get_search_service():
-    """Return shared SearchService singleton."""
+    """返回共享的 SearchService 单例。"""
     from src.search_service import get_search_service
     return get_search_service()
 
 
 def _canonical_search_code(stock_code: str) -> str:
-    """Canonicalize a search stock code before persistence and lookup."""
+    """在持久化与查询前把搜索用股票代码标准化。"""
     from data_provider.base import canonical_stock_code, normalize_stock_code
 
     return canonical_stock_code(normalize_stock_code(str(stock_code or "").strip()))
@@ -41,7 +41,7 @@ def _persist_news_response(
     dimension: str,
     response,
 ) -> None:
-    """Best-effort news persistence for Agent search tools."""
+    """Agent 搜索工具的尽力而为式新闻持久化。"""
     if not response or not getattr(response, "success", False) or not getattr(response, "results", None):
         return
 
@@ -71,7 +71,7 @@ def _persist_news_response(
 
 
 def _handle_search_stock_news(stock_code: str, stock_name: str) -> dict:
-    """Search latest news for a stock."""
+    """搜索某只股票的最新新闻。"""
     service = _get_search_service()
 
     if not service.is_available:
@@ -141,7 +141,7 @@ search_stock_news_tool = ToolDefinition(
 # ============================================================
 
 def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict:
-    """Multi-dimensional intelligence search."""
+    """多维度情报搜索。"""
     service = _get_search_service()
 
     if not service.is_available:
@@ -157,10 +157,10 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
         record_news_evidence(0)
         return {"error": "Comprehensive intel search returned no results"}
 
-    # Format into readable report
+    # 格式化为可读报告
     report = service.format_intel_report(intel_results, stock_name)
 
-    # Also return structured data
+    # 同时返回结构化数据
     dimensions = {}
     total_results = 0
     for dim_name, response in intel_results.items():
@@ -181,7 +181,7 @@ def _handle_search_comprehensive_intel(stock_code: str, stock_name: str) -> dict
                         "snippet": r.snippet,
                         "source": r.source,
                     }
-                    for r in response.results[:3]  # limit to 3 per dimension to save tokens
+                    for r in response.results[:3]  # 每维度限 3 条以节省 token
                 ],
             }
 

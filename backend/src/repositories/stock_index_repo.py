@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Repository and in-memory search cache for the local stock index.
+"""本地股票搜索索引仓库与进程内查询缓存。
 
-The index is used by API and agent flows to map user-entered stock codes,
-Chinese names, pinyin and aliases to canonical stock metadata.
+负责把代码、中文名、拼音（全拼 / 首字母）和别名维护进 ``StockIndexEntry`` 表，
+并在内存里构建一份轻量缓存，供 API 搜索与 Agent 工具调用使用。
+
+主要能力：
+
+- 同步写入（``upsert_entries``）支持按 ``canonical_code`` upsert 并清理过期条目；
+- 提供 ``search()``：基于预归一化字段的打分排序（精确 > 前缀 > 包含 > 模糊）；
+- ``get_name_by_code()`` 用于把 ``600519`` / ``sh600519`` / ``00700.HK`` 等用户
+  输入格式解析成中文显示名；
+- 搜索结果按 ``(query, limit, active_only)`` 在内存里缓存，默认 TTL 5 分钟，
+  以减少数据库压力并兼容测试库快速切换。
 """
 from __future__ import annotations
 
@@ -23,13 +32,15 @@ from src.storage import DatabaseManager, StockIndexEntry, StockIndexMeta
 logger = logging.getLogger(__name__)
 
 STOCK_INDEX_META_KEY = "default"
+# 搜索缓存默认有效期（秒）；索引同步后 ``clear_search_cache()`` 会立即失效。
 _SEARCH_CACHE_TTL_SECONDS = 300.0
+# 进程级搜索结果缓存上限, 超过后整表清空, 防内存无界增长。
 _SEARCH_RESULT_CACHE_MAX_SIZE = 512
 
 
 @dataclass(frozen=True)
 class _CachedStockIndexEntry:
-    """Normalized stock index row stored in the process-level search cache."""
+    """进程级搜索缓存中预归一化的股票索引条目。"""
 
     canonical_code: str
     display_code: str
@@ -51,12 +62,12 @@ class _CachedStockIndexEntry:
 
 
 def normalize_stock_query(value: str) -> str:
-    """Normalize user search text so full-width and case variants match."""
+    """对用户搜索文本做 NFKC 归一化 + 去前后空格 + 小写化，便于跨形态匹配。"""
     return unicodedata.normalize("NFKC", str(value or "")).strip().lower()
 
 
 def _safe_aliases(raw: str | None) -> list[str]:
-    """Decode aliases JSON from storage, returning an empty list on bad payloads."""
+    """解析存储中的别名 JSON；解析失败时返回空列表。"""
     if not raw:
         return []
     try:
@@ -69,7 +80,7 @@ def _safe_aliases(raw: str | None) -> list[str]:
 
 
 def _entry_normalized_value(entry: Any, attr: str, normalized_attr: str) -> str:
-    """Read a pre-normalized field when cached entries provide one."""
+    """读取缓存条目预归一化字段；未提供时按需现算一次。"""
     value = getattr(entry, normalized_attr, None)
     if value is not None:
         return str(value)
@@ -77,11 +88,11 @@ def _entry_normalized_value(entry: Any, attr: str, normalized_attr: str) -> str:
 
 
 def _match_score(query: str, entry: Any) -> tuple[int, str]:
-    """Score a stock index entry against one normalized query.
+    """对一条索引记录打分：精确 > 前缀 > 包含，分数越高越相关。
 
-    Higher scores represent stronger matches: exact code/name/alias first,
-    then prefix matches, then contains matches. The returned field explains
-    which user-facing attribute produced the best match.
+    Returns:
+        ``(score, field)`` 元组：``score`` 为命中分数，``field`` 标识命中来源
+        （``code`` / ``name`` / ``pinyin`` / ``alias``），便于前端高亮展示。
     """
     q = normalize_stock_query(query)
     canonical = _entry_normalized_value(entry, "canonical_code", "canonical_norm")
@@ -91,6 +102,7 @@ def _match_score(query: str, entry: Any) -> tuple[int, str]:
     pinyin_abbr = _entry_normalized_value(entry, "pinyin_abbr", "pinyin_abbr_norm")
     aliases = getattr(entry, "aliases_norm", None)
     if aliases is None:
+        # 兼容直接传入 ORM 行的情况（无预归一化字段时退化为现算）
         aliases = [normalize_stock_query(alias) for alias in _safe_aliases(entry.aliases)]
 
     if q == canonical:
@@ -124,7 +136,7 @@ def _match_score(query: str, entry: Any) -> tuple[int, str]:
 
 
 def _match_type(score: int) -> str:
-    """Map a numeric match score to the API's coarse match category."""
+    """把数字匹配分数映射为 API 用的粗粒度分类标签。"""
     if score >= 90:
         return "exact"
     if score >= 70:
@@ -135,7 +147,7 @@ def _match_type(score: int) -> str:
 
 
 class StockIndexRepository:
-    """Database-backed stock index repository with short-lived process cache."""
+    """基于数据库的股票索引仓库，附带短期进程级搜索缓存。"""
 
     _search_cache_lock = RLock()
     _search_cache_db_url: str | None = None
@@ -144,12 +156,12 @@ class StockIndexRepository:
     _search_result_cache: dict[tuple[str, int, bool], list[dict[str, Any]]] = {}
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
-        """Use an injected manager for tests or the shared database in runtime."""
+        """测试时可注入自定义 ``db_manager``，运行时使用全局数据库单例。"""
         self.db = db_manager or DatabaseManager.get_instance()
 
     @classmethod
     def clear_search_cache(cls) -> None:
-        """Clear both index-entry and query-result caches after index changes."""
+        """清空索引条目与查询结果缓存，用于索引同步后立即失效。"""
         with cls._search_cache_lock:
             cls._search_cache_db_url = None
             cls._search_cache_loaded_at = 0.0
@@ -157,11 +169,11 @@ class StockIndexRepository:
             cls._search_result_cache = {}
 
     def _search_cache_namespace(self) -> str:
-        """Return the database identity used to avoid sharing cache across test DBs."""
+        """返回用于区分缓存命名空间的数据库标识，防止不同测试库共享缓存。"""
         return str(getattr(self.db, "_db_url", ""))
 
     def _load_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
-        """Load all searchable stock rows and precompute normalized fields."""
+        """加载全部可搜索股票行，并预先计算归一化字段，便于后续打分。"""
         stmt = select(
             StockIndexEntry.canonical_code,
             StockIndexEntry.display_code,
@@ -211,7 +223,7 @@ class StockIndexRepository:
         return tuple(entries)
 
     def _get_search_entries(self) -> tuple[_CachedStockIndexEntry, ...]:
-        """Return cached search entries, reloading after TTL or database switch."""
+        """返回缓存的条目，TTL 到期或数据库变更时重新加载。"""
         namespace = self._search_cache_namespace()
         now = monotonic()
         cls = type(self)
@@ -226,29 +238,30 @@ class StockIndexRepository:
             cls._search_cache_db_url = namespace
             cls._search_cache_loaded_at = now
             cls._search_cache_entries = entries
+            # 索引条目变化后旧的查询结果缓存全部失效
             cls._search_result_cache = {}
             return entries
 
     def preload_search_cache(self) -> int:
-        """Warm the search cache and return the number of cached entries."""
+        """预热搜索缓存，返回已缓存的条目数。"""
         return len(self._get_search_entries())
 
     def count(self) -> int:
-        """Return the number of stock index entries currently stored."""
+        """返回当前索引中的股票条目总数。"""
         with self.db.get_session() as session:
             return int(session.execute(select(func.count()).select_from(StockIndexEntry)).scalar() or 0)
 
     def get_meta(self) -> StockIndexMeta | None:
-        """Return sync metadata for the current stock index payload."""
+        """返回当前股票索引同步元数据（版本号/总数等）。"""
         with self.db.get_session() as session:
             return session.get(StockIndexMeta, STOCK_INDEX_META_KEY)
 
     def upsert_entries(self, entries: Iterable[dict[str, Any]], *, version: str) -> int:
-        """Replace the stock index with incoming entries and update sync metadata."""
+        """用本次传入的全量条目覆盖写入股票索引，并更新同步元数据。"""
         prepared = list(entries)
 
         def write(session: Session) -> int:
-            """Write callback executed under DatabaseManager's serialized transaction."""
+            """在 ``DatabaseManager`` 的串行化事务中执行的写入回调。"""
             existing_codes = set(session.execute(select(StockIndexEntry.canonical_code)).scalars().all())
             incoming_codes: set[str] = set()
             now = datetime.now()
@@ -301,10 +314,11 @@ class StockIndexRepository:
         return count
 
     def search(self, query: str, *, limit: int = 20, active_only: bool = True) -> list[dict[str, Any]]:
-        """Search code/name/pinyin/alias fields and return ranked API suggestions."""
+        """在代码/名称/拼音/别名字段上检索，并返回按相关度排序的 API 建议。"""
         normalized = normalize_stock_query(query)
         if not normalized:
             return []
+        # 限制 limit 在 [1, 50] 区间, 防异常入参拖垮接口
         limit = max(1, min(int(limit or 20), 50))
         entries = self._get_search_entries()
         cache_key = (normalized, limit, bool(active_only))
@@ -321,6 +335,7 @@ class StockIndexRepository:
             score, field = _match_score(normalized, row)
             if score > 0:
                 ranked.append((score, int(row.popularity or 0), row, field))
+        # 主排序: 分数; 次排序: 热度（popularity）, 让同分热门股票优先展示
         ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
         result = [
@@ -336,18 +351,20 @@ class StockIndexRepository:
             for score, _, row, field in ranked[:limit]
         ]
         with cls._search_cache_lock:
+            # 缓存超过上限则整表清空, 避免单个查询键长期驻留
             if len(cls._search_result_cache) >= _SEARCH_RESULT_CACHE_MAX_SIZE:
                 cls._search_result_cache = {}
             cls._search_result_cache[cache_key] = [dict(item) for item in result]
         return result
 
     def get_name_by_code(self, stock_code: str) -> str | None:
-        """Resolve a display name by common CN/HK code variants."""
+        """通过常见的 A 股 / 港股代码格式反查中文显示名。"""
         query = normalize_stock_query(stock_code)
         if not query:
             return None
         keys = {query, query.upper()}
         if "." in query:
+            # 形如 ``00700.HK`` / ``600519.SH`` 时, 拆出数字主体再加进匹配集合
             base, suffix = query.rsplit(".", 1)
             if suffix.upper() in {"SH", "SZ", "SS", "BJ"} and base.isdigit():
                 keys.add(base)
@@ -355,6 +372,7 @@ class StockIndexRepository:
                 digits = base.zfill(5)
                 keys.update({digits, f"HK{digits}"})
         if query.upper().startswith("HK"):
+            # 兼容 ``HK00700`` 这种带前缀的输入, 统一补零到 5 位
             digits = query[2:]
             if digits.isdigit() and 1 <= len(digits) <= 5:
                 digits = digits.zfill(5)

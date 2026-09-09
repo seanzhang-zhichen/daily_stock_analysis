@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-RiskAgent — dedicated risk screening specialist.
+RiskAgent —— 专注风险筛查的专用 Agent。
 
-Responsible for:
-- Scanning for insider sell-downs, earnings warnings, regulatory actions
-- Checking valuation anomalies (PE/PB extremes)
-- Evaluating lock-up expiration risks
-- Producing risk flags that can override or downgrade signals from other agents
+职责：
+- 扫描股东减持、业绩预警、监管处罚等风险
+- 检查估值异常（PE/PB 极端值）
+- 评估限售解禁风险
+- 产出可覆盖或下调其他 Agent 信号的风险标记
 
-Risk flags use a two-level severity system:
-- **soft**: downgrades the signal and adds a visible warning
-- **hard**: vetoes buy signals entirely when risk override is enabled
+风险标记采用两级严重度体系：
+- **soft**：下调信号并附加可见警告
+- **hard**：开启风险覆盖时完全否决买入信号
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class RiskAgent(BaseAgent):
-    """Screen material risks and write risk flags back to shared context."""
+    """筛查实质性风险并把风险标记写回共享上下文。"""
 
     agent_name = "risk"
     max_steps = 4
@@ -38,7 +38,7 @@ class RiskAgent(BaseAgent):
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """Build the risk-only prompt and strict JSON output schema."""
+        """构造仅关注风险的提示词与严格的 JSON 输出模式。"""
         return """\
 You are a **Risk Screening Agent** focused exclusively on identifying \
 risks and red flags for the given stock.
@@ -83,27 +83,27 @@ from your search results. Do NOT invent risks.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """Ask for a risk scan, reusing existing intel data when available."""
+        """请求风险扫描，已有情报数据时直接复用。"""
         parts = [f"Screen stock **{ctx.stock_code}**"]
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
         parts.append("for ALL risk factors listed in your instructions.")
         parts.append("Search for latest news if you haven't received intel data yet.")
 
-        # Feed any existing intel data so the risk agent doesn't redo searches
+        # 传入已有的情报数据，避免风险 Agent 重复搜索
         if ctx.get_data("intel_opinion"):
             parts.append(f"\n[Existing intel data]\n{json.dumps(ctx.get_data('intel_opinion'), ensure_ascii=False, default=str)}")
 
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """Parse risk JSON and propagate each structured flag to the context."""
+        """解析风险 JSON，并把每条结构化标记传递到上下文。"""
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[RiskAgent] failed to parse risk JSON")
             return None
 
-        # Propagate structured risk flags to context
+        # 把结构化风险标记传递到上下文
         for flag in parsed.get("flags", []):
             if isinstance(flag, dict):
                 ctx.add_risk_flag(
@@ -122,7 +122,7 @@ from your search results. Do NOT invent risks.
 
 
 def _risk_to_signal(risk_level: str) -> str:
-    """Map risk level to a trading signal (inverted)."""
+    """把风险等级映射为交易信号（方向相反）。"""
     mapping = {
         "none": "buy",
         "low": "hold",

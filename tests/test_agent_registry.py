@@ -156,6 +156,18 @@ class TestToolRegistry(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.execute("bad_tool")
 
+    def test_category_timeout_and_per_tool_timeout_metadata(self):
+        registry = ToolRegistry(category_timeouts={"data": 12, "search": 20})
+        registry.register(_make_tool("data_tool", category="data"))
+        registry.register(ToolDefinition(
+            name="search_tool", description="Search", parameters=[], handler=lambda: None,
+            category="search", timeout_seconds=3,
+        ))
+
+        self.assertEqual(registry.category_default_timeout("data"), 12)
+        self.assertEqual(registry.category_default_timeout("market"), 12)
+        self.assertEqual(registry.get("search_tool").timeout_seconds, 3)
+
 
 # ============================================================
 # Schema generation tests

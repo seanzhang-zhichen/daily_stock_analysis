@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Bootstrap a platform super admin from deployment environment variables."""
+"""从部署环境变量引导平台超级管理员账号。
+
+在应用启动时调用，确保至少存在一个管理员账号：若环境变量未配置则跳过；
+若账号已存在则直接提升为管理员（默认不改密码，除非显式开启密码同步）。
+仅在缺失账号时校验密码强度，避免无谓的失败。
+"""
 
 from __future__ import annotations
 
@@ -31,7 +36,12 @@ _FALSEY_VALUES = {"0", "false", "no", "off"}
 
 @dataclass(frozen=True)
 class SuperAdminBootstrapResult:
-    """Summary of one super-admin bootstrap attempt."""
+    """单次超级管理员引导操作的执行摘要。
+
+    由 ``bootstrap_super_admin_from_env`` 返回，便于上层调用方区分
+    「未启用」「邮箱无效」「密码无效」「账户不存在」等不同的跳过原因，
+    并区分创建/提升/同步密码等不同的副作用。
+    """
 
     enabled: bool
     email: Optional[str] = None
@@ -42,14 +52,25 @@ class SuperAdminBootstrapResult:
 
 
 def _normalize_email(raw_email: Optional[str]) -> str:
+    """规范化邮箱字符串，做去空白与大小写归一。"""
     return (raw_email or "").strip().lower()
 
 
 def _current_terms_version() -> str:
+    """读取当前生效的服务条款版本。
+
+    优先使用环境变量 ``USER_TERMS_VERSION``，未配置时回退到 ``CURRENT_TERMS_VERSION``。
+    去除首尾空白后若仍为空，也兜底使用默认值，避免写入空字符串。
+    """
     return (os.getenv("USER_TERMS_VERSION") or CURRENT_TERMS_VERSION).strip() or CURRENT_TERMS_VERSION
 
 
 def _parse_env_bool(value: Optional[str], default: bool = False) -> bool:
+    """解析布尔型环境变量。
+
+    采用宽松策略：未设置/全空白使用 ``default``；非空白字符串若不属于
+    ``_FALSEY_VALUES`` 集合则视为 True，从而兼容 ``true/1/yes/on`` 等常见写法。
+    """
     if value is None:
         return default
     normalized = value.strip().lower()
@@ -59,18 +80,24 @@ def _parse_env_bool(value: Optional[str], default: bool = False) -> bool:
 
 
 def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
-    """Create or promote the configured platform super admin.
+    """按环境变量配置创建或提升平台超级管理员。
 
-    Required for creating a missing account:
-    - ``SUPER_ADMIN_EMAIL``
-    - ``SUPER_ADMIN_PASSWORD``
+    若未配置 ``SUPER_ADMIN_EMAIL`` 则整体跳过（返回 ``enabled=False``）。
+    创建缺失账户时需要同时提供 ``SUPER_ADMIN_PASSWORD`` 且通过强度校验；
+    已存在的账户默认仅授予管理员权限而不会覆盖密码。
+    若希望每次启动都强制把已存在账户的密码哈希同步为环境变量值，
+    可将 ``SUPER_ADMIN_SYNC_PASSWORD=true``。
 
-    Existing accounts are promoted without changing their password by default.
-    Set ``SUPER_ADMIN_SYNC_PASSWORD=true`` to force the stored password hash to
-    follow ``SUPER_ADMIN_PASSWORD`` on every startup.
+    Args:
+        db: 数据库会话，用于查询/创建/更新 ``AppUser`` 记录。
+
+    Returns:
+        :class:`SuperAdminBootstrapResult`，描述本次引导操作是否执行、
+        是否新建账户、是否提升为管理员、是否同步密码，以及跳过原因。
     """
 
     email = _normalize_email(os.getenv(SUPER_ADMIN_EMAIL_ENV))
+    # 未配置邮箱则视为功能关闭，整个流程直接跳过，避免误创建。
     if not email:
         return SuperAdminBootstrapResult(enabled=False, skipped_reason="not_configured")
 
@@ -84,11 +111,13 @@ def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
     terms_version = _current_terms_version()
 
     user = db.query(AppUser).filter(AppUser.email == email).first()
+    # 记录提权前的管理员状态，便于在结果中区分「本就已是管理员」与「本次新授予」。
     was_admin = bool(getattr(user, "is_admin", False)) if user is not None else False
     created = False
     password_updated = False
 
     if user is None:
+        # 仅在新建账户时校验密码强度，避免对已存在账户进行无谓的失败校验。
         password_error = validate_password_strength(password)
         if password_error:
             logger.warning(
@@ -116,6 +145,7 @@ def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
         try:
             db.flush()
         except IntegrityError:
+            # 兜底处理并发场景：邮箱唯一索引冲突时回滚，重新查询以沿用竞态创建的账户。
             db.rollback()
             user = db.query(AppUser).filter(AppUser.email == email).first()
             if user is None:
@@ -128,6 +158,7 @@ def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
         return SuperAdminBootstrapResult(enabled=True, email=email, skipped_reason="not_found")
 
     if sync_password and not created:
+        # 显式开启密码同步时才覆盖已有账户的密码哈希，默认不动既有密码。
         password_error = validate_password_strength(password)
         if password_error:
             logger.warning(
@@ -147,8 +178,10 @@ def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
         user.password_hash = hash_password(password)
         password_updated = True
 
+    # 以下字段无论新建还是已存在账户都无条件刷新，保证管理员状态最终一致。
     user.is_admin = True
     user.status = "active"
+    # 清理待注销标记，避免管理员被误判为正在注销流程中。
     user.deletion_requested_at = None
     if user.email_verified_at is None:
         user.email_verified_at = datetime.utcnow()

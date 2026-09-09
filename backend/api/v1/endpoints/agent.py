@@ -60,7 +60,7 @@ router = APIRouter()
 
 
 def _current_user_id_or_none(current_user: Any) -> Optional[int]:
-    """Extract a numeric user id from AppUser-like objects."""
+    """从 AppUser 之类的对象中提取数值型 user id。"""
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
@@ -71,13 +71,14 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
 
 
 def _db_user(db: Session, current_user: AppUser) -> AppUser:
-    """Reload the current user from DB when possible for fresh quota/credit state."""
+    """在配额/积分扣减前尽量从 DB 重新加载当前用户，保证状态最新。"""
     user_id = _current_user_id_or_none(current_user)
     if user_id is None or not hasattr(db, "query"):
         return current_user
     try:
         row = db.query(AppUser).filter(AppUser.id == user_id).first()
     except Exception:  # noqa: BLE001
+        # DB 不可用时直接复用请求上下文中的 user 对象
         return current_user
     return row if isinstance(row, AppUser) else current_user
 
@@ -89,7 +90,7 @@ def _scope_session_id(
     raw_session_id: Optional[str],
     current_user: Optional[AppUser],
 ) -> str:
-    """Prefix chat session ids with user id to prevent cross-user history access."""
+    """在登录态下为会话 id 加 ``u{user_id}:`` 前缀，防止跨用户访问历史。"""
     if current_user is None:
         return raw_session_id or str(uuid.uuid4())
     prefix = f"u{current_user.id}:"
@@ -102,51 +103,52 @@ def _scope_session_id(
     return f"{prefix}{inner}"
 
 class ChatRequest(BaseModel):
-    """Agent chat request with optional session, skills and reusable context."""
+    """Agent 对话请求，支持会话延续、技能选择与可复用的上下文。"""
 
     model_config = ConfigDict(populate_by_name=True)
 
     message: str
     session_id: Optional[str] = None
     skills: Optional[List[str]] = Field(default=None)
-    context: Optional[Dict[str, Any]] = None  # Previous analysis context for data reuse
+    context: Optional[Dict[str, Any]] = None  # 用于复用上一次分析的上下文
 
     @property
     def effective_skills(self) -> Optional[List[str]]:
-        """Return skill ids from the unified request shape."""
+        """返回统一请求形态下的技能 id 列表。"""
         return self.skills
 
 class ChatResponse(BaseModel):
-    """Agent chat response returned by non-streaming chat calls."""
+    """非流式对话端点的响应体。"""
 
     success: bool
     content: str
     session_id: str
     error: Optional[str] = None
+    selected_skill_ids: Optional[List[str]] = None
 
 class SkillInfo(BaseModel):
-    """Minimal skill metadata exposed to frontend selectors."""
+    """前端技能选择器所需的最小化技能元数据。"""
 
     id: str
     name: str
     description: str
 
 class SkillsResponse(BaseModel):
-    """Available skill list plus the configured default skill id."""
+    """可用技能列表与配置的默认技能 id。"""
 
     skills: List[SkillInfo]
     default_skill_id: str = ""
 
 
 class StrategiesResponse(BaseModel):
-    """Backward-compatible strategy list response using skill metadata shape."""
+    """兼容旧前端的策略列表响应，复用技能的元数据形态。"""
 
     strategies: List[SkillInfo]
     default_strategy_id: str = ""
 
 
 class AgentModelDeployment(BaseModel):
-    """One configured Agent model deployment option."""
+    """一个已配置的 Agent 模型部署选项。"""
 
     deployment_id: str
     model: str
@@ -159,14 +161,14 @@ class AgentModelDeployment(BaseModel):
 
 
 class AgentModelsResponse(BaseModel):
-    """Configured Agent model deployments response."""
+    """已配置的 Agent 模型部署响应。"""
 
     models: List[AgentModelDeployment]
 
 
 @router.get("/models", response_model=AgentModelsResponse)
 async def get_agent_models():
-    """Get configured Agent model deployments for frontend selection."""
+    """返回前端可选的 Agent 模型部署列表。"""
     config = get_config()
     return AgentModelsResponse(
         models=[AgentModelDeployment(**item) for item in list_agent_model_deployments(config)]
@@ -174,11 +176,12 @@ async def get_agent_models():
 
 
 def _build_skills_response(config) -> SkillsResponse:
-    """Build available skill metadata from runtime config."""
+    """从运行时配置构造可用技能的元数据响应。"""
     from src.agent.factory import get_skill_manager
     from src.agent.skills.defaults import get_primary_default_skill_id
 
     skill_manager = get_skill_manager(config)
+    # 仅暴露允许用户手动调用的技能，按优先级排序
     available_skills = sorted(
         [
             skill
@@ -203,15 +206,13 @@ def _build_skills_response(config) -> SkillsResponse:
 
 @router.get("/skills", response_model=SkillsResponse)
 async def get_skills():
-    """
-    Get available agent strategy skills.
-    """
+    """返回当前可用的 Agent 策略技能列表。"""
     return _build_skills_response(get_config())
 
 
 @router.get("/strategies", response_model=StrategiesResponse, include_in_schema=False)
 async def get_strategies():
-    """Compatibility alias for legacy clients."""
+    """兼容旧客户端的 /strategies 别名端点。"""
     payload = _build_skills_response(get_config())
     return StrategiesResponse(
         strategies=payload.skills,
@@ -224,11 +225,9 @@ async def agent_chat(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """
-    Chat with the AI Agent.
-    """
+    """与 AI Agent 进行同步对话。"""
     config = get_config()
-    
+
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
@@ -246,6 +245,7 @@ async def agent_chat(
             return JSONResponse(status_code=402, content=quota_exceeded_payload(outcome))
         credit_outcome = enforce_credits(db, user=current_user, kind=KIND_AGENT, related_type="agent")
         if credit_outcome.exceeded:
+            # 积分不足时回滚本次已扣的日额度，保持一致
             if outcome.consumed:
                 refund_quota(db, user=current_user, kind=KIND_AGENT, on_date=outcome.on_date)
             db.commit()
@@ -254,22 +254,27 @@ async def agent_chat(
             db.commit()
 
     session_id = _scope_session_id(request.session_id, effective_user)
-    
+
     try:
-        skills = request.effective_skills
+        from src.services.agent_chat_session_service import AgentChatSessionService
+
+        session_service = AgentChatSessionService()
+        selection = session_service.resolve_skill_selection(
+            config, session_id, request.effective_skills,
+        )
+        skills = selection.effective_skill_ids
+        session_service.persist_skill_selection(session_id, selection.selected_skill_ids_update)
         if current_user_id is None:
             executor = _build_executor(config, skills or None)
         else:
             executor = _build_executor(config, skills or None, user_id=current_user_id)
 
-        # Pass explicit skills into context for the orchestrator.
-        # Direct assignment so caller-provided skills always take precedence
-        # over any stale value carried in the context dict.
+        # 将显式传入的 skills 注入到 context，覆盖 context 中可能残留的旧值
         ctx = dict(request.context or {})
         if skills is not None:
             ctx["skills"] = skills
 
-        # Offload the blocking call to a thread to avoid blocking the event loop.
+        # 把阻塞型执行器调用 offload 到线程池，避免长时间占用事件循环
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
@@ -289,9 +294,10 @@ async def agent_chat(
             success=result_success,
             content=result.content,
             session_id=session_id,
-            error=result.error
+            error=result.error,
+            selected_skill_ids=skills,
         )
-            
+
     except Exception as e:
         if credit_outcome and credit_outcome.consumed:
             refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="agent")
@@ -305,7 +311,7 @@ async def agent_chat(
 
 
 class SessionItem(BaseModel):
-    """Summary row for one persisted Agent chat session."""
+    """单条持久化 Agent 会话的摘要行。"""
 
     session_id: str
     title: str
@@ -314,15 +320,16 @@ class SessionItem(BaseModel):
     last_active: Optional[str] = None
 
 class SessionsResponse(BaseModel):
-    """Paginated session list response for chat history."""
+    """聊天历史会话列表的分页响应。"""
 
     sessions: List[SessionItem]
 
 class SessionMessagesResponse(BaseModel):
-    """Message list response for one Agent chat session."""
+    """单个 Agent 会话的消息列表响应。"""
 
     session_id: str
     messages: List[Dict[str, Any]]
+    selected_skill_ids: Optional[List[str]] = None
 
 
 @router.get("/chat/sessions", response_model=SessionsResponse)
@@ -331,13 +338,12 @@ async def list_chat_sessions(
     user_id: Optional[str] = None,
     current_user: AppUser = Depends(get_current_user),
 ):
-    """获取聊天会话列表
+    """获取当前用户的聊天会话列表。
 
     Args:
-        limit: Maximum number of sessions to return.
-        user_id: Optional platform-prefixed user identifier (e.g.
-            ``telegram_12345``, ``feishu_ou_abc``) for Bot / CLI 路径的
-            平台级隔离; 登录用户请不要传, 后端会以 ``current_user`` 为准。
+        limit: 返回的最大会话数量。
+        user_id: 可选的平台级用户标识（如 ``telegram_12345``、``feishu_ou_abc``），
+            仅用于 Bot / CLI 路径的隔离；登录用户请勿传入，后端以 ``current_user`` 为准。
     """
     from src.storage import get_db
     sessions = get_db().get_chat_sessions(
@@ -351,7 +357,7 @@ def _ensure_session_owner(
     session_id: str,
     current_user: Optional[AppUser],
 ) -> None:
-    """登录模式下拒绝访问不属于当前用户的会话。"""
+    """登录态下拒绝访问不属于当前用户的会话。"""
     if current_user is None:
         return
     expected_prefix = f"u{current_user.id}:"
@@ -365,11 +371,15 @@ async def get_chat_session_messages(
     limit: int = 100,
     current_user: AppUser = Depends(get_current_user),
 ):
-    """获取单个会话的完整消息"""
+    """获取单个会话的完整消息列表。"""
     from src.storage import get_db
     _ensure_session_owner(session_id, current_user)
-    messages = get_db().get_conversation_messages(session_id, limit=limit)
-    return SessionMessagesResponse(session_id=session_id, messages=messages)
+    storage = get_db()
+    messages = storage.get_conversation_messages(session_id, limit=limit)
+    return SessionMessagesResponse(
+        session_id=session_id, messages=messages,
+        selected_skill_ids=storage.get_conversation_session_selected_skill_ids(session_id),
+    )
 
 
 @router.delete("/chat/sessions/{session_id}")
@@ -377,7 +387,7 @@ async def delete_chat_session(
     session_id: str,
     current_user: AppUser = Depends(get_current_user),
 ):
-    """删除指定会话"""
+    """删除指定会话及其关联消息。"""
     from src.storage import get_db
     _ensure_session_owner(session_id, current_user)
     count = get_db().delete_conversation_session(session_id)
@@ -385,7 +395,7 @@ async def delete_chat_session(
 
 
 class SendChatRequest(BaseModel):
-    """Request body for sending chat content to notification channels."""
+    """将聊天内容推送到通知渠道的请求体。"""
 
     content: str = Field(..., min_length=1, max_length=50000)
     title: Optional[str] = None
@@ -393,10 +403,7 @@ class SendChatRequest(BaseModel):
 
 @router.post("/chat/send")
 async def send_chat_to_notification(request: SendChatRequest):
-    """
-    Send chat session content to configured notification channels.
-    Uses run_in_executor to avoid blocking the event loop.
-    """
+    """将对话内容推送到已配置的通知渠道，避免阻塞事件循环。"""
     from src.notification import NotificationService
 
     loop = asyncio.get_running_loop()
@@ -414,7 +421,7 @@ async def send_chat_to_notification(request: SendChatRequest):
 
 
 def _build_executor(config, skills: Optional[List[str]] = None, user_id: Optional[int] = None):
-    """Build and return a configured AgentExecutor (sync helper)."""
+    """构造一个配置好的 AgentExecutor（同步辅助函数）。"""
     from src.agent.factory import build_agent_executor
     return build_agent_executor(config, skills=skills, user_id=user_id)
 
@@ -426,7 +433,7 @@ async def _run_research_in_background(
     *,
     timeout: int,
 ):
-    """Run deep research off the event loop with an internal overall timeout."""
+    """在事件循环之外执行深度研究，并施加内部整体超时。"""
     return await asyncio.to_thread(
         agent.research,
         question,
@@ -440,13 +447,13 @@ async def _run_research_in_background(
 # ============================================================
 
 class ResearchRequest(BaseModel):
-    """Deep research request for either a free-form question or stock context."""
+    """深度研究请求，支持自由提问或附带股票上下文。"""
 
     question: str
     stock_code: Optional[str] = None
 
 class ResearchResponse(BaseModel):
-    """Deep research response with report content, source list and token usage."""
+    """深度研究响应，包含报告内容、来源列表与 token 消耗。"""
 
     success: bool
     content: str
@@ -461,15 +468,15 @@ async def agent_research(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """Run a deep-research query via the ResearchAgent.
+    """通过 ResearchAgent 执行深度研究查询。
 
-    Similar to the ``/research`` bot command but exposed as a REST endpoint.
+    与 ``/research`` bot 命令类似，但作为 REST 端点对外暴露。
     """
     config = get_config()
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
-    # Phase 2: deep research 也走 agent 配额池
+    # Phase 2: 深度研究同样走 agent 配额池
     current_user_id = _current_user_id_or_none(current_user)
     if current_user_id is not None:
         current_user = _db_user(db, current_user)
@@ -493,6 +500,7 @@ async def agent_research(
     question = request.question
     context: Optional[Dict[str, Any]] = None
     if request.stock_code:
+        # 在问题前缀注入股票上下文，方便下游 LLM 与工具识别标的
         question = f"[Stock: {request.stock_code}] {question}"
         context = {"stock_code": request.stock_code}
 
@@ -503,6 +511,7 @@ async def agent_research(
 
         registry = get_tool_registry()
         llm_adapter = LLMToolAdapter(config, user_id=current_user_id)
+        # token 预算、子问题上限等均走配置，便于在不重启的情况下灵活调整
         budget = getattr(config, "agent_deep_research_budget", 30000)
         max_sub_questions = getattr(config, "agent_deep_research_max_sub_questions", 8)
         sub_question_steps = getattr(config, "agent_deep_research_sub_question_steps", 6)
@@ -525,6 +534,7 @@ async def agent_research(
         )
         if getattr(result, "timed_out", False):
             logger.warning("Agent research API timed out after %ss", research_timeout)
+            # 整体超时：退还本次已扣的积分与日额度
             if credit_outcome and credit_outcome.consumed:
                 refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="research")
             if outcome and outcome.consumed:
@@ -573,15 +583,15 @@ async def agent_chat_stream(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """
-    Chat with the AI Agent, streaming progress via SSE.
-    Each SSE event is a JSON object with a 'type' field:
-      - thinking: AI is deciding next action
-      - tool_start: a tool call has begun
-      - tool_done: a tool call finished
-      - generating: final answer being generated
-      - done: analysis complete, contains 'content' and 'success'
-      - error: error occurred, contains 'message'
+    """与 AI Agent 对话，并通过 SSE 实时推送进度。
+
+    每个 SSE 事件为带 ``type`` 字段的 JSON 对象：
+    - thinking: Agent 正在决策下一步行动
+    - tool_start: 一次工具调用已开始
+    - tool_done: 一次工具调用完成
+    - generating: 最终答复生成中
+    - done: 分析完成，包含 ``content`` 与 ``success``
+    - error: 发生错误，包含 ``message``
     """
     config = get_config()
     if not config.is_agent_available():
@@ -614,9 +624,14 @@ async def agent_chat_stream(
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
-    # Pass explicit skills into context for the orchestrator.
-    # Direct assignment so caller-provided skills always take precedence.
-    skills = request.effective_skills
+    # 将显式传入的 skills 注入 context，覆盖可能的旧值
+    from src.services.agent_chat_session_service import AgentChatSessionService
+    session_service = AgentChatSessionService()
+    selection = session_service.resolve_skill_selection(
+        config, session_id, request.effective_skills,
+    )
+    skills = selection.effective_skill_ids
+    session_service.persist_skill_selection(session_id, selection.selected_skill_ids_update)
     stream_ctx = dict(request.context or {})
     if skills is not None:
         stream_ctx["skills"] = skills
@@ -625,8 +640,8 @@ async def agent_chat_stream(
     stream_result: Dict[str, Any] = {"failed": False}
 
     def progress_callback(event: dict):
-        """Bridge executor progress events from worker thread into the SSE queue."""
-        # Enrich tool events with display names
+        """把执行器回调事件从工作线程桥接到 SSE 队列。"""
+        # 为工具事件补充中文展示名，便于前端展示
         if event.get("type") in ("tool_start", "tool_done"):
             tool = event.get("tool", "")
             event["display_name"] = TOOL_DISPLAY_NAMES.get(tool, tool)
@@ -635,7 +650,7 @@ async def agent_chat_stream(
     _stream_user_id = current_user_id
 
     def run_sync():
-        """Run blocking Agent chat in a worker and publish terminal stream events."""
+        """在工作线程中执行阻塞型 Agent 对话，并发布收尾事件。"""
         try:
             executor = _build_executor(config, skills or None, user_id=_stream_user_id)
             result = executor.chat(
@@ -654,6 +669,7 @@ async def agent_chat_stream(
                     "error": result.error,
                     "total_steps": result.total_steps,
                     "session_id": session_id,
+                    "selected_skill_ids": skills,
                 }),
                 loop,
             )
@@ -666,12 +682,13 @@ async def agent_chat_stream(
             )
 
     async def event_generator():
-        """Yield Agent progress events as SSE frames until done, error or timeout."""
-        # Start executor in a thread so we don't block the event loop
+        """将 Agent 进度事件以 SSE 帧形式产出，直到 done/error/超时。"""
+        # 把执行器放到后台线程，避免阻塞事件循环
         fut = loop.run_in_executor(None, run_sync)
         try:
             while True:
                 try:
+                    # 设置较长超时以兼容慢查询；超时本身视为失败并推送 error 帧
                     event = await asyncio.wait_for(queue.get(), timeout=300.0)
                 except asyncio.TimeoutError:
                     stream_result["failed"] = True
@@ -684,11 +701,12 @@ async def agent_chat_stream(
                     break
         finally:
             try:
+                # 给后台线程一个短暂的清理窗口
                 await asyncio.wait_for(fut, timeout=5.0)
             except asyncio.CancelledError:
                 pass
             except asyncio.TimeoutError:
-                # Cleanup taking longer than 5s is treated as an expected timeout; no warning.
+                # 清理超过 5s 视为正常超时，不告警
                 logger.debug("agent executor cleanup timed out after 5s for session %s", session_id)
             except Exception as exc:
                 logger.warning("agent executor cleanup error (ignored): %s", exc, exc_info=True)

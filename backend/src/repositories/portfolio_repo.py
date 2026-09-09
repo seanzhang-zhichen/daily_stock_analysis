@@ -1,7 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Portfolio repository.
+"""组合（Portfolio）数据访问层。
 
-Provides DB access helpers for portfolio account/events/snapshot tables.
+负责组合账户（``PortfolioAccount``）、成交（``PortfolioTrade``）、资金流水
+（``PortfolioCashLedger``）、公司行为（``PortfolioCorporateAction``）、持仓快照
+（``PortfolioPosition`` / ``PortfolioPositionLot`` / ``PortfolioDailySnapshot``）
+以及汇率缓存（``PortfolioFxRate``）等 P0 域表的 CRUD 与查询。
+
+主要特性：
+
+- 写操作使用 ``portfolio_write_session`` 串行化（``BEGIN IMMEDIATE``），避免
+  SQLite 多写入并发导致账本错乱或缓存失效竞态；
+- 写后自动失效受影响账户从变更日起的派生缓存（持仓/快照）；
+- 唯一约束冲突会被翻译成 ``DuplicateTradeUidError`` /
+  ``DuplicateTradeDedupHashError``，方便上层识别导入重复；
+- 提供 ``*_in_session`` 系列方法供调用方在已有事务中复用写入流程。
+
+供组合服务层（``backend/src/services/portfolio``）与 API 端点
+（``backend/api/v1/endpoints/portfolio.py``）调用。
 """
 
 from __future__ import annotations
@@ -31,22 +46,26 @@ logger = logging.getLogger(__name__)
 
 
 class DuplicateTradeUidError(Exception):
-    """Raised when trade_uid conflicts with existing record in one account."""
+    """账户内 ``trade_uid`` 与已有记录冲突时抛出。"""
 
 
 class DuplicateTradeDedupHashError(Exception):
-    """Raised when dedup hash conflicts with existing record in one account."""
+    """账户内 ``dedup_hash`` 与已有记录冲突时抛出。"""
 
 
 class PortfolioBusyError(Exception):
-    """Raised when SQLite write serialization cannot acquire the ledger lock."""
+    """SQLite 写串行化未能拿到账本锁时抛出，调用方应快速重试。"""
 
 
 class PortfolioRepository:
-    """DB access layer for portfolio P0 domain."""
+    """组合 P0 域的数据访问层。
+
+    提供组合账户、成交/资金/公司行为等事件流、估值快照以及汇率缓存的写入与
+    查询能力；上层（组合服务、估值计算器、回测/风险监控）通过它与数据库解耦。
+    """
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
-        """Use the injected database manager for tests or the app singleton in runtime."""
+        """测试时传入自定义 ``db_manager``，运行时使用全局单例。"""
         self.db = db_manager or DatabaseManager.get_instance()
 
     # ------------------------------------------------------------------
@@ -61,7 +80,7 @@ class PortfolioRepository:
         base_currency: str,
         owner_id: Optional[str] = None,
     ) -> PortfolioAccount:
-        """Create an active portfolio account and return the refreshed ORM row."""
+        """创建一个处于激活状态的组合账户，并返回刷新后的 ORM 行。"""
         with self.db.get_session() as session:
             row = PortfolioAccount(
                 owner_id=owner_id,
@@ -77,7 +96,7 @@ class PortfolioRepository:
             return row
 
     def get_account(self, account_id: int, include_inactive: bool = False) -> Optional[PortfolioAccount]:
-        """Return one account, hiding soft-deactivated rows by default."""
+        """查询单个账户；默认隐藏软删除（``is_active=False``）的记录。"""
         with self.db.get_session() as session:
             return self.get_account_in_session(
                 session=session,
@@ -90,7 +109,7 @@ class PortfolioRepository:
         include_inactive: bool = False,
         owner_id: Optional[str] = None,
     ) -> List[PortfolioAccount]:
-        """List accounts, optionally scoped to an owner and including inactive rows."""
+        """列出账户，可选按 owner 过滤，并可包含已停用账户。"""
         with self.db.get_session() as session:
             query = select(PortfolioAccount)
             if not include_inactive:
@@ -107,7 +126,7 @@ class PortfolioRepository:
         account_id: int,
         include_inactive: bool = False,
     ) -> Optional[PortfolioAccount]:
-        """Session-scoped account lookup for callers already inside a transaction."""
+        """会话内（事务中）查询账户，供调用方在已有事务里复用。"""
         conditions = [PortfolioAccount.id == account_id]
         if not include_inactive:
             conditions.append(PortfolioAccount.is_active.is_(True))
@@ -116,7 +135,7 @@ class PortfolioRepository:
         ).scalar_one_or_none()
 
     def update_account(self, account_id: int, fields: Dict[str, Any]) -> Optional[PortfolioAccount]:
-        """Patch mutable account fields and return None when the account is absent."""
+        """按字段集更新可变账户属性；账户不存在时返回 ``None``。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
@@ -131,7 +150,7 @@ class PortfolioRepository:
             return row
 
     def deactivate_account(self, account_id: int) -> bool:
-        """Soft-delete an account so historical events remain available."""
+        """软删除账户（保留历史事件可被查询），返回是否成功。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
@@ -148,10 +167,11 @@ class PortfolioRepository:
     # ------------------------------------------------------------------
     @contextmanager
     def portfolio_write_session(self):
-        """Open a serialized portfolio write transaction.
+        """打开一个 Portfolio 写事务，串行化 SQLite 写入。
 
-        SQLite uses ``BEGIN IMMEDIATE`` here so concurrent ledger writes fail fast
-        with ``PortfolioBusyError`` instead of interleaving cache invalidation.
+        SQLite 下使用 ``BEGIN IMMEDIATE``：并发写请求会立刻以
+        ``PortfolioBusyError`` 失败，让调用方快速重试，而不是让多个事务相互阻塞
+        导致缓存失效逻辑错乱。
         """
         session = self.db.get_session()
         try:
@@ -193,7 +213,7 @@ class PortfolioRepository:
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
     ) -> PortfolioTrade:
-        """Add a trade in its own serialized transaction and detach the returned row."""
+        """在一个独立的事务里写入成交记录，并返回脱离 Session 的 ORM 行。"""
         with self.portfolio_write_session() as session:
             row = self.add_trade_in_session(
                 session=session,
@@ -224,7 +244,7 @@ class PortfolioRepository:
         currency: str,
         note: Optional[str] = None,
     ) -> PortfolioCashLedger:
-        """Add a cash ledger event and invalidate derived portfolio state."""
+        """写入一条资金流水，并使相关派生缓存失效。"""
         with self.portfolio_write_session() as session:
             row = self.add_cash_ledger_in_session(
                 session=session,
@@ -251,7 +271,7 @@ class PortfolioRepository:
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
     ) -> PortfolioCorporateAction:
-        """Add a corporate action event and invalidate affected snapshots."""
+        """写入一条公司行为（分红/拆股等），并使受影响的快照失效。"""
         with self.portfolio_write_session() as session:
             row = self.add_corporate_action_in_session(
                 session=session,
@@ -269,7 +289,7 @@ class PortfolioRepository:
             return row
 
     def get_trade_account_id(self, trade_id: int) -> Optional[int]:
-        """Return account_id for trade_id, or None if not found."""
+        """返回成交记录所属的 ``account_id``；记录不存在时返回 ``None``。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioTrade).where(PortfolioTrade.id == trade_id).limit(1)
@@ -277,7 +297,7 @@ class PortfolioRepository:
             return int(row.account_id) if row is not None else None
 
     def get_cash_ledger_account_id(self, entry_id: int) -> Optional[int]:
-        """Return account_id for cash ledger entry_id, or None if not found."""
+        """返回资金流水所属的 ``account_id``；记录不存在时返回 ``None``。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioCashLedger).where(PortfolioCashLedger.id == entry_id).limit(1)
@@ -285,7 +305,7 @@ class PortfolioRepository:
             return int(row.account_id) if row is not None else None
 
     def get_corporate_action_account_id(self, action_id: int) -> Optional[int]:
-        """Return account_id for corporate action action_id, or None if not found."""
+        """返回公司行为所属的 ``account_id``；记录不存在时返回 ``None``。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioCorporateAction).where(PortfolioCorporateAction.id == action_id).limit(1)
@@ -293,22 +313,22 @@ class PortfolioRepository:
             return int(row.account_id) if row is not None else None
 
     def delete_trade(self, trade_id: int) -> bool:
-        """Delete a trade and clear derived cache from the trade date onward."""
+        """删除一笔成交记录，并清理从成交日起的所有派生缓存。"""
         with self.portfolio_write_session() as session:
             return self.delete_trade_in_session(session=session, trade_id=trade_id)
 
     def delete_cash_ledger(self, entry_id: int) -> bool:
-        """Delete a cash ledger row and clear derived cache from its event date."""
+        """删除一条资金流水，并清理从事件日起的派生缓存。"""
         with self.portfolio_write_session() as session:
             return self.delete_cash_ledger_in_session(session=session, entry_id=entry_id)
 
     def delete_corporate_action(self, action_id: int) -> bool:
-        """Delete a corporate action and clear affected derived portfolio state."""
+        """删除一条公司行为，并清理受影响的派生组合状态。"""
         with self.portfolio_write_session() as session:
             return self.delete_corporate_action_in_session(session=session, action_id=action_id)
 
     def has_trade_uid(self, account_id: int, trade_uid: Optional[str]) -> bool:
-        """Return True when trade_uid already exists in the account."""
+        """检查账户内是否已存在相同 ``trade_uid`` 的成交记录。"""
         uid = (trade_uid or "").strip()
         if not uid:
             return False
@@ -316,7 +336,7 @@ class PortfolioRepository:
             return self.has_trade_uid_in_session(session=session, account_id=account_id, trade_uid=uid)
 
     def has_trade_dedup_hash(self, account_id: int, dedup_hash: Optional[str]) -> bool:
-        """Return True when dedup hash already exists in the account."""
+        """检查账户内是否已存在相同 ``dedup_hash`` 的成交记录。"""
         hash_value = (dedup_hash or "").strip()
         if not hash_value:
             return False
@@ -328,7 +348,7 @@ class PortfolioRepository:
             )
 
     def has_trade_uid_in_session(self, *, session: Any, account_id: int, trade_uid: str) -> bool:
-        """Session-scoped uniqueness check for caller-managed import transactions."""
+        """会话内的 ``trade_uid`` 唯一性检查，供导入批事务复用。"""
         row = session.execute(
             select(PortfolioTrade.id).where(
                 and_(
@@ -340,7 +360,7 @@ class PortfolioRepository:
         return row is not None
 
     def has_trade_dedup_hash_in_session(self, *, session: Any, account_id: int, dedup_hash: str) -> bool:
-        """Session-scoped dedup hash check used by import batches."""
+        """会话内的 ``dedup_hash`` 检查，供导入批事务复用。"""
         row = session.execute(
             select(PortfolioTrade.id).where(
                 and_(
@@ -369,7 +389,7 @@ class PortfolioRepository:
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
     ) -> PortfolioTrade:
-        """Insert a trade inside an existing write session and translate duplicates."""
+        """在调用方传入的会话中插入成交，并把唯一约束冲突翻译为业务异常。"""
         row = PortfolioTrade(
             account_id=account_id,
             trade_uid=trade_uid,
@@ -414,7 +434,7 @@ class PortfolioRepository:
         currency: str,
         note: Optional[str] = None,
     ) -> PortfolioCashLedger:
-        """Insert a cash movement inside an existing write session."""
+        """在调用方传入的会话中插入一条资金流水。"""
         row = PortfolioCashLedger(
             account_id=account_id,
             event_date=event_date,
@@ -447,7 +467,7 @@ class PortfolioRepository:
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
     ) -> PortfolioCorporateAction:
-        """Insert a corporate action inside an existing write session."""
+        """在调用方传入的会话中插入一条公司行为。"""
         row = PortfolioCorporateAction(
             account_id=account_id,
             symbol=symbol,
@@ -470,7 +490,7 @@ class PortfolioRepository:
         return row
 
     def delete_trade_in_session(self, *, session: Any, trade_id: int) -> bool:
-        """Session-scoped trade delete that invalidates only affected future snapshots."""
+        """会话内删除成交记录，仅清理受影响账户自成交日及之后的派生快照。"""
         row = session.execute(
             select(PortfolioTrade).where(PortfolioTrade.id == trade_id).limit(1)
         ).scalar_one_or_none()
@@ -486,7 +506,7 @@ class PortfolioRepository:
         return True
 
     def delete_cash_ledger_in_session(self, *, session: Any, entry_id: int) -> bool:
-        """Session-scoped cash event delete that clears dependent caches."""
+        """会话内删除资金流水记录，并清理依赖缓存。"""
         row = session.execute(
             select(PortfolioCashLedger).where(PortfolioCashLedger.id == entry_id).limit(1)
         ).scalar_one_or_none()
@@ -502,7 +522,7 @@ class PortfolioRepository:
         return True
 
     def delete_corporate_action_in_session(self, *, session: Any, action_id: int) -> bool:
-        """Session-scoped corporate action delete that clears dependent caches."""
+        """会话内删除公司行为记录，并清理依赖缓存。"""
         row = session.execute(
             select(PortfolioCorporateAction).where(PortfolioCorporateAction.id == action_id).limit(1)
         ).scalar_one_or_none()
@@ -521,7 +541,7 @@ class PortfolioRepository:
     # Event reads
     # ------------------------------------------------------------------
     def list_trades(self, account_id: int, as_of: date) -> List[PortfolioTrade]:
-        """List all trades up to ``as_of`` in deterministic ledger order."""
+        """列出截至 ``as_of`` 的所有成交记录，按账本顺序返回。"""
         with self.db.get_session() as session:
             return self.list_trades_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -532,7 +552,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioTrade]:
-        """Session-scoped trade listing for valuation calculators."""
+        """会话内列出成交记录，供估值计算器在已有事务中复用。"""
         rows = session.execute(
             select(PortfolioTrade)
             .where(
@@ -546,7 +566,7 @@ class PortfolioRepository:
         return list(rows)
 
     def list_cash_ledger(self, account_id: int, as_of: date) -> List[PortfolioCashLedger]:
-        """List all cash movements up to ``as_of`` in event order."""
+        """列出截至 ``as_of`` 的所有资金流水，按事件顺序返回。"""
         with self.db.get_session() as session:
             return self.list_cash_ledger_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -557,7 +577,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioCashLedger]:
-        """Session-scoped cash ledger listing for portfolio reconstruction."""
+        """会话内列出资金流水，供组合重建使用。"""
         rows = session.execute(
             select(PortfolioCashLedger)
             .where(
@@ -571,7 +591,7 @@ class PortfolioRepository:
         return list(rows)
 
     def list_corporate_actions(self, account_id: int, as_of: date) -> List[PortfolioCorporateAction]:
-        """List corporate actions effective on or before ``as_of``."""
+        """列出生效日不晚于 ``as_of`` 的所有公司行为。"""
         with self.db.get_session() as session:
             return self.list_corporate_actions_in_session(session=session, account_id=account_id, as_of=as_of)
 
@@ -582,7 +602,7 @@ class PortfolioRepository:
         account_id: int,
         as_of: date,
     ) -> List[PortfolioCorporateAction]:
-        """Session-scoped corporate action listing for valuation replay."""
+        """会话内列出公司行为，供估值回放使用。"""
         rows = session.execute(
             select(PortfolioCorporateAction)
             .where(
@@ -596,7 +616,7 @@ class PortfolioRepository:
         return list(rows)
 
     def get_first_activity_date(self, *, account_id: int, as_of: date) -> Optional[date]:
-        """Return earliest event date (trade/cash/corporate action) for one account."""
+        """返回该账户内（截至 ``as_of``）三类事件中最早的日期。"""
         with self.db.get_session() as session:
             first_trade = session.execute(
                 select(func.min(PortfolioTrade.trade_date)).where(
@@ -640,7 +660,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioTrade], int]:
-        """Return a paginated trade query, optionally scoped by account owner."""
+        """分页查询成交记录，可选按账户 owner 限定；返回 (rows, total)。"""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -694,7 +714,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCashLedger], int]:
-        """Return a paginated cash ledger query with optional owner scoping."""
+        """分页查询资金流水，可选按 owner 限定；返回 (rows, total)。"""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -747,7 +767,7 @@ class PortfolioRepository:
         page_size: int,
         owner_id: Optional[str] = None,
     ) -> Tuple[List[PortfolioCorporateAction], int]:
-        """Return a paginated corporate-action query with symbol/type filters."""
+        """分页查询公司行为，支持按 symbol/类型/时间范围过滤。"""
         with self.db.get_session() as session:
             conditions = []
             if account_id is not None:
@@ -794,12 +814,12 @@ class PortfolioRepository:
     # Price / FX
     # ------------------------------------------------------------------
     def get_latest_close(self, symbol: str, as_of: date) -> Optional[float]:
-        """Return the latest close price on or before ``as_of`` without its date."""
+        """返回 ``as_of`` 之前的最新收盘价（不含日期）。"""
         close = self.get_latest_close_with_date(symbol=symbol, as_of=as_of)
         return close[0] if close is not None else None
 
     def get_latest_close_with_date(self, symbol: str, as_of: date) -> Optional[Tuple[float, date]]:
-        """Return the latest close price and quote date for valuation staleness checks."""
+        """返回 ``as_of`` 之前的最新收盘价与对应日期，用于估值陈旧度判断。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(StockDaily)
@@ -826,7 +846,7 @@ class PortfolioRepository:
         source: str = "manual",
         is_stale: bool = False,
     ) -> None:
-        """Upsert a daily FX rate for a currency pair."""
+        """为指定货币对按日期 upsert 一条汇率记录。"""
         with self.db.get_session() as session:
             existing = session.execute(
                 select(PortfolioFxRate).where(
@@ -862,7 +882,7 @@ class PortfolioRepository:
         to_currency: str,
         as_of: date,
     ) -> Optional[PortfolioFxRate]:
-        """Return the newest FX rate on or before ``as_of`` for a currency pair."""
+        """返回指定货币对在 ``as_of`` 之前的最新汇率记录。"""
         with self.db.get_session() as session:
             row = session.execute(
                 select(PortfolioFxRate)
@@ -887,7 +907,7 @@ class PortfolioRepository:
         owner_id: Optional[str] = None,
         lookback_days: int = 180,
     ) -> List[PortfolioDailySnapshot]:
-        """Load snapshot rows in ascending date order for risk monitoring."""
+        """按日期升序加载快照行，供风险监控使用。"""
         with self.db.get_session() as session:
             query = select(PortfolioDailySnapshot).where(
                 and_(
@@ -911,7 +931,7 @@ class PortfolioRepository:
             ).scalars().all()
             if lookback_days <= 0:
                 return list(rows)
-            # Keep only the latest N calendar days window for risk calculations.
+            # 只保留最近 N 个日历日窗口内的快照, 用于风险指标计算
             cutoff_ordinal = as_of.toordinal() - lookback_days
             return [row for row in rows if row.snapshot_date.toordinal() >= cutoff_ordinal]
 
@@ -927,7 +947,7 @@ class PortfolioRepository:
         lots: Iterable[Dict[str, Any]],
         valuation_currency: str,
     ) -> None:
-        """Replace cached positions/lots for one account and cost method."""
+        """按账户与成本法覆盖写入最新的持仓与批次缓存。"""
         with self.db.get_session() as session:
             session.execute(
                 delete(PortfolioPosition).where(
@@ -982,7 +1002,7 @@ class PortfolioRepository:
             session.commit()
 
     def _invalidate_account_cache_in_session(self, *, session: Any, account_id: int, from_date: date) -> None:
-        """Drop derived portfolio caches that may depend on a changed ledger event."""
+        """清理可能受账本变更影响的派生组合缓存。"""
         session.execute(
             delete(PortfolioPositionLot).where(PortfolioPositionLot.account_id == account_id)
         )
@@ -1000,7 +1020,7 @@ class PortfolioRepository:
 
     @staticmethod
     def _is_sqlite_locked_error(exc: OperationalError) -> bool:
-        """Return True for SQLite lock messages that should become PortfolioBusyError."""
+        """识别应被翻译为 ``PortfolioBusyError`` 的 SQLite 锁错误。"""
         err_text = str(getattr(exc, "orig", exc)).lower()
         return any(
             token in err_text
@@ -1019,7 +1039,7 @@ class PortfolioRepository:
         trade_uid: Optional[str],
         dedup_hash: Optional[str],
     ) -> Exception:
-        """Map low-level unique constraint errors to domain-specific exceptions."""
+        """把底层唯一约束错误映射到领域特定异常。"""
         err_text = str(getattr(exc, "orig", exc)).lower()
         if trade_uid and ("uix_portfolio_trade_uid" in err_text or "unique" in err_text):
             return DuplicateTradeUidError(
@@ -1052,7 +1072,7 @@ class PortfolioRepository:
         fx_stale: bool,
         payload: str,
     ) -> None:
-        """Insert or update one daily portfolio snapshot row."""
+        """插入或更新一条组合的每日快照行。"""
         with self.db.get_session() as session:
             existing = session.execute(
                 select(PortfolioDailySnapshot).where(
@@ -1116,7 +1136,7 @@ class PortfolioRepository:
         lots: Iterable[Dict[str, Any]],
         valuation_currency: str,
     ) -> None:
-        """Atomically refresh position cache and daily snapshot in one transaction."""
+        """在同一个事务里原子地刷新持仓缓存与日终快照。"""
         with self.db.get_session() as session:
             session.execute(
                 delete(PortfolioPosition).where(

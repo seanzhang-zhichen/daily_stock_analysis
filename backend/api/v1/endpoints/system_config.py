@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """System configuration endpoints.
 
 这些接口只允许管理员访问，用于动态设置表单、.env 导入导出、运行时配置更新、
@@ -12,7 +13,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from api.deps import get_admin_user, get_system_config_service
+from api.deps import get_admin_user, get_runtime_scheduler_service, get_system_config_service
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.system_config import (
     DiscoverLLMChannelModelsRequest,
@@ -40,27 +41,47 @@ from src.services.system_config_service import (
     ConfigValidationError,
     SystemConfigService,
 )
+from src.services.runtime_scheduler import RuntimeSchedulerService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_admin_user)])
 
 
+@router.get("/scheduler/status", summary="Get runtime scheduler status")
+def get_scheduler_status(
+    scheduler: RuntimeSchedulerService = Depends(get_runtime_scheduler_service),
+) -> dict:
+    """Return scheduler and isolated watchdog status for API/Web processes."""
+    return scheduler.status()
+
+
+@router.post("/scheduler/run-now", summary="Run scheduled analysis now")
+def run_scheduler_now(
+    scheduler: RuntimeSchedulerService = Depends(get_runtime_scheduler_service),
+) -> dict:
+    """Start one isolated schedule run, rejecting concurrent starts."""
+    result = scheduler.run_now()
+    if not result["accepted"]:
+        raise HTTPException(status_code=409, detail={"error": "scheduler_busy", "message": "A scheduled analysis is already running"})
+    return result
+
+
 class EnvBackupAccessDenied(Exception):
-    """Raised when raw `.env` backup access is not allowed for this request."""
+    """当请求不允许访问原始 .env 备份时抛出。"""
 
     def __init__(self, *, status_code: int, message: str) -> None:
-        """Store the HTTP status and display message for endpoint conversion."""
+        """保存 HTTP 状态码与对外展示文案，供 endpoint 统一转换。"""
         super().__init__(message)
         self.status_code = status_code
         self.message = message
 
 
 def _allow_env_backup_access(request: Request) -> None:
-    """Gate raw .env backup/restore to explicit secure modes.
+    """限制原始 .env 备份/恢复的访问入口，避免在未启用管理认证的环境泄露敏感配置。
 
-    - Desktop runtime keeps existing local behavior via DSA_DESKTOP_MODE.
-    - Non-desktop runtime must have admin auth enabled and a valid session.
+    - 桌面端运行时：通过 ``DSA_DESKTOP_MODE=true`` 保留既有本地行为。
+    - 非桌面运行时：必须启用 admin 认证并携带有效会话。
     """
     if os.getenv("DSA_DESKTOP_MODE") == "true":
         return
@@ -83,7 +104,7 @@ def _allow_env_backup_access(request: Request) -> None:
 
 
 def _raise_env_backup_access_error(exc: EnvBackupAccessDenied) -> None:
-    """Convert env-backup gate failures into the public API error shape."""
+    """把 env 备份访问拦截失败转换为对外的 JSON 错误响应。"""
     raise HTTPException(
         status_code=exc.status_code,
         detail={
@@ -108,7 +129,7 @@ def get_system_config(
     include_schema: bool = Query(True, description="Whether to include schema metadata"),
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> SystemConfigResponse:
-    """Load current config values, optionally with frontend schema metadata."""
+    """读取当前配置值，可选附带前端动态表单所需的 schema 元数据。"""
     try:
         payload = service.get_config(include_schema=include_schema)
         return SystemConfigResponse.model_validate(payload)
@@ -121,6 +142,14 @@ def get_system_config(
                 "message": "Failed to load system configuration",
             },
         )
+
+
+@router.get("/config/generation/status")
+def get_generation_backend_status(
+    service: SystemConfigService = Depends(get_system_config_service),
+):
+    """返回当前配置的 A 股报告生成后端状态。"""
+    return service.get_generation_backend_status()
 
 
 @router.get(
@@ -137,7 +166,7 @@ def get_system_config(
 def get_setup_status(
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> SetupStatusResponse:
-    """Return first-run setup status without writing config or reloading runtime state."""
+    """返回首次运行的配置就绪状态，不写文件也不重载运行时状态。"""
     try:
         payload = service.get_setup_status()
         return SetupStatusResponse.model_validate(payload)
@@ -168,7 +197,7 @@ def update_system_config(
     request: UpdateSystemConfigRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> UpdateSystemConfigResponse:
-    """Validate, version-check, persist, and optionally reload configuration."""
+    """校验 → 版本号比对 → 持久化 → 按需重载配置。"""
     try:
         payload = service.update(
             config_version=request.config_version,
@@ -187,6 +216,7 @@ def update_system_config(
             },
         )
     except ConfigConflictError as exc:
+        # 乐观锁冲突：让前端重新拉取最新版本后再提交
         raise HTTPException(
             status_code=409,
             detail={
@@ -222,7 +252,7 @@ def export_system_config(
     request: Request,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> ExportSystemConfigResponse:
-    """Export raw saved `.env` content after backup-access checks."""
+    """在通过备份访问校验后导出原始 .env 内容。"""
     try:
         _allow_env_backup_access(request)
     except EnvBackupAccessDenied as exc:
@@ -274,7 +304,7 @@ def import_system_config(
     request_obj: Request,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> UpdateSystemConfigResponse:
-    """Import raw `.env` text with validation and optimistic conflict checks."""
+    """导入原始 .env 文本，并配合版本号乐观锁做并发保护。"""
     try:
         _allow_env_backup_access(request_obj)
     except EnvBackupAccessDenied as exc:
@@ -339,7 +369,7 @@ def validate_system_config(
     request: ValidateSystemConfigRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> ValidateSystemConfigResponse:
-    """Run pre-save validation without writing files or reloading runtime state."""
+    """仅运行预保存校验，不写 .env 也不触发运行时重载。"""
     try:
         payload = service.validate(items=[item.model_dump() for item in request.items])
         return ValidateSystemConfigResponse.model_validate(payload)
@@ -368,7 +398,7 @@ def test_llm_channel(
     request: TestLLMChannelRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> TestLLMChannelResponse:
-    """Validate and smoke-test one LLM channel definition without saving it."""
+    """校验一份草稿 LLM 通道定义并做最小化冒烟测试，但不会持久化。"""
     try:
         payload = service.test_llm_channel(
             name=request.name,
@@ -414,7 +444,7 @@ def test_notification_channel(
     request: TestNotificationChannelRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> TestNotificationChannelResponse:
-    """Send a draft notification-channel test without saving configuration."""
+    """在草稿形态下发送一条测试通知，不会写入已保存的配置。"""
     try:
         payload = service.test_notification_channel(
             channel=request.channel,
@@ -458,7 +488,7 @@ def discover_llm_channel_models(
     request: DiscoverLLMChannelModelsRequest,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> DiscoverLLMChannelModelsResponse:
-    """Call a draft LLM channel's model-list endpoint without saving it."""
+    """调用草稿 LLM 通道的 ``/models`` 端点，但不会持久化配置。"""
     try:
         payload = service.discover_llm_channel_models(
             name=request.name,
@@ -501,7 +531,7 @@ def discover_llm_channel_models(
 def get_system_config_schema(
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> SystemConfigSchemaResponse:
-    """Return categorized field metadata for dynamic settings-page rendering."""
+    """返回分类后的字段元数据，供动态设置页渲染。"""
     try:
         payload = service.get_schema()
         return SystemConfigSchemaResponse.model_validate(payload)

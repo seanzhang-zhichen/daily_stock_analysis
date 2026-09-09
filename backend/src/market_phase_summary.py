@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Low-sensitivity public summary for Issue #1386 market phase context."""
+"""市场阶段（market phase）上下文的低敏感度对外摘要。
 
+把运行时的 `MarketPhaseContext` 字典投影为对外稳定、可控的字段集合（phase、market、布尔标志等），
+并负责文本与 JSON 形态的去敏、阶段桶折叠、对外摘要行渲染。
+供通知生成、API 响应组装、复盘统计模块复用。
+"""
 from __future__ import annotations
 
 import json
@@ -10,11 +14,12 @@ from typing import Any, Dict, List, Optional
 
 try:
     from src.core.trading_calendar import MarketPhase, build_market_phase_context, get_market_for_stock
-except ImportError:  # Older target calendar: preserve alert API visibility without phase inference.
+except ImportError:  # 旧版交易日历：保留告警 API 可见性但不做阶段推断。
     from enum import Enum
     from src.core.trading_calendar import get_market_for_stock
 
     class MarketPhase(str, Enum):
+        """市场交易阶段枚举（fallback 定义）：盘前/盘中/午休/临收/盘后/非交易/未知。"""
         PREMARKET = "premarket"
         INTRADAY = "intraday"
         LUNCH_BREAK = "lunch_break"
@@ -24,6 +29,7 @@ except ImportError:  # Older target calendar: preserve alert API visibility with
         UNKNOWN = "unknown"
 
     def build_market_phase_context(*, market=None, current_time=None, trigger_source="system", analysis_intent="auto", analysis_phase="auto"):
+        """fallback：交易日历不可用时构造阶段未知的降级上下文。"""
         from datetime import datetime
         return type("MarketPhaseContext", (), {
             "to_dict": lambda self: {
@@ -118,7 +124,14 @@ _PHASE_LABELS_EN = {
 
 
 def render_market_phase_summary(phase_context: Any) -> Optional[Dict[str, Any]]:
-    """Project a runtime MarketPhaseContext dict into a stable public summary."""
+    """把运行时的 `MarketPhaseContext` 字典投影为对外稳定的摘要。
+
+    Args:
+        phase_context: dict 形态的阶段上下文，字符串 JSON 也会被自动解析。
+
+    Returns:
+        标准化后的摘要字典；阶段非法或输入为空时返回 None。
+    """
     payload = _as_mapping(phase_context)
     if not payload:
         return None
@@ -139,7 +152,7 @@ def render_market_phase_summary(phase_context: Any) -> Optional[Dict[str, Any]]:
 
 
 def extract_market_phase_summary(context_snapshot: Any) -> Optional[Dict[str, Any]]:
-    """Extract and re-sanitize a persisted market phase summary."""
+    """从持久化快照中提取并重新去敏市场阶段摘要。"""
     snapshot = _as_mapping(context_snapshot)
     if not snapshot:
         return None
@@ -150,6 +163,7 @@ def extract_market_phase_summary(context_snapshot: Any) -> Optional[Dict[str, An
 
 
 def _parse_phase_local_time(value: Any) -> Optional[datetime]:
+    """解析阶段本地时间，支持 datetime 或 ISO 字符串，失败返回 None。"""
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
@@ -164,11 +178,10 @@ def rebuild_market_phase_summary_for_stock_code(
     stock_code: Any,
     context_snapshot: Any,
 ) -> Optional[Dict[str, Any]]:
-    """Rebuild phase summary with derived fields for JP/KR display codes.
+    """为 JP/KR 显示代码重建带派生字段的阶段摘要。
 
-    Legacy CN snapshots on JP/KR stock records can retain CN-local values. This
-    helper recomputes those derived fields using the target market context while
-    preserving non-derived source fields when possible.
+     JP/KR 股票记录上的旧版 CN 快照可能保留 CN 本地值。此辅助函数会基于
+     目标市场上下文重新计算派生字段，同时尽量保留非派生来源字段。
     """
     summary = extract_market_phase_summary(context_snapshot)
     if not isinstance(summary, Mapping):
@@ -200,7 +213,7 @@ def rebuild_market_phase_summary_for_stock_code(
 
 
 def normalize_analysis_phase_bucket(value: Any) -> str:
-    """Fold detailed phase labels into the public backtest/statistics buckets."""
+    """把详细阶段标签折叠为复盘/统计使用的对外桶。"""
     phase = _safe_text(value)
     if phase == "premarket":
         return "premarket"
@@ -218,7 +231,7 @@ def format_public_phase_pack_excerpt(
     source: Optional[str] = None,
     report_language: str = "zh",
 ) -> str:
-    """Format a low-sensitivity phase/pack excerpt for notifications."""
+    """渲染用于通知的低敏感度阶段 + 上下文包摘要片段。"""
     phase_summary = _as_mapping(market_phase_summary)
     overview = _as_mapping(analysis_context_pack_overview)
     if not phase_summary and not overview:
@@ -272,7 +285,7 @@ def format_public_market_status_line(
     *,
     report_language: str = "zh",
 ) -> str:
-    """Format one compact market/phase line for aggregate reports."""
+    """格式化一行精简的市场 + 阶段摘要，用于聚合报告。"""
     phase_summary = _as_mapping(market_phase_summary)
     if not phase_summary:
         return ""
@@ -297,6 +310,7 @@ def format_public_market_status_line(
 
 
 def _as_mapping(value: Any) -> Optional[Mapping[str, Any]]:
+    """把 dict 或 JSON 字符串归一化为 Mapping；无法解析时返回 None。"""
     if isinstance(value, Mapping):
         return value
     if isinstance(value, str) and value.strip():
@@ -309,11 +323,13 @@ def _as_mapping(value: Any) -> Optional[Mapping[str, Any]]:
 
 
 def _safe_phase(value: Any) -> Optional[str]:
+    """仅返回白名单内的阶段值（_ALLOWED_PHASES），其余视为非法返回 None。"""
     text = _safe_text(value)
     return text if text in _ALLOWED_PHASES else None
 
 
 def _source_label(value: Any, lang: str) -> Optional[str]:
+    """返回摘要来源标签的本地化名称，未匹配时回退原值。"""
     source = _safe_text(value)
     if not source:
         return None
@@ -322,6 +338,7 @@ def _source_label(value: Any, lang: str) -> Optional[str]:
 
 
 def _safe_text(value: Any) -> str:
+    """把值安全转为纯文本，并对敏感标记字段做脱敏（返回 [REDACTED]）。"""
     if value is None:
         return ""
     if isinstance(value, (Mapping, list, tuple, set)):
@@ -336,6 +353,7 @@ def _safe_text(value: Any) -> str:
 
 
 def _safe_int(value: Any) -> Optional[int]:
+    """仅接受 int（显式排除 bool），其它类型返回 None。"""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -344,6 +362,7 @@ def _safe_int(value: Any) -> Optional[int]:
 
 
 def _list_strings(value: Any, *, limit: int = 5) -> List[str]:
+    """将列表转为去重非空字符串列表，最多保留 limit 条。"""
     if not isinstance(value, list):
         return []
     result: List[str] = []

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-FinnhubFetcher — US market data source (Priority 2)
+FinnhubFetcher — 美股数据源（优先级 2）
 
-Data source: Finnhub.io REST API
-Rate limit: 60 calls/min (free tier)
-Markets: US only
+数据来源：Finnhub.io REST API
+速率限制：免费档 60 次/分钟
+覆盖市场：仅美股
 """
 
 import logging
@@ -25,13 +25,13 @@ _FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
 
 class FinnhubFetcher(BaseFetcher):
-    """Finnhub-backed US OHLCV and quote fetcher."""
+    """基于 Finnhub 的美股 OHLCV 与行情 fetcher。"""
 
     name = "FinnhubFetcher"
     priority = 2
 
     def __init__(self):
-        """Load Finnhub API key from config/env; missing key disables this fetcher."""
+        """从配置/环境变量加载 Finnhub API key；缺失时该 fetcher 被禁用。"""
         from src.config import get_config
         config = get_config()
         self._api_key = getattr(config, 'finnhub_api_key', None) or os.getenv('FINNHUB_API_KEY')
@@ -39,11 +39,11 @@ class FinnhubFetcher(BaseFetcher):
             logger.debug("[Finnhub] API key not configured, fetcher disabled")
 
     def _is_us_stock(self, stock_code: str) -> bool:
-        """Return True when stock_code is supported by Finnhub US endpoints."""
+        """判断 stock_code 是否被 Finnhub 美股接口支持。"""
         return is_us_stock_code(stock_code)
 
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """Fetch raw daily candle data from Finnhub."""
+        """从 Finnhub 拉取原始日线蜡烛数据。"""
         if not self._api_key:
             raise DataFetchError("[Finnhub] API key not configured")
         if not self._is_us_stock(stock_code):
@@ -83,7 +83,7 @@ class FinnhubFetcher(BaseFetcher):
         })
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
-        """Normalize Finnhub candle rows into the project standard schema."""
+        """将 Finnhub 蜡烛数据规范化为项目标准字段结构。"""
         if df.empty:
             return df
 
@@ -103,7 +103,7 @@ class FinnhubFetcher(BaseFetcher):
         return df
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
-        """Fetch Finnhub quote endpoint data as UnifiedRealtimeQuote."""
+        """获取 Finnhub quote 接口数据，并转换为 UnifiedRealtimeQuote。"""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 
@@ -154,7 +154,7 @@ class FinnhubFetcher(BaseFetcher):
         )
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
-        """Resolve ticker description through Finnhub search."""
+        """通过 Finnhub 搜索解析美股代码对应的描述名称。"""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 

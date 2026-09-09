@@ -1,5 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Helpers for report output language selection and localization."""
+"""报告输出语言的本地化与归一化工具。
+
+为分析报告的 UI 文案、信号标签、情绪等级、状态枚举提供中英文互译能力，
+同时把用户传入的多种语言代号（zh-CN / zh-Hans / en-US 等）归一化为内部统一编码。
+
+主要能力：
+- 报告语言归一化与别名解析（zh / en）
+- 报告 UI 标签字典的获取（按语言返回键值对）
+- 操作建议、趋势预测、置信度、筹码健康、乖离状态等枚举的中英文互译
+- 基于操作建议文本与评分的信号等级推断（用于决策类型、emoji 与配色）
+- 文本占位符与情绪评语的多语言渲染
+"""
 
 from __future__ import annotations
 
@@ -364,9 +375,10 @@ _DECISION_INTENT_NEGATION_CONNECTORS = (
 
 
 def _strip_decision_negation_connectors(text: str) -> str:
-    """Remove common advisory connectors between a negation token and decision word."""
+    """去掉否定词与决策词之间常见的建议性连接词。"""
     suffix = text.strip()
     changed = True
+    # 反复扫描直至不再能剥离前缀连接词为止（处理多个连接词连写的情况）。
     while changed:
         changed = False
         for connector in _DECISION_INTENT_NEGATION_CONNECTORS:
@@ -378,8 +390,9 @@ def _strip_decision_negation_connectors(text: str) -> str:
 
 
 def normalize_report_language(value: Optional[str], default: str = "zh") -> str:
-    """Normalize report language to a supported short code."""
+    """将输入语言字符串归一化为受支持的两位短码（zh / en）。"""
     candidate = (value or default).strip().lower().replace(" ", "_")
+    # 优先通过别名表映射（zh-CN / en_US 等），未命中则保留原值再次校验。
     candidate = _REPORT_LANGUAGE_ALIASES.get(candidate, candidate)
     if candidate in SUPPORTED_REPORT_LANGUAGES:
         return candidate
@@ -387,7 +400,7 @@ def normalize_report_language(value: Optional[str], default: str = "zh") -> str:
 
 
 def is_supported_report_language_value(value: Optional[str]) -> bool:
-    """Return whether the raw value is a supported language code or alias."""
+    """返回原始字符串是否为受支持的语言码或别名。"""
     candidate = (value or "").strip().lower().replace(" ", "_")
     if not candidate:
         return False
@@ -395,38 +408,39 @@ def is_supported_report_language_value(value: Optional[str]) -> bool:
 
 
 def get_report_labels(language: Optional[str]) -> Dict[str, str]:
-    """Return UI copy for the selected report language."""
+    """按所选报告语言返回 UI 文案键值对字典。"""
     normalized = normalize_report_language(language)
     return _REPORT_LABELS[normalized]
 
 
 def get_placeholder_text(language: Optional[str]) -> str:
-    """Return placeholder text for missing localized content."""
+    """返回缺失本地化内容时的占位文本（如「待补充」/「TBD」）。"""
     return _PLACEHOLDER_BY_LANGUAGE[normalize_report_language(language)]
 
 
 def get_unknown_text(language: Optional[str]) -> str:
-    """Return localized unknown text."""
+    """返回本地化的「未知」占位文本。"""
     return _UNKNOWN_BY_LANGUAGE[normalize_report_language(language)]
 
 
 def get_no_data_text(language: Optional[str]) -> str:
-    """Return localized data unavailable text."""
+    """返回本地化的「数据缺失」占位文本。"""
     return _NO_DATA_BY_LANGUAGE[normalize_report_language(language)]
 
 
 def _normalize_lookup_key(value: Any) -> str:
-    """Normalize free-form lookup keys for strategy and label translation maps."""
+    """为策略与标签翻译表归一化自由格式查找键。"""
     return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
 def _iter_lookup_candidates(value: Any) -> list[str]:
-    """Yield whole and delimiter-split candidates for localized value lookup."""
+    """产出整体及按分隔符拆分的候选值，用于本地化查找。"""
     raw_text = str(value or "").strip()
     if not raw_text:
         return []
 
     candidates = [raw_text]
+    # 按 /,|,，、 等分隔符拆开，便于混合写法（如「买入/加仓」）的逐项匹配。
     for part in re.split(r"[/|,，、]+", raw_text):
         normalized = part.strip()
         if normalized and normalized not in candidates:
@@ -435,7 +449,7 @@ def _iter_lookup_candidates(value: Any) -> list[str]:
 
 
 def _canonicalize_lookup_value(value: Any, canonical_map: Dict[str, str]) -> Optional[str]:
-    """Resolve a free-form value to its canonical map key when possible."""
+    """在可能的情况下把自由格式的输入解析到 canonical 表中的标准键。"""
     for candidate in _iter_lookup_candidates(value):
         canonical = canonical_map.get(_normalize_lookup_key(candidate))
         if canonical:
@@ -444,11 +458,16 @@ def _canonicalize_lookup_value(value: Any, canonical_map: Dict[str, str]) -> Opt
 
 
 def _first_non_negated_position(text: str, token: str) -> Optional[int]:
-    """Find the first token occurrence not covered by a nearby negation phrase."""
+    """查找首个未被就近否定短语修饰的 token 出现位置。
+
+    用于解析「不建议买入」「未到减仓时点」这类带否定/语气的句子，避免把
+    否定语境下的动作建议误判为正向操作。
+    """
     if not text or not token:
         return None
 
     normalized_text = text.lower().strip()
+    # 文本含英文时启用单词边界匹配，避免子串误命中；纯中文时直接用子串定位。
     if any(ch in normalized_text for ch in "abcdefghijklmnopqrstuvwxyz"):
         matches = list(re.finditer(rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])", normalized_text))
     else:
@@ -456,8 +475,10 @@ def _first_non_negated_position(text: str, token: str) -> Optional[int]:
 
     for match in matches:
         prefix = normalized_text[: match.start()]
+        # 直接后缀是完整否定词（如「不」「not 」）的命中视为被否定，跳过。
         if any(prefix.rstrip().endswith(neg) for neg in _DECISION_INTENT_NEGATIONS):
             continue
+        # 只回看最近 12 个字符判断就近的否定词影响范围。
         lookback = prefix[-12:]
         negated = False
         for neg in _DECISION_INTENT_NEGATIONS:
@@ -470,6 +491,7 @@ def _first_non_negated_position(text: str, token: str) -> Optional[int]:
             if not suffix:
                 negated = True
                 break
+            # 中间出现句号/逗号/分号等断句符号，说明否定作用域已结束。
             if any(ch in suffix for ch in _DECISION_INTENT_NEGATION_SCOPE_BREAK_CHARS):
                 continue
             normalized_suffix = _strip_decision_negation_connectors(suffix)
@@ -478,6 +500,7 @@ def _first_non_negated_position(text: str, token: str) -> Optional[int]:
                 break
             if any(ch in normalized_suffix for ch in _DECISION_INTENT_NEGATION_SCOPE_BREAK_CHARS):
                 continue
+            # 修饰段超过 6 个字符且不再出现 token 时，认为否定与该 token 无关。
             if len(normalized_suffix) > 6 and token not in normalized_suffix:
                 continue
             if normalized_suffix.startswith(token):
@@ -491,7 +514,7 @@ def _first_non_negated_position(text: str, token: str) -> Optional[int]:
 
 
 def _is_placeholder_stock_name(value: Any, code: Any = None) -> bool:
-    """Return whether a stock name is empty, generic or just repeats the code."""
+    """判断股票名称是否为空、通用占位或只是把代码当作名称。"""
     text = str(value or "").strip()
     if not text:
         return True
@@ -506,6 +529,7 @@ def _is_placeholder_stock_name(value: Any, code: Any = None) -> bool:
     if code_text and lowered == code_text.lower():
         return True
 
+    # 「股票XXX」之类只把种类当成名称的占位。
     return text.startswith("股票")
 
 
@@ -516,7 +540,7 @@ def _translate_from_map(
     canonical_map: Dict[str, str],
     translations: Dict[str, Dict[str, str]],
 ) -> str:
-    """Translate a mapped value for the requested report language."""
+    """按报告语言把映射值翻译到对应文本；未知值原样回退。"""
     normalized_language = normalize_report_language(language)
     raw_text = str(value or "").strip()
     if not raw_text:
@@ -529,7 +553,7 @@ def _translate_from_map(
 
 
 def localize_operation_advice(value: Any, language: Optional[str]) -> str:
-    """Translate operation advice between Chinese and English when recognized."""
+    """识别到时将「买入/卖出」类操作建议在中英文之间互译。"""
     return _translate_from_map(
         value,
         language,
@@ -539,11 +563,12 @@ def localize_operation_advice(value: Any, language: Optional[str]) -> str:
 
 
 def localize_trend_prediction(value: Any, language: Optional[str]) -> str:
-    """Translate trend prediction between Chinese and English when recognized."""
+    """识别到时将趋势预测（中英文/强弱档）翻译到指定语言。"""
     normalized_language = normalize_report_language(language)
     raw_text = str(value or "").strip()
     if not raw_text:
         return raw_text
+    # 中文输出且原文本身就是中文时不再二次翻译，避免重复处理或破坏原始措辞。
     if normalized_language == "zh":
         if re.search(r"[\u4e00-\u9fff]", raw_text):
             return raw_text
@@ -556,7 +581,7 @@ def localize_trend_prediction(value: Any, language: Optional[str]) -> str:
 
 
 def localize_confidence_level(value: Any, language: Optional[str]) -> str:
-    """Translate confidence level between Chinese and English when recognized."""
+    """在识别到时将置信度等级在中英文之间互译。"""
     return _translate_from_map(
         value,
         language,
@@ -566,7 +591,7 @@ def localize_confidence_level(value: Any, language: Optional[str]) -> str:
 
 
 def localize_chip_health(value: Any, language: Optional[str]) -> str:
-    """Translate chip health labels between Chinese and English when recognized."""
+    """识别到时将筹码健康标签在中英文之间互译。"""
     return _translate_from_map(
         value,
         language,
@@ -576,7 +601,7 @@ def localize_chip_health(value: Any, language: Optional[str]) -> str:
 
 
 def localize_bias_status(value: Any, language: Optional[str]) -> str:
-    """Translate price bias status labels between Chinese and English when recognized."""
+    """在识别到时将价格乖离状态标签在中英文之间互译。"""
     return _translate_from_map(
         value,
         language,
@@ -586,7 +611,7 @@ def localize_bias_status(value: Any, language: Optional[str]) -> str:
 
 
 def get_bias_status_emoji(value: Any) -> str:
-    """Return the stable alert emoji for a localized or canonical bias status."""
+    """返回本地化或规范化乖离状态对应的稳定预警 emoji。"""
     canonical = _canonicalize_lookup_value(value, _BIAS_STATUS_CANONICAL_MAP)
     if canonical == "safe":
         return "✅"
@@ -596,7 +621,8 @@ def get_bias_status_emoji(value: Any) -> str:
 
 
 def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
-    """Infer buy/hold/sell from human-readable operation advice."""
+    """从自然语言操作建议文本中推断决策类型（buy / hold / sell）。"""
+    # 第一轮：直接通过 canonical 表精确匹配。
     canonical = _canonicalize_lookup_value(value, _OPERATION_ADVICE_CANONICAL_MAP)
     if canonical in {"strong_buy", "buy"}:
         return "buy"
@@ -605,6 +631,7 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
     if canonical in {"hold", "watch"}:
         return "hold"
 
+    # 第二轮：在原始文本中搜索最早出现的、未被否定修饰的指令关键词。
     normalized_text = _normalize_lookup_key(value)
     best_position: Optional[int] = None
     best_canonical: Optional[str] = None
@@ -613,6 +640,7 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
         pos = _first_non_negated_position(normalized_text, option_norm)
         if pos is None:
             continue
+        # 取最早出现且非否定的命中，作为最终决策依据。
         if best_position is None or pos < best_position:
             best_position = pos
             best_canonical = canonical
@@ -628,9 +656,10 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
 
 
 def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[str, str, str]:
-    """Return localized signal text, emoji, and stable color tag."""
+    """返回本地化后的信号文案、emoji 与稳定的色彩/分类标签。"""
     normalized_language = normalize_report_language(language)
     canonical = _canonicalize_lookup_value(advice, _OPERATION_ADVICE_CANONICAL_MAP)
+    # 命中明确建议时直接按建议分级（不参考分数）。
     if canonical == "strong_buy":
         return (_OPERATION_ADVICE_TRANSLATIONS["strong_buy"][normalized_language], "💚", "strong_buy")
     if canonical == "buy":
@@ -644,9 +673,11 @@ def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[
     if canonical in {"sell", "strong_sell"}:
         return (_OPERATION_ADVICE_TRANSLATIONS["sell"][normalized_language], "🔴", "sell")
 
+    # 没有可识别建议时退化到按分数阈值划分等级。
     try:
         numeric_score = int(float(score))
     except (TypeError, ValueError):
+        # 无法解析分数时按中性区间处理（50 = 持有）。
         numeric_score = 50
 
     if numeric_score >= 80:
@@ -663,7 +694,7 @@ def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[
 
 
 def get_localized_stock_name(value: Any, code: Any, language: Optional[str]) -> str:
-    """Return a localized stock name placeholder when the original name is missing."""
+    """股票名称缺失或为占位时，返回本地化的「待确认股票」等通用名称。"""
     raw_text = str(value or "").strip()
     if not _is_placeholder_stock_name(raw_text, code):
         return raw_text
@@ -671,7 +702,7 @@ def get_localized_stock_name(value: Any, code: Any, language: Optional[str]) -> 
 
 
 def get_sentiment_label(score: int, language: Optional[str]) -> str:
-    """Return localized sentiment label by score band."""
+    """按分数所在区间返回本地化的舆情情绪标签。"""
     normalized = normalize_report_language(language)
     if normalized == "en":
         if score >= 80:

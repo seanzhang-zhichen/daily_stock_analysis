@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-SkillAggregator — weighted aggregation of skill opinions.
+SkillAggregator —— 对多个技能 Agent 的意见做加权聚合，输出共识意见。
+
+按各技能的 confidence 与历史回测表现得到权重，把信号（strong_buy/buy/hold/sell/strong_sell）
+映射成数值后加权平均，再映射回最终信号。
 """
 
 from __future__ import annotations
@@ -8,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-from src.agent.memory import AgentMemory
+from src.services.skill_opinion_weight_service import SkillOpinionWeightService
 from src.agent.protocols import AgentContext, AgentOpinion
 from src.agent.skills.defaults import (
     SKILL_CONSENSUS_AGENT_NAME,
@@ -38,26 +41,22 @@ _SCORE_TO_SIGNAL = [
 
 
 class SkillAggregator:
-    """Aggregate multiple skill-agent opinions into one consensus."""
+    """把多个技能 Agent 的意见聚合为一个共识。"""
 
     def aggregate(
         self,
         ctx: AgentContext,
         min_samples: int = _MIN_BACKTEST_SAMPLES,
     ) -> Optional[AgentOpinion]:
-        """Combine individual skill opinions into one weighted consensus opinion."""
+        """把各技能意见合并为一条加权共识意见。"""
         skill_opinions = [op for op in ctx.opinions if is_skill_agent_name(op.agent_name)]
         if not skill_opinions:
             return None
 
         skill_ids = [extract_skill_id(op.agent_name) or op.agent_name for op in skill_opinions]
-        memory = AgentMemory.from_config()
         perf_weights = (
-            memory.compute_skill_weights(
-                skill_ids,
-                use_backtest=self._use_backtest_autoweight(),
-            )
-            if memory.enabled
+            SkillOpinionWeightService().compute_weights(skill_ids)
+            if self._use_backtest_autoweight()
             else {}
         )
 
@@ -123,7 +122,7 @@ class SkillAggregator:
         min_samples: int,
         perf_weight: Optional[float] = None,
     ) -> float:
-        """Compute one skill's aggregation weight from confidence and performance."""
+        """由置信度与历史表现计算单个技能的聚合权重。"""
         base_weight = opinion.confidence
         if perf_weight is not None:
             return base_weight * perf_weight
@@ -131,7 +130,7 @@ class SkillAggregator:
 
     @staticmethod
     def _backtest_factor(agent_name: str, min_samples: int) -> float:
-        """Return a backtest-derived multiplier when enough samples exist."""
+        """样本量足够时返回回测推导的乘数。"""
         if not SkillAggregator._use_backtest_autoweight():
             return 1.0
 
@@ -150,7 +149,7 @@ class SkillAggregator:
 
     @staticmethod
     def _use_backtest_autoweight() -> bool:
-        """Read whether skill consensus should use backtest performance weighting."""
+        """读取技能共识是否应使用回测表现加权。"""
         try:
             from src.config import get_config
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""股票日线数据相关的存取操作。"""
+"""股票日线数据相关的存取操作（``StockDataMixin``）。"""
 
 from __future__ import annotations
 
@@ -22,20 +22,20 @@ class StockDataMixin:
 
     def has_today_data(self, code: str, target_date: Optional[date] = None) -> bool:
         """
-        检查是否已有指定日期的数据
-        
-        用于断点续传逻辑：如果已有数据则跳过网络请求
-        
+        检查是否已有指定日期的数据。
+
+        用于断点续传逻辑：如果已有数据则跳过网络请求。
+
         Args:
-            code: 股票代码
-            target_date: 目标日期（默认今天）
-            
+            code: 股票代码。
+            target_date: 目标日期（默认今天）。
+
         Returns:
-            是否存在数据
+            是否存在数据。
         """
         if target_date is None:
             target_date = date.today()
-        # 注意：这里的 target_date 语义是“自然日”，而不是“最新交易日”。
+        # 注意：这里的 target_date 语义是"自然日"，而不是"最新交易日"。
         # 在周末/节假日/非交易日运行时，即使数据库已有最新交易日数据，这里也会返回 False。
         # 该行为目前保留（按需求不改逻辑）。
 
@@ -57,16 +57,16 @@ class StockDataMixin:
         days: int = 2
     ) -> List[StockDaily]:
         """
-        获取最近 N 天的数据
-        
-        用于计算"相比昨日"的变化
-        
+        获取最近 N 天的数据。
+
+        用于计算"相比昨日"的变化。
+
         Args:
-            code: 股票代码
-            days: 获取天数
-            
+            code: 股票代码。
+            days: 获取天数。
+
         Returns:
-            StockDaily 对象列表（按日期降序）
+            StockDaily 对象列表（按日期降序）。
         """
         with self.get_session() as session:
             results = session.execute(
@@ -85,15 +85,15 @@ class StockDataMixin:
         end_date: date
     ) -> List[StockDaily]:
         """
-        获取指定日期范围的数据
-        
+        获取指定日期范围的数据。
+
         Args:
-            code: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期
-            
+            code: 股票代码。
+            start_date: 开始日期。
+            end_date: 结束日期。
+
         Returns:
-            StockDaily 对象列表
+            StockDaily 对象列表（按日期升序）。
         """
         with self.get_session() as session:
             results = session.execute(
@@ -118,20 +118,21 @@ class StockDataMixin:
         canonical_id: Optional[str] = None,
     ) -> int:
         """
-        保存日线数据到数据库
-        
+        保存日线数据到数据库。
+
         策略：
-        - 按 `(code, date)` 做批量 UPSERT，已存在记录会覆盖更新
-        - 同一批次内若存在重复日期，以最后一条记录为准
-        - SQLite 分支按 chunk 写入以避免绑定参数上限
-        
+        - 按 ``(code, date)`` 做批量 UPSERT，已存在记录会覆盖更新；
+        - 同一批次内若存在重复日期，以最后一条记录为准；
+        - SQLite 分支按 chunk 写入以避免绑定参数上限。
+
         Args:
-            df: 包含日线数据的 DataFrame
-            code: 股票代码
-            data_source: 数据来源名称
-            
+            df: 包含日线数据的 DataFrame。
+            code: 股票代码。
+            data_source: 数据来源名称。
+            canonical_id: 规范化的稳定分析 ID（可选）。
+
         Returns:
-            本次实际新增的记录数（不含更新）
+            本次实际新增的记录数（不含更新覆盖部分）。
         """
         if df is None or df.empty:
             logger.warning(f"保存数据为空，跳过 {code}")
@@ -151,6 +152,7 @@ class StockDataMixin:
             except Exception:
                 canonical_id = None
         now = _dt.now()
+        # 按 date 聚合, 同一天的多条记录以后出现者为准（最新覆盖）
         records_by_date: Dict[date, Dict[str, Any]] = {}
         for row in df.to_dict(orient='records'):
             row_date = self._normalize_daily_date(row.get('date'))
@@ -287,22 +289,22 @@ class StockDataMixin:
         target_date: Optional[date] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        获取分析所需的上下文数据
-        
-        返回今日数据 + 昨日数据的对比信息
-        
+        获取分析所需的上下文数据。
+
+        返回今日数据 + 昨日数据的对比信息（变化率、均线形态等）。
+
         Args:
-            code: 股票代码
-            target_date: 目标日期（默认今天）
-            
+            code: 股票代码。
+            target_date: 目标日期（默认今天）。
+
         Returns:
-            包含今日数据、昨日对比等信息的字典
+            包含今日/昨日/变化率等信息的字典；不存在则返回 ``None``。
         """
         if target_date is None:
             target_date = date.today()
-        # 注意：尽管入参提供了 target_date，但当前实现实际使用的是“最新两天数据”（get_latest_data），
+        # 注意：尽管入参提供了 target_date，但当前实现实际使用的是"最新两天数据"（get_latest_data），
         # 并不会按 target_date 精确取当日/前一交易日的上下文。
-        # 因此若未来需要支持“按历史某天复盘/重算”的可解释性，这里需要调整。
+        # 因此若未来需要支持"按历史某天复盘/重算"的可解释性，这里需要调整。
         # 该行为目前保留（按需求不改逻辑）。
 
         # 获取最近2天数据
@@ -342,14 +344,14 @@ class StockDataMixin:
 
     def _analyze_ma_status(self, data: StockDaily) -> str:
         """
-        分析均线形态
-        
+        分析均线形态。
+
         判断条件：
         - 多头排列：close > ma5 > ma10 > ma20
         - 空头排列：close < ma5 < ma10 < ma20
         - 震荡整理：其他情况
         """
-        # 注意：这里的均线形态判断基于“close/ma5/ma10/ma20”静态比较，
+        # 注意：这里的均线形态判断基于"close/ma5/ma10/ma20"静态比较，
         # 未考虑均线拐点、斜率、或不同数据源复权口径差异。
         # 该行为目前保留（按需求不改逻辑）。
         close = data.close or 0

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Configuration field metadata registry.
+"""配置字段元数据注册表。
 
-This module is the single source of truth for configuration UI metadata,
-validation hints, and category grouping. The registry intentionally lives in a
-plain Python structure so backend APIs, web forms, and documentation helpers can
-share one schema without importing frontend code.
+本模块是配置界面元数据、校验提示与分类分组的唯一权威来源（single source of
+truth）。注册表刻意采用纯 Python 结构（而非依赖前端代码），使后端 API、Web
+表单与文档辅助工具能够共享同一套配置 schema，而无需引入前端依赖。
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
-from src.config import AGENT_MAX_STEPS_DEFAULT
+from src.config import AGENT_CONTEXT_COMPRESSION_PROFILES, AGENT_MAX_STEPS_DEFAULT
 from src.notification_noise import NOTIFICATION_SEVERITIES
 from src.notification_routing import ROUTABLE_NOTIFICATION_CHANNELS
 
@@ -99,6 +98,38 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             },
         ],
         "warning_codes": [],
+    },
+    "GENERATION_BACKEND": {
+        "title": "Analysis Generation Backend", "description": "Backend for A-share report text generation.",
+        "category": "ai_model", "data_type": "string", "ui_control": "select", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "litellm",
+        "options": [{"label": "LiteLLM", "value": "litellm"}, {"label": "Codex CLI", "value": "codex_cli"}, {"label": "OpenCode CLI", "value": "opencode_cli"}],
+        "validation": {"enum": ["litellm", "codex_cli", "opencode_cli"]}, "display_order": 0,
+    },
+    "GENERATION_FALLBACK_BACKEND": {
+        "title": "Generation Fallback Backend", "description": "Use LiteLLM when a local CLI generation fails; leave empty to disable.",
+        "category": "ai_model", "data_type": "string", "ui_control": "select", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "litellm",
+        "options": [{"label": "Disabled", "value": ""}, {"label": "LiteLLM", "value": "litellm"}],
+        "validation": {"enum": ["", "litellm"]}, "display_order": 0.1,
+    },
+    "GENERATION_BACKEND_TIMEOUT_SECONDS": {
+        "title": "Generation Backend Timeout", "description": "Maximum seconds for one local CLI call.",
+        "category": "ai_model", "data_type": "integer", "ui_control": "number", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "300", "options": [],
+        "validation": {"min": 1, "max": 3600}, "display_order": 0.2,
+    },
+    "GENERATION_BACKEND_MAX_OUTPUT_BYTES": {
+        "title": "Generation Output Limit", "description": "Maximum local CLI output bytes.",
+        "category": "ai_model", "data_type": "integer", "ui_control": "number", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "1048576", "options": [],
+        "validation": {"min": 1024, "max": 33554432}, "display_order": 0.3,
+    },
+    "OPENCODE_CLI_MODEL": {
+        "title": "OpenCode CLI Model", "description": "Optional model argument for OpenCode CLI.",
+        "category": "ai_model", "data_type": "string", "ui_control": "text", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "", "options": [],
+        "validation": {"pattern": r"^$|^[^\s|<>;`$]+$"}, "display_order": 0.4,
     },
     "LITELLM_MODEL": {
         "title": "Primary Model",
@@ -192,7 +223,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "warning_codes": ["fallback_models_must_be_available"],
     },
     # ------------------------------------------------------------------
-    # AI Model – Multi-channel LLM configuration
+    # AI 模型 – 多渠道 LLM 配置
     # ------------------------------------------------------------------
     "LITELLM_CONFIG": {
         "title": "Advanced Model Routing Config",
@@ -307,7 +338,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "warning_codes": ["secret_value"],
     },
     # ------------------------------------------------------------------
-    # AI Model – DeepSeek official (independent from OpenAI-compatible)
+    # AI 模型 – DeepSeek 官方（独立于 OpenAI 兼容通道）
     # ------------------------------------------------------------------
     "DEEPSEEK_API_KEY": {
         "title": "DeepSeek API Key",
@@ -702,6 +733,22 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             },
         ],
         "warning_codes": [],
+    },
+    "NEWS_INTEL_AUTO_FETCH_ENABLED": {
+        "title": "Local Intelligence Auto Fetch",
+        "description": "Refresh the optional A-share RSS/Atom/NewsNow intelligence pool before analysis and market review.",
+        "category": "data_source", "data_type": "boolean", "ui_control": "switch",
+        "is_sensitive": False, "is_required": False, "is_editable": True, "default_value": "false",
+        "options": [], "validation": {}, "display_order": 62, "help_key": "settings.data_source.news_intel",
+        "examples": ["NEWS_INTEL_AUTO_FETCH_ENABLED=true"], "docs": [], "warning_codes": [],
+    },
+    "NEWSNOW_BASE_URL": {
+        "title": "NewsNow Base URL",
+        "description": "NewsNow API base URL for the optional A-share local intelligence pool. A self-hosted instance is recommended for production.",
+        "category": "data_source", "data_type": "string", "ui_control": "input",
+        "is_sensitive": False, "is_required": False, "is_editable": True, "default_value": "https://newsnow.busiyi.world",
+        "options": [], "validation": {"max_length": 1000}, "display_order": 63, "help_key": "settings.data_source.news_intel",
+        "examples": ["NEWSNOW_BASE_URL=https://newsnow.example.com"], "docs": [], "warning_codes": [],
     },
     "BIAS_THRESHOLD": {
         "title": "Bias Threshold (%)",
@@ -1234,7 +1281,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "display_order": 54,
     },
     # ------------------------------------------------------------------
-    # Notification – Feishu
+    # 通知渠道 – 飞书
     # ------------------------------------------------------------------
     "FEISHU_WEBHOOK_URL": {
         "title": "Feishu Webhook URL",
@@ -1327,7 +1374,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "display_order": 16,
     },
     # ------------------------------------------------------------------
-    # Notification – Telegram
+    # 通知渠道 – Telegram
     # ------------------------------------------------------------------
     "TELEGRAM_BOT_TOKEN": {
         "title": "Telegram Bot Token",
@@ -1396,7 +1443,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "display_order": 19,
     },
     # ------------------------------------------------------------------
-    # Notification – Email
+    # 通知渠道 – 邮件
     # ------------------------------------------------------------------
     "EMAIL_SENDER": {
         "title": "Email Sender",
@@ -1478,7 +1525,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "warning_codes": ["comma_separated_values"],
     },
     # ------------------------------------------------------------------
-    # Notification – Discord
+    # 通知渠道 – Discord
     # ------------------------------------------------------------------
     "DISCORD_WEBHOOK_URL": {
         "title": "Discord Webhook URL",
@@ -1560,7 +1607,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "display_order": 36,
     },
     # ------------------------------------------------------------------
-    # Notification – Slack  (Bot > Webhook when both configured)
+    # 通知渠道 – Slack（两者都配置时 Bot 优先于 Webhook）
     # ------------------------------------------------------------------
     "SLACK_BOT_TOKEN": {
         "title": "Slack Bot Token",
@@ -1617,7 +1664,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "display_order": 39,
     },
     # ------------------------------------------------------------------
-    # Notification – Pushover
+    # 通知渠道 – Pushover
     # ------------------------------------------------------------------
     "PUSHOVER_USER_KEY": {
         "title": "Pushover User Key",
@@ -2755,6 +2802,20 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "validation": {"min": 0, "max": 3600},
         "display_order": 62,
     },
+    "AGENT_SKILL_MAX_CONCURRENCY": {
+        "title": "Specialist Skill Concurrency",
+        "description": "Maximum number of independent specialist skills to run in parallel (1-4).",
+        "category": "agent",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "3",
+        "options": [],
+        "validation": {"min": 1, "max": 4},
+        "display_order": 63,
+    },
     "AGENT_RISK_OVERRIDE": {
         "title": "Risk Agent Override",
         "description": "Allow the risk agent to veto buy signals when critical risk flags are detected.",
@@ -2768,6 +2829,33 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 63,
+    },
+    "AGENT_CONTEXT_COMPRESSION_ENABLED": {
+        "title": "Agent Context Compression", "description": "Enable rolling summaries for long chat histories.",
+        "category": "agent", "data_type": "boolean", "ui_control": "switch", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "false", "options": [], "validation": {}, "display_order": 63.1,
+    },
+    "AGENT_CONTEXT_COMPRESSION_PROFILE": {
+        "title": "Context Compression Profile",
+        "description": "Compression preset. Threshold, protected turns, and summary size default to this profile when omitted.",
+        "category": "agent", "data_type": "string", "ui_control": "select", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "balanced",
+        "options": [
+            {"label": "Cost", "value": "cost"},
+            {"label": "Balanced", "value": "balanced"},
+            {"label": "Long context raw first", "value": "long_context_raw_first"},
+        ],
+        "validation": {"enum": list(AGENT_CONTEXT_COMPRESSION_PROFILES)}, "display_order": 63.15,
+    },
+    "AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS": {
+        "title": "Context Compression Threshold", "description": "Estimated token threshold that triggers summarization.",
+        "category": "agent", "data_type": "integer", "ui_control": "number", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "12000", "options": [], "validation": {"min": 1000}, "display_order": 63.2,
+    },
+    "AGENT_CONTEXT_PROTECTED_TURNS": {
+        "title": "Protected Chat Turns", "description": "Recent user turns kept verbatim during compression.",
+        "category": "agent", "data_type": "integer", "ui_control": "number", "is_sensitive": False,
+        "is_required": False, "is_editable": True, "default_value": "4", "options": [], "validation": {"min": 0, "max": 50}, "display_order": 63.3,
     },
     "AGENT_DEEP_RESEARCH_BUDGET": {
         "title": "Deep Research Token Budget",
@@ -2919,17 +3007,17 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
 
 
 def get_category_definitions() -> List[Dict[str, Any]]:
-    """Return deep-copied category metadata."""
+    """返回深拷贝（deep copy）后的分类元数据，避免调用方改动污染全局注册表。"""
     return deepcopy(_CATEGORY_DEFINITIONS)
 
 
 def get_registered_field_keys() -> List[str]:
-    """Return all explicitly registered keys."""
+    """返回所有已显式注册的字段名。"""
     return list(_FIELD_DEFINITIONS.keys())
 
 
 def _extract_option_values(options: List[Any]) -> List[str]:
-    """Extract canonical option values from string/object style select options."""
+    """从"纯字符串"或"对象形式"的下拉选项中提取规范化的取值列表。"""
     values: List[str] = []
     for option in options:
         if isinstance(option, str):
@@ -2943,11 +3031,17 @@ def _extract_option_values(options: List[Any]) -> List[str]:
 
 
 def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str, Any]:
-    """Return field definition for key, including inferred fallback metadata.
+    """返回指定字段的定义，未注册时回退为推断出的元数据。
 
-    Unknown environment keys remain editable through the settings UI. Their
-    category/control metadata is inferred from the key name and optional current
-    value instead of requiring every extension key to be registered up front.
+    未在注册表中的环境变量仍然可以在设置界面编辑：其分类与控件类型由字段名及可选的
+    当前取值推断得出，这样新增扩展字段无需提前注册即可被 UI 正常渲染。
+
+    Args:
+        key: 环境变量名（大小写不敏感）。
+        value_hint: 该字段当前的值，仅用于推断未注册字段的数据类型。
+
+    Returns:
+        字段定义字典；已注册字段会额外带上 ``key`` 与补全了 ``enum`` 的 ``validation``。
     """
     key_upper = key.upper()
     if key_upper in _FIELD_DEFINITIONS:
@@ -2955,6 +3049,7 @@ def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str
         field["key"] = key_upper
         validation = deepcopy(field.get("validation") or {})
         option_values = _extract_option_values(field.get("options", []))
+        # select 控件在没有显式 enum 时，用选项列表补全，便于后端做取值校验
         if field.get("ui_control") == "select" and option_values and "enum" not in validation:
             validation["enum"] = option_values
         field["validation"] = validation
@@ -2975,13 +3070,18 @@ def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str
         "default_value": None,
         "options": [],
         "validation": {},
+        # 9000：让推断出的字段始终排在已注册字段之后，避免打乱既有展示顺序
         "display_order": 9000,
     }
     return field
 
 
 def build_schema_response() -> Dict[str, Any]:
-    """Build schema payload grouped by category for the settings API."""
+    """构建按分类分组的配置 schema 负载，供设置页 API 使用。
+
+    分类按 ``display_order`` 排序，分类内字段再按各自的 ``display_order`` 与字段名排序，
+    保证前端渲染顺序稳定可预期。
+    """
     category_map: Dict[str, Dict[str, Any]] = {}
     for category in get_category_definitions():
         category_map[category["category"]] = {**category, "fields": []}
@@ -3004,13 +3104,17 @@ def build_schema_response() -> Dict[str, Any]:
 
 
 def _is_sensitive_key(key: str) -> bool:
-    """Detect keys that should be masked and rendered with password controls."""
+    """判断字段名是否属于敏感字段（需掩码展示并使用密码控件）。"""
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD")
     return any(marker in key for marker in markers)
 
 
 def _infer_category(key: str) -> str:
-    """Infer a stable category for unregistered environment keys."""
+    """为未注册的环境变量推断一个稳定的分类。
+
+    按"前缀/后缀特征"自上而下匹配，命中即返回，因此顺序决定了优先级；
+    全部不命中时归入 ``uncategorized``。
+    """
     if key == "STOCK_LIST":
         return "base"
     if key.startswith("BACKTEST_"):
@@ -3061,7 +3165,11 @@ def _infer_category(key: str) -> str:
 
 
 def _infer_data_type(key: str, value_hint: Optional[str]) -> str:
-    """Infer a primitive field type from the key and current string value."""
+    """根据字段名与当前字符串取值推断基础数据类型。
+
+    先按布尔/整数/浮点依次尝试解析，都失败再按已知的数组型字段名单判定，最后退化为字符串。
+    """
+    # 调度时间类字段（如 SCHEDULE_TIME）统一按时间类型渲染
     if key.endswith("_TIME"):
         return "time"
     if value_hint is None:
@@ -3089,7 +3197,10 @@ def _infer_data_type(key: str, value_hint: Optional[str]) -> str:
 
 
 def _infer_ui_control(data_type: str, key: str) -> str:
-    """Map inferred data type/sensitivity to a frontend control hint."""
+    """把推断出的类型与敏感性映射为前端控件类型提示。
+
+    敏感字段优先：即便推断为文本，也强制使用密码控件，避免密钥明文展示。
+    """
     if _is_sensitive_key(key):
         return "password"
     if data_type == "boolean":

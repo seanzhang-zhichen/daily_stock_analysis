@@ -45,12 +45,18 @@ from src.storage.models.app import (
     AppResearchReportReaction,
 )
 from src.storage.models.backtest import BacktestResult, BacktestSummary
-from src.storage.models.conversation import ConversationMessage, LLMUsage
+from src.storage.models.conversation import ConversationMessage, ConversationSessionState, ConversationSummary, LLMUsage
 from src.storage.models.decision_signal import DecisionSignalRecord
+from src.storage.models.decision_signal_outcome import DecisionSignalOutcomeRecord
+from src.storage.models.decision_signal_feedback import DecisionSignalFeedbackRecord
+from src.storage.models.skill_opinion import SkillOpinionOutcomeRecord, SkillOpinionSampleRecord
 from src.storage.models.core import (
     AnalysisHistory,
     FundamentalSnapshot,
     NewsIntel,
+    IntelligenceSource,
+    IntelligenceItem,
+    INTELLIGENCE_ITEM_NULL_SCOPE_VALUE,
     ScreeningRun,
     StockDaily,
     StockIndexEntry,
@@ -71,6 +77,9 @@ __all__ = [
     # core
     "StockDaily",
     "NewsIntel",
+    "IntelligenceSource",
+    "IntelligenceItem",
+    "INTELLIGENCE_ITEM_NULL_SCOPE_VALUE",
     "FundamentalSnapshot",
     "AnalysisHistory",
     "ScreeningRun",
@@ -90,9 +99,15 @@ __all__ = [
     "PortfolioFxRate",
     # conversation / llm
     "ConversationMessage",
+    "ConversationSessionState",
+    "ConversationSummary",
     "LLMUsage",
     # decision signals
     "DecisionSignalRecord",
+    "DecisionSignalOutcomeRecord",
+    "DecisionSignalFeedbackRecord",
+    "SkillOpinionSampleRecord",
+    "SkillOpinionOutcomeRecord",
     # alert
     "AlertRuleRecord",
     "AlertTriggerRecord",

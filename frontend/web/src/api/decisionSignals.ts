@@ -6,6 +6,8 @@ import type {
   DecisionSignalListParams,
   DecisionSignalListResponse,
   DecisionSignalStatus,
+  DecisionSignalFeedback,
+  DecisionSignalFeedbackValue,
 } from '../types/decisionSignals';
 
 function buildParams(query: DecisionSignalListParams): Record<string, unknown> {
@@ -55,5 +57,20 @@ export const decisionSignalsApi = {
     );
     const data = toCamelCase<{ item: DecisionSignalItem }>(response.data);
     return data.item;
+  },
+
+  async getFeedback(signalId: number): Promise<DecisionSignalFeedback> {
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/decision-signals/${signalId}/feedback`);
+    return toCamelCase<DecisionSignalFeedback>(response.data);
+  },
+
+  async putFeedback(signalId: number, feedbackValue: DecisionSignalFeedbackValue, reasonCode?: string, note?: string): Promise<DecisionSignalFeedback> {
+    const response = await apiClient.put<Record<string, unknown>>(`/api/v1/decision-signals/${signalId}/feedback`, {
+      feedback_value: feedbackValue,
+      reason_code: reasonCode,
+      note,
+      source: 'web',
+    });
+    return toCamelCase<DecisionSignalFeedback>(response.data);
   },
 };

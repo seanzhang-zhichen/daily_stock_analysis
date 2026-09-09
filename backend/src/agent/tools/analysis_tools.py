@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-Analysis tools — wraps StockTrendAnalyzer as an agent-callable tool.
+"""分析类工具 —— 将 StockTrendAnalyzer 封装为智能体可调用的工具。
 
-Tools:
-- analyze_trend: comprehensive technical trend analysis
+对外供 `src.agent.factory` 构建 ToolRegistry 时统一注册。
+
+主要工具：
+- analyze_trend: 综合技术面趋势分析
+- calculate_ma: 移动平均计算
+- get_volume_analysis: 量价关系分析
+- analyze_pattern: K 线/图表形态识别
 """
 
 import logging
@@ -15,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _fetch_trend_data(stock_code: str):
-    """Fetch historical OHLCV (DataFrame) for trend analysis. DB first, then DataFetcher fallback."""
+    """获取用于趋势分析的历史 OHLCV 数据（DataFrame）。优先数据库，DataFetcher 兜底。"""
     from src.services.history_loader import load_history_df
 
     df, _ = load_history_df(stock_code, days=60)
@@ -23,7 +27,7 @@ def _fetch_trend_data(stock_code: str):
 
 
 def _handle_analyze_trend(stock_code: str) -> dict:
-    """Run technical trend analysis on a stock."""
+    """对股票执行技术面趋势分析。"""
     from src.stock_analyzer import StockTrendAnalyzer
 
     if not (stock_code and str(stock_code).strip()):
@@ -100,11 +104,11 @@ analyze_trend_tool = ToolDefinition(
 
 
 # ============================================================
-# calculate_ma — flexible moving average calculator
+# calculate_ma —— 灵活的移动平均计算器
 # ============================================================
 
 def _handle_calculate_ma(stock_code: str, periods: Optional[str] = None, days: int = 120) -> dict:
-    """Calculate moving averages for arbitrary periods from historical K-line data."""
+    """基于历史 K 线数据计算任意周期的移动平均。"""
     from src.services.history_loader import load_history_df
 
     df, source = load_history_df(stock_code, days=days)
@@ -112,7 +116,7 @@ def _handle_calculate_ma(stock_code: str, periods: Optional[str] = None, days: i
     if df is None or df.empty:
         return {"error": f"No historical data for {stock_code}"}
 
-    # Parse requested periods (default: 5,10,20,30,60,120,250)
+    # 解析请求的均线周期（默认：5,10,20,30,60,120,250）
     default_periods = [5, 10, 20, 30, 60, 120, 250]
     if periods:
         try:
@@ -145,7 +149,7 @@ def _handle_calculate_ma(stock_code: str, periods: Optional[str] = None, days: i
             "price_above": current_price > ma_val,
         }
 
-    # Summary: how many MAs is the price above?
+    # 汇总：价格位于多少条均线上方？
     ma_values = [v for v in result["ma"].values() if v is not None]
     above_count = sum(1 for v in ma_values if v["price_above"])
     result["above_ma_count"] = above_count
@@ -191,11 +195,11 @@ calculate_ma_tool = ToolDefinition(
 
 
 # ============================================================
-# get_volume_analysis — volume-price relationship analysis
+# get_volume_analysis —— 量价关系分析
 # ============================================================
 
 def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
-    """Analyse volume-price patterns over recent trading days."""
+    """分析近若干交易日的量价形态。"""
     from src.services.history_loader import load_history_df
     import pandas as pd
 
@@ -211,7 +215,7 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     close = df["close"]
     volume = df["volume"]
 
-    # Average volumes
+    # 平均成交量
     avg_vol_5 = float(volume.tail(5).mean())
     avg_vol_10 = float(volume.tail(10).mean())
     avg_vol_20 = float(volume.tail(20).mean()) if len(df) >= 20 else avg_vol_10
@@ -219,10 +223,10 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     vol_ratio_5d = round(latest_vol / avg_vol_5, 2) if avg_vol_5 > 0 else None
     vol_ratio_20d = round(latest_vol / avg_vol_20, 2) if avg_vol_20 > 0 else None
 
-    # Price direction for each day
-    price_up = close.diff() > 0  # True = up day
+    # 每日价格涨跌方向
+    price_up = close.diff() > 0  # True 表示上涨日
 
-    # Volume-price correlation (last N days)
+    # 量价相关性（近 N 日）
     try:
         import numpy as np
         vp_corr = float(pd.Series(volume.values, dtype=float).corr(pd.Series(close.values, dtype=float)))
@@ -230,13 +234,13 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     except Exception:
         vp_corr = None
 
-    # Detect shrinking volume on up days (bearish divergence) vs expanding on up days (healthy)
+    # 识别上涨日缩量（偏空背离）与上涨日放量（健康）
     up_days = df[price_up]
     down_days = df[~price_up]
     avg_up_vol = float(up_days["volume"].mean()) if len(up_days) > 0 else 0
     avg_down_vol = float(down_days["volume"].mean()) if len(down_days) > 0 else 0
 
-    # Volume trend: compare last 5 days vs prior 5 days
+    # 量能趋势：对比最近 5 日与前 5 日
     if len(volume) >= 10:
         recent_5_avg = float(volume.tail(5).mean())
         prior_5_avg = float(volume.iloc[-10:-5].mean())
@@ -246,10 +250,10 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
         vol_trend_pct = 0
         vol_trend = "数据不足"
 
-    # High-volume days (> 2x 20d avg)
+    # 高量能交易日（超过 20 日均量的 2 倍）
     high_vol_days = int((volume > avg_vol_20 * 2).sum()) if avg_vol_20 > 0 else 0
 
-    # Volume-price pattern interpretation
+    # 量价形态解读
     pattern = "未知"
     if avg_up_vol > avg_down_vol * 1.3:
         pattern = "量价配合良好（上涨放量、下跌缩量）"
@@ -307,11 +311,11 @@ get_volume_analysis_tool = ToolDefinition(
 
 
 # ============================================================
-# analyze_pattern — candlestick / chart pattern recognition
+# analyze_pattern —— K 线/图表形态识别
 # ============================================================
 
 def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
-    """Detect common candlestick and chart patterns in recent price history."""
+    """识别近期价格历史中的常见 K 线与图表形态。"""
     from src.services.history_loader import load_history_df
 
     df, source = load_history_df(stock_code, days=max(days, 120))
@@ -332,36 +336,36 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
     patterns_detected = []
     n = len(c)
 
-    # ---- Helpers ----
+    # ---- 辅助函数 ----
     def body(i):
-        """Return absolute candle body size for row index i."""
+        """返回第 i 行 K 线实体的绝对大小。"""
         return abs(c[i] - o[i])
 
     def upper_shadow(i):
-        """Return upper shadow length for row index i."""
+        """返回第 i 行 K 线的上影线长度。"""
         return h[i] - max(c[i], o[i])
 
     def lower_shadow(i):
-        """Return lower shadow length for row index i."""
+        """返回第 i 行 K 线的下影线长度。"""
         return min(c[i], o[i]) - l[i]
 
     def is_bullish(i):
-        """Return True when candle i closes above open."""
+        """第 i 根 K 线收盘价高于开盘价时返回 True。"""
         return c[i] > o[i]
 
     def is_bearish(i):
-        """Return True when candle i closes below open."""
+        """第 i 根 K 线收盘价低于开盘价时返回 True。"""
         return c[i] < o[i]
 
     avg_body = sum(body(i) for i in range(n)) / n if n > 0 else 1
 
-    # --- Single-candle patterns (last 3 days) ---
+    # --- 单根 K 线形态（最近 3 日）---
     for i in range(max(0, n - 3), n):
         bd = body(i)
         us = upper_shadow(i)
         ls = lower_shadow(i)
 
-        # Doji
+        # 十字星
         if bd < avg_body * 0.1 and (us + ls) > bd * 3:
             patterns_detected.append({
                 "pattern": "十字星 (Doji)", "type": "reversal_signal",
@@ -369,7 +373,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "strength": "弱", "desc": "多空平衡，可能变盘信号"
             })
 
-        # Hammer / Hanging Man
+        # 锤子线 / 上吊线
         if ls > body(i) * 2 and us < body(i) * 0.5:
             label = "锤子线 (Hammer)" if i == 0 or c[i] >= c[i - 1] else "上吊线 (Hanging Man)"
             patterns_detected.append({
@@ -378,7 +382,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "strength": "中", "desc": "下影线长，潜在支撑/反转"
             })
 
-        # Shooting Star / Inverted Hammer
+        # 流星线 / 倒锤子
         if us > body(i) * 2 and ls < body(i) * 0.5:
             label = "流星线 (Shooting Star)" if is_bearish(i) else "倒锤子"
             patterns_detected.append({
@@ -387,7 +391,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "strength": "中", "desc": "上影线长，潜在压力/反转"
             })
 
-        # Big bullish / bearish candle
+        # 大阳线 / 大阴线
         if bd > avg_body * 2.5:
             label = "大阳线" if is_bullish(i) else "大阴线"
             t = "bullish" if is_bullish(i) else "bearish"
@@ -397,10 +401,10 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "strength": "强", "desc": "实体大，方向明确"
             })
 
-    # --- Multi-candle patterns (use last 10 days) ---
+    # --- 多根 K 线形态（使用最近 10 日）---
     if n >= 3:
         i = n - 1
-        # Morning Star (早晨之星) — bottom reversal
+        # 早晨之星 —— 底部反转
         if (is_bearish(i - 2) and body(i - 2) > avg_body * 1.5
                 and body(i - 1) < avg_body * 0.4
                 and is_bullish(i) and body(i) > avg_body * 1.5
@@ -410,7 +414,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "day_offset": -2, "strength": "强", "desc": "三根K线底部反转形态"
             })
 
-        # Evening Star (黄昏之星) — top reversal
+        # 黄昏之星 —— 顶部反转
         if (is_bullish(i - 2) and body(i - 2) > avg_body * 1.5
                 and body(i - 1) < avg_body * 0.4
                 and is_bearish(i) and body(i) > avg_body * 1.5
@@ -420,7 +424,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "day_offset": -2, "strength": "强", "desc": "三根K线顶部反转形态"
             })
 
-        # Engulfing (吞没形态)
+        # 吞没形态
         if (is_bullish(i) and is_bearish(i - 1)
                 and o[i] < c[i - 1] and c[i] > o[i - 1]):
             patterns_detected.append({
@@ -434,8 +438,8 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "day_offset": -1, "strength": "强", "desc": "阴线完全覆盖前一阳线"
             })
 
-    # --- Chart patterns over the window ---
-    # Double bottom detection (简化版: 两个相近低点 + 中间高点)
+    # --- 窗口内的图表形态 ---
+    # 双底识别（简化版：两个相近低点 + 中间高点）
     recent_lows_idx = sorted(range(n), key=lambda i: l[i])[:5]
     if len(recent_lows_idx) >= 2:
         lo1, lo2 = sorted(recent_lows_idx[:2])
@@ -448,7 +452,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                     "strength": "强", "desc": "两个相近低点，W型底部形态"
                 })
 
-    # Upward breakout: closes above 20d high (excluding last day itself)
+    # 向上突破：收盘价突破 20 日高点（排除最后一天本身）
     if n >= 21:
         high_20d = max(h[n - 21:n - 1])
         if c[-1] > high_20d and (v is None or v[-1] > sum(v[n - 6:n - 1]) / 5 * 1.5):
@@ -457,7 +461,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "day_offset": 0, "strength": "强", "desc": "收盘突破近20日最高，量能配合"
             })
 
-    # Price in consolidation box (box oscillation)
+    # 价格处于箱体震荡区间
     if n >= 10:
         recent_high = max(h[n - 10:])
         recent_low = min(l[n - 10:])
@@ -469,7 +473,7 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
                 "desc": f"近10日波幅 {box_range_pct:.1f}%，价格在区间内震荡"
             })
 
-    # Deduplicate by pattern name, keep most recent
+    # 按形态名称去重，保留最近出现的
     seen = set()
     unique_patterns = []
     for p in reversed(patterns_detected):

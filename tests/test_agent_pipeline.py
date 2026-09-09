@@ -82,6 +82,13 @@ class TestAgentConfig(unittest.TestCase):
         config = Config._load_from_env()
         self.assertEqual(config.agent_skills, [])
 
+    @patch.dict(os.environ, {'AGENT_SKILL_MAX_CONCURRENCY': '4'}, clear=True)
+    def test_specialist_skill_concurrency_from_env(self):
+        from src.config import Config
+        Config._instance = None
+        config = Config._load_from_env()
+        self.assertEqual(config.agent_skill_max_concurrency, 4)
+
     @patch.dict(os.environ, {'AGENT_SKILLS': '  dragon_head , shrink_pullback  '}, clear=True)
     def test_skills_whitespace_handling(self):
         """Skills should have whitespace trimmed."""

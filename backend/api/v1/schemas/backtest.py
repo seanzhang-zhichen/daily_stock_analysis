@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 
 class BacktestRunRequest(BaseModel):
-    """Request body for starting or refreshing backtest calculations."""
+    """触发或刷新回测计算的请求体。"""
 
     code: Optional[str] = Field(None, description="仅回测指定股票")
     force: bool = Field(False, description="强制重新计算")
@@ -23,7 +23,7 @@ class BacktestRunRequest(BaseModel):
 
 
 class BacktestRunResponse(BaseModel):
-    """Summary counters returned after a backtest run finishes."""
+    """回测任务完成后的概要计数响应。"""
 
     processed: int = Field(..., description="候选记录数")
     saved: int = Field(..., description="写入回测结果数")
@@ -33,7 +33,7 @@ class BacktestRunResponse(BaseModel):
 
 
 class BacktestResultItem(BaseModel):
-    """One evaluated analysis-history record and its realized market outcome."""
+    """单条历史分析记录的回测结果及对应的实际行情表现。"""
 
     analysis_history_id: int
     code: str
@@ -70,7 +70,7 @@ class BacktestResultItem(BaseModel):
 
 
 class BacktestResultsResponse(BaseModel):
-    """Paginated list of backtest result rows."""
+    """回测结果记录的分页列表响应。"""
 
     total: int
     page: int
@@ -79,7 +79,7 @@ class BacktestResultsResponse(BaseModel):
 
 
 class PerformanceMetrics(BaseModel):
-    """Aggregated backtest performance metrics for a scope/code/window."""
+    """按 scope / code / 评估窗口聚合的回测表现指标。"""
 
     scope: str
     code: Optional[str] = None

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-WebUI frontend asset preparation helper.
+"""WebUI 前端静态资源构建辅助。
 
-Used by explicit WebUI startup paths. API-only startup does not call this helper.
-Set WEBUI_AUTO_BUILD=false to disable WebUI auto build and only verify artifacts.
+仅在显式启用 WebUI 的启动路径中调用；纯 API 启动不会触发本模块。
+可通过设置 ``WEBUI_AUTO_BUILD=false`` 关闭启动时自动构建，仅做产物校验。
 """
 
 from __future__ import annotations
@@ -17,7 +16,9 @@ from typing import Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
+# 视为「关闭」的环境变量字符串集合，大小写不敏感。
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
+# 触发前端构建的输入文件清单（配置 + 入口 HTML）。
 _BUILD_INPUT_FILES = (
     "package.json",
     "package-lock.json",
@@ -30,6 +31,7 @@ _BUILD_INPUT_FILES = (
     "tailwind.config.js",
     "index.html",
 )
+# 触发构建的源码目录。
 _BUILD_INPUT_DIRS = ("src", "public")
 
 
@@ -40,7 +42,7 @@ def _is_truthy_env(var_name: str, default: str = "true") -> bool:
 
 
 def _safe_mtime(path: Path) -> float:
-    """Return a file mtime or zero when the path cannot be inspected."""
+    """安全地读取文件 mtime，无法访问时返回 0 便于比较。"""
     try:
         return path.stat().st_mtime
     except OSError:
@@ -48,7 +50,7 @@ def _safe_mtime(path: Path) -> float:
 
 
 def _tree_latest_mtime(root: Path) -> float:
-    """Return latest file mtime under a tree, falling back to root mtime on errors."""
+    """返回目录树下最新文件的 mtime，遍历失败时回退到根目录 mtime。"""
     if not root.exists():
         return 0.0
     latest = 0.0
@@ -57,13 +59,13 @@ def _tree_latest_mtime(root: Path) -> float:
             if p.is_file():
                 latest = max(latest, _safe_mtime(p))
     except OSError:
-        # Fallback to root mtime when recursive traversal fails on restricted envs.
+        # 递归遍历在受限环境下失败时，回退到根目录 mtime。
         latest = max(latest, _safe_mtime(root))
     return latest
 
 
 def _max_mtime(paths: Iterable[Path]) -> float:
-    """Return the newest mtime across a path iterable."""
+    """返回一组路径中最大的 mtime。"""
     latest = 0.0
     for path in paths:
         latest = max(latest, _safe_mtime(path))
@@ -71,14 +73,15 @@ def _max_mtime(paths: Iterable[Path]) -> float:
 
 
 def _resolve_artifact_index(frontend_dir: Path) -> Path:
-    """Resolve the preferred frontend artifact index path for this repository."""
-    # Prefer static/index.html because it is the configured output path in this repo.
+    """解析本仓库首选的前端产物入口 HTML 路径。"""
+    # 优先 static/index.html：这是本仓库 Vite 输出的目标位置。
     static_index = (frontend_dir / ".." / ".." / "static" / "index.html").resolve()
     dist_index = frontend_dir / "dist" / "index.html"
     build_index = frontend_dir / "build" / "index.html"
     if static_index.exists():
         return static_index
 
+    # 没有 static 时取 dist / build 中 mtime 最新的那份作为回退。
     fallback_candidates = [p for p in (dist_index, build_index) if p.exists()]
     if not fallback_candidates:
         return static_index
@@ -86,7 +89,7 @@ def _resolve_artifact_index(frontend_dir: Path) -> Path:
 
 
 def _needs_dependency_install(frontend_dir: Path, package_json: Path, lock_file: Path, force_build: bool) -> bool:
-    """Return whether npm dependencies are missing or older than package inputs."""
+    """判断 npm 依赖是否缺失或比 package 输入更旧，需要重装。"""
     node_modules_dir = frontend_dir / "node_modules"
     install_marker = node_modules_dir / ".package-lock.json"
     deps_marker_mtime = _safe_mtime(install_marker) if install_marker.exists() else _safe_mtime(node_modules_dir)
@@ -95,7 +98,7 @@ def _needs_dependency_install(frontend_dir: Path, package_json: Path, lock_file:
 
 
 def _collect_build_inputs_latest_mtime(frontend_dir: Path) -> float:
-    """Return newest mtime among frontend build configuration and source inputs."""
+    """返回前端构建配置与源码输入中的最新 mtime。"""
     latest = _max_mtime(frontend_dir / filename for filename in _BUILD_INPUT_FILES)
     for dirname in _BUILD_INPUT_DIRS:
         latest = max(latest, _tree_latest_mtime(frontend_dir / dirname))
@@ -103,7 +106,7 @@ def _collect_build_inputs_latest_mtime(frontend_dir: Path) -> float:
 
 
 def _needs_frontend_build(frontend_dir: Path, force_build: bool) -> tuple[bool, Path]:
-    """Return whether frontend artifacts should be rebuilt and the target index."""
+    """判断前端产物是否需要重新构建，并返回产物入口路径。"""
     artifact_index = _resolve_artifact_index(frontend_dir)
     inputs_latest_mtime = _collect_build_inputs_latest_mtime(frontend_dir)
     artifact_mtime = _safe_mtime(artifact_index)
@@ -112,7 +115,7 @@ def _needs_frontend_build(frontend_dir: Path, force_build: bool) -> tuple[bool, 
 
 
 def _run_frontend_commands(commands: Sequence[Sequence[str]], frontend_dir: Path) -> bool:
-    """Run npm commands in order and report success without raising to callers."""
+    """按顺序执行前端命令，整体成功才返回 True，失败不向上抛异常。"""
     try:
         for command in commands:
             logger.info("执行前端命令: %s", " ".join(command))
@@ -130,7 +133,7 @@ def _run_frontend_commands(commands: Sequence[Sequence[str]], frontend_dir: Path
 
 
 def _manual_build_command(frontend_dir: Path) -> str:
-    """Return the shell command users can run to build frontend assets manually."""
+    """返回供用户手动构建前端时使用的 shell 命令。"""
     lock_file = frontend_dir / "package-lock.json"
     install_cmd = "npm ci" if lock_file.exists() else "npm install"
     return f'cd "{frontend_dir}" && {install_cmd} && npm run build'
@@ -175,17 +178,16 @@ def _warn_if_assets_missing(artifact_index: Path, frontend_dir: Path) -> None:
 
 
 def prepare_webui_frontend_assets() -> bool:
-    """
-    Prepare frontend assets for WebUI startup.
+    """为 WebUI 启动准备前端静态资源。
 
-    Default mode (WEBUI_AUTO_BUILD=true):
-    - Run npm install/build when dependencies or sources changed,
-      or artifacts are missing.
+    默认模式（``WEBUI_AUTO_BUILD=true``）：
+    - 依赖或源码发生变化、或产物缺失时，自动执行 ``npm install`` / ``npm run build``。
 
-    Manual mode (WEBUI_AUTO_BUILD=false):
-    - Do not compile frontend during backend startup.
-    - Only check whether existing artifacts are available.
+    手动模式（``WEBUI_AUTO_BUILD=false``）：
+    - 后端启动时不编译前端。
+    - 仅检查既有产物是否可用。
     """
+    # 前端项目位于仓库根目录下 frontend/web，向上两级回到项目根再拼接。
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend" / "web"
     auto_build_enabled = _is_truthy_env("WEBUI_AUTO_BUILD", "true")
     artifact_index = _resolve_artifact_index(frontend_dir)
@@ -230,6 +232,7 @@ def prepare_webui_frontend_assets() -> bool:
     )
 
     commands = []
+    # 有 lockfile 时使用 npm ci 保证版本一致，无 lockfile 时退回 npm install。
     if needs_install:
         lock_exists = (frontend_dir / "package-lock.json").exists()
         commands.append([npm_path, "ci" if lock_exists else "install"])

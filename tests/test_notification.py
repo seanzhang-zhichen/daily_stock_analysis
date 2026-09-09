@@ -447,6 +447,98 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("*分析模型：gemini/gemini-2.5-flash*", out)
 
     @mock.patch("src.notification.get_config")
+    def test_a_share_context_is_rendered_in_dashboard_and_single_reports(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="等待确认",
+            data_sources="tencent,akshare",
+            dashboard={
+                "phase_decision": {
+                    "action_window": "盘后至次日开盘",
+                    "immediate_action": "不追高，等待回踩确认",
+                    "next_check_time": "明日 10:30",
+                    "confidence_reason": "大盘风险尚未完全释放",
+                    "watch_conditions": ["量能回升"],
+                    "data_limitations": ["盘中数据可能波动"],
+                }
+            },
+            market_structure_context={
+                "market": "cn",
+                "stock_market_position": {
+                    "related_boards": [
+                        {"name": "白酒", "type": "行业", "change_pct": 1.23},
+                    ]
+                },
+            },
+        )
+
+        dashboard = service.generate_dashboard_report([result], report_date="2026-09-08")
+        single = service.generate_single_stock_report(result)
+
+        for report in (dashboard, single):
+            self.assertIn("关联板块", report)
+            self.assertIn("白酒（行业 +1.23%）", report)
+            self.assertIn("阶段决策", report)
+            self.assertIn("不追高，等待回踩确认", report)
+            self.assertIn("数据来源：tencent,akshare", report)
+
+    @mock.patch("src.notification.get_config")
+    def test_a_share_financial_summary_uses_runtime_context_only(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健",
+            fundamental_context={
+                "market": "cn",
+                "earnings": {"data": {"financial_report": {
+                    "report_date": "2026Q2", "revenue": 120_000_000_000,
+                    "net_profit_parent": 60_000_000_000, "roe": 18.5,
+                }}},
+                "growth": {"data": {"revenue_yoy": 8.2, "net_profit_yoy": 9.1}},
+            },
+        )
+
+        report = service.generate_dashboard_report([result], report_date="2026-09-08")
+
+        self.assertIn("财务摘要", report)
+        self.assertIn("1200.00亿元", report)
+        self.assertIn("600.00亿元", report)
+        self.assertIn("18.50%", report)
+        self.assertNotIn("fundamental_context", result.to_dict())
+
+    @mock.patch("src.notification.get_config")
+    def test_a_share_market_status_uses_runtime_context_only(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519", name="贵州茅台", sentiment_score=72,
+            trend_prediction="看多", operation_advice="持有", analysis_summary="稳健",
+            market_phase_summary={"market": "cn", "phase": "intraday"},
+        )
+
+        report = service.generate_single_stock_report(result)
+
+        self.assertIn("市场状态：A股 · 盘中", report)
+        self.assertNotIn("market_phase_summary", result.to_dict())
+
+    @mock.patch("src.notification.get_config")
     def test_generate_reports_hide_model_when_disabled(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(
             report_renderer_enabled=False,

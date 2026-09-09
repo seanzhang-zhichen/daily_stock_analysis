@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Market snapshot fetcher.
+"""全市场快照抓取模块。
 
-Fetches full-market real-time snapshots for screening.
-This is separate from single-stock realtime quotes.
+负责从多个第三方源（sina / efinance / akshare / eastmoney datacenter / tushare）拉取
+A股全市场实时行情，统一为标准字段返回，供后续 L1 硬过滤与打分使用。
+与单股实时行情接口相互独立：
+- 单股实时行情：随个股分析按需调用
+- 全市场快照：批量筛选场景下一次性拉取
+
+主要能力：
+- 多源降级 + 健康度冷却：连续失败次数达到阈值后暂时禁用，避免持续对通道造成压力
+- last-good 缓存：把最近一次成功的快照序列化到本地文件，源失败时降级使用
+- 与 Eastmoney 共享节流会话与抖动间隔，减少被反爬封禁的概率
 """
 
 import logging
@@ -40,13 +48,15 @@ _SOURCE_HEALTH_LOCK = threading.Lock()
 
 
 def fetch_cn_snapshot(source: str = "efinance") -> pd.DataFrame:
-    """Fetch A-share full-market snapshot.
+    """拉取 A 股全市场快照。
 
-    Returns a DataFrame with columns:
-        code, name, price, change_pct, amount, total_mv, circ_mv,
-        pe_ratio, pb_ratio, volume_ratio, turnover_rate
+    Returns:
+        包含 ``code`` / ``name`` / ``price`` / ``change_pct`` / ``amount`` /
+        ``total_mv`` / ``circ_mv`` / ``pe_ratio`` / ``pb_ratio`` / ``volume_ratio`` /
+        ``turnover_rate`` 等列的 :class:`pandas.DataFrame`。
 
-    Raises RuntimeError if the source is unavailable.
+    Raises:
+        RuntimeError: 数据源不可用时抛出。
     """
     if source == "sina":
         return _call_snapshot_wrapper(_fetch_sina, source=source)
@@ -71,12 +81,13 @@ def fetch_snapshot_with_fallback(
     cache_ttl_seconds: float = 0.0,
     market: str = "cn",
 ) -> pd.DataFrame:
-    """Try live sources, optionally falling back to the last-good snapshot."""
+    """按顺序尝试实时源，全部失败时可回退到上次成功的快照缓存。"""
     if market == "us":
         return _fetch_us_snapshot_with_fallback(required_columns)
 
     errors = []
     required = required_columns or []
+    # 若配置了短 TTL 缓存，先尝试以新鲜缓存直接复用，跳过实时拉取
     if cache_ttl_seconds > 0:
         cached = _read_last_good_snapshot(
             fallback_snapshot_path,
@@ -103,6 +114,7 @@ def fetch_snapshot_with_fallback(
                     errors.append(f"{source}: {error}")
                     _record_source_failure(source, error)
                     continue
+                # 标记快照来源、降级状态、健康度等元数据，方便调用方排障
                 df.attrs.setdefault("snapshot_source", source)
                 df.attrs["source_errors"] = list(errors)
                 df.attrs["fallback_used"] = False
@@ -123,6 +135,7 @@ def fetch_snapshot_with_fallback(
             _record_source_failure(source, e)
             logger.warning("Snapshot source %s failed: %s", source, e)
 
+    # 所有实时源都失败：尝试用历史快照降级
     cached = _read_last_good_snapshot(
         fallback_snapshot_path,
         required_columns=required,
@@ -138,109 +151,117 @@ def fetch_snapshot_with_fallback(
 def _fetch_us_snapshot_with_fallback(
     required_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Fetch US equity snapshot via yfinance adapter."""
-    from src.services.screening.snapshot_us import fetch_us_snapshot
+        """通过 yfinance 适配器获取美股全市场快照。"""
+        from src.services.screening.snapshot_us import fetch_us_snapshot
 
-    df = fetch_us_snapshot()
-    missing = _missing_required_columns(df, required_columns or [])
-    if missing:
-        logger.warning("US snapshot missing columns: %s", ",".join(missing))
-    return df
+        df = fetch_us_snapshot()
+        missing = _missing_required_columns(df, required_columns or [])
+        if missing:
+            logger.warning("US snapshot missing columns: %s", ",".join(missing))
+        return df
 
 
 def _missing_required_columns(df: pd.DataFrame, required_columns: list[str]) -> list[str]:
-    missing: list[str] = []
-    for col in required_columns:
-        if col not in df.columns:
-            missing.append(col)
-            continue
-        if df[col].dropna().empty:
-            missing.append(col)
-    return missing
+        """返回 DataFrame 中缺失或全为空值的必需列。"""
+        missing: list[str] = []
+        for col in required_columns:
+            if col not in df.columns:
+                missing.append(col)
+                continue
+            if df[col].dropna().empty:
+                missing.append(col)
+        return missing
 
 
 def _call_snapshot_wrapper(fetcher, *, source: str) -> pd.DataFrame:
-    return call_with_timeout(
-        fetcher,
-        timeout_sec=_snapshot_call_timeout_seconds(),
-        label=f"snapshot source {source}",
-    )
+        """为快照抓取统一加上超时控制包装。"""
+        return call_with_timeout(
+            fetcher,
+            timeout_sec=_snapshot_call_timeout_seconds(),
+            label=f"snapshot source {source}",
+        )
 
 
 def _snapshot_call_timeout_seconds() -> float | None:
-    return parse_source_timeout_seconds(
-        "SCREENING_SNAPSHOT_CALL_TIMEOUT_SEC",
-        default=_SNAPSHOT_CALL_TIMEOUT_SECONDS,
-    )
+        """读取快照抓取超时配置（环境变量优先，默认 60 秒）。"""
+        return parse_source_timeout_seconds(
+            "SCREENING_SNAPSHOT_CALL_TIMEOUT_SEC",
+            default=_SNAPSHOT_CALL_TIMEOUT_SECONDS,
+        )
 
 
 def _source_disabled_reason(source: str) -> str | None:
-    now = time.monotonic()
-    with _SOURCE_HEALTH_LOCK:
-        state = _SOURCE_HEALTH.get(source)
-        if not state:
-            return None
-        disabled_until = float(state.get("disabled_until", 0.0))
-        if disabled_until <= now:
-            if disabled_until:
-                state["disabled_until"] = 0.0
-            return None
-        return f"temporarily disabled for {disabled_until - now:.1f}s after repeated failures"
+        """查询指定源是否处于健康度冷却期，返回禁用原因或 ``None``。"""
+        now = time.monotonic()
+        with _SOURCE_HEALTH_LOCK:
+            state = _SOURCE_HEALTH.get(source)
+            if not state:
+                return None
+            disabled_until = float(state.get("disabled_until", 0.0))
+            if disabled_until <= now:
+                # 冷却到期后清理标记，允许重新尝试
+                if disabled_until:
+                    state["disabled_until"] = 0.0
+                return None
+            return f"temporarily disabled for {disabled_until - now:.1f}s after repeated failures"
 
 
 def _record_source_success(source: str, *, rows: int | None = None) -> None:
-    with _SOURCE_HEALTH_LOCK:
-        state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
-        successes = float(state.get("successes", 0.0)) + 1.0
-        state["successes"] = successes
-        state["failures"] = 0.0
-        state["disabled_until"] = 0.0
-        state["last_success_at"] = time.time()
-        if rows is not None:
-            state["last_rows"] = float(rows)
-            previous_avg = float(state.get("avg_rows", rows))
-            state["avg_rows"] = previous_avg + (float(rows) - previous_avg) / successes
+        """记录一次成功抓取，重置连续失败计数并更新平均行数。"""
+        with _SOURCE_HEALTH_LOCK:
+            state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
+            successes = float(state.get("successes", 0.0)) + 1.0
+            state["successes"] = successes
+            state["failures"] = 0.0
+            state["disabled_until"] = 0.0
+            state["last_success_at"] = time.time()
+            if rows is not None:
+                state["last_rows"] = float(rows)
+                previous_avg = float(state.get("avg_rows", rows))
+                state["avg_rows"] = previous_avg + (float(rows) - previous_avg) / successes
 
 
 def _record_source_failure(source: str, error: object | None = None) -> None:
-    now = time.monotonic()
-    with _SOURCE_HEALTH_LOCK:
-        state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
-        failures = float(state.get("failures", 0.0)) + 1.0
-        state["failures"] = failures
-        state["total_failures"] = float(state.get("total_failures", 0.0)) + 1.0
-        state["last_failure_at"] = time.time()
-        if error is not None:
-            state["last_error"] = " ".join(str(error).split())
-        if failures >= _SOURCE_HEALTH_FAILURE_THRESHOLD:
-            state["disabled_until"] = now + _SOURCE_HEALTH_COOLDOWN_SECONDS
+        """记录一次失败，达到阈值后进入冷却期。"""
+        now = time.monotonic()
+        with _SOURCE_HEALTH_LOCK:
+            state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
+            failures = float(state.get("failures", 0.0)) + 1.0
+            state["failures"] = failures
+            state["total_failures"] = float(state.get("total_failures", 0.0)) + 1.0
+            state["last_failure_at"] = time.time()
+            if error is not None:
+                state["last_error"] = " ".join(str(error).split())
+            # 达到连续失败阈值后临时禁用 5 分钟
+            if failures >= _SOURCE_HEALTH_FAILURE_THRESHOLD:
+                state["disabled_until"] = now + _SOURCE_HEALTH_COOLDOWN_SECONDS
 
 
 def snapshot_source_health_snapshot(
     sources: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, dict[str, float | bool | str]]:
-    """Return in-process snapshot-source health without exposing credentials."""
-    now = time.monotonic()
-    requested = tuple(sources or tuple(_SOURCE_HEALTH))
-    with _SOURCE_HEALTH_LOCK:
-        snapshot: dict[str, dict[str, float | bool | str]] = {}
-        for source in requested:
-            state = dict(_SOURCE_HEALTH.get(source, {}))
-            disabled_until = float(state.get("disabled_until", 0.0))
-            cooldown_remaining = max(disabled_until - now, 0.0)
-            snapshot[source] = {
-                "successes": float(state.get("successes", 0.0)),
-                "failures": float(state.get("failures", 0.0)),
-                "total_failures": float(state.get("total_failures", 0.0)),
-                "last_rows": float(state.get("last_rows", 0.0)),
-                "avg_rows": float(state.get("avg_rows", 0.0)),
-                "disabled": disabled_until > now,
-                "cooldown_remaining_seconds": round(cooldown_remaining, 4),
-                "last_success_at": float(state.get("last_success_at", 0.0)),
-                "last_failure_at": float(state.get("last_failure_at", 0.0)),
-                "last_error": str(state.get("last_error", "")),
-            }
-    return snapshot
+        """导出当前快照源健康度（不包含凭证信息）。"""
+        now = time.monotonic()
+        requested = tuple(sources or tuple(_SOURCE_HEALTH))
+        with _SOURCE_HEALTH_LOCK:
+            snapshot: dict[str, dict[str, float | bool | str]] = {}
+            for source in requested:
+                state = dict(_SOURCE_HEALTH.get(source, {}))
+                disabled_until = float(state.get("disabled_until", 0.0))
+                cooldown_remaining = max(disabled_until - now, 0.0)
+                snapshot[source] = {
+                    "successes": float(state.get("successes", 0.0)),
+                    "failures": float(state.get("failures", 0.0)),
+                    "total_failures": float(state.get("total_failures", 0.0)),
+                    "last_rows": float(state.get("last_rows", 0.0)),
+                    "avg_rows": float(state.get("avg_rows", 0.0)),
+                    "disabled": disabled_until > now,
+                    "cooldown_remaining_seconds": round(cooldown_remaining, 4),
+                    "last_success_at": float(state.get("last_success_at", 0.0)),
+                    "last_failure_at": float(state.get("last_failure_at", 0.0)),
+                    "last_error": str(state.get("last_error", "")),
+                }
+        return snapshot
 
 
 def _write_last_good_snapshot(
@@ -249,33 +270,34 @@ def _write_last_good_snapshot(
     *,
     source_priority: list[str] | None = None,
 ) -> None:
-    if path_like is None:
-        return
-    path = Path(path_like)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": _SNAPSHOT_CACHE_VERSION,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": {
-                "snapshot_source": str(df.attrs.get("snapshot_source", "")),
-                "source_priority": [
-                    str(source).strip()
-                    for source in (source_priority or [])
-                    if str(source).strip()
-                ],
-                "row_count": int(len(df)),
-                "columns": list(df.columns),
-            },
-            "frame": json.loads(
-                df.to_json(orient="split", date_format="iso", force_ascii=False)
-            ),
-        }
-        tmp_path = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp_path.replace(path)
-    except Exception as exc:  # noqa: BLE001 - live snapshot should remain usable.
-        logger.warning("Failed to write last-good snapshot cache %s: %s", path, exc)
+        """把最新成功的快照原子写入磁盘（先写临时文件再 rename）。"""
+        if path_like is None:
+            return
+        path = Path(path_like)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": _SNAPSHOT_CACHE_VERSION,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": {
+                    "snapshot_source": str(df.attrs.get("snapshot_source", "")),
+                    "source_priority": [
+                        str(source).strip()
+                        for source in (source_priority or [])
+                        if str(source).strip()
+                    ],
+                    "row_count": int(len(df)),
+                    "columns": list(df.columns),
+                },
+                "frame": json.loads(
+                    df.to_json(orient="split", date_format="iso", force_ascii=False)
+                ),
+            }
+            tmp_path = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001 - live snapshot should remain usable.
+            logger.warning("Failed to write last-good snapshot cache %s: %s", path, exc)
 
 
 def _read_last_good_snapshot(
@@ -287,371 +309,379 @@ def _read_last_good_snapshot(
     fresh: bool = False,
     requested_snapshot_sources: list[str] | None = None,
 ) -> pd.DataFrame | None:
-    if path_like is None:
-        return None
-    path = Path(path_like)
-    try:
-        stat = path.stat()
-    except FileNotFoundError:
-        return None
+        """读取上次成功快照缓存，返回 DataFrame 或 ``None``。
 
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("version") != _SNAPSHOT_CACHE_VERSION:
-            raise ValueError("unsupported cache version")
-        metadata = payload.get("metadata")
-        if not isinstance(metadata, dict):
-            raise ValueError("missing cache metadata")
-        cached_snapshot_source = str(metadata.get("snapshot_source", "")).strip()
-        if fresh and requested_snapshot_sources is not None:
-            requested_priority = [
-                str(source).strip()
-                for source in requested_snapshot_sources
-                if str(source).strip()
-            ]
-            cached_priority_raw = metadata.get("source_priority")
-            cached_priority = (
-                [str(source).strip() for source in cached_priority_raw if str(source).strip()]
-                if isinstance(cached_priority_raw, list)
-                else []
-            )
-            if cached_priority:
-                if cached_priority != requested_priority:
-                    raise ValueError(
-                        "cached snapshot priority "
-                        f"{','.join(cached_priority)} does not match requested priority "
-                        f"{','.join(requested_priority)}"
-                    )
-            elif not requested_priority or cached_snapshot_source != requested_priority[0]:
-                # Legacy cache entries did not persist the configured chain.
-                # Reuse them only when their actual provider is still the
-                # current primary source; a new live fetch will upgrade the
-                # metadata and allow same-chain fallback reuse afterwards.
-                raise ValueError(
-                    "legacy cached snapshot source "
-                    f"{cached_snapshot_source or '<missing>'} does not match requested primary "
-                    f"{requested_priority[0] if requested_priority else '<missing>'}"
+        ``fresh=True`` 表示仅当缓存来自同一组数据源优先级时才复用，
+        否则抛错让调用方继续走实时拉取，避免在配置变更后用过期的旧快照。
+        """
+        if path_like is None:
+            return None
+        path = Path(path_like)
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("version") != _SNAPSHOT_CACHE_VERSION:
+                raise ValueError("unsupported cache version")
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                raise ValueError("missing cache metadata")
+            cached_snapshot_source = str(metadata.get("snapshot_source", "")).strip()
+            if fresh and requested_snapshot_sources is not None:
+                requested_priority = [
+                    str(source).strip()
+                    for source in requested_snapshot_sources
+                    if str(source).strip()
+                ]
+                cached_priority_raw = metadata.get("source_priority")
+                cached_priority = (
+                    [str(source).strip() for source in cached_priority_raw if str(source).strip()]
+                    if isinstance(cached_priority_raw, list)
+                    else []
                 )
-        frame = payload.get("frame")
-        if not isinstance(frame, dict):
-            raise ValueError("missing cached frame")
-        columns = frame.get("columns")
-        data = frame.get("data")
-        if not isinstance(columns, list) or not isinstance(data, list):
-            raise ValueError("malformed cached frame")
-        stale_age_hours = _cache_stale_age_hours(
-            stat.st_mtime,
-            created_at=str(payload.get("created_at", "")),
-        )
-        if max_age_hours is not None and max_age_hours >= 0 and stale_age_hours > max_age_hours:
-            raise ValueError(
-                f"cache stale_age_hours={stale_age_hours:.4g} exceeds max_age_hours={max_age_hours:.4g}"
+                if cached_priority:
+                    if cached_priority != requested_priority:
+                        raise ValueError(
+                            "cached snapshot priority "
+                            f"{','.join(cached_priority)} does not match requested priority "
+                            f"{','.join(requested_priority)}"
+                        )
+                elif not requested_priority or cached_snapshot_source != requested_priority[0]:
+                    # 旧版缓存没有持久化优先级链，只有当主源仍相同时才允许复用
+                    # 下次实时拉取会升级 metadata，后续即可同链复用
+                    raise ValueError(
+                        "legacy cached snapshot source "
+                        f"{cached_snapshot_source or '<missing>'} does not match requested primary "
+                        f"{requested_priority[0] if requested_priority else '<missing>'}"
+                    )
+            frame = payload.get("frame")
+            if not isinstance(frame, dict):
+                raise ValueError("missing cached frame")
+            columns = frame.get("columns")
+            data = frame.get("data")
+            if not isinstance(columns, list) or not isinstance(data, list):
+                raise ValueError("malformed cached frame")
+            stale_age_hours = _cache_stale_age_hours(
+                stat.st_mtime,
+                created_at=str(payload.get("created_at", "")),
             )
-        cached = pd.DataFrame(data, columns=columns)
-        if cached.empty:
-            raise ValueError("cached snapshot is empty")
-        missing = _missing_required_columns(cached, required_columns)
-        if missing:
-            raise ValueError(f"missing required columns {','.join(missing)}")
-    except Exception as exc:  # noqa: BLE001 - invalid cache should not mask live errors.
-        source_errors.append(f"last_good_cache: {exc}")
-        return None
+            if max_age_hours is not None and max_age_hours >= 0 and stale_age_hours > max_age_hours:
+                raise ValueError(
+                    f"cache stale_age_hours={stale_age_hours:.4g} exceeds max_age_hours={max_age_hours:.4g}"
+                )
+            cached = pd.DataFrame(data, columns=columns)
+            if cached.empty:
+                raise ValueError("cached snapshot is empty")
+            missing = _missing_required_columns(cached, required_columns)
+            if missing:
+                raise ValueError(f"missing required columns {','.join(missing)}")
+        except Exception as exc:  # noqa: BLE001 - invalid cache should not mask live errors.
+            source_errors.append(f"last_good_cache: {exc}")
+            return None
 
-    cached.attrs["snapshot_source"] = "last_good_cache"
-    cached.attrs["fallback_used"] = not fresh
-    cached.attrs["cache_used"] = True
-    cached.attrs["stale"] = not fresh
-    cached.attrs["stale_age_hours"] = stale_age_hours
-    cached.attrs["source_errors"] = list(source_errors)
-    cached.attrs["last_good_snapshot_source"] = str(
-        metadata.get("snapshot_source", "")
-    )
-    if isinstance(metadata, dict):
-        cached.attrs["last_good_created_at"] = str(payload.get("created_at", ""))
-    if fresh:
-        logger.info(
-            "Using fresh snapshot cache %s: age_hours=%s rows=%d",
-            path,
-            stale_age_hours,
-            len(cached),
+        # 在 DataFrame 上标记降级状态，供上层排障展示
+        cached.attrs["snapshot_source"] = "last_good_cache"
+        cached.attrs["fallback_used"] = not fresh
+        cached.attrs["cache_used"] = True
+        cached.attrs["stale"] = not fresh
+        cached.attrs["stale_age_hours"] = stale_age_hours
+        cached.attrs["source_errors"] = list(source_errors)
+        cached.attrs["last_good_snapshot_source"] = str(
+            metadata.get("snapshot_source", "")
         )
-    else:
-        logger.warning(
-            "Using last-good snapshot cache %s after live source failures: %s",
-            path,
-            "; ".join(source_errors),
-        )
-    return cached
+        if isinstance(metadata, dict):
+            cached.attrs["last_good_created_at"] = str(payload.get("created_at", ""))
+        if fresh:
+            logger.info(
+                "Using fresh snapshot cache %s: age_hours=%s rows=%d",
+                path,
+                stale_age_hours,
+                len(cached),
+            )
+        else:
+            logger.warning(
+                "Using last-good snapshot cache %s after live source failures: %s",
+                path,
+                "; ".join(source_errors),
+            )
+        return cached
 
 
 def _cache_stale_age_hours(mtime: float, *, created_at: str = "") -> float:
-    modified = _parse_created_at(created_at) or datetime.fromtimestamp(mtime, tz=timezone.utc)
-    age_hours = (datetime.now(timezone.utc) - modified).total_seconds() / 3600.0
-    return round(max(age_hours, 0.0), 4)
+        """根据文件 mtime 与 payload 内 created_at 计算缓存陈旧小时数。"""
+        modified = _parse_created_at(created_at) or datetime.fromtimestamp(mtime, tz=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - modified).total_seconds() / 3600.0
+        return round(max(age_hours, 0.0), 4)
 
 
 def _parse_created_at(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        """解析 ISO8601 时间字符串，统一归一为带 tzinfo 的 UTC 时间。"""
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
 
 def _fetch_efinance() -> pd.DataFrame:
-    """Fetch via efinance."""
-    import efinance as ef
+        """通过 efinance 抓取快照。"""
+        import efinance as ef
 
-    df = ef.stock.get_realtime_quotes()
-    if df is None or df.empty:
-        raise RuntimeError("efinance returned empty data")
-    return _normalize(df, source="efinance")
+        df = ef.stock.get_realtime_quotes()
+        if df is None or df.empty:
+            raise RuntimeError("efinance returned empty data")
+        return _normalize(df, source="efinance")
 
 
 def _fetch_akshare_em() -> pd.DataFrame:
-    """Fetch via akshare (eastmoney)."""
-    import akshare as ak
+        """通过 akshare 的 eastmoney 接口抓取快照。"""
+        import akshare as ak
 
-    df = ak.stock_zh_a_spot_em()
-    if df is None or df.empty:
-        raise RuntimeError("akshare returned empty data")
-    return _normalize(df, source="akshare_em")
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            raise RuntimeError("akshare returned empty data")
+        return _normalize(df, source="akshare_em")
 
 
 def _fetch_sina() -> pd.DataFrame:
-    """Fetch A-share full-market snapshot directly from Sina Finance.
+        """直接从新浪财经市场中心接口拉取全市场快照。
 
-    Sina's market-center endpoint is a lightweight direct HTTP source with PE,
-    PB, turnover and market-cap fields. It gives the screening engine another non-wrapper,
-    non-Eastmoney-first snapshot option before falling back to Eastmoney-heavy
-    sources.
-    """
-    url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
-    page = 1
-    # Sina caps this endpoint at 100 rows. Use the cap to reduce full-market
-    # pagination round trips without changing the response contract.
-    page_size = 100
-    all_items = []
-    while True:
-        resp = requests.get(
-            url,
-            params={
-                "page": page,
-                "num": page_size,
-                "sort": "symbol",
-                "asc": 1,
-                "node": "hs_a",
-                "symbol": "",
-                "_s_r_a": "page",
-            },
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://vip.stock.finance.sina.com.cn/mkt/",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        items = resp.json()
-        if not isinstance(items, list):
-            raise RuntimeError("sina snapshot returned malformed data")
-        if not items:
-            break
-        all_items.extend(items)
-        if len(items) < page_size:
-            break
-        page += 1
-    if not all_items:
-        raise RuntimeError("sina returned empty data")
-    df = pd.DataFrame(all_items)
-    for col in ("mktcap", "nmc"):
-        if col in df.columns:
-            # Sina exposes market caps in ten-thousand yuan; normalize to yuan.
-            df[col] = pd.to_numeric(df[col], errors="coerce") * 10000
-    return _normalize(df, source="sina")
+        新浪的 endpoint 是轻量的直接 HTTP 源，覆盖 PE / PB / 换手率 / 市值等字段，
+        为筛选引擎在 Eastmoney 优先链之外提供一个非封装、可独立降级的选项。
+        """
+        url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+        page = 1
+        # 新浪接口单页最多 100 行；按上限取可以减少全市场分页轮询
+        page_size = 100
+        all_items = []
+        while True:
+            resp = requests.get(
+                url,
+                params={
+                    "page": page,
+                    "num": page_size,
+                    "sort": "symbol",
+                    "asc": 1,
+                    "node": "hs_a",
+                    "symbol": "",
+                    "_s_r_a": "page",
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://vip.stock.finance.sina.com.cn/mkt/",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json()
+            if not isinstance(items, list):
+                raise RuntimeError("sina snapshot returned malformed data")
+            if not items:
+                break
+            all_items.extend(items)
+            if len(items) < page_size:
+                break
+            page += 1
+        if not all_items:
+            raise RuntimeError("sina returned empty data")
+        df = pd.DataFrame(all_items)
+        for col in ("mktcap", "nmc"):
+            if col in df.columns:
+                # 新浪市值单位为万元，统一换算为元
+                df[col] = pd.to_numeric(df[col], errors="coerce") * 10000
+        return _normalize(df, source="sina")
 
 
 def _fetch_em_datacenter() -> pd.DataFrame:
-    """Fetch via eastmoney datacenter xuangu API.
+        """从东方财富数据中心选股 API 拉取快照。
 
-    This works even on weekends (returns last trading day data).
-    """
-    url = "https://data.eastmoney.com/dataapi/xuangu/list"
-    all_items = []
-    page = 1
-    page_size = 500
+        在周末等非交易日也能取到上一个交易日的数据，便于离线回放。
+        """
+        url = "https://data.eastmoney.com/dataapi/xuangu/list"
+        all_items = []
+        page = 1
+        page_size = 500
 
-    while True:
-        params = {
-            "st": "SECURITY_CODE",
-            "sr": "1",
-            "ps": str(page_size),
-            "p": str(page),
-            "sty": "SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,NEW_PRICE,"
-                   "CHANGE_RATE,VOLUME_RATIO,DEAL_AMOUNT,TURNOVERRATE,"
-                   "PE9,PBNEWMRQ,TOTAL_MARKET_CAP,CIRCULATION_MARKET_CAP",
-            "filter": '(MARKET+in+("上交所主板","深交所主板","深交所创业板","上交所科创板","北交所"))',
-            "source": "SELECT_SECURITIES",
-            "client": "WEB",
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://data.eastmoney.com/xuangu/",
-        }
+        while True:
+            params = {
+                "st": "SECURITY_CODE",
+                "sr": "1",
+                "ps": str(page_size),
+                "p": str(page),
+                "sty": "SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,NEW_PRICE,"
+                       "CHANGE_RATE,VOLUME_RATIO,DEAL_AMOUNT,TURNOVERRATE,"
+                       "PE9,PBNEWMRQ,TOTAL_MARKET_CAP,CIRCULATION_MARKET_CAP",
+                "filter": '(MARKET+in+("上交所主板","深交所主板","深交所创业板","上交所科创板","北交所"))',
+                "source": "SELECT_SECURITIES",
+                "client": "WEB",
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://data.eastmoney.com/xuangu/",
+            }
 
-        resp = _eastmoney_get(url, params=params, headers=headers, timeout=30)
-        data = resp.json()
+            resp = _eastmoney_get(url, params=params, headers=headers, timeout=30)
+            data = resp.json()
 
-        if not data.get("success"):
-            raise RuntimeError(f"em_datacenter API error: {data.get('message', 'unknown')}")
+            if not data.get("success"):
+                raise RuntimeError(f"em_datacenter API error: {data.get('message', 'unknown')}")
 
-        items = data["result"]["data"]
-        all_items.extend(items)
+            items = data["result"]["data"]
+            all_items.extend(items)
 
-        total_count = data["result"]["count"]
-        if page * page_size >= total_count:
-            break
-        page += 1
+            total_count = data["result"]["count"]
+            if page * page_size >= total_count:
+                break
+            page += 1
 
-    if not all_items:
-        raise RuntimeError("em_datacenter returned no data")
+        if not all_items:
+            raise RuntimeError("em_datacenter returned no data")
 
-    df = pd.DataFrame(all_items)
-    return _normalize(df, source="em_datacenter")
+        df = pd.DataFrame(all_items)
+        return _normalize(df, source="em_datacenter")
 
 
 def _eastmoney_get(url: str, **kwargs) -> requests.Response:
-    """GET EastMoney endpoints through one throttled shared session.
+        """通过共享的节流会话访问 EastMoney 端点。
 
-    EastMoney endpoints are useful but more sensitive to bursty access than
-    lightweight direct sources. Keeping all direct calls behind one retrying
-    session, a process-wide interval, and a little jitter follows the same
-    anti-ban pattern used by a-stock-data's ``em_get`` helper.
-    """
-    global _EM_LAST_REQUEST_AT, _EM_SESSION
-    with _EM_LOCK:
-        if _EM_SESSION is None:
-            _EM_SESSION = _build_eastmoney_session()
-        elapsed = time.monotonic() - _EM_LAST_REQUEST_AT
-        interval = _eastmoney_request_interval_seconds()
-        if elapsed < interval:
-            time.sleep(interval - elapsed)
-        response = _EM_SESSION.get(url, **kwargs)
-        _EM_LAST_REQUEST_AT = time.monotonic()
-    response.raise_for_status()
-    return response
+        EastMoney 接口对突发访问较为敏感，所有直接请求统一经过：
+        - 进程级会话 + 重试适配器
+        - 进程级最小间隔 + 随机抖动
+
+        与 a-stock-data 中 ``em_get`` 的反封思路保持一致。
+        """
+        global _EM_LAST_REQUEST_AT, _EM_SESSION
+        with _EM_LOCK:
+            if _EM_SESSION is None:
+                _EM_SESSION = _build_eastmoney_session()
+            elapsed = time.monotonic() - _EM_LAST_REQUEST_AT
+            interval = _eastmoney_request_interval_seconds()
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
+            response = _EM_SESSION.get(url, **kwargs)
+            _EM_LAST_REQUEST_AT = time.monotonic()
+        response.raise_for_status()
+        return response
 
 
 def _build_eastmoney_session() -> requests.Session:
-    session = requests.Session()
-    retry = Retry(
-        total=2,
-        backoff_factor=0.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+        """构造带有 429/5xx 自动重试的 EastMoney 会话。"""
+        session = requests.Session()
+        retry = Retry(
+            total=2,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
 
 
 def _eastmoney_request_interval_seconds() -> float:
-    min_interval = _float_env(
-        "SCREENING_EASTMONEY_MIN_INTERVAL_SEC",
-        _EM_REQUEST_MIN_INTERVAL_SECONDS,
-    )
-    jitter = _float_env(
-        "SCREENING_EASTMONEY_JITTER_SEC",
-        _EM_REQUEST_JITTER_SECONDS,
-    )
-    return max(min_interval, 0.0) + random.uniform(0.0, max(jitter, 0.0))
+        """读取 EastMoney 访问间隔与抖动配置（环境变量优先）。"""
+        min_interval = _float_env(
+            "SCREENING_EASTMONEY_MIN_INTERVAL_SEC",
+            _EM_REQUEST_MIN_INTERVAL_SECONDS,
+        )
+        jitter = _float_env(
+            "SCREENING_EASTMONEY_JITTER_SEC",
+            _EM_REQUEST_JITTER_SECONDS,
+        )
+        return max(min_interval, 0.0) + random.uniform(0.0, max(jitter, 0.0))
 
 
 def _float_env(name: str, default: float) -> float:
-    value = os.getenv(name, "").strip()
-    return float(value) if value else float(default)
+        """从环境变量读取浮点数；为空时返回默认值。"""
+        value = os.getenv(name, "").strip()
+        return float(value) if value else float(default)
 
 
 def _fetch_tushare() -> pd.DataFrame:
-    """Fetch latest available A-share snapshot via Tushare Pro.
+        """通过 Tushare Pro 抓取最近一个交易日 A 股快照。
 
-    Tushare is not a real-time source here. It is used as a resilient fallback
-    by joining the latest open trading day's daily quote and daily_basic data.
-    """
-    token = (
-        os.getenv("TUSHARE_TOKEN", "").strip()
-        or os.getenv("TUSHARE_API_TOKEN", "").strip()
-    )
-    if not token:
-        raise RuntimeError("tushare requires TUSHARE_TOKEN")
+        Tushare 在本场景不是实时源：通过拼接最近一个交易日的 ``daily`` 与
+        ``daily_basic`` 数据实现稳定回退。
+        """
+        token = (
+            os.getenv("TUSHARE_TOKEN", "").strip()
+            or os.getenv("TUSHARE_API_TOKEN", "").strip()
+        )
+        if not token:
+            raise RuntimeError("tushare requires TUSHARE_TOKEN")
 
-    import tushare as ts
+        import tushare as ts
 
-    pro = ts.pro_api(token)
-    _configure_tushare_client(pro, token=token)
-    trade_date = _resolve_tushare_trade_date(pro)
-    daily = pro.daily(
-        trade_date=trade_date,
-        fields="ts_code,trade_date,close,pct_chg,amount",
-    )
-    daily_basic = pro.daily_basic(
-        trade_date=trade_date,
-        fields="ts_code,turnover_rate,volume_ratio,pe,pb,total_mv,circ_mv",
-    )
-    stock_basic = pro.stock_basic(
-        exchange="",
-        list_status="L",
-        fields="ts_code,symbol,name,industry",
-    )
+        pro = ts.pro_api(token)
+        _configure_tushare_client(pro, token=token)
+        trade_date = _resolve_tushare_trade_date(pro)
+        daily = pro.daily(
+            trade_date=trade_date,
+            fields="ts_code,trade_date,close,pct_chg,amount",
+        )
+        daily_basic = pro.daily_basic(
+            trade_date=trade_date,
+            fields="ts_code,turnover_rate,volume_ratio,pe,pb,total_mv,circ_mv",
+        )
+        stock_basic = pro.stock_basic(
+            exchange="",
+            list_status="L",
+            fields="ts_code,symbol,name,industry",
+        )
 
-    if daily is None or daily.empty:
-        raise RuntimeError(f"tushare daily returned empty data for {trade_date}")
-    if daily_basic is None or daily_basic.empty:
-        raise RuntimeError(f"tushare daily_basic returned empty data for {trade_date}")
+        if daily is None or daily.empty:
+            raise RuntimeError(f"tushare daily returned empty data for {trade_date}")
+        if daily_basic is None or daily_basic.empty:
+            raise RuntimeError(f"tushare daily_basic returned empty data for {trade_date}")
 
-    return _prepare_tushare_snapshot(daily, daily_basic, stock_basic)
+        return _prepare_tushare_snapshot(daily, daily_basic, stock_basic)
 
 
 def _configure_tushare_client(pro: object, *, token: str) -> None:
-    try:
-        setattr(pro, "_DataApi__token", token)
-    except Exception:
-        pass
+        """把 token 与 HTTP URL 强制写入 Tushare 客户端实例（兼容私有属性）。"""
+        try:
+            setattr(pro, "_DataApi__token", token)
+        except Exception:
+            pass
 
-    http_url = (
-        os.getenv("TUSHARE_API_URL", "").strip()
-        or os.getenv("TUSHARE_HTTP_URL", "").strip()
-        or _DEFAULT_TUSHARE_HTTP_URL
-    )
-    try:
-        setattr(pro, "_DataApi__http_url", http_url)
-    except Exception:
-        pass
+        http_url = (
+            os.getenv("TUSHARE_API_URL", "").strip()
+            or os.getenv("TUSHARE_HTTP_URL", "").strip()
+            or _DEFAULT_TUSHARE_HTTP_URL
+        )
+        try:
+            setattr(pro, "_DataApi__http_url", http_url)
+        except Exception:
+            pass
 
 
 def _resolve_tushare_trade_date(pro) -> str:
-    """Return the latest open trade date for Tushare requests."""
-    explicit = os.getenv("TUSHARE_TRADE_DATE", "").strip()
-    if explicit:
-        return explicit
+        """返回 Tushare 上下文里最近一个开市交易日。"""
+        explicit = os.getenv("TUSHARE_TRADE_DATE", "").strip()
+        if explicit:
+            return explicit
 
-    end = date.today()
-    start = end - timedelta(days=30)
-    calendar = pro.trade_cal(
-        exchange="",
-        start_date=start.strftime("%Y%m%d"),
-        end_date=end.strftime("%Y%m%d"),
-        is_open="1",
-        fields="cal_date,is_open",
-    )
-    if calendar is None or calendar.empty or "cal_date" not in calendar.columns:
-        raise RuntimeError("tushare trade_cal returned no open trading days")
-    return str(calendar["cal_date"].max())
+        end = date.today()
+        start = end - timedelta(days=30)
+        calendar = pro.trade_cal(
+            exchange="",
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            is_open="1",
+            fields="cal_date,is_open",
+        )
+        if calendar is None or calendar.empty or "cal_date" not in calendar.columns:
+            raise RuntimeError("tushare trade_cal returned no open trading days")
+        return str(calendar["cal_date"].max())
 
 
 def _prepare_tushare_snapshot(
@@ -659,147 +689,143 @@ def _prepare_tushare_snapshot(
     daily_basic: pd.DataFrame,
     stock_basic: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Join and unit-normalize Tushare tables into the common snapshot schema."""
-    merged = daily.merge(daily_basic, on="ts_code", how="left")
-    if stock_basic is not None and not stock_basic.empty:
-        merged = merged.merge(stock_basic, on="ts_code", how="left")
-    if "symbol" not in merged.columns:
-        merged["symbol"] = merged["ts_code"].astype(str).str.split(".").str[0]
-    else:
-        fallback_symbol = merged["ts_code"].astype(str).str.split(".").str[0]
-        merged["symbol"] = merged["symbol"].fillna(fallback_symbol)
+        """把 Tushare 三张表拼成与其它源一致的标准快照 schema。"""
+        merged = daily.merge(daily_basic, on="ts_code", how="left")
+        if stock_basic is not None and not stock_basic.empty:
+            merged = merged.merge(stock_basic, on="ts_code", how="left")
+        if "symbol" not in merged.columns:
+            merged["symbol"] = merged["ts_code"].astype(str).str.split(".").str[0]
+        else:
+            fallback_symbol = merged["ts_code"].astype(str).str.split(".").str[0]
+            merged["symbol"] = merged["symbol"].fillna(fallback_symbol)
 
-    # Tushare units: amount is thousand yuan; market caps are ten-thousand yuan.
-    for col, multiplier in {
-        "amount": 1000,
-        "total_mv": 10000,
-        "circ_mv": 10000,
-    }.items():
-        if col in merged.columns:
-            merged[col] = pd.to_numeric(merged[col], errors="coerce") * multiplier
+        # Tushare 单位：amount 为千元；总市值/流通市值为万元，统一换算为元
+        for col, multiplier in {
+            "amount": 1000,
+            "total_mv": 10000,
+            "circ_mv": 10000,
+        }.items():
+            if col in merged.columns:
+                merged[col] = pd.to_numeric(merged[col], errors="coerce") * multiplier
 
-    return _normalize(merged, source="tushare")
+        return _normalize(merged, source="tushare")
 
 
 def _normalize(df: pd.DataFrame, source: str) -> pd.DataFrame:
-    """Normalize column names to a standard schema.
+        """把各源的列名映射到统一 schema（code/name/price/change_pct/amount 等）。"""
+        df = df.copy()
 
-    Standard columns: code, name, price, change_pct, amount, total_mv,
-                      circ_mv, pe_ratio, pb_ratio, volume_ratio, turnover_rate
-    """
-    df = df.copy()
+        if source == "efinance":
+            standard_cols = {
+                "code": ["股票代码", "代码"],
+                "name": ["股票名称", "名称"],
+                "price": ["最新价"],
+                "change_pct": ["涨跌幅"],
+                "amount": ["成交额"],
+                "total_mv": ["总市值"],
+                "circ_mv": ["流通市值"],
+                "pe_ratio": ["动态市盈率", "市盈率(动)"],
+                "pb_ratio": ["市净率"],
+                "volume_ratio": ["量比"],
+                "turnover_rate": ["换手率"],
+                "industry": ["行业", "所属行业", "行业板块"],
+                "concepts": ["概念", "概念题材", "题材"],
+            }
+        elif source == "akshare_em":
+            standard_cols = {
+                "code": ["代码"],
+                "name": ["名称"],
+                "price": ["最新价"],
+                "change_pct": ["涨跌幅"],
+                "amount": ["成交额"],
+                "total_mv": ["总市值"],
+                "circ_mv": ["流通市值"],
+                "pe_ratio": ["市盈率-动态", "市盈率(动)"],
+                "pb_ratio": ["市净率"],
+                "volume_ratio": ["量比"],
+                "turnover_rate": ["换手率"],
+                "industry": ["行业", "所属行业", "行业板块"],
+                "concepts": ["概念", "概念题材", "题材"],
+            }
+        elif source == "sina":
+            standard_cols = {
+                "code": ["code"],
+                "name": ["name"],
+                "price": ["trade"],
+                "change_pct": ["changepercent"],
+                "amount": ["amount"],
+                "total_mv": ["mktcap"],
+                "circ_mv": ["nmc"],
+                "pe_ratio": ["per"],
+                "pb_ratio": ["pb"],
+                "turnover_rate": ["turnoverratio"],
+            }
+        elif source == "em_datacenter":
+            standard_cols = {
+                "code": ["SECURITY_CODE"],
+                "name": ["SECURITY_NAME_ABBR"],
+                "price": ["NEW_PRICE"],
+                "change_pct": ["CHANGE_RATE"],
+                "amount": ["DEAL_AMOUNT"],
+                "total_mv": ["TOTAL_MARKET_CAP"],
+                "circ_mv": ["CIRCULATION_MARKET_CAP"],
+                "pe_ratio": ["PE9"],
+                "pb_ratio": ["PBNEWMRQ"],
+                "volume_ratio": ["VOLUME_RATIO"],
+                "turnover_rate": ["TURNOVERRATE"],
+                "industry": ["INDUSTRY", "INDUSTRY_NAME", "BOARD_NAME"],
+                "concepts": ["CONCEPT", "CONCEPT_NAME", "THEME_NAME"],
+            }
+        elif source == "tushare":
+            standard_cols = {
+                "code": ["symbol", "code"],
+                "name": ["name"],
+                "price": ["close"],
+                "change_pct": ["pct_chg"],
+                "amount": ["amount"],
+                "total_mv": ["total_mv"],
+                "circ_mv": ["circ_mv"],
+                "pe_ratio": ["pe"],
+                "pb_ratio": ["pb"],
+                "volume_ratio": ["volume_ratio"],
+                "turnover_rate": ["turnover_rate"],
+                "industry": ["industry"],
+                "concepts": ["concepts"],
+            }
+        else:
+            standard_cols = {}
 
-    if source == "efinance":
-        standard_cols = {
-            "code": ["股票代码", "代码"],
-            "name": ["股票名称", "名称"],
-            "price": ["最新价"],
-            "change_pct": ["涨跌幅"],
-            "amount": ["成交额"],
-            "total_mv": ["总市值"],
-            "circ_mv": ["流通市值"],
-            "pe_ratio": ["动态市盈率", "市盈率(动)"],
-            "pb_ratio": ["市净率"],
-            "volume_ratio": ["量比"],
-            "turnover_rate": ["换手率"],
-            "industry": ["行业", "所属行业", "行业板块"],
-            "concepts": ["概念", "概念题材", "题材"],
-        }
-    elif source == "akshare_em":
-        standard_cols = {
-            "code": ["代码"],
-            "name": ["名称"],
-            "price": ["最新价"],
-            "change_pct": ["涨跌幅"],
-            "amount": ["成交额"],
-            "total_mv": ["总市值"],
-            "circ_mv": ["流通市值"],
-            "pe_ratio": ["市盈率-动态", "市盈率(动)"],
-            "pb_ratio": ["市净率"],
-            "volume_ratio": ["量比"],
-            "turnover_rate": ["换手率"],
-            "industry": ["行业", "所属行业", "行业板块"],
-            "concepts": ["概念", "概念题材", "题材"],
-        }
-    elif source == "sina":
-        standard_cols = {
-            "code": ["code"],
-            "name": ["name"],
-            "price": ["trade"],
-            "change_pct": ["changepercent"],
-            "amount": ["amount"],
-            "total_mv": ["mktcap"],
-            "circ_mv": ["nmc"],
-            "pe_ratio": ["per"],
-            "pb_ratio": ["pb"],
-            "turnover_rate": ["turnoverratio"],
-        }
-    elif source == "em_datacenter":
-        standard_cols = {
-            "code": ["SECURITY_CODE"],
-            "name": ["SECURITY_NAME_ABBR"],
-            "price": ["NEW_PRICE"],
-            "change_pct": ["CHANGE_RATE"],
-            "amount": ["DEAL_AMOUNT"],
-            "total_mv": ["TOTAL_MARKET_CAP"],
-            "circ_mv": ["CIRCULATION_MARKET_CAP"],
-            "pe_ratio": ["PE9"],
-            "pb_ratio": ["PBNEWMRQ"],
-            "volume_ratio": ["VOLUME_RATIO"],
-            "turnover_rate": ["TURNOVERRATE"],
-            "industry": ["INDUSTRY", "INDUSTRY_NAME", "BOARD_NAME"],
-            "concepts": ["CONCEPT", "CONCEPT_NAME", "THEME_NAME"],
-        }
-    elif source == "tushare":
-        standard_cols = {
-            "code": ["symbol", "code"],
-            "name": ["name"],
-            "price": ["close"],
-            "change_pct": ["pct_chg"],
-            "amount": ["amount"],
-            "total_mv": ["total_mv"],
-            "circ_mv": ["circ_mv"],
-            "pe_ratio": ["pe"],
-            "pb_ratio": ["pb"],
-            "volume_ratio": ["volume_ratio"],
-            "turnover_rate": ["turnover_rate"],
-            "industry": ["industry"],
-            "concepts": ["concepts"],
-        }
-    else:
-        standard_cols = {}
+        df = _rename_standard_columns(df, standard_cols)
 
-    df = _rename_standard_columns(df, standard_cols)
+        # 把所有数值列强制转为 float，无法解析的置为 NaN
+        numeric_cols = [
+            "price", "change_pct", "amount", "total_mv", "circ_mv",
+            "pe_ratio", "pb_ratio", "volume_ratio", "turnover_rate",
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Coerce numeric columns
-    numeric_cols = [
-        "price", "change_pct", "amount", "total_mv", "circ_mv",
-        "pe_ratio", "pb_ratio", "volume_ratio", "turnover_rate",
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        # 丢弃没有有效价格的行，避免后续打分出现除零/无效指标
+        if "price" in df.columns:
+            df = df.dropna(subset=["price"])
+            df = df[df["price"] > 0]
 
-    # Drop rows without a valid price
-    if "price" in df.columns:
-        df = df.dropna(subset=["price"])
-        df = df[df["price"] > 0]
-
-    df.attrs["snapshot_source"] = source
-    return df
+        df.attrs["snapshot_source"] = source
+        return df
 
 
 def _rename_standard_columns(
     df: pd.DataFrame,
     standard_cols: dict[str, list[str]],
 ) -> pd.DataFrame:
-    """Rename the first matching source column for each standard field."""
-    rename_map: dict[str, str] = {}
-    for standard_name, candidates in standard_cols.items():
-        for candidate in candidates:
-            if candidate in df.columns:
-                rename_map[candidate] = standard_name
-                break
-    return df.rename(columns=rename_map)
+        """为每个标准字段从候选列里取第一个存在的列进行重命名。"""
+        rename_map: dict[str, str] = {}
+        for standard_name, candidates in standard_cols.items():
+            for candidate in candidates:
+                if candidate in df.columns:
+                    rename_map[candidate] = standard_name
+                    break
+        return df.rename(columns=rename_map)
 
 

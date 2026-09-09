@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Service helpers for operator-authored paid research reports.
+"""运营/管理员撰写的付费研报相关服务函数。
 
-These helpers are intentionally transaction-neutral: callers own the SQLAlchemy
-session commit/rollback. The functions normalize API payloads, enforce purchase
-idempotency, and serialize user-specific unlock/reaction state.
+本模块刻意不介入事务（transaction-neutral）：调用方负责 SQLAlchemy 会话的
+commit/rollback。这些函数负责：归一化 API 载荷、保证购买的幂等性，以及序列化
+与当前用户相关的解锁与互动状态。
 """
 
 from __future__ import annotations
@@ -25,11 +25,12 @@ from src.storage import (
 from src.users.credits import consume_credits
 
 
+# 积分流水的 related_type 与 kind 统一用该常量，便于按研报消费做统计
 RESEARCH_RELATED_TYPE = "research_report"
 
 
 def _tags_to_json(tags: Optional[list[str]]) -> Optional[str]:
-    """Normalize bounded tag lists into the storage JSON string."""
+    """把标签列表规范化后存成 JSON 字符串：单标签截断 32 字符，最多保留 12 个。"""
     if tags is None:
         return None
     normalized = [str(tag).strip()[:32] for tag in tags if str(tag).strip()]
@@ -37,7 +38,7 @@ def _tags_to_json(tags: Optional[list[str]]) -> Optional[str]:
 
 
 def _tags_from_json(value: Optional[str]) -> list[str]:
-    """Decode stored tag JSON defensively for API output."""
+    """解码存储的标签 JSON，用于 API 输出，做防御性处理。"""
     if not value:
         return []
     try:
@@ -50,7 +51,7 @@ def _tags_from_json(value: Optional[str]) -> list[str]:
 
 
 def user_has_unlocked(db: Session, report: AppResearchReport, user: Optional[AppUser]) -> bool:
-    """Return whether a user may see the paid full report content."""
+    """返回当前用户是否可以看到付费研报的完整正文。"""
     if int(report.price_credits or 0) <= 0:
         return True
     if user is None:
@@ -67,7 +68,7 @@ def user_has_unlocked(db: Session, report: AppResearchReport, user: Optional[App
 
 
 def get_reaction_counts(db: Session, report_id: int) -> dict[str, int]:
-    """Count visible like/dislike reactions for one report."""
+    """统计单篇研报的点赞/点踩数量，返回 ``{"likes": n, "dislikes": n}``。"""
     rows = (
         db.query(AppResearchReportReaction.reaction, func.count(AppResearchReportReaction.id))
         .filter(AppResearchReportReaction.report_id == int(report_id))
@@ -84,7 +85,7 @@ def get_reaction_counts(db: Session, report_id: int) -> dict[str, int]:
 
 
 def get_user_reaction(db: Session, report_id: int, user: Optional[AppUser]) -> Optional[str]:
-    """Return the current user's reaction, if any."""
+    """返回当前用户在该研报上的表态（like/dislike/None）。"""
     if user is None:
         return None
     row = (
@@ -99,7 +100,7 @@ def get_user_reaction(db: Session, report_id: int, user: Optional[AppUser]) -> O
 
 
 def count_visible_comments(db: Session, report_id: int) -> int:
-    """Count comments that should be visible in the public report detail."""
+    """统计在公开研报详情中应当可见的评论数量。"""
     return (
         db.query(AppResearchReportComment)
         .filter(
@@ -117,7 +118,17 @@ def serialize_report(
     user: Optional[AppUser] = None,
     include_full: bool = False,
 ) -> dict:
-    """Serialize report metadata with user-specific unlock and reaction fields."""
+    """序列化研报元数据，并附带当前用户的解锁态与点赞态。
+
+    Args:
+        db: 数据库会话。
+        report: 研报实体。
+        user: 当前用户；匿名时解锁态与 myReaction 均为空。
+        include_full: 是否输出正文；未解锁时正文强制为 None，防止内容泄露。
+
+    Returns:
+        驼峰字段的 API 响应字典。
+    """
     unlocked = user_has_unlocked(db, report, user)
     reactions = get_reaction_counts(db, int(report.id))
     payload = {
@@ -157,7 +168,7 @@ def create_report(
     tags: Optional[list[str]] = None,
     cover_image_url: Optional[str] = None,
 ) -> AppResearchReport:
-    """Create a draft research report authored by an operator/admin user."""
+    """由运营/管理员创建一篇研报草稿。"""
     report = AppResearchReport(
         title=title.strip(),
         summary=summary.strip(),
@@ -188,7 +199,7 @@ def update_report(
     tags: Optional[list[str]] = None,
     cover_image_url: Optional[str] = None,
 ) -> AppResearchReport:
-    """Apply partial edits to an existing research report."""
+    """对已有研报做局部更新：仅更新显式传入（非 None）的字段。"""
     if title is not None:
         report.title = title.strip()
     if summary is not None:
@@ -211,7 +222,7 @@ def update_report(
 
 
 def publish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
-    """Publish a report and set its first published timestamp."""
+    """发布一篇研报，并在首次发布时记录发布时间。"""
     report.is_published = True
     report.published_at = report.published_at or datetime.now()
     db.add(report)
@@ -220,7 +231,7 @@ def publish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
 
 
 def unpublish_report(db: Session, report: AppResearchReport) -> AppResearchReport:
-    """Hide a report from public listing without deleting purchase history."""
+    """将研报从公开列表中下架，但不删除购买记录。"""
     report.is_published = False
     db.add(report)
     db.flush()
@@ -228,7 +239,7 @@ def unpublish_report(db: Session, report: AppResearchReport) -> AppResearchRepor
 
 
 def purchase_report(db: Session, *, report: AppResearchReport, user: AppUser) -> AppResearchReportPurchase:
-    """Unlock a paid report once, consuming credits with an idempotency key."""
+    """解锁一篇付费研报，并通过幂等键扣减积分。"""
     existing = (
         db.query(AppResearchReportPurchase)
         .filter(
@@ -271,7 +282,11 @@ def set_reaction(
     user: AppUser,
     reaction: Optional[str],
 ) -> Optional[AppResearchReportReaction]:
-    """Create, update, or clear the user's like/dislike reaction."""
+    """设置用户的点赞/点踩：reaction 为 None 表示取消表态。
+
+    Raises:
+        ValueError: reaction 既不是 None 也不是 like/dislike。
+    """
     row = (
         db.query(AppResearchReportReaction)
         .filter(
@@ -307,7 +322,7 @@ def add_comment(
     user: AppUser,
     content: str,
 ) -> AppResearchReportComment:
-    """Add a visible user comment to a research report."""
+    """为研报添加一条默认可见的用户评论。"""
     comment = AppResearchReportComment(
         report_id=int(report.id),
         user_id=int(user.id),
@@ -320,7 +335,7 @@ def add_comment(
 
 
 def serialize_comment(comment: AppResearchReportComment, user: Optional[AppUser] = None) -> dict:
-    """Serialize one research report comment for API responses."""
+    """序列化单条研报评论；传入 user 时附带作者邮箱。"""
     return {
         "id": int(comment.id),
         "reportId": int(comment.report_id),

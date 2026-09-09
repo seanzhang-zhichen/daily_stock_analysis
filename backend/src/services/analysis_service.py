@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-分析服务层
-===================================
+"""分析服务层。
 
 职责：
 1. 封装股票分析逻辑
-2. 调用 analyzer 和 pipeline 执行分析
-3. 保存分析结果到数据库
+2. 调用 analyzer 与 pipeline 执行分析
+3. 把分析结果落库
 """
 
 import logging
@@ -21,6 +18,12 @@ from src.report_language import (
     localize_operation_advice,
     localize_trend_prediction,
     normalize_report_language,
+)
+from src.services.run_diagnostics import (
+    activate_run_diagnostic_context,
+    current_diagnostic_snapshot,
+    get_current_diagnostic_context,
+    reset_run_diagnostic_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class AnalysisService:
         report_type: str = "detailed",
         force_refresh: bool = False,
         query_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
         send_notification: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         skills: Optional[List[str]] = None,
@@ -79,6 +83,15 @@ class AnalysisService:
             # 生成 query_id
             if query_id is None:
                 query_id = uuid.uuid4().hex
+            effective_trace_id = trace_id or query_id
+            diagnostic_token = None
+            if get_current_diagnostic_context() is None:
+                diagnostic_token = activate_run_diagnostic_context(
+                    trace_id=effective_trace_id,
+                    query_id=query_id,
+                    stock_code=stock_code,
+                    trigger_source=query_source or "api",
+                )
             
             # 获取配置
             config = get_config()
@@ -87,6 +100,7 @@ class AnalysisService:
             pipeline = StockAnalysisPipeline(
                 config=config,
                 query_id=query_id,
+                trace_id=effective_trace_id,
                 query_source=query_source or "api",
                 progress_callback=progress_callback,
                 analysis_skills=skills,
@@ -117,17 +131,25 @@ class AnalysisService:
                 return None
             
             # 构建响应
-            return self._build_analysis_response(result, query_id, report_type=rt.value)
+            return self._build_analysis_response(
+                result,
+                query_id,
+                trace_id=effective_trace_id,
+                report_type=rt.value,
+            )
             
         except Exception as e:
             self.last_error = str(e)
             logger.error(f"分析股票 {stock_code} 失败: {e}", exc_info=True)
             return None
+        finally:
+            reset_run_diagnostic_context(locals().get("diagnostic_token"))
     
     def _build_analysis_response(
         self, 
         result: Any, 
         query_id: str,
+        trace_id: Optional[str] = None,
         report_type: str = "detailed",
     ) -> Dict[str, Any]:
         """
@@ -155,6 +177,7 @@ class AnalysisService:
         report = {
             "meta": {
                 "query_id": query_id,
+                "trace_id": trace_id or query_id,
                 "stock_code": result.code,
                 "stock_name": stock_name,
                 "report_type": report_type,
@@ -186,7 +209,10 @@ class AnalysisService:
         }
         
         return {
+            "query_id": query_id,
+            "trace_id": trace_id or query_id,
             "stock_code": result.code,
             "stock_name": stock_name,
             "report": report,
+            "diagnostics": current_diagnostic_snapshot(),
         }

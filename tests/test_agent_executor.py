@@ -30,6 +30,7 @@ except ModuleNotFoundError:
 from src.agent.executor import AgentExecutor, AgentResult
 from src.agent.llm_adapter import LLMResponse, ToolCall
 from src.agent.runner import parse_dashboard_json, run_agent_loop, serialize_tool_result
+from src.agent.tools.execution import ToolExecutionCancelled, check_tool_execution
 from src.agent.tools.registry import ToolRegistry, ToolDefinition, ToolParameter
 
 
@@ -163,6 +164,25 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertEqual(result.total_steps, 1)
         self.assertEqual(result.provider, "openai")
         self.assertEqual(len(result.tool_calls_log), 0)
+
+    def test_single_agent_loop_emits_stage_lifecycle_events(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.return_value = LLMResponse(
+            content=json.dumps(SAMPLE_DASHBOARD), tool_calls=[], usage={}, provider="openai",
+        )
+        events = []
+
+        result = run_agent_loop(
+            messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "Analyze"}],
+            tool_registry=registry, llm_adapter=adapter, progress_callback=events.append,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(events[0]["type"], "stage_start")
+        self.assertEqual(events[0]["stage"], "agent_loop")
+        self.assertEqual(events[-1]["type"], "stage_done")
+        self.assertEqual(events[-1]["status"], "completed")
 
     def test_tool_call_then_text(self):
         """Agent calls a tool, gets result, then returns final answer."""
@@ -579,6 +599,81 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertEqual(len(result.tool_calls_log), 1)
         self.assertTrue(result.tool_calls_log[0].get("timeout"))
         self.assertEqual(result.tool_calls_log[0]["arguments"]["message"], "slow")
+
+    def test_category_timeout_applies_without_explicit_timeout(self):
+        registry = ToolRegistry(category_timeouts={"data": 0.01})
+        registry.register(ToolDefinition(
+            name="slow_data", description="Slow data", parameters=[], category="data",
+            handler=lambda: (time.sleep(0.05), {"ok": True})[1],
+        ))
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(content="", tool_calls=[ToolCall(id="slow", name="slow_data", arguments={})], usage={}, provider="openai"),
+            LLMResponse(content=json.dumps(SAMPLE_DASHBOARD), tool_calls=[], usage={}, provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "Analyze"}],
+            tool_registry=registry, llm_adapter=adapter, max_steps=3,
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.tool_calls_log[0].get("timeout"))
+
+    def test_explicit_timeout_overrides_stricter_category_timeout(self):
+        registry = ToolRegistry(category_timeouts={"data": 0.01})
+        registry.register(ToolDefinition(
+            name="slow_data", description="Slow data", parameters=[], category="data",
+            handler=lambda: (time.sleep(0.02), {"ok": True})[1],
+        ))
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(content="", tool_calls=[ToolCall(id="slow", name="slow_data", arguments={})], usage={}, provider="openai"),
+            LLMResponse(content=json.dumps(SAMPLE_DASHBOARD), tool_calls=[], usage={}, provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "Analyze"}],
+            tool_registry=registry, llm_adapter=adapter, max_steps=3,
+            tool_call_timeout_seconds=0.08,
+        )
+
+        self.assertTrue(result.success)
+        self.assertFalse(result.tool_calls_log[0].get("timeout", False))
+
+    def test_timeout_signals_cooperative_tool_cancellation(self):
+        cancellations = []
+
+        def _cooperative_slow_tool():
+            try:
+                for _ in range(100):
+                    check_tool_execution()
+                    time.sleep(0.002)
+            except ToolExecutionCancelled:
+                cancellations.append(True)
+                raise
+            return {"ok": True}
+
+        registry = ToolRegistry(category_timeouts={"data": 0.01})
+        registry.register(ToolDefinition(
+            name="slow_data", description="Slow data", parameters=[], category="data",
+            handler=_cooperative_slow_tool,
+        ))
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(content="", tool_calls=[ToolCall(id="slow", name="slow_data", arguments={})], usage={}, provider="openai"),
+            LLMResponse(content=json.dumps(SAMPLE_DASHBOARD), tool_calls=[], usage={}, provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "Analyze"}],
+            tool_registry=registry, llm_adapter=adapter, max_steps=3,
+        )
+        time.sleep(0.03)
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.tool_calls_log[0].get("timeout"))
+        self.assertEqual(cancellations, [True])
 
     def test_llm_call_receives_remaining_timeout_budget(self):
         """LLM tool calls should receive the remaining wall-clock budget."""

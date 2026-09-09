@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-AlphaVantageFetcher — US market data source (Priority 3)
+AlphaVantageFetcher — 美股数据源（优先级 3）
 
-Data source: AlphaVantage REST API
-Rate limit: 25 calls/day, 5 calls/min (free tier)
-Markets: US only
+数据来源：AlphaVantage REST API
+速率限制：免费档 25 次/天、5 次/分钟
+覆盖市场：仅美股
 """
 
 import logging
@@ -25,13 +25,13 @@ _AV_BASE_URL = "https://www.alphavantage.co/query"
 
 
 class AlphaVantageFetcher(BaseFetcher):
-    """AlphaVantage-backed US OHLCV and realtime quote fetcher."""
+    """基于 AlphaVantage 的美股 OHLCV 与实时行情 fetcher。"""
 
     name = "AlphaVantageFetcher"
     priority = 3
 
     def __init__(self):
-        """Load API key from config/env; missing key leaves fetcher effectively disabled."""
+        """从配置/环境变量加载 API key；缺失时 fetcher 实际处于禁用状态。"""
         from src.config import get_config
         config = get_config()
         self._api_key = getattr(config, 'alphavantage_api_key', None) or os.getenv('ALPHAVANTAGE_API_KEY')
@@ -39,11 +39,11 @@ class AlphaVantageFetcher(BaseFetcher):
             logger.debug("[AlphaVantage] API key not configured, fetcher disabled")
 
     def _is_us_stock(self, stock_code: str) -> bool:
-        """Return True when stock_code is supported by AlphaVantage US endpoints."""
+        """判断 stock_code 是否被 AlphaVantage 美股接口支持。"""
         return is_us_stock_code(stock_code)
 
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """Fetch raw daily time-series rows from AlphaVantage."""
+        """从 AlphaVantage 拉取原始日线时间序列数据。"""
         if not self._api_key:
             raise DataFetchError("[AlphaVantage] API key not configured")
         if not self._is_us_stock(stock_code):
@@ -97,7 +97,7 @@ class AlphaVantageFetcher(BaseFetcher):
         return df.drop(columns=['date'])
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
-        """Normalize AlphaVantage daily rows into the project standard schema."""
+        """将 AlphaVantage 日线数据规范化为项目标准字段结构。"""
         if df.empty:
             return df
 
@@ -107,7 +107,7 @@ class AlphaVantageFetcher(BaseFetcher):
             '1. open': 'open', '2. high': 'high', '3. low': 'low',
             '4. close': 'close', '5. volume': 'volume',
         })
-        # AlphaVantage returns newest-first; sort ascending before computing pct_chg
+        # AlphaVantage 返回的数据为倒序（最新在前）；计算涨跌幅前先按日期升序排列
         df = df.sort_values('date', ascending=True).reset_index(drop=True)
         df['pct_chg'] = df['close'].pct_change() * 100
         df['pct_chg'] = df['pct_chg'].fillna(0).round(2)
@@ -119,7 +119,7 @@ class AlphaVantageFetcher(BaseFetcher):
         return df
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
-        """Fetch a realtime/global quote and convert it to UnifiedRealtimeQuote."""
+        """获取实时/全球行情，并转换为 UnifiedRealtimeQuote。"""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 
@@ -165,7 +165,7 @@ class AlphaVantageFetcher(BaseFetcher):
         )
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
-        """Resolve US ticker display name through AlphaVantage symbol search."""
+        """通过 AlphaVantage 符号搜索解析美股代码对应的显示名称。"""
         if not self._api_key or not self._is_us_stock(stock_code):
             return None
 

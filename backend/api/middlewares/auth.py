@@ -60,11 +60,11 @@ EXEMPT_PATHS = frozenset({
 
 
 def _path_exempt(path: str) -> bool:
-    """Return whether ``path`` can bypass login enforcement.
+    """判断 ``path`` 是否可以绕过登录校验。
 
-    ``rstrip("/")`` 让 ``/foo`` 与 ``/foo/`` 拥有一致行为；research report
-    需要按资源前缀公开访问，因此在这里单独处理，避免扩大 ``EXEMPT_PATHS``
-    的匹配语义。
+    使用 ``rstrip("/")`` 归一化路径，使 ``/foo`` 与 ``/foo/`` 行为一致；
+    research report 公开访问需要按资源前缀放行，因此在此处单独处理，
+    避免扩大 ``EXEMPT_PATHS`` 的匹配语义。
     """
     normalized = path.rstrip("/") or "/"
     if normalized == "/api/v1/research-reports" or normalized.startswith("/api/v1/research-reports/"):
@@ -73,16 +73,14 @@ def _path_exempt(path: str) -> bool:
 
 
 def _resolve_user_session(request: Request):
-    """Look up the To C user bound to the request, if any.
+    """解析绑定到当前请求的 To C 用户（若存在）。
 
-    Returns the :class:`AppUser` ORM row when found, ``None`` otherwise. The
-    user is stashed on ``request.state.user`` so downstream dependencies can
-    read it without re-querying the DB.
+    找到时返回 :class:`AppUser` ORM 行，否则返回 ``None``。同时把用户对象缓存到
+    ``request.state.user``，下游依赖可直接读取而无需再次访问数据库。
 
-    A short-lived SQLAlchemy session is opened here because middleware runs
-    before FastAPI dependency injection. The ORM object is only used during
-    the current request and is cached on ``request.state`` immediately after
-    validation succeeds.
+    这里短生命周期地打开一个 SQLAlchemy 会话，是因为中间件先于 FastAPI 的依赖
+    注入运行；ORM 对象仅在当前请求内使用，校验通过后立即写入
+    ``request.state`` 缓存。
     """
     cookie_val = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_val:
@@ -96,20 +94,20 @@ def _resolve_user_session(request: Request):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Require a valid multi-user session for protected API endpoints."""
+    """要求受保护 API 端点必须携带有效的多用户会话。"""
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable,
     ):
-        """Attach session context or reject protected requests before routing."""
+        """在路由匹配前附加会话上下文或拒绝未授权请求。"""
         path = request.url.path
         if _path_exempt(path):
             return await call_next(request)
 
-        # Static files, root routes, docs and legacy non-v1 endpoints stay out
-        # of this middleware's responsibility unless explicitly added above.
+        # 静态文件、根路径、文档与历史遗留的非 v1 端点不在本中间件管理范围内，
+        # 除非在上面 EXEMPT_PATHS 中显式登记。
         if not path.startswith("/api/v1/"):
             return await call_next(request)
 
@@ -128,5 +126,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 def add_auth_middleware(app):
-    """Register authentication middleware on a FastAPI application."""
+    """在 FastAPI 应用上注册鉴权中间件。"""
     app.add_middleware(AuthMiddleware)

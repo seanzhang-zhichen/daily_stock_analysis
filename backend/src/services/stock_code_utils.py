@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Shared stock-code parsing utilities for import and API input paths."""
+"""导入与 API 输入路径共用的股票代码解析工具函数。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ _SUFFIX_DIGIT_LENS: dict = {
 
 
 def _valid_exchange_code(exchange: str, base: str, digit_lens: tuple[int, ...]) -> bool:
-    """Validate exchange-specific digit length and Beijing exchange shape."""
+    """校验交易所专属的数字长度以及北交所（Beijing exchange）代码形态。"""
     if not (base.isdigit() and len(base) in digit_lens):
         return False
     if exchange == "BJ":
@@ -38,7 +38,7 @@ def _valid_exchange_code(exchange: str, base: str, digit_lens: tuple[int, ...]) 
 
 
 def _strip_exchange_prefix(text: str) -> Optional[str]:
-    """Strip leading exchange prefix (SH/SZ/HK etc.) and return the bare digits, or None."""
+    """剥离前导交易所前缀（SH/SZ/HK 等）并返回纯数字代码，失败返回 None。"""
     for prefix, digit_lens in _PREFIX_DIGIT_LENS.items():
         if text.startswith(prefix):
             base = text[len(prefix):]
@@ -48,7 +48,7 @@ def _strip_exchange_prefix(text: str) -> Optional[str]:
 
 
 def _strip_exchange_suffix(text: str) -> Optional[str]:
-    """Strip exchange suffix (.SH/.SZ/.SS/.HK) and return normalized bare digits, or None."""
+    """剥离交易所后缀（.SH/.SZ/.SS/.HK）并返回归一化的纯数字代码，失败返回 None。"""
     for suffix, digit_lens in _SUFFIX_DIGIT_LENS.items():
         if text.endswith(suffix):
             base = text[: -len(suffix)].strip()
@@ -59,7 +59,7 @@ def _strip_exchange_suffix(text: str) -> Optional[str]:
 
 
 def is_code_like(value: str) -> bool:
-    """Check if string looks like a stock code (5-6 digits, 1-5 letters, or prefixed code)."""
+    """判断字符串是否像股票代码（5-6 位数字、1-5 位字母，或带前缀/后缀代码）。"""
     text = value.strip().upper()
     if not text:
         return False
@@ -76,13 +76,13 @@ def is_code_like(value: str) -> bool:
 
 
 def normalize_code(raw: str) -> Optional[str]:
-    """Normalize and validate a single stock code.
+    """归一化并校验单个股票代码。
 
-    Supports:
-    - Plain digit codes: 600519, 00700
-    - Suffix format: 600519.SH, 600519.SZ, 920493.BJ, 00700.HK
-    - Prefix format: SH600519, SZ000001, BJ920493, HK00700 (case-insensitive)
-    - US ticker symbols: AAPL, TSLA
+    支持：
+    - 纯数字代码：600519、00700
+    - 后缀格式：600519.SH、600519.SZ、920493.BJ、00700.HK
+    - 前缀格式：SH600519、SZ000001、BJ920493、HK00700（大小写不敏感）
+    - 美股代码：AAPL、TSLA
     """
     text = raw.strip().upper()
     if not text:

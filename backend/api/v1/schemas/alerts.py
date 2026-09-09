@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Alert API schemas.
+"""告警 API 的 Pydantic Schema。
 
-告警接口围绕规则、触发记录和通知投递记录展开。创建/更新请求保留
-``parameters``、``cooldown_policy``、``notification_policy`` 为字典，
-便于不同 alert_type 逐步扩展自己的配置结构。
+围绕告警规则、触发记录、通知投递记录三个核心对象，定义请求与响应模型。
+
+设计要点：
+- 规则的 ``parameters``、``cooldown_policy``、``notification_policy`` 字段一律
+  保持为 ``Dict[str, Any]``，便于不同 ``alert_type`` 逐步扩展自己的配置结构，
+  无需每次都修改 Schema。
+- 触发记录与通知记录都采用分页列表响应（``*ListResponse``），便于前端按页加载。
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ DryRunStatusValue = Literal["triggered", "not_triggered", "evaluation_error"]
 
 
 class AlertRuleCreateRequest(BaseModel):
-    """Request body for creating an alert rule."""
+    """创建告警规则的请求体。"""
 
     name: Optional[str] = Field(None, max_length=64)
     target_scope: TargetScopeValue = "single_symbol"
@@ -33,7 +37,7 @@ class AlertRuleCreateRequest(BaseModel):
 
 
 class AlertRuleUpdateRequest(BaseModel):
-    """Partial update body for an existing alert rule."""
+    """对已有告警规则做局部更新的请求体（仅修改显式给出的字段）。"""
 
     name: Optional[str] = Field(None, max_length=64)
     target_scope: Optional[TargetScopeValue] = None
@@ -47,7 +51,7 @@ class AlertRuleUpdateRequest(BaseModel):
 
 
 class AlertRuleItem(BaseModel):
-    """Alert rule representation returned to API clients."""
+    """返回给 API 客户端的告警规则完整表示。"""
 
     id: int
     name: str
@@ -65,7 +69,7 @@ class AlertRuleItem(BaseModel):
 
 
 class AlertRuleListResponse(BaseModel):
-    """Paginated alert-rule list response."""
+    """告警规则列表的分页响应。"""
 
     items: List[AlertRuleItem] = Field(default_factory=list)
     total: int
@@ -74,13 +78,13 @@ class AlertRuleListResponse(BaseModel):
 
 
 class AlertDeleteResponse(BaseModel):
-    """Deletion summary for alert-rule bulk operations."""
+    """告警规则删除操作的概要响应。"""
 
     deleted: int
 
 
 class AlertRuleTestResponse(BaseModel):
-    """Dry-run evaluation result for one alert rule."""
+    """对单条告警规则进行试跑（dry-run）的评估结果。"""
 
     rule_id: int
     status: DryRunStatusValue
@@ -90,7 +94,7 @@ class AlertRuleTestResponse(BaseModel):
 
 
 class AlertTriggerItem(BaseModel):
-    """One historical alert trigger event."""
+    """单条历史告警触发事件。"""
 
     id: int
     rule_id: Optional[int] = None
@@ -106,7 +110,7 @@ class AlertTriggerItem(BaseModel):
 
 
 class AlertTriggerListResponse(BaseModel):
-    """Paginated alert-trigger history response."""
+    """告警触发历史的分页响应。"""
 
     items: List[AlertTriggerItem] = Field(default_factory=list)
     total: int
@@ -115,7 +119,7 @@ class AlertTriggerListResponse(BaseModel):
 
 
 class AlertNotificationItem(BaseModel):
-    """One notification delivery attempt produced by an alert trigger."""
+    """由告警触发产生的单次通知投递记录。"""
 
     id: int
     trigger_id: Optional[int] = None
@@ -130,7 +134,7 @@ class AlertNotificationItem(BaseModel):
 
 
 class AlertNotificationListResponse(BaseModel):
-    """Paginated alert notification-attempt response."""
+    """告警通知投递记录的分页响应。"""
 
     items: List[AlertNotificationItem] = Field(default_factory=list)
     total: int

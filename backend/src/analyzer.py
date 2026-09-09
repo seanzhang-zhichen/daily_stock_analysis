@@ -15,7 +15,7 @@ import logging
 import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import litellm
@@ -56,7 +56,19 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_risk_warning_values(value: Any) -> List[str]:
-    """Normalize arbitrary risk_warning values into a flat list of text alerts."""
+    """把任意形式的 `risk_warning` 字段归一化为扁平文本列表。
+
+    支持 None / 字符串 / 列表 / 元组 / 集合 / 字典：
+    - 字符串：返回单元素列表（去除首尾空白）。
+    - 列表/元组/集合：递归归一化并拼接。
+    - 字典：序列化为 JSON 字符串返回；空字典返回空列表。
+
+    Args:
+        value: 任意形态的原始风险提示数据。
+
+    Returns:
+        归一化后的字符串列表；始终不会是 None。
+    """
     if value is None:
         return []
     if isinstance(value, str):
@@ -71,6 +83,7 @@ def _normalize_risk_warning_values(value: Any) -> List[str]:
         if not value:
             return []
         try:
+            # 把字典序列化为单条 JSON 字符串，便于后续统一展示
             dumped = json.dumps(value, ensure_ascii=False)
             text = dumped.strip()
         except (TypeError, ValueError):
@@ -81,26 +94,30 @@ def _normalize_risk_warning_values(value: Any) -> List[str]:
 
 
 class _LiteLLMStreamError(RuntimeError):
-    """Internal error wrapper that records whether any text was streamed."""
+    """LiteLLM 流式响应异常包装，记录是否已收到部分文本。"""
 
     def __init__(self, message: str, *, partial_received: bool = False):
-        """Store stream error text and whether partial content was received."""
+        """保存错误信息以及“是否已收到部分输出”标记。
+
+        Args:
+            message: 错误描述文本。
+            partial_received: 是否已经接收到至少一段文本（用于上层决定是否降级到非流式重试）。
+        """
         super().__init__(message)
         self.partial_received = partial_received
 
 
 class _AllModelsFailedError(Exception):
-    """Raised when every model in the fallback chain fails.
+    """当备选链（fallback chain）中的所有模型都失败时抛出。
 
-    This includes both LLM call errors and JSON parse errors (when a
-    ``response_validator`` is provided to :meth:`GeminiAnalyzer._call_litellm`).
+    失败既包括 LLM 调用本身的异常，也包括当 `_call_litellm` 传入了
+    `response_validator` 时 JSON 校验失败的情况。
 
-    The ``last_response_text`` attribute holds the raw text from the last model
-    that *did* return a response (but whose JSON could not be validated), so
-    callers can still attempt a best-effort text fallback.
+    `last_response_text` 记录最后一次“确实拿到了响应、但 JSON 无法通过校验”的
+    原始文本，便于调用方尝试 best-effort 的纯文本兜底解析。
 
-    ``last_model`` and ``last_usage`` record the model name and token usage
-    from the last attempt so callers can persist usage even on fallback.
+    `last_model` 与 `last_usage` 记录最后一次尝试所使用的模型与 token 用量，
+    即便整体失败也要把用量统计上报。
     """
 
     def __init__(
@@ -111,7 +128,7 @@ class _AllModelsFailedError(Exception):
         last_model: Optional[str] = None,
         last_usage: Optional[Dict[str, Any]] = None,
     ):
-        """Store last raw response/model metadata for best-effort fallback."""
+        """保存最后一次的响应文本、模型名和用量，供兜底逻辑使用。"""
         super().__init__(message)
         self.last_response_text = last_response_text
         self.last_model = last_model
@@ -119,14 +136,21 @@ class _AllModelsFailedError(Exception):
 
 
 def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
-    """
-    Check mandatory fields for report content integrity.
-    Returns (pass, missing_fields). Module-level for use by pipeline (agent weak mode).
+    """校验 `AnalysisResult` 是否具备所有报告必备字段。
+
+    模块级函数，供流水线（agent 弱模式等）复用。会逐项检查情感分数、操作建议、
+    分析摘要、核心结论一句话、风险警报列表、（买入/持有决策时）止损位等。
+
+    Args:
+        result: 待校验的 `AnalysisResult`。
+
+    Returns:
+        (是否通过, 缺失字段名列表)。缺失字段名按本函数约定的层级路径描述。
     """
     missing: List[str] = []
 
     def _is_blank_text(value: Any) -> bool:
-        """Return whether a mandatory text field is absent or blank."""
+        """判断文本字段是否为空（None / 全空白）。"""
         if value is None:
             return True
         if isinstance(value, str):
@@ -134,13 +158,14 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
         return True
 
     def _is_invalid_risk_alerts(value: Any) -> bool:
-        """Return whether risk alerts fail the required list contract."""
+        """判断 `risk_alerts` 是否不符合“必须是列表”的契约。"""
         return not isinstance(value, list)
 
     def _is_invalid_stop_loss(value: Any) -> bool:
-        """Return whether stop-loss value is missing or structurally invalid."""
+        """判断止损字段是否缺失或结构非法。"""
         if value is None:
             return True
+        # 列表/元组/字典都属于结构非法，必须落到 scalar
         if isinstance(value, (list, tuple, dict)):
             return True
         if isinstance(value, str):
@@ -176,10 +201,19 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
 
 
 def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) -> None:
-    """Fill missing mandatory fields with placeholders (in-place). Module-level for pipeline."""
+    """对缺失的必填字段填充占位值（in-place 修改 result）。
+
+    模块级函数，供流水线复用。仅对 `missing_fields` 中列出的字段做兜底，
+    其他字段保持原状。覆盖：情感分数默认 50、止损与文案回退到本地化占位文本、
+    风险警报回退到 `_normalize_risk_warning_values(result.risk_warning)`。
+
+    Args:
+        result: 目标 `AnalysisResult`（会被原地修改）。
+        missing_fields: 由 `check_content_integrity` 给出的缺失字段路径列表。
+    """
 
     def _is_blank_text(value: Any) -> bool:
-        """Return whether a text field needs placeholder fill."""
+        """判断文本字段是否需要占位填充。"""
         if value is None:
             return True
         if isinstance(value, str):
@@ -187,11 +221,11 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
         return True
 
     def _is_invalid_risk_alerts(value: Any) -> bool:
-        """Return whether the risk-alert field needs placeholder fill."""
+        """判断 `risk_alerts` 是否需要占位填充。"""
         return not isinstance(value, list)
 
     def _is_invalid_stop_loss(value: Any) -> bool:
-        """Return whether the stop-loss field needs placeholder fill."""
+        """判断 `stop_loss` 字段是否需要占位填充。"""
         if value is None:
             return True
         if isinstance(value, (list, tuple, dict)):
@@ -203,6 +237,7 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
     placeholder = get_placeholder_text(getattr(result, "report_language", "zh"))
     for field in missing_fields:
         if field == "sentiment_score":
+            # 中性情感分数：避免误触发趋势分级阈值
             result.sentiment_score = 50
         elif field == "operation_advice":
             if _is_blank_text(result.operation_advice):
@@ -217,6 +252,7 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
             if not isinstance(core, dict):
                 core = {}
                 result.dashboard["core_conclusion"] = core
+            # 决策句子优先复用已有的摘要/操作建议，再退到占位文案
             fallback_sentence = (
                 result.analysis_summary
                 or result.operation_advice
@@ -232,6 +268,7 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
                 intelligence = {}
                 result.dashboard["intelligence"] = intelligence
             if _is_invalid_risk_alerts(intelligence.get("risk_alerts")):
+                # 把顶层 risk_warning 归一化后写入 dashboard，保证 schema 契约
                 risk_warning_values = _normalize_risk_warning_values(result.risk_warning)
                 intelligence["risk_alerts"] = risk_warning_values
         elif field == "dashboard.battle_plan.sniper_points.stop_loss":
@@ -250,14 +287,17 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
 
 
 # ---------- chip_structure fallback (Issue #589) ----------
+# 当 LLM 返回的 `dashboard.data_perspective.chip_structure` 字段缺失或为占位值时，
+# 改用本地行情数据回填，避免下游做指标解读时出现 "N/A"。
 
 _CHIP_KEYS: tuple = ("profit_ratio", "avg_cost", "concentration", "chip_health")
 
 
 def _is_value_placeholder(v: Any) -> bool:
-    """True if value is empty or placeholder (N/A, 数据缺失, etc.)."""
+    """判断值是否为“空 / 占位”（N/A、数据缺失、未知等）。"""
     if v is None:
         return True
+    # 数值型 0 也视作占位：业务上 chip_structure 没有合法的 0 数值
     if isinstance(v, (int, float)) and v == 0:
         return True
     s = str(v).strip().lower()
@@ -279,6 +319,8 @@ _RISK_WARNING_PLACEHOLDER_TEXTS = {
     "无",
 }
 
+# 结构化风险关键词表：出现在 risk_warning / risk_alerts / signal_type 中即视为
+# “重大结构性风险”，触发降级到持有观望或保持 `decision_type=hold` 的兜底。
 _STRUCTURAL_RISK_PHRASE_HINTS = (
     "重大利空",
     "重大风险",
@@ -317,6 +359,7 @@ _STRUCTURAL_RISK_PHRASE_HINTS = (
     "default",
 )
 
+# 资金流不可用 / 未支持的常见状态字符串，用于统一识别上游 “not_supported” 类响应
 _CAPITAL_FLOW_UNAVAILABLE_STATUS = {
     "not_supported",
     "not supported",
@@ -333,7 +376,7 @@ _CAPITAL_FLOW_UNAVAILABLE_STATUS = {
 
 
 def _is_meaningful_text(value: Any) -> bool:
-    """Return whether text is non-empty and not a known placeholder value."""
+    """判断文本是否“非空且不是已知占位字符串”。"""
     text = str(value).strip() if value is not None else ""
     if not text:
         return False
@@ -342,11 +385,12 @@ def _is_meaningful_text(value: Any) -> bool:
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
-    """Safely convert to float; return default on failure. Private helper for chip fill."""
+    """安全地把任意值转成 float；失败返回 `default`。chip 回填场景下的私有工具函数。"""
     if v is None:
         return default
     if isinstance(v, (int, float)):
         try:
+            # NaN 也视作非法数值，回退到 default
             return default if math.isnan(float(v)) else float(v)
         except (ValueError, TypeError):
             return default
@@ -356,6 +400,8 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+# 趋势方向判定用的关键词词典：用于把 LLM 输出的趋势描述归类为 bullish/bearish/neutral。
+# 同时支持中英文，避免 LLM 用同义词表达时漏判。
 _BULLISH_TREND_HINTS: Tuple[str, ...] = (
     "多头排列",
     "持续上涨",
@@ -376,6 +422,7 @@ _BEARISH_TREND_HINTS: Tuple[str, ...] = (
     "downtrend",
 )
 _WEAK_BEARISH_TREND_HINTS: Tuple[str, ...] = ("弱势空头",)
+# 否定词词典：在判断“多/空”关键词前需要先排除被否定的情况。
 _NEGATION_TOKENS: Tuple[str, ...] = (
     "不是",
     "并非",
@@ -390,9 +437,11 @@ _NEGATION_TOKENS: Tuple[str, ...] = (
     "not ",
     "no ",
 )
+# 否定作用域终结符：出现这些标点/换行，否定关系立即断开
 _NEGATION_BREAK_CHARS: Tuple[str, ...] = (",", ".", ";", ":", "!", "?", "，", "。", "；", "：", "！", "？", "\n")
 _NEGATION_LOOKBACK_CHARS = 16
 _NEGATION_MAX_GAP_CHARS = 8
+# 出现在否定词与趋势词之间的“转折”短语：只要出现就视为否定被打断
 _NEGATION_SCOPE_BREAK_TOKENS: Tuple[str, ...] = (
     "而是",
     "但是",
@@ -407,6 +456,7 @@ _NEGATION_SCOPE_BREAK_TOKENS: Tuple[str, ...] = (
     " instead ",
     " rather ",
 )
+# 单字否定词（未/无/非）后允许的紧邻动词前缀：避免把“未形成多头排列”误判为多头
 _SINGLE_CHAR_NEGATION_GAP_PREFIXES: Tuple[str, ...] = (
     "形成",
     "出现",
@@ -428,7 +478,7 @@ _SINGLE_CHAR_NEGATION_GAP_PREFIXES: Tuple[str, ...] = (
 
 
 def _normalize_prompt_reason_items(items: Any) -> List[str]:
-    """Normalize prompt reason/risk items into a clean string list."""
+    """把 LLM 给出的“支持/风险”列表项清洗成干净的字符串列表。"""
     if not isinstance(items, list):
         return []
     normalized: List[str] = []
@@ -440,11 +490,21 @@ def _normalize_prompt_reason_items(items: Any) -> List[str]:
 
 
 def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
-    """Return True when text contains a non-negated strong trend hint."""
+    """判断文本中是否包含“非否定的强趋势关键词”。
+
+    用否定作用域机制避免“未形成多头排列”这种情况被误识别为多头。
+
+    Args:
+        text: 原始 LLM 描述文本。
+        hints: 待匹配的关键词元组（每个 hint 都会做否定作用域检查）。
+
+    Returns:
+        True 表示确实存在未被否定的趋势关键词。
+    """
     lowered = text.strip().lower()
 
     def _has_negation_scope_break(gap: str) -> bool:
-        """Return whether words between negation and hint break negation scope."""
+        """判断否定词到趋势词之间的间隙是否包含“转折”短语；含则否定被断开。"""
         normalized_gap = gap.lower()
         for token in _NEGATION_SCOPE_BREAK_TOKENS:
             token_index = normalized_gap.find(token)
@@ -453,7 +513,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
         return False
 
     def _is_valid_negation_gap(token: str, gap: str) -> bool:
-        """Return whether a negation token can validly negate across the gap."""
+        """单字否定词（未/无/非）后必须紧跟合法动词前缀才算有效否定。"""
         if not gap:
             return True
         if token not in {"未", "无", "非"}:
@@ -461,16 +521,18 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
         return any(gap.startswith(prefix) for prefix in _SINGLE_CHAR_NEGATION_GAP_PREFIXES)
 
     def _is_negated_match(index: int) -> bool:
-        """Return whether a trend hint match is negated by nearby context."""
+        """判断在 `index` 处命中的关键词是否被上下文中的否定词否定掉。"""
         prefix = lowered[max(0, index - _NEGATION_LOOKBACK_CHARS):index]
         for token in _NEGATION_TOKENS:
             token_index = prefix.rfind(token)
             if token_index < 0:
                 continue
             gap = prefix[token_index + len(token):]
+            # 出现断句标点 → 否定关系已经断开
             if any(char in gap for char in _NEGATION_BREAK_CHARS):
                 continue
             stripped_gap = gap.strip()
+            # 距离过远 → 不再视为有效否定
             if len(stripped_gap) > _NEGATION_MAX_GAP_CHARS:
                 continue
             if _has_negation_scope_break(stripped_gap):
@@ -487,6 +549,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
             index = lowered.find(keyword, start)
             if index < 0:
                 break
+            # 一旦找到非否定命中，立即返回 True；命中本身继续往后找
             if not _is_negated_match(index):
                 return True
             start = index + len(keyword)
@@ -494,7 +557,17 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
 
 
 def _infer_trend_direction(trend: Dict[str, Any]) -> str:
-    """Infer the final trend direction from trend_status and ma_alignment."""
+    """根据 `trend_status` 与 `ma_alignment` 综合推断最终趋势方向。
+
+    输出 "bullish" / "bearish" / "neutral" 三种结果。同时识别 MA5/10/20 的
+    强多头/空头排列模式（`ma5>ma10>ma20` / `ma5<ma10<ma20`），用于兜底关键词匹配。
+
+    Args:
+        trend: 技术面趋势字典，含 `trend_status` / `ma_alignment` 字段。
+
+    Returns:
+        `bullish` / `bearish` / `neutral`。
+    """
     combined = " ".join(
         str(trend.get(key, "")).strip()
         for key in ("trend_status", "ma_alignment")
@@ -528,7 +601,15 @@ def _infer_trend_direction(trend: Dict[str, Any]) -> str:
 
 
 def _filter_conflicting_trend_items(items: List[str], conflict_hints: Tuple[str, ...]) -> List[str]:
-    """Drop reasons that directly conflict with the final trend direction."""
+    """过滤掉与最终趋势方向直接冲突的支持/风险条目。
+
+    Args:
+        items: 原始文本列表（如 `signal_reasons` / `risk_factors`）。
+        conflict_hints: 与主趋势相反的关键词集合。
+
+    Returns:
+        剔除冲突项后的列表。
+    """
     return [item for item in items if not _contains_trend_hint(item, conflict_hints)]
 
 
@@ -537,7 +618,21 @@ def _sanitize_trend_analysis_for_prompt(
     *,
     volume_change_ratio: Any = None,
 ) -> Dict[str, Any]:
-    """Clean prompt-only trend hints on a derived copy without touching runtime/provider config."""
+    """清洗 prompt-only 的趋势字段，避免把矛盾结论喂给 LLM。
+
+    仅在副本上操作，不影响运行时/Provider 配置。处理逻辑：
+    1. 推断主趋势方向；
+    2. 删除与之冲突的支持/风险条目，并写入 prompt_consistency_notes；
+    3. 当成交量异常放大（>10 倍）时追加“需降权解读”的提示。
+
+    Args:
+        trend: 技术面趋势字典或 dataclass。
+        volume_change_ratio: 当日成交量较昨日变化倍率，None / NaN 表示跳过。
+
+    Returns:
+        包含清洗后的 `signal_reasons` / `risk_factors` / `prompt_consistency_notes`
+        / `prompt_trend_direction` 等字段的字典。
+    """
     trend_dict = dict(trend) if isinstance(trend, dict) else {}
     signal_reasons = _normalize_prompt_reason_items(trend_dict.get("signal_reasons"))
     risk_factors = _normalize_prompt_reason_items(trend_dict.get("risk_factors"))
@@ -545,6 +640,7 @@ def _sanitize_trend_analysis_for_prompt(
     trend_direction = _infer_trend_direction(trend_dict)
 
     if trend_direction == "bearish":
+        # 空头主判断下，把“看多”结构理由剔除
         filtered_signal_reasons = _filter_conflicting_trend_items(
             signal_reasons,
             _BULLISH_TREND_HINTS + _WEAK_BULLISH_TREND_HINTS,
@@ -556,6 +652,7 @@ def _sanitize_trend_analysis_for_prompt(
             "若新闻、业绩或政策催化偏多，只能表述为“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”，严禁写成确定性买点。"
         )
     elif trend_direction == "bullish":
+        # 多头主判断下，剔除看空结构理由（支持因素 + 风险因素都要清理）
         filtered_signal_reasons = _filter_conflicting_trend_items(
             signal_reasons,
             _BEARISH_TREND_HINTS + _WEAK_BEARISH_TREND_HINTS,
@@ -572,6 +669,7 @@ def _sanitize_trend_analysis_for_prompt(
         risk_factors = filtered_risk_factors
 
     parsed_volume_change = _safe_float(volume_change_ratio, default=math.nan)
+    # 成交量放大 10 倍以上通常意味着异常数据或一次性冲量，必须提示 LLM 降权解读
     if math.isfinite(parsed_volume_change) and parsed_volume_change > 10:
         prompt_notes.append(
             f"成交量较昨日变化约 {parsed_volume_change:.2f} 倍，可能存在异常数据或一次性冲量；量能信号必须降权解读，不能机械视为强确认。"
@@ -585,7 +683,16 @@ def _sanitize_trend_analysis_for_prompt(
 
 
 def _derive_chip_health(profit_ratio: float, concentration_90: float, language: str = "zh") -> str:
-    """Derive chip_health from profit_ratio and concentration_90."""
+    """根据获利比例和 90% 筹码集中度推断筹码健康度。
+
+    Args:
+        profit_ratio: 当前股价之上的获利盘比例（0~1）。
+        concentration_90: 90% 筹码的集中度，越小越集中（0~1）。
+        language: 报告语言，"zh" / "en"。
+
+    Returns:
+        本地化后的筹码健康度标签（"健康" / "一般" / "警惕"）。
+    """
     if profit_ratio >= 0.9:
         return localize_chip_health("警惕", language)  # 获利盘极高
     if concentration_90 >= 0.25:
@@ -596,7 +703,15 @@ def _derive_chip_health(profit_ratio: float, concentration_90: float, language: 
 
 
 def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dict[str, Any]:
-    """Build chip_structure dict from ChipDistribution or dict."""
+    """根据 `ChipDistribution` 或 dict 构造 `chip_structure` 字典。
+
+    Args:
+        chip_data: 筹码分布数据，支持 dataclass 或 dict 形态。
+        language: 报告语言，影响 `chip_health` 输出文案。
+
+    Returns:
+        包含 `profit_ratio` / `avg_cost` / `concentration` / `chip_health` 的字典。
+    """
     if hasattr(chip_data, "profit_ratio"):
         pr = _safe_float(chip_data.profit_ratio)
         ac = chip_data.avg_cost
@@ -616,14 +731,17 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
 
 
 def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> None:
-    """When chip_data exists, fill chip_structure placeholder fields from chip_data (in-place)."""
+    """当存在 `chip_data` 时，用本地数据回填 LLM 给出的占位字段（in-place）。
+
+    仅替换占位字段，保留 LLM 在 `chip_structure` 中已经填好的其他字段。
+    """
     if not result or not chip_data:
         return
     try:
         if not result.dashboard:
             result.dashboard = {}
         dash = result.dashboard
-        # Use `or {}` rather than setdefault so that an explicit `null` from LLM is also replaced
+        # 使用 `or {}` 而非 setdefault，让 LLM 显式返回的 `null` 也能被替换
         dp = dash.get("data_perspective") or {}
         dash["data_perspective"] = dp
         cs = dp.get("chip_structure") or {}
@@ -631,7 +749,7 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
             chip_data,
             language=getattr(result, "report_language", "zh"),
         )
-        # Start from a copy of cs to preserve any extra keys the LLM may have added
+        # 从 cs 复制开始，保留 LLM 可能写入的额外字段
         merged = dict(cs)
         for k in _CHIP_KEYS:
             if _is_value_placeholder(merged.get(k)):
@@ -651,7 +769,11 @@ def fill_price_position_if_needed(
     trend_result: Any = None,
     realtime_quote: Any = None,
 ) -> None:
-    """Fill missing price_position fields from trend_result / realtime data (in-place)."""
+    """用 trend 与实时行情回填 `price_position` 中的占位字段（in-place）。
+
+    当 LLM 没有给出支撑/压力位、均线等具体数值时，由本函数用本地数据兜底，
+    避免 AI 报告中出现大片空白。
+    """
     if not result:
         return
     try:
@@ -687,6 +809,7 @@ def fill_price_position_if_needed(
 
         filled = False
         for k in _PRICE_POS_KEYS:
+            # 缺一个就补一个；只在 LLM 给出占位时覆盖，避免冲掉已有正确值
             if _is_value_placeholder(pp.get(k)) and not _is_value_placeholder(computed.get(k)):
                 pp[k] = computed[k]
                 filled = True
@@ -702,13 +825,18 @@ def stabilize_decision_with_structure(
     trend_result: Any = None,
     fundamental_context: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """
-    Calibrate aggressive buy/sell advice with price levels and capital flow.
+    """用价位与资金流约束买入/卖出的剧烈切换。
 
-    The LLM can overreact to one-day price movement.  This guard keeps the
-    public `decision_type` enum stable while allowing richer neutral wording
-    such as 震荡/洗盘观察 when support, resistance, and fund flow do not confirm
-    an immediate buy/sell action.
+    LLM 可能因单日涨跌而给出激进的买入/卖出结论。本函数作为“兜底守门员”，
+    在以下场景会把决策降级到“震荡/洗盘观察”这类更稳健的中性建议，并保留
+    `decision_type` 为 `hold`：
+
+    - 接近压力位且主力资金未流入；
+    - 主力资金净流出与买入结论冲突；
+    - 价格处于支撑与压力之间且资金流不明确；
+    - 接近支撑且资金未确认流出时的单日杀跌。
+
+    同时把校准信息同步到 `dashboard.decision_stability`，便于前端展示。
     """
     if not result:
         return
@@ -749,6 +877,7 @@ def stabilize_decision_with_structure(
 
         flow_bias, flow_reason = _capital_flow_bias_with_status(fundamental_context)
         if flow_bias == "unavailable":
+            # 资金流不可用时，根据原决策方向决定是降级 buy 还是直接记录“未校准”
             if isinstance(fundamental_context, dict) and "capital_flow" in fundamental_context:
                 if decision_type == "buy" or advice_decision_type == "buy":
                     _downgrade_buy_without_capital_flow(
@@ -773,6 +902,11 @@ def stabilize_decision_with_structure(
         if current_price is None:
             return
 
+        # 价位关系阈值：
+        #   跌破支撑 * 0.985 视为有效破位；
+        #   在支撑 * 1.03 内视为“接近支撑”；
+        #   突破压力 * 1.01 视为有效突破；
+        #   在压力 * 0.97 内视为“接近压力”。
         broke_support = support is not None and current_price < support * 0.985
         near_support = support is not None and not broke_support and current_price <= support * 1.03
         breakout = resistance is not None and current_price > resistance * 1.01
@@ -791,6 +925,7 @@ def stabilize_decision_with_structure(
 
         if decision_type == "buy":
             if near_resistance and flow_bias != "inflow":
+                # 追高风险 + 资金未确认 → 不能买
                 _downgrade_to_structural_hold(
                     result,
                     language,
@@ -802,6 +937,7 @@ def stabilize_decision_with_structure(
                     flow_bias=flow_bias,
                 )
             elif flow_bias == "outflow" and not breakout:
+                # 资金净流出且未突破压力 → 不能买
                 _downgrade_to_structural_hold(
                     result,
                     language,
@@ -813,6 +949,7 @@ def stabilize_decision_with_structure(
                     flow_bias=flow_bias,
                 )
             elif mid_range and flow_bias == "neutral":
+                # 区间中部 + 资金中性 → 维持震荡观望
                 _downgrade_to_structural_hold(
                     result,
                     language,
@@ -825,6 +962,7 @@ def stabilize_decision_with_structure(
                 )
         elif decision_type == "sell":
             if near_support and (flow_bias != "outflow") and not has_significant_risk:
+                # 接近支撑且资金未流出、无重大风险 → 杀跌理由不足
                 _downgrade_to_structural_hold(
                     result,
                     language,
@@ -836,6 +974,7 @@ def stabilize_decision_with_structure(
                     flow_bias=flow_bias,
                 )
             elif flow_bias == "inflow" and not broke_support and not has_significant_risk:
+                # 资金流入 + 未破支撑 + 无重大风险 → 卖出结论被推翻
                 _downgrade_to_structural_hold(
                     result,
                     language,
@@ -849,6 +988,7 @@ def stabilize_decision_with_structure(
         elif decision_type == "hold":
             change_pct = _first_numeric_value(getattr(result, "change_pct", None))
             if change_pct is not None and change_pct < 0 and near_support and flow_bias != "outflow":
+                # 跌幅中接近支撑 → 更适合按洗盘观察处理
                 _set_structural_hold_wording(
                     result,
                     language,
@@ -876,7 +1016,7 @@ def stabilize_decision_with_structure(
 
 
 def _has_structural_risk_alert(result: "AnalysisResult") -> bool:
-    """Return whether result/dashboard text contains structural risk signals."""
+    """判断 result/dashboard 中是否包含结构性风险信号。"""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
 
     risk_text = getattr(result, "risk_warning", "")
@@ -902,7 +1042,7 @@ def _has_structural_risk_alert(result: "AnalysisResult") -> bool:
 
 
 def _is_significant_structural_risk(value: Any) -> bool:
-    """Return whether one risk string is meaningful and structurally important."""
+    """判断单条风险文本是否“有意义且属于重大结构性风险”。"""
     text = str(value or "").strip()
     if not _is_meaningful_text(text):
         return False
@@ -911,11 +1051,16 @@ def _is_significant_structural_risk(value: Any) -> bool:
     if any(keyword in normalized for keyword in _STRUCTURAL_RISK_PHRASE_HINTS):
         return True
 
+    # 中文里“重大风险”这种偏正结构也要识别
     return "重大" in text and "风险" in normalized
 
 
 def _sync_stability_dashboard_fields(result: "AnalysisResult") -> None:
-    """Mirror top-level decision fields into the dashboard compatibility payload."""
+    """把顶层的决策字段同步到 dashboard 兼容字段。
+
+    旧版渲染逻辑直接读 `dashboard.sentiment_score` / `operation_advice` /
+    `decision_type`，新逻辑主要用顶层字段；本函数保持双向一致。
+    """
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
     result.dashboard = dashboard
     dashboard["sentiment_score"] = getattr(result, "sentiment_score", None)
@@ -924,7 +1069,7 @@ def _sync_stability_dashboard_fields(result: "AnalysisResult") -> None:
 
 
 def _as_dict_for_decision_guard(value: Any) -> Dict[str, Any]:
-    """Convert dict-like indicator inputs into plain dictionaries for guards."""
+    """把 dict-like 指标输入统一转成普通字典，供后续守卫使用。"""
     if isinstance(value, dict):
         return value
     if hasattr(value, "to_dict"):
@@ -939,14 +1084,14 @@ def _as_dict_for_decision_guard(value: Any) -> Dict[str, Any]:
 
 
 def _first_list_value(value: Any) -> Any:
-    """Return first sequence item when indicators provide list-like values."""
+    """当指标返回列表时取第一个；非列表原样返回。"""
     if isinstance(value, (list, tuple)) and value:
         return value[0]
     return value
 
 
 def _coerce_numeric_value(value: Any) -> Optional[float]:
-    """Parse numeric dashboard/indicator values while ignoring placeholders."""
+    """解析 dashboard/指标中的数值，同时跳过占位字符串。"""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -956,6 +1101,7 @@ def _coerce_numeric_value(value: Any) -> Optional[float]:
     text = str(value).replace(",", "").replace("，", "").strip()
     if not text or text.upper() in {"N/A", "NA", "NONE", "NULL"}:
         return None
+    # 仅取首个出现的数字（容忍形如 "12.34 元" 的文本）
     match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
     if not match:
         return None
@@ -966,7 +1112,7 @@ def _coerce_numeric_value(value: Any) -> Optional[float]:
 
 
 def _first_numeric_value(*values: Any) -> Optional[float]:
-    """Return the first parseable numeric value from flat or nested inputs."""
+    """从一组候选值里挑出第一个能解析为 float 的值；支持嵌套列表。"""
     for value in values:
         if isinstance(value, (list, tuple)):
             nested = _first_numeric_value(*value)
@@ -980,14 +1126,18 @@ def _first_numeric_value(*values: Any) -> Optional[float]:
 
 
 def _capital_flow_bias(fundamental_context: Optional[Dict[str, Any]]) -> str:
-    """Return capital-flow direction without exposing diagnostic status."""
+    """对外暴露的资金流方向（不返回诊断状态字符串）。"""
     return _capital_flow_bias_with_status(fundamental_context)[0]
 
 
 def _capital_flow_bias_with_status(
     fundamental_context: Optional[Dict[str, Any]],
 ) -> tuple[str, str]:
-    """Classify stock capital flow as inflow/outflow/neutral/unavailable."""
+    """把资金流数据归类为 inflow / outflow / neutral / unavailable，并给出原因。
+
+    优先取 `main_net_inflow`，与 `inflow_5d` / `inflow_10d` 中信号一致的字段；
+    信号不一致时归为 neutral，便于上层降级为持有观察。
+    """
     if not isinstance(fundamental_context, dict):
         return "unavailable", "invalid_context"
     block = fundamental_context.get("capital_flow")
@@ -1003,7 +1153,7 @@ def _capital_flow_bias_with_status(
         return "unavailable", "empty_stock_flow"
 
     def _flow_direction(value: Optional[float]) -> Optional[str]:
-        """Convert a numeric flow amount into inflow/outflow/neutral signal."""
+        """把单期资金净流入换算成 inflow / outflow / None。"""
         if value is None or value == 0:
             return None
         return "inflow" if value > 0 else "outflow"
@@ -1020,6 +1170,7 @@ def _capital_flow_bias_with_status(
         _flow_direction(value) for value in numeric_values
     ]
     directions = {signal for signal in ordered_signals if signal is not None}
+    # 三档信号互相冲突 → 视为中性，避免错误触发决策降级
     if not directions or len(directions) > 1:
         return "neutral", "conflict_or_missing"
     for signal in ordered_signals:
@@ -1029,7 +1180,7 @@ def _capital_flow_bias_with_status(
 
 
 def _capital_flow_status_for_stability(reason: str, language: str) -> str:
-    """Localize the capital-flow unavailability reason for stability metadata."""
+    """把“资金流不可用”的原因翻译成本地化文案，供稳定性元数据展示。"""
     normalized = str(reason or "").strip().lower()
     if "not_supported" in normalized or "unsupported" in normalized or "not available" in normalized:
         return "市场资金流服务暂不支持" if language == "zh" else "Capital flow source unsupported"
@@ -1047,7 +1198,7 @@ def _set_decision_stability_unavailable(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
-    """Record that decision-stability calibration was skipped due to missing flow."""
+    """记录“因资金流不可用，本次稳定性校准被跳过”的元数据。"""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
     result.dashboard = dashboard
     dashboard["decision_stability"] = {
@@ -1063,7 +1214,7 @@ def _set_decision_stability_unavailable(
 
 
 def _bound_hold_watch_sentiment_score(result: "AnalysisResult") -> None:
-    """Clamp sentiment score into the neutral hold/watch range."""
+    """把情感分数钳制到“中性持有/观望”区间（45-59），避免被误读为强多/强空。"""
     try:
         score = int(getattr(result, "sentiment_score", 50))
     except (TypeError, ValueError):
@@ -1085,7 +1236,7 @@ def _apply_hold_watch_dashboard(
     has_position: str,
     capital_flow_status: Optional[str] = None,
 ) -> None:
-    """Apply standardized hold/watch wording and dashboard stability metadata."""
+    """把持有/观望的标准措辞以及 dashboard 稳定性元数据一并写入 result。"""
     result.operation_advice = advice
 
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
@@ -1116,6 +1267,7 @@ def _apply_hold_watch_dashboard(
         stability["capital_flow_status"] = capital_flow_status
     dashboard["decision_stability"] = stability
 
+    # 同步把 reason 写入 risk_warning，避免提示信息丢失
     if reason and reason not in str(result.risk_warning or ""):
         sep = "；" if language == "zh" else "; "
         result.risk_warning = f"{result.risk_warning}{sep}{reason}" if result.risk_warning else reason
@@ -1131,7 +1283,7 @@ def _downgrade_buy_without_capital_flow(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
-    """Downgrade buy decisions when capital-flow confirmation is unavailable."""
+    """资金流不可用时，把买入结论降级为持有观察。"""
     status_text = _capital_flow_status_for_stability(flow_status, language)
     if language == "zh":
         advice = "持有观察"
@@ -1163,6 +1315,13 @@ def _downgrade_buy_without_capital_flow(
         capital_flow_status=status_text,
     )
     _sync_stability_dashboard_fields(result)
+    _append_decision_guardrail(
+        result,
+        guardrail_type="structural_stability",
+        reason="capital_flow_unavailable",
+        before_action="buy",
+        after_action="watch",
+    )
     logger.info("[decision_stability] Downgraded buy because capital flow is unavailable: %s", flow_status)
 
 
@@ -1177,7 +1336,7 @@ def _downgrade_to_structural_hold(
     resistance: Optional[float],
     flow_bias: str,
 ) -> None:
-    """Downgrade aggressive decisions to hold when structural guardrails trigger."""
+    """结构性守门员触发时，把决策降级为持有/观望。"""
     result.decision_type = "hold"
     _bound_hold_watch_sentiment_score(result)
     _set_structural_hold_wording(
@@ -1203,7 +1362,7 @@ def _set_structural_hold_wording(
     resistance: Optional[float],
     flow_bias: str,
 ) -> None:
-    """Apply localized wording for structural hold/watch downgrade reasons."""
+    """为结构性持有/观望降级场景填充本地化措辞与 dashboard 元数据。"""
     advice = {
         "zh": {
             "range": "震荡观望",
@@ -1236,6 +1395,7 @@ def _set_structural_hold_wording(
     }
     reason = reason_templates[language].get(reason_key, "")
     result.operation_advice = advice
+    # 中文趋势词需要“震荡”前缀才能让前端按区间震荡处理
     if language == "zh" and "震荡" not in str(result.trend_prediction) and advice_key == "range":
         result.trend_prediction = "震荡"
     elif language == "en" and advice_key == "range":
@@ -1259,7 +1419,36 @@ def _set_structural_hold_wording(
         no_position=no_position,
         has_position=has_position,
     )
+    _append_decision_guardrail(
+        result,
+        guardrail_type="structural_stability",
+        reason=reason_key,
+        before_action="buy" if reason_key.startswith("buy_") else "sell" if reason_key.startswith("sell_") else "watch",
+        after_action="watch",
+    )
     logger.info("[decision_stability] Applied structural hold calibration: %s", reason_key)
+
+
+def _append_decision_guardrail(
+    result: "AnalysisResult",
+    *,
+    guardrail_type: str,
+    reason: str,
+    before_action: str,
+    after_action: str,
+) -> None:
+    """Record a final-action override so persisted reports remain auditable."""
+    result.decision_action = after_action
+    records = getattr(result, "decision_guardrails", None)
+    if not isinstance(records, list):
+        records = []
+        result.decision_guardrails = records
+    records.append({
+        "type": guardrail_type,
+        "reason": reason,
+        "before_action": before_action,
+        "after_action": after_action,
+    })
 
 
 def get_stock_name_multi_source(
@@ -1267,28 +1456,28 @@ def get_stock_name_multi_source(
     context: Optional[Dict] = None,
     data_manager = None
 ) -> str:
-    """
-    多来源获取股票中文名称
+    """多来源获取股票中文名称。
 
-    获取策略（按优先级）：
-    1. 从传入的 context 中获取（realtime 数据）
-    2. 从静态映射表 STOCK_NAME_MAP 获取
-    3. 从 DataFetcherManager 获取（各数据源）
-    4. 返回默认名称（股票+代码）
+    优先级：
+    1. 传入的 `context`（一般是实时行情快照）；
+    2. 静态映射表 `STOCK_NAME_MAP`；
+    3. `DataFetcherManager` 动态拉取；
+    4. 回退到 `股票{code}` 默认名。
 
     Args:
-        stock_code: 股票代码
-        context: 分析上下文（可选）
-        data_manager: DataFetcherManager 实例（可选）
+        stock_code: 股票代码。
+        context: 分析上下文（可选），含 `stock_name` 或 `realtime` 子字段。
+        data_manager: 已构造好的 `DataFetcherManager`，传 None 会按需懒加载。
 
     Returns:
-        股票中文名称
+        股票中文名称字符串。
     """
     # 1. 从上下文获取（实时行情数据）
     if context:
         # 优先从 stock_name 字段获取
         if context.get('stock_name'):
             name = context['stock_name']
+            # 过滤掉 “股票xxxx” 这种没解析出来的占位名
             if name and not name.startswith('股票'):
                 return name
 
@@ -1312,7 +1501,7 @@ def get_stock_name_multi_source(
         try:
             name = data_manager.get_stock_name(stock_code)
             if name:
-                # 更新缓存
+                # 命中即回填静态映射，避免下次重复远程查询
                 STOCK_NAME_MAP[stock_code] = name
                 return name
         except Exception as e:
@@ -1324,10 +1513,11 @@ def get_stock_name_multi_source(
 
 @dataclass
 class AnalysisResult:
-    """
-    AI 分析结果数据类 - 决策仪表盘版
+    """AI 分析结果数据类（决策仪表盘版）。
 
-    封装 Gemini 返回的分析结果，包含决策仪表盘和详细分析
+    封装 LLM 返回的结构化分析结果：核心结论、决策仪表盘、技术面/基本面/
+    情绪面文本字段、元数据、行情快照等。下游的报告渲染、API 序列化、
+    历史对比都依赖本类的字段。
     """
     code: str
     name: str
@@ -1337,6 +1527,7 @@ class AnalysisResult:
     trend_prediction: str  # 趋势预测：强烈看多/看多/震荡/看空/强烈看空
     operation_advice: str  # 操作建议：买入/加仓/持有/减仓/卖出/观望
     decision_type: str = "hold"  # 决策类型：buy/hold/sell（用于统计）
+    decision_action: str = "watch"  # Canonical action: buy/watch/reduce/sell
     confidence_level: str = "中"  # 置信度：高/中/低
     report_language: str = "zh"  # 报告输出语言：zh/en
 
@@ -1377,11 +1568,16 @@ class AnalysisResult:
     search_performed: bool = False  # 是否执行了联网搜索
     data_sources: str = ""  # 数据来源说明
     market_structure_context: Optional[Dict[str, Any]] = None
+    # 仅当前运行期供通知报告读取；持久化副本由 pipeline 的 context snapshot 管理。
+    market_phase_summary: Optional[Dict[str, Any]] = None
+    # 仅当前运行期供通知报告读取；历史快照仍由 pipeline 单独治理，避免扩大 raw_result 载荷。
+    fundamental_context: Optional[Dict[str, Any]] = None
     news_result_count: Optional[int] = None
     news_result_count_known: bool = True
     news_evidence_present: bool = False
     success: bool = True
     error_message: Optional[str] = None
+    decision_guardrails: List[Dict[str, Any]] = field(default_factory=list)
 
     # ========== 价格数据（分析时快照）==========
     current_price: Optional[float] = None  # 分析时的股价
@@ -1394,7 +1590,7 @@ class AnalysisResult:
     query_id: Optional[str] = None  # 本次分析 query_id，用于历史对比时排除本次记录
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        """转换为可 JSON 序列化的字典（不含 query_id 等临时调试字段）。"""
         return {
             'code': self.code,
             'name': self.name,
@@ -1402,6 +1598,7 @@ class AnalysisResult:
             'trend_prediction': self.trend_prediction,
             'operation_advice': self.operation_advice,
             'decision_type': self.decision_type,
+            'decision_action': self.decision_action,
             'confidence_level': self.confidence_level,
             'report_language': self.report_language,
             'dashboard': self.dashboard,  # 决策仪表盘数据
@@ -1431,19 +1628,20 @@ class AnalysisResult:
             'search_performed': self.search_performed,
             'success': self.success,
             'error_message': self.error_message,
+            'decision_guardrails': self.decision_guardrails,
             'current_price': self.current_price,
             'change_pct': self.change_pct,
             'model_used': self.model_used,
         }
 
     def get_core_conclusion(self) -> str:
-        """获取核心结论（一句话）"""
+        """获取“一句话核心结论”；缺失时回退到 `analysis_summary`。"""
         if self.dashboard and 'core_conclusion' in self.dashboard:
             return self.dashboard['core_conclusion'].get('one_sentence', self.analysis_summary)
         return self.analysis_summary
 
     def get_position_advice(self, has_position: bool = False) -> str:
-        """获取持仓建议"""
+        """根据是否持仓返回对应的操作建议文案。"""
         if self.dashboard and 'core_conclusion' in self.dashboard:
             pos_advice = self.dashboard['core_conclusion'].get('position_advice', {})
             if has_position:
@@ -1452,25 +1650,25 @@ class AnalysisResult:
         return self.operation_advice
 
     def get_sniper_points(self) -> Dict[str, str]:
-        """获取狙击点位"""
+        """获取 dashboard.battle_plan.sniper_points（理想/次优买入点、止损、目标位等）。"""
         if self.dashboard and 'battle_plan' in self.dashboard:
             return self.dashboard['battle_plan'].get('sniper_points', {})
         return {}
 
     def get_checklist(self) -> List[str]:
-        """获取检查清单"""
+        """获取 dashboard.battle_plan.action_checklist（带 ✅⚠️❌ 的可勾选条目）。"""
         if self.dashboard and 'battle_plan' in self.dashboard:
             return self.dashboard['battle_plan'].get('action_checklist', [])
         return []
 
     def get_risk_alerts(self) -> List[str]:
-        """获取风险警报"""
+        """获取 dashboard.intelligence.risk_alerts 风险警报列表。"""
         if self.dashboard and 'intelligence' in self.dashboard:
             return self.dashboard['intelligence'].get('risk_alerts', [])
         return []
 
     def get_emoji(self) -> str:
-        """根据操作建议返回对应 emoji"""
+        """根据操作建议返回对应的 emoji 信号图标。"""
         _, emoji, _ = get_signal_level(
             self.operation_advice,
             self.sentiment_score,
@@ -1479,7 +1677,7 @@ class AnalysisResult:
         return emoji
 
     def get_confidence_stars(self) -> str:
-        """返回置信度星级"""
+        """根据置信度字段返回对应的星级字符串（如 ⭐⭐⭐）。"""
         star_map = {
             "高": "⭐⭐⭐",
             "high": "⭐⭐⭐",
@@ -1492,13 +1690,12 @@ class AnalysisResult:
 
 
 class GeminiAnalyzer:
-    """
-    Gemini AI 分析器
+    """基于 LiteLLM 的多模型 AI 分析器（原名 GeminiAnalyzer，向后兼容保留）。
 
     职责：
-    1. 调用 Google Gemini API 进行股票分析
-    2. 结合预先搜索的新闻和技术面数据生成分析报告
-    3. 解析 AI 返回的 JSON 格式结果
+    1. 通过 LiteLLM 统一调用 Gemini / Anthropic / OpenAI 等多家 LLM 提供商；
+    2. 结合预先抓取的技术面、新闻、资金流、市场结构等数据生成【决策仪表盘】分析报告；
+    3. 解析 LLM 响应为 `AnalysisResult`，必要时回退到文本分析或占位填充。
 
     使用方式：
         analyzer = GeminiAnalyzer()
@@ -1842,10 +2039,16 @@ class GeminiAnalyzer:
         use_legacy_default_prompt: Optional[bool] = None,
         user_id: Optional[int] = None,
     ):
-        """Initialize LLM Analyzer via LiteLLM.
+        """初始化 LLM 分析器（统一通过 LiteLLM 调用各家模型）。
 
         Args:
-            api_key: Ignored (kept for backward compatibility). Keys are loaded from config.
+            api_key: 已废弃，保留仅为向后兼容；API Key 全部通过 `Config` 加载。
+            config: 注入的运行时配置；为 None 时按需懒加载全局配置。
+            skills: 显式指定要启用的交易技能列表。
+            skill_instructions: 直接覆盖激活技能的提示文案。
+            default_skill_policy: 直接覆盖默认技能策略文案。
+            use_legacy_default_prompt: 是否使用旧版默认系统提示词。
+            user_id: 当前用户 ID，用于按用户权益解析模型路由。
         """
         self._config_override = config
         self._requested_skills = list(skills) if skills is not None else None
@@ -1862,7 +2065,7 @@ class GeminiAnalyzer:
             logger.warning("No LLM configured (LITELLM_MODEL / API keys), AI analysis will be unavailable")
 
     def _get_runtime_config(self) -> Config:
-        """Return the runtime config, honoring injected overrides for tests/pipeline."""
+        """返回运行时配置；优先使用注入的覆盖，否则取全局配置。"""
         return getattr(self, "_config_override", None) or get_config()
 
     def _resolve_user_model_route(
@@ -1871,7 +2074,7 @@ class GeminiAnalyzer:
         config: Config,
         platform_models: List[str],
     ) -> Optional[ModelRoute]:
-        """Resolve per-user model entitlement route when user context is present."""
+        """根据用户权益解析本次分析可用的模型路由。"""
         user_id = getattr(self, "_user_id", None)
         if not user_id:
             return None
@@ -1896,12 +2099,13 @@ class GeminiAnalyzer:
             return None
 
     def _get_skill_prompt_sections(self) -> tuple[str, str, bool]:
-        """Resolve skill instructions + default baseline + prompt mode."""
+        """解析当前激活的技能提示、默认策略以及是否使用旧版默认 prompt。"""
         skill_instructions = getattr(self, "_skill_instructions_override", None)
         default_skill_policy = getattr(self, "_default_skill_policy_override", None)
         use_legacy_default_prompt = getattr(self, "_use_legacy_default_prompt_override", None)
 
         if skill_instructions is not None and default_skill_policy is not None:
+            # 显式覆盖全部三项参数 → 直接返回
             return (
                 skill_instructions,
                 default_skill_policy,
@@ -1934,7 +2138,7 @@ class GeminiAnalyzer:
         )
 
     def _get_analysis_system_prompt(self, report_language: str, stock_code: str = "") -> str:
-        """Build the analyzer system prompt with output-language guidance."""
+        """构建系统提示词（含市场角色、市场准则、技能提示与输出语言约束）。"""
         lang = normalize_report_language(report_language)
         market_role = get_market_role(stock_code, lang)
         market_guidelines = get_market_guidelines(stock_code, lang)
@@ -1979,11 +2183,17 @@ class GeminiAnalyzer:
 """
 
     def _has_channel_config(self, config: Config) -> bool:
-        """Check if multi-channel config (channels / YAML) is active."""
+        """判断是否启用了多渠道（channels / YAML）配置。"""
         return bool(config.llm_model_list)
 
     def _init_litellm(self) -> None:
-        """Initialize litellm Router from channels / YAML or explicit direct keys."""
+        """根据 channels / YAML 或直接 API Key 初始化 LiteLLM Router。
+
+        优先级：
+        1. 通过 channels/YAML 提供的 model_list 构建 Router（多 key 负载均衡 + 重试）；
+        2. 多 key 直连时也构建 Router；
+        3. 单 key 或无 key 场景下退化为 `litellm.completion` 直调。
+        """
         config = self._get_runtime_config()
         litellm_model = config.litellm_model
         if not litellm_model:
@@ -2002,6 +2212,7 @@ class GeminiAnalyzer:
                     num_retries=2,
                 )
             except TypeError:
+                # 兼容老版本 liteLLM：Router 构造签名不匹配时降级为直接调用
                 logger.debug("Analyzer LLM: Router constructor signature not compatible; fallback to direct mode")
                 self._router = None
             else:
@@ -2058,7 +2269,14 @@ class GeminiAnalyzer:
             )
 
     def is_available(self) -> bool:
-        """Check if LiteLLM is properly configured with at least one API key."""
+        """判断 LiteLLM 是否已经配置好至少一个可用 API Key。"""
+        try:
+            from src.llm.backend_registry import resolve_generation_backend_id, LITELLM_BACKEND_ID
+            if resolve_generation_backend_id(self._get_runtime_config()) != LITELLM_BACKEND_ID:
+                # 当 backend 不是 LiteLLM 时（如本地后端），认为可用，由 backend 自行决定
+                return True
+        except Exception:
+            return False
         return self._router is not None or self._litellm_available
 
     def _dispatch_litellm_completion(
@@ -2071,7 +2289,7 @@ class GeminiAnalyzer:
         router_model_names: set[str],
         model_route: Optional[ModelRoute] = None,
     ) -> Any:
-        """Dispatch a LiteLLM completion through router or direct fallback."""
+        """把 LiteLLM completion 路由到 Router 或直接调用兜底。"""
         effective_kwargs = dict(call_kwargs)
         if use_channel_router and self._router and model in router_model_names:
             return self._router.completion(**effective_kwargs)
@@ -2085,12 +2303,12 @@ class GeminiAnalyzer:
         return litellm.completion(**effective_kwargs)
 
     def _normalize_usage(self, usage_obj: Any) -> Dict[str, Any]:
-        """Normalize usage objects from LiteLLM responses/chunks."""
+        """把 LiteLLM 的 usage 对象归一化成统一字典结构。"""
         if not usage_obj:
             return {}
 
         def _get_value(key: str) -> int:
-            """Read one usage counter from dict or object-style LiteLLM usage."""
+            """读取 usage 对象中的某个计数字段，兼容 dict 与 object 两种形态。"""
             if isinstance(usage_obj, dict):
                 return int(usage_obj.get(key) or 0)
             return int(getattr(usage_obj, key, 0) or 0)
@@ -2103,13 +2321,13 @@ class GeminiAnalyzer:
 
     @staticmethod
     def _get_response_field(obj: Any, key: str) -> Any:
-        """Read a field from dict-like or object-like LiteLLM payloads."""
+        """读取 LiteLLM 返回对象中的字段，兼容 dict 和 object 形态。"""
         if isinstance(obj, dict):
             return obj.get(key)
         return getattr(obj, key, None)
 
     def _extract_text_blocks(self, blocks: Any) -> str:
-        """Extract text from OpenAI-compatible content block lists."""
+        """从 OpenAI 兼容的 content block 列表中拼接出纯文本。"""
         if not blocks:
             return ""
 
@@ -2135,7 +2353,7 @@ class GeminiAnalyzer:
         return "".join(parts).strip()
 
     def _extract_completion_text(self, response: Any) -> str:
-        """Extract text from non-stream LiteLLM completion responses."""
+        """从非流式 LiteLLM 响应中抽取纯文本。"""
         choices = self._get_response_field(response, "choices")
         if not choices:
             return ""
@@ -2163,7 +2381,7 @@ class GeminiAnalyzer:
         return str(content).strip() if content is not None else ""
 
     def _extract_stream_text(self, chunk: Any) -> str:
-        """Extract provider-agnostic text delta from a LiteLLM streaming chunk."""
+        """从一个 LiteLLM 流式 chunk 中抽取本次新增的文本 delta。"""
         choices = chunk.get("choices") if isinstance(chunk, dict) else getattr(chunk, "choices", None)
         if not choices:
             return ""
@@ -2206,7 +2424,7 @@ class GeminiAnalyzer:
         model: str,
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
-        """Consume a LiteLLM stream into a single text payload."""
+        """把 LiteLLM 流式响应消费成单条完整文本，并统计 token 用量。"""
         chunks: List[str] = []
         usage: Dict[str, Any] = {}
         chars_received = 0
@@ -2225,6 +2443,7 @@ class GeminiAnalyzer:
 
                 chunks.append(delta_text)
                 chars_received += len(delta_text)
+                # 进度回调采用按字符数“步进”通知，避免每个 chunk 都打日志
                 if progress_callback and chars_received >= next_emit_at:
                     progress_callback(chars_received)
                     next_emit_at = chars_received + 160
@@ -2256,25 +2475,24 @@ class GeminiAnalyzer:
         stream_progress_callback: Optional[Callable[[int], None]] = None,
         response_validator: Optional[Callable[[str], None]] = None,
     ) -> Tuple[str, str, Dict[str, Any]]:
-        """Call LLM via litellm with fallback across configured models.
+        """调用 LLM：在主模型失败时按顺序回退到其他模型。
 
-        When channels/YAML are configured, every model goes through the Router
-        (which handles per-model key selection, load balancing, and retries).
-        In legacy mode, the primary model may use the Router while fallback
-        models fall back to direct litellm.completion().
+        行为要点：
+        1. 优先尝试本地的 generation backend（如果有），失败时回退到 LiteLLM；
+        2. 依次尝试每个用户/平台可见模型，stream 失败时退化为非流式重试；
+        3. `response_validator` 可用于把“返回了 JSON 但格式非法”也视为失败并触发回退；
+        4. 所有模型都失败时抛出 `_AllModelsFailedError`，附带最后一次的响应文本/模型/用量。
 
         Args:
-            prompt: User prompt text.
-            generation_config: Dict with optional keys: temperature, max_output_tokens, max_tokens.
-            response_validator: Optional callable that accepts the raw response text and raises
-                an exception if the response is unacceptable (e.g. not valid JSON).  When it
-                raises, the current model is treated as failed and the next fallback model is
-                tried.  If all models fail validation, :class:`_AllModelsFailedError` is raised
-                with ``last_response_text`` set to the last raw response received.
+            prompt: 用户提示文本。
+            generation_config: 生成参数字典，支持 `temperature` / `max_output_tokens` / `max_tokens`。
+            system_prompt: 系统提示词；为空时退化为 `TEXT_SYSTEM_PROMPT`。
+            stream: 是否启用流式响应。
+            stream_progress_callback: 流式输出时的字符级进度回调。
+            response_validator: 校验响应文本的回调；抛出异常时视为本模型失败。
 
         Returns:
-            Tuple of (response text, model_used, usage). On success model_used is the full model
-            name and usage is a dict with prompt_tokens, completion_tokens, total_tokens.
+            (响应文本, 实际使用的模型名, usage 字典)。
         """
         config = self._get_runtime_config()
         max_tokens = (
@@ -2283,6 +2501,22 @@ class GeminiAnalyzer:
             or 8192
         )
         requested_temperature = generation_config.get('temperature', 0.7)
+        from src.llm.backend_factory import build_generation_backend
+        from src.llm.backend_registry import resolve_generation_fallback_backend_id
+        backend = build_generation_backend(config)
+        if backend is not None:
+            try:
+                generated = backend.generate(
+                    prompt, generation_config, system_prompt=system_prompt or self.TEXT_SYSTEM_PROMPT,
+                    stream=stream, stream_progress_callback=stream_progress_callback,
+                    response_validator=response_validator,
+                )
+                return generated.text, generated.model, generated.usage
+            except Exception as exc:
+                # 非 LiteLLM 后端失败时，如果 fallback 不是 litellm 则直接把异常抛上去
+                if resolve_generation_fallback_backend_id(config) != "litellm":
+                    raise
+                logger.warning("Local generation backend failed; falling back to LiteLLM: %s", exc)
 
         platform_models = [config.litellm_model] + (config.litellm_fallback_models or [])
         platform_models = [m for m in platform_models if m]
@@ -2370,6 +2604,8 @@ class GeminiAnalyzer:
                             progress_callback=stream_progress_callback,
                         )
                     except _LiteLLMStreamError as exc:
+                        # 已拿到部分文本 → 保留为最后响应但不直接返回；
+                        # 未拿到任何文本 → 直接降级到非流式重试。
                         if exc.partial_received:
                             logger.warning(
                                 "[LiteLLM] %s stream failed after partial output, retrying non-stream for same model: %s",
@@ -2442,19 +2678,18 @@ class GeminiAnalyzer:
         max_tokens: int = 2048,
         temperature: float = 0.7,
     ) -> Optional[str]:
-        """Public entry point for free-form text generation.
+        """自由文本生成的公开入口（供 MarketAnalyzer 等模块复用）。
 
-        External callers (e.g. MarketAnalyzer) must use this method instead of
-        calling _call_litellm() directly or accessing private attributes such as
-        _litellm_available, _router, _model, _use_openai, or _use_anthropic.
+        外部调用方应只通过此方法访问生成能力，不要直接调用 `_call_litellm`
+        或私有属性（`_litellm_available` / `_router` 等）。
 
         Args:
-            prompt:      Text prompt to send to the LLM.
-            max_tokens:  Maximum tokens in the response (default 2048).
-            temperature: Sampling temperature (default 0.7).
+            prompt: 提示文本。
+            max_tokens: 最大输出 token 数（默认 2048）。
+            temperature: 采样温度（默认 0.7）。
 
         Returns:
-            Response text, or None if the LLM call fails (error is logged).
+            响应文本；失败时返回 None（异常会被记录到日志）。
         """
         try:
             result = self._call_litellm(
@@ -2471,30 +2706,32 @@ class GeminiAnalyzer:
             return None
 
     def analyze(
-        self, 
+        self,
         context: Dict[str, Any],
         news_context: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         stream_progress_callback: Optional[Callable[[int], None]] = None,
     ) -> AnalysisResult:
-        """
-        分析单只股票
-        
-        流程：
-        1. 格式化输入数据（技术面 + 新闻）
-        2. 调用 Gemini API（带重试和模型切换）
-        3. 解析 JSON 响应
-        4. 返回结构化结果
-        
+        """分析单只股票（包含流式调用、完整性校验与重试）。
+
+        整体流程：
+        1. 准备系统提示词 + 用户提示词（含技术面、新闻、市场结构等）；
+        2. 调用 `_call_litellm` 获取响应（必要时回退模型）；
+        3. 解析 JSON 响应并做 schema 软校验；
+        4. 如果启用了完整性校验（`report_integrity_enabled`），缺失字段会触发补全重试，
+           仍缺失则做占位填充。
+
         Args:
-            context: 从 storage.get_analysis_context() 获取的上下文数据
-            news_context: 预先搜索的新闻内容（可选）
-            
+            context: 通过 `storage.get_analysis_context()` 获取的上下文数据。
+            news_context: 预先搜索的新闻正文（可选）。
+            progress_callback: 总进度回调 (进度百分比, 描述)。
+            stream_progress_callback: 流式字符级进度回调。
+
         Returns:
-            AnalysisResult 对象
+            `AnalysisResult` 对象。LLM 不可用或调用异常时返回带失败标记的兜底结果。
         """
         def _emit_progress(progress: int, message: str) -> None:
-            """Safely forward analyzer progress updates to the optional callback."""
+            """安全地把进度事件转发给可选回调，回调异常不影响主流程。"""
             if progress_callback is None:
                 return
             try:
@@ -2506,14 +2743,14 @@ class GeminiAnalyzer:
         config = self._get_runtime_config()
         report_language = normalize_report_language(getattr(config, "report_language", "zh"))
         system_prompt = self._get_analysis_system_prompt(report_language, stock_code=code)
-        
+
         # 请求前增加延时（防止连续请求触发限流）
         request_delay = config.gemini_request_delay
         if request_delay > 0:
             logger.debug(f"[LLM] 请求前等待 {request_delay:.1f} 秒...")
             _emit_progress(65, f"{code}：LLM 请求前等待 {request_delay:.1f} 秒")
             time.sleep(request_delay)
-        
+
         # 优先从上下文获取股票名称（由 main.py 传入）
         name = context.get('stock_name')
         if not name or name.startswith('股票'):
@@ -2523,7 +2760,7 @@ class GeminiAnalyzer:
             else:
                 # 最后从映射表获取
                 name = STOCK_NAME_MAP.get(code, f'股票{code}')
-        
+
         # 如果模型不可用，返回默认结果
         if not self.is_available():
             return AnalysisResult(
@@ -2544,7 +2781,7 @@ class GeminiAnalyzer:
         try:
             # 格式化输入（包含技术面数据和新闻）
             prompt = self._format_prompt(context, name, news_context, report_language=report_language)
-            
+
             config = self._get_runtime_config()
             model_name = config.litellm_model or "unknown"
             logger.info(f"========== AI 分析 {name}({code}) ==========")
@@ -2583,6 +2820,7 @@ class GeminiAnalyzer:
                         response_validator=self._validate_json_response,
                     )
                 except _AllModelsFailedError as exc:
+                    # 所有模型都返回了非法 JSON → 使用最后一次的原始响应做 best-effort 兜底
                     if exc.last_response_text is not None:
                         logger.warning(
                             "[LLM JSON] %s(%s): all models returned invalid JSON, using text fallback",
@@ -2605,7 +2843,7 @@ class GeminiAnalyzer:
                 logger.debug(
                     f"=== {model_name} 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ==="
                 )
-                # Keep parser/retry progress monotonic so task progress/message never "goes backward".
+                # 解析进度采用“单调递增”策略，避免与重试进度叠加出现倒退
                 parse_progress = min(99, 93 + retry_count * 2)
                 _emit_progress(parse_progress, f"{name}：LLM 返回完成，正在解析 JSON")
 
@@ -2617,7 +2855,7 @@ class GeminiAnalyzer:
                 result.model_used = model_used
                 result.report_language = report_language
 
-                # 内容完整性校验（可选）
+                # 内容完整性校验（可选）：缺失时尝试让 LLM 补全
                 if not config.report_integrity_enabled:
                     break
                 pass_integrity, missing_fields = self._check_content_integrity(result)
@@ -2642,6 +2880,7 @@ class GeminiAnalyzer:
                         f"{name}：报告字段不完整，正在补全重试（{retry_count}/{max_retries}）",
                     )
                 else:
+                    # 超过重试次数 → 用占位填充兜底，不阻塞流程
                     self._apply_placeholder_fill(result, missing_fields)
                     logger.warning(
                         "[LLM完整性] 必填字段缺失 %s，已占位补全，不阻塞流程",
@@ -2654,7 +2893,7 @@ class GeminiAnalyzer:
             logger.info(f"[LLM解析] {name}({code}) 分析完成: {result.trend_prediction}, 评分 {result.sentiment_score}")
 
             return result
-            
+
         except Exception as e:
             logger.error(f"AI 分析 {name}({code}) 失败: {e}")
             return AnalysisResult(
@@ -2673,21 +2912,23 @@ class GeminiAnalyzer:
             )
     
     def _format_prompt(
-        self, 
-        context: Dict[str, Any], 
+        self,
+        context: Dict[str, Any],
         name: str,
         news_context: Optional[str] = None,
         report_language: str = "zh",
     ) -> str:
-        """
-        格式化分析提示词（决策仪表盘 v2.0）
-        
-        包含：技术指标、实时行情（量比/换手率）、筹码分布、趋势分析、新闻
-        
+        """构建完整的用户提示词（决策仪表盘 v2.0 输入格式）。
+
+        主要包含：股票基础信息、今日行情、均线、实时行情增强数据（量比/换手率）、
+        财报与分红、主力资金流向、筹码分布、趋势分析预判、舆情情报以及输出语言
+        要求等区块。LLM 必须按系统提示词中的 JSON 结构输出决策仪表盘。
+
         Args:
-            context: 技术面数据上下文（包含增强数据）
-            name: 股票名称（默认值，可能被上下文覆盖）
-            news_context: 预先搜索的新闻内容
+            context: 技术面上下文（含 `today` / `realtime` / `chip` / `trend_analysis` 等）。
+            name: 默认股票名称（可能被上下文里的 `stock_name` 覆盖）。
+            news_context: 预先搜索的新闻正文（None 时回退到“无新闻”提示）。
+            report_language: 报告语言；本函数仅根据它决定 `no_data_text` 文案。
         """
         code = context.get('code', 'Unknown')
         report_language = normalize_report_language(report_language)
@@ -3119,7 +3360,7 @@ class GeminiAnalyzer:
         return prompt
     
     def _format_volume(self, volume: Optional[float]) -> str:
-        """格式化成交量显示"""
+        """把成交量数字格式化为“亿股/万股/股”易读字符串。"""
         if volume is None:
             return 'N/A'
         if volume >= 1e8:
@@ -3128,9 +3369,9 @@ class GeminiAnalyzer:
             return f"{volume / 1e4:.2f} 万股"
         else:
             return f"{volume:.0f} 股"
-    
+
     def _format_amount(self, amount: Optional[float]) -> str:
-        """格式化成交额显示"""
+        """把成交额数字格式化为“亿元/万元/元”易读字符串。"""
         if amount is None:
             return 'N/A'
         if amount >= 1e8:
@@ -3141,7 +3382,7 @@ class GeminiAnalyzer:
             return f"{amount:.0f} 元"
 
     def _format_percent(self, value: Optional[float]) -> str:
-        """格式化百分比显示"""
+        """把百分比数值格式化为带 “%” 的字符串。"""
         if value is None:
             return 'N/A'
         try:
@@ -3150,7 +3391,7 @@ class GeminiAnalyzer:
             return 'N/A'
 
     def _format_price(self, value: Optional[float]) -> str:
-        """格式化价格显示"""
+        """把价格数值格式化为两位小数字符串。"""
         if value is None:
             return 'N/A'
         try:
@@ -3159,7 +3400,7 @@ class GeminiAnalyzer:
             return 'N/A'
 
     def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """构建当日行情快照（展示用）"""
+        """组装“当日行情快照”，供前端展示使用。"""
         today = context.get('today', {}) or {}
         realtime = context.get('realtime', {}) or {}
         yesterday = context.get('yesterday', {}) or {}
@@ -3173,6 +3414,7 @@ class GeminiAnalyzer:
         change_amount = None
         if prev_close not in (None, 0) and high is not None and low is not None:
             try:
+                # 振幅 = (最高 - 最低) / 昨收 × 100%
                 amplitude = (float(high) - float(low)) / float(prev_close) * 100
             except (TypeError, ValueError, ZeroDivisionError):
                 amplitude = None
@@ -3207,11 +3449,11 @@ class GeminiAnalyzer:
         return snapshot
 
     def _check_content_integrity(self, result: AnalysisResult) -> Tuple[bool, List[str]]:
-        """Delegate to module-level check_content_integrity."""
+        """内容完整性校验的实例方法封装，委托给模块级 `check_content_integrity`。"""
         return check_content_integrity(result)
 
     def _build_integrity_complement_prompt(self, missing_fields: List[str], report_language: str = "zh") -> str:
-        """Build complement instruction for missing mandatory fields."""
+        """为缺失的必填字段生成“补全要求”提示行。"""
         report_language = normalize_report_language(report_language)
         if report_language == "en":
             lines = ["### Completion requirements: fill the missing mandatory fields below and output the full JSON again:"]
@@ -3253,7 +3495,7 @@ class GeminiAnalyzer:
         missing_fields: List[str],
         report_language: str = "zh",
     ) -> str:
-        """Build retry prompt using the previous response as the complement baseline."""
+        """构造补全重试 prompt：原 prompt + 之前的响应 + 缺失字段补全要求。"""
         complement = self._build_integrity_complement_prompt(missing_fields, report_language=report_language)
         previous_output = previous_response.strip()
         if normalize_report_language(report_language) == "en":
@@ -3268,20 +3510,30 @@ class GeminiAnalyzer:
         ])
 
     def _apply_placeholder_fill(self, result: AnalysisResult, missing_fields: List[str]) -> None:
-        """Delegate to module-level apply_placeholder_fill."""
+        """占位填充的实例方法封装，委托给模块级 `apply_placeholder_fill`。"""
         apply_placeholder_fill(result, missing_fields)
 
     def _parse_response(
-        self, 
-        response_text: str, 
-        code: str, 
+        self,
+        response_text: str,
+        code: str,
         name: str
     ) -> AnalysisResult:
-        """
-        解析 Gemini 响应（决策仪表盘版）
-        
-        尝试从响应中提取 JSON 格式的分析结果，包含 dashboard 字段
-        如果解析失败，尝试智能提取或返回默认结果
+        """解析 LLM 响应（决策仪表盘版）。
+
+        流程：
+        1. 清理 markdown 代码块标记；
+        2. 截取首尾花括号之间的 JSON 字符串并尝试修复；
+        3. 通过 `AnalysisReportSchema` 做软校验（失败时仅警告，仍按原 dict 继续）；
+        4. 把 dict 转成 `AnalysisResult`；当无法解析 JSON 时回退到 `_parse_text_response`。
+
+        Args:
+            response_text: LLM 原始响应文本。
+            code: 股票代码。
+            name: 股票名称。
+
+        Returns:
+            `AnalysisResult` 对象。JSON 不可用时会带 `success=False`。
         """
         try:
             report_language = normalize_report_language(
@@ -3293,17 +3545,17 @@ class GeminiAnalyzer:
                 cleaned_text = cleaned_text.replace('```json', '').replace('```', '')
             elif '```' in cleaned_text:
                 cleaned_text = cleaned_text.replace('```', '')
-            
+
             # 尝试找到 JSON 内容
             json_start = cleaned_text.find('{')
             json_end = cleaned_text.rfind('}') + 1
-            
+
             if json_start >= 0 and json_end > json_start:
                 json_str = cleaned_text[json_start:json_end]
-                
+
                 # 尝试修复常见的 JSON 问题
                 json_str = self._fix_json_string(json_str)
-                
+
                 data = json.loads(json_str)
 
                 # Schema validation (lenient: on failure, continue with raw dict)
@@ -3329,7 +3581,7 @@ class GeminiAnalyzer:
                 if not decision_type:
                     op = data.get('operation_advice', 'Hold' if report_language == "en" else '持有')
                     decision_type = infer_decision_type_from_advice(op, default='hold')
-                
+
                 return AnalysisResult(
                     code=code,
                     name=name,
@@ -3377,42 +3629,40 @@ class GeminiAnalyzer:
                 # 没有找到 JSON，标记为失败
                 logger.warning(f"无法从响应中提取 JSON，标记为解析失败")
                 return self._parse_text_response(response_text, code, name)
-                
+
         except json.JSONDecodeError as e:
             logger.warning(f"JSON 解析失败: {e}，标记为解析失败")
             return self._parse_text_response(response_text, code, name)
-    
+
     def _fix_json_string(self, json_str: str) -> str:
-        """修复常见的 JSON 格式问题"""
+        """修复常见的 JSON 格式问题（注释、尾随逗号、大小写布尔值）。"""
         import re
-        
+
         # 移除注释
         json_str = re.sub(r'//.*?\n', '\n', json_str)
         json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-        
+
         # 修复尾随逗号
         json_str = re.sub(r',\s*}', '}', json_str)
         json_str = re.sub(r',\s*]', ']', json_str)
-        
+
         # 确保布尔值是小写
         json_str = json_str.replace('True', 'true').replace('False', 'false')
-        
+
         # fix by json-repair
         json_str = repair_json(json_str)
-        
+
         return json_str
 
     def _validate_json_response(self, text: str) -> None:
-        """Validate that *text* contains a parseable JSON object.
+        """校验响应文本是否包含可解析的 JSON。
 
-        Used as the ``response_validator`` argument to :meth:`_call_litellm` so
-        that a JSON-less or unparseable reply from the primary model is treated
-        as a model failure and triggers fallback to the next configured model.
+        作为 `_call_litellm` 的 `response_validator` 使用：未找到 JSON 或解析失败
+        时抛异常，从而让 LiteLLM 把当前模型视作失败并切换到下一个候选。
 
         Raises:
-            ValueError: if no JSON object is found in *text*.
-            json.JSONDecodeError: if the extracted JSON cannot be parsed (after
-                :meth:`_fix_json_string` attempts repair).
+            ValueError: 响应中未找到 JSON 对象。
+            json.JSONDecodeError: 提取的 JSON 无法被解析（含修复尝试后）。
         """
         cleaned = text
         if "```json" in cleaned:
@@ -3429,14 +3679,20 @@ class GeminiAnalyzer:
         json_str = cleaned[json_start:json_end]
         json_str = self._fix_json_string(json_str)
         json.loads(json_str)
-    
+
     def _parse_text_response(
-        self, 
-        response_text: str, 
-        code: str, 
+        self,
+        response_text: str,
+        code: str,
         name: str
     ) -> AnalysisResult:
-        """从纯文本响应中尽可能提取分析信息"""
+        """当 JSON 解析失败时，从纯文本响应里尽量提取情感和操作建议。
+
+        提取策略：分别统计“看多/买入”等正向关键词与“看空/卖出”等负向关键词的
+        出现次数，按多数判定 sentiment_score / trend_prediction / decision_type。
+        同时把原文前 500 字符截取为摘要，并标记 success=False，提示调用方该结果
+        仅供参考。
+        """
         report_language = normalize_report_language(
             getattr(self._get_runtime_config(), "report_language", "zh")
         )
@@ -3444,16 +3700,17 @@ class GeminiAnalyzer:
         sentiment_score = 50
         trend = 'Sideways' if report_language == "en" else '震荡'
         advice = 'Hold' if report_language == "en" else '持有'
-        
+
         text_lower = response_text.lower()
-        
+
         # 简单的情绪识别
         positive_keywords = ['看多', '买入', '上涨', '突破', '强势', '利好', '加仓', 'bullish', 'buy']
         negative_keywords = ['看空', '卖出', '下跌', '跌破', '弱势', '利空', '减仓', 'bearish', 'sell']
-        
+
         positive_count = sum(1 for kw in positive_keywords if kw in text_lower)
         negative_count = sum(1 for kw in negative_keywords if kw in text_lower)
-        
+
+        # 正向比负向多 2 个以上才视为偏多/偏空，避免小幅波动引发误判
         if positive_count > negative_count + 1:
             sentiment_score = 65
             trend = 'Bullish' if report_language == "en" else '看多'
@@ -3466,10 +3723,10 @@ class GeminiAnalyzer:
             decision_type = 'sell'
         else:
             decision_type = 'hold'
-        
+
         # 截取前500字符作为摘要
         summary = response_text[:500] if response_text else ('No analysis result' if report_language == "en" else '无分析结果')
-        
+
         return AnalysisResult(
             code=code,
             name=name,
@@ -3486,40 +3743,39 @@ class GeminiAnalyzer:
             error_message='LLM response is not valid JSON; analysis result will not be persisted',
             report_language=report_language,
         )
-    
+
     def batch_analyze(
-        self, 
+        self,
         contexts: List[Dict[str, Any]],
         delay_between: float = 2.0
     ) -> List[AnalysisResult]:
-        """
-        批量分析多只股票
-        
-        注意：为避免 API 速率限制，每次分析之间会有延迟
-        
+        """批量分析多只股票。
+
+        为避免触发上游 API 的速率限制，会在每只股票之间睡眠 `delay_between` 秒。
+
         Args:
-            contexts: 上下文数据列表
-            delay_between: 每次分析之间的延迟（秒）
-            
+            contexts: 多只股票的上下文数据列表。
+            delay_between: 每次分析之间的延迟（秒），默认 2.0。
+
         Returns:
-            AnalysisResult 列表
+            与 contexts 等长的 `AnalysisResult` 列表。
         """
         results = []
-        
+
         for i, context in enumerate(contexts):
             if i > 0:
                 logger.debug(f"等待 {delay_between} 秒后继续...")
                 time.sleep(delay_between)
-            
+
             result = self.analyze(context)
             results.append(result)
-        
+
         return results
 
 
 # 便捷函数
 def get_analyzer() -> GeminiAnalyzer:
-    """获取 LLM 分析器实例"""
+    """获取默认 LLM 分析器实例（懒加载单例）。"""
     return GeminiAnalyzer()
 
 

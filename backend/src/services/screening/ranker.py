@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""L2 LLM ranker — relative ranking of shortlisted candidates."""
+"""L2 阶段 LLM 排序器：在"已硬筛"的候选池上做相对排序。
+
+职责：
+- 构造带截断预算的 LLM 排序 prompt；
+- 调用 LLM（带降级模型链、LiteLLM router 支持、JSON 模式兼容）；
+- 解析并把结果写回候选对象（``llm_score`` / ``rank`` / ``final_score`` 等）；
+- 全链失败时保留原始 ``screen_score`` 排序，保证上层流程不被阻塞。
+
+被调用方：选股流水线（`src/services/screening/pipeline.py` 等）。
+"""
 
 import copy
 import json
@@ -22,17 +31,21 @@ from src.services.screening.normalize import (
 
 
 def _normalize_code(value: object) -> str:
+    """包装 `normalize_code`，允许 LLM 返回的美股 ticker 原样通过。"""
     # Candidate codes and LLM ranking JSON code fields are structured, so
     # US tickers may pass through (see normalize_code docstring).
     return normalize_code(value, allow_ticker=True)
 
 logger = logging.getLogger(__name__)
+# 排序 prompt 默认上限 24000 字符：超过会按 hints/context/candidates 三段优先级压缩
 _DEFAULT_RANKING_PROMPT_MAX_CHARS = 24_000
 _PROMPT_TRIM_MARKER = "[prompt_trimmed]"
 
 
 @dataclass
 class RankingParseResult:
+    """排序响应的初步解析结果：候选、覆盖率、错误、全局研究字段。"""
+
     picks: list[Pick]
     coverage: float
     errors: list[str]
@@ -43,6 +56,8 @@ class RankingParseResult:
 
 @dataclass
 class LLMRankingResult:
+    """排序的最终返回：含成功标志、覆盖度、错误列表等供上层决策。"""
+
     picks: list[Pick]
     ranked: bool = False
     market_view: str = ""
@@ -55,6 +70,8 @@ class LLMRankingResult:
     failure_reason: str = ""
 
     def __post_init__(self) -> None:
+        """初始化后把 None 列表归一为空列表，避免调用方判空不一致。"""
+        # 默认空列表避免调用方判 None，统一处理
         if self.errors is None:
             self.errors = []
         if self.attempted_models is None:
@@ -82,10 +99,7 @@ def rank_candidates(
     max_prompt_chars: int | None = _DEFAULT_RANKING_PROMPT_MAX_CHARS,
     max_tokens: int | None = 2048,
 ) -> list[Pick]:
-    """Use LLM to re-rank candidates and add ranking_reason / risk_summary.
-
-    Falls back to screen_score order if LLM call fails.
-    """
+    """用 LLM 对候选池做相对排序；失败时按 ``screen_score`` 顺序回退。"""
     return rank_candidates_with_metadata(
         candidates,
         ranking_hints,
@@ -130,7 +144,14 @@ def rank_candidates_with_metadata(
     degradation: list[str] | None = None,
     max_tokens: int | None = 2048,
 ) -> LLMRankingResult:
-    """Use LLM to re-rank candidates and return global research metadata."""
+    """带全局研究字段的排序包装，供报告层展示 market_view / selection_logic / portfolio_risk。
+
+    流程：
+    1. 构造带截断预算的 prompt；
+    2. 依次尝试 (主模型 + fallback_models) × (max_retries+1) 次；
+    3. 每次返回都会被校验，覆盖率 ≥ ``min_coverage`` 才视为成功；
+    4. 成功则重排并重写 ``rank`` / ``final_score``，失败按失败原因回退。
+    """
     if not candidates:
         return LLMRankingResult(picks=candidates)
 
@@ -154,14 +175,14 @@ def rank_candidates_with_metadata(
         for attempt in range(max_retries + 1):
             attempt_prompt = prompt
             if attempt:
+                # 第二次起追加"覆盖率不达标"提示，引导模型扩列
                 attempt_prompt += (
                     "\n\n上一次输出没有满足结构化覆盖率要求。"
                     "请重新返回严格 JSON，并覆盖尽可能多的候选代码。"
                 )
             try:
-                # Keep transport/provider retries scoped to one model here. A
-                # syntactically successful but unusable response must also
-                # advance to the configured fallback model chain.
+                # 仅在本模型内部做 transport/provider 重试：解析失败/覆盖低
+                # 也需推进到下一个 fallback model，避免在同一模型上空转。
                 response = _call_llm(
                     attempt_prompt,
                     llm_api_key,
@@ -177,6 +198,7 @@ def rank_candidates_with_metadata(
                     max_tokens=max_tokens,
                 )
             except Exception as exc:
+                # 区分超时与普通调用失败：便于上层做不同降级策略
                 failure_reason = "timeout" if _is_timeout_error(exc) else "call_failed"
                 model_errors.append(f"{failure_reason}:{exc.__class__.__name__}")
                 break
@@ -192,7 +214,9 @@ def rank_candidates_with_metadata(
             for i, pick in enumerate(ranked):
                 pick.rank = i + 1
                 if pick.llm_score is None:
+                    # LLM 没给分时按位置给一个均匀衰减的兜底分数
                     pick.llm_score = 100.0 - i * (100.0 / max(len(ranked), 1))
+                # rank_weight 限制到 [0,1]，避免最终分数出现异常权重
                 weight = min(max(rank_weight, 0.0), 1.0)
                 pick.final_score = pick.screen_score * (1 - weight) + (pick.llm_score or 0) * weight
             ranked.sort(key=lambda item: item.final_score, reverse=True)
@@ -241,6 +265,7 @@ def _build_ranking_prompt(
     max_chars: int | None = _DEFAULT_RANKING_PROMPT_MAX_CHARS,
     degradation: list[str] | None = None,
 ) -> str:
+    """构造排序 prompt；超长时按"hints→context→candidates"优先级降级。"""
     hints_text = hints.strip() or "无额外排序提示。"
     context_text = context.strip() or "无额外上下文。只能基于候选池结构化数据和策略偏好判断。"
     candidates_text = "\n".join(_format_candidate_for_prompt(p) for p in candidates)
@@ -257,6 +282,7 @@ def _build_ranking_prompt(
 
 
 def _render_ranking_prompt(hints: str, context: str, candidates_text: str) -> str:
+    """组装相对排序提示词：策略偏好 + 市场/情报上下文 + 候选列表。"""
     return f"""你是一个专业的股票研究员，任务是在“已经由代码硬筛过”的候选池内做相对排序。
 你不能推荐候选池外股票，不能修改硬筛条件，不能给目标价或承诺收益。你的价值在于：
 1. 结合策略偏好，对候选之间做跨股票比较；
@@ -310,6 +336,11 @@ def _build_bounded_ranking_prompt(
     max_chars: int,
     degradation: list[str] | None,
 ) -> str:
+    """在硬性字符上限内构造排序 prompt：分两轮拟合，必要时再做硬截断。
+
+    优先级：hints 保留全文 → context 裁剪 → candidates 退化为 identity 行；
+    仍然超长则打 hard_cap 标记。``degradation`` 列表会被填入实际裁剪动作。
+    """
     trimmed: list[str] = []
     identity_text = "\n".join(_format_candidate_for_prompt(p, detail="identity") for p in candidates)
     base_min = _render_ranking_prompt(
@@ -366,6 +397,7 @@ def _build_bounded_ranking_prompt(
 
 
 def _format_candidate_for_prompt(p: Pick, *, detail: str = "full") -> str:
+    """把单个候选对象序列化为 prompt 文本行，按 detail 选择信息密度。"""
     if detail == "identity":
         return (
             f"- {p.code} {p.name}: rank={p.rank}, "
@@ -408,6 +440,11 @@ def _fit_candidate_prompt_lines(
     budget: int,
     trimmed: list[str],
 ) -> str:
+    """在 budget 字符内按"identity → full → compact"阶梯塞入选候行。
+
+    始终保留候选身份信息（代码/名称/rank/score），不足预算时按 detail
+    退化或直接丢弃尾部候选项，最后追加标记说明做了哪种裁剪。
+    """
     marker = f"...{_PROMPT_TRIM_MARKER}:candidate_details"
     full_text = "\n".join(_format_candidate_for_prompt(p) for p in candidates)
     if len(full_text) <= budget:
@@ -431,6 +468,7 @@ def _fit_candidate_prompt_lines(
         used += extra
 
     if omitted == 0:
+        # 还有预算：按 full → compact 顺序为已入选行升级详细度
         for idx, pick in enumerate(candidates):
             for detail in ("full", "compact"):
                 replacement = _format_candidate_for_prompt(pick, detail=detail)
@@ -450,6 +488,7 @@ def _fit_candidate_prompt_lines(
 
 
 def _truncate_prompt_text(text: str, limit: int, label: str, trimmed: list[str]) -> str:
+    """把任意 prompt 段落裁剪到 ``limit`` 字符，并在末尾打 label 标记。"""
     text = text.strip()
     if len(text) <= limit:
         return text
@@ -461,6 +500,7 @@ def _truncate_prompt_text(text: str, limit: int, label: str, trimmed: list[str])
 
 
 def _format_dsa_context_for_prompt(p: Pick) -> str:
+    """从候选的 DSA 上下文里抽出对 LLM 排序最有用的几类信息（行情/覆盖/新闻/警告）。"""
     parts: list[str] = []
     if p.dsa_analysis_summary:
         parts.append(f"summary={_truncate_text(p.dsa_analysis_summary, 240)}")
@@ -508,6 +548,7 @@ def _format_dsa_context_for_prompt(p: Pick) -> str:
 
 
 def _truncate_text(value: str, limit: int) -> str:
+    """把任意字符串截到 ``limit`` 字符，截断处加省略号；不破坏空白。"""
     text = " ".join(value.split())
     if len(text) <= limit:
         return text
@@ -529,7 +570,11 @@ def _call_llm(
     timeout_sec: float = 60.0,
     max_tokens: int | None = 2048,
 ) -> str:
-    """Call LLM via litellm with fallback models and channel configs."""
+    """通过 LiteLLM 调用 LLM：优先 router，再依次尝试各模型/渠道组合。
+
+    超时会向上冒泡（让外层判定为 timeout 而非 call_failed），其它异常
+    会被捕获并继续尝试下一个组合；全部失败则抛最后一次错误。
+    """
     import litellm
 
     if silent:
@@ -540,6 +585,7 @@ def _call_llm(
     last_error: Exception | None = None
 
     if config_path:
+        # router 模式优先：一份 yaml 配置多个部署，按 model 名称自动路由
         router_result = _call_litellm_router(
             litellm,
             config_path=config_path,
@@ -580,6 +626,7 @@ def _call_llm(
                 )
                 return _extract_completion_text(response)
             except Exception as exc:
+                # 超时要立即向上抛：客户端已超时，服务端可能仍在生成，重试会浪费算力
                 last_error = exc
                 if _is_timeout_error(exc):
                     raise
@@ -591,7 +638,7 @@ def _call_llm(
 
 
 def _extract_completion_text(response: object) -> str:
-    """Normalize text returned by OpenAI-compatible and reasoning gateways."""
+    """从 OpenAI 兼容/推理网关返回中抽取最终文本。"""
     try:
         choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices")
         choice = choices[0]
@@ -600,6 +647,7 @@ def _extract_completion_text(response: object) -> str:
         return ""
 
     def field(name: str) -> object:
+        """从 dict 或对象形态的 message 上取字段，兼容 model_extra 扩展字段。"""
         if isinstance(message, dict):
             return message.get(name)
         value = getattr(message, name, None)
@@ -612,8 +660,7 @@ def _extract_completion_text(response: object) -> str:
     if content.strip():
         return content
 
-    # If provider returns segmented blocks (LiteLLM, MiniMax, etc.), prefer
-    # extracting text from content_blocks before treating the response as empty.
+    # 网关分段返回 content_blocks（如 LiteLLM、MiniMax）时优先从这里取最终文本
     content_blocks = None
     for owner in (choice, message):
         if isinstance(owner, dict):
@@ -628,19 +675,12 @@ def _extract_completion_text(response: object) -> str:
         if content.strip():
             return content
 
-    # Do NOT fall back to internal 'reasoning_content' (chain-of-thought) as the
-    # model's final output. Treat absence of final content as empty to allow
-    # higher-level fallback logic (try next model or use factor ranking).
+    # 不降级到 reasoning_content（思维链），视为空：让上层 fallback 走下一个模型
     return ""
 
 
 def _coerce_completion_content(value: object) -> str:
-    """Coerce various completion content shapes into joined text.
-
-    Filter out non-final provider blocks (thinking/draft) by honoring the
-    block 'type' field. This prevents earlier thinking blocks from overriding
-    the model's final output when both are present.
-    """
+    """把多种返回结构规整为单一字符串：跳过 thinking/draft 类块。"""
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
@@ -669,7 +709,7 @@ def _coerce_completion_content(value: object) -> str:
 
 
 def _is_json_mode_unsupported(exc: Exception) -> bool:
-    """Return True only for provider errors that clearly reject JSON mode."""
+    """仅当异常明确表明 provider 不支持 JSON 模式时返回 True。"""
     if _is_timeout_error(exc):
         return False
     text = str(exc).lower()
@@ -683,18 +723,19 @@ def _is_json_mode_unsupported(exc: Exception) -> bool:
 
 
 def _is_timeout_error(exc: Exception) -> bool:
+    """检测常见的超时错误关键词。"""
     text = str(exc).lower()
     timeout_markers = ("timeout", "timed out", "readtimeout", "apitimeout")
     return any(marker in text for marker in timeout_markers)
 
 
 def _parse_ranking_response(response: str, candidates: list[Pick]) -> list[Pick]:
-    """Parse LLM response and reorder candidates."""
+    """解析 LLM 响应并重排候选（仅返回 Pick 列表的轻量包装）。"""
     return _parse_ranking_response_detail(response, candidates).picks
 
 
 def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> RankingParseResult:
-    """Parse LLM response and return diagnostics."""
+    """解析 LLM 响应并返回诊断信息（含 coverage、错误列表、研究字段）。"""
     errors: list[str] = []
     if not response or not response.strip():
         errors.append("empty_response")
@@ -721,8 +762,7 @@ def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> Ran
         logger.warning("LLM ranking JSON has no ranked list")
         return RankingParseResult(candidates, 0.0, errors)
 
-    # Parse into detached picks so partial/low-coverage results never mutate the
-    # caller's candidate list before coverage validation passes.
+    # 先深拷贝原候选，确保解析失败/覆盖低时不会污染调用方数据
     working_candidates = [copy.deepcopy(pick) for pick in candidates]
     code_to_pick = {
         _normalize_code(p.code): p for p in working_candidates if _normalize_code(p.code)
@@ -758,6 +798,7 @@ def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> Ran
             pick.llm_watch_items = _safe_string_list(item.get("watch_items"))
             pick.llm_risks = _safe_string_list(item.get("risk_flags"))
             pick.llm_tags = _safe_string_list(item.get("tags"))
+            # 把 sector/theme/style_fit 拼到 tags，便于后续按 tag 检索
             if pick.llm_sector:
                 pick.llm_tags = _dedupe([*pick.llm_tags, f"sector:{pick.llm_sector}"])
             if pick.llm_theme:
@@ -769,7 +810,7 @@ def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> Ran
         elif code:
             errors.append(f"unknown_code:{code}")
 
-    # Append any candidates not mentioned by LLM
+    # 兜底：把 LLM 没提到的候选补在末尾，保持长度等于输入
     ranked.extend(code_to_pick.values())
     coverage = matched / max(len(candidates), 1)
     return RankingParseResult(
@@ -783,15 +824,15 @@ def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> Ran
 
 
 def _safe_str(value, *, max_len: int) -> str:
+    """包装 `safe_text`，统一函数签名风格。"""
     return safe_text(value, max_len=max_len)
 
 
 def _try_parse_json_lenient(raw: str, errors: list[str]):
-    """Attempt to parse LLM JSON output, tolerating common formatting drift.
+    """宽松解析 LLM JSON：按 严格 → 去尾逗号 → 补齐括号 顺序修复。
 
-    Steps applied in order: strict parse → strip trailing commas → balance
-    truncated brackets → return None if all fail. Any repair that succeeds is
-    recorded in ``errors`` for diagnostics.
+    每一次修复成功都会在 ``errors`` 里登记 ``json_repaired:*`` 标签，
+    全部失败返回 None 并把首个原始错误抛出。
     """
     import re
 
@@ -828,12 +869,13 @@ def _try_parse_json_lenient(raw: str, errors: list[str]):
 
 
 def _extract_ranking_json(response: str, errors: list[str]):
-    """Extract ranking JSON from common LLM response shapes."""
+    """从 LLM 响应里提取首个像是排序 JSON 的 payload。"""
     for raw in _iter_json_payloads(response):
         parsed = _try_parse_json_lenient(raw, errors)
         if _looks_like_ranking_payload(parsed):
             return parsed
 
+    # 兜底：扫描多个独立 JSON 对象组成列表形式的"碎片化"响应
     partial = _extract_partial_ranking_array(response, errors)
     if partial is not None:
         return partial
@@ -841,6 +883,7 @@ def _extract_ranking_json(response: str, errors: list[str]):
 
 
 def _looks_like_ranking_payload(value: object) -> bool:
+    """判断解析结果是否像"排序"：dict 含 ranked 数组，或 list 含 code 字段。"""
     if isinstance(value, dict):
         return isinstance(value.get("ranked"), list)
     if isinstance(value, list):
@@ -849,7 +892,7 @@ def _looks_like_ranking_payload(value: object) -> bool:
 
 
 def _iter_json_payloads(response: str):
-    """Yield likely JSON payload substrings in priority order."""
+    """按优先级产出可能的 JSON 负载：先 ```json ``` 围栏，再顶层平衡对象/数组。"""
     import re
 
     yielded: set[str] = set()
@@ -868,7 +911,7 @@ def _iter_json_payloads(response: str):
 
 
 def _balanced_json_values(text: str) -> list[str]:
-    """Return balanced top-level JSON object/array substrings."""
+    """扫描并返回所有顶层平衡的 JSON 对象/数组子串。"""
     values: list[str] = []
     stack: list[str] = []
     start: int | None = None
@@ -895,6 +938,7 @@ def _balanced_json_values(text: str) -> list[str]:
             continue
         if char in ("}", "]") and stack:
             expected = stack.pop()
+            # 括号类型不匹配说明扫描状态坏了，重置起点避免误报
             if char != expected:
                 stack.clear()
                 start = None
@@ -906,7 +950,7 @@ def _balanced_json_values(text: str) -> list[str]:
 
 
 def _extract_partial_ranking_array(response: str, errors: list[str]):
-    """Recover a ranked list from multiple JSON objects in a noisy response."""
+    """从碎片化的多对象响应中抢救出 ranked 数组。"""
     items = []
     item_errors: list[str] = []
     for raw in _balanced_json_values(response):
@@ -930,6 +974,7 @@ def _call_litellm_router(
     timeout_sec: float,
     max_tokens: int | None = 2048,
 ) -> str | None:
+    """通过 LiteLLM Router 顺序尝试每个模型；配置文件无效时回退到直连调用。"""
     try:
         import yaml
 
@@ -980,6 +1025,7 @@ def _apply_screening_litellm_generation_params(
     temperature: float | None,
     model_list: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    """包装通用 LLM 生成参数注入逻辑（reasoning/温度等）。"""
     return apply_litellm_generation_params(
         call_kwargs,
         model,
@@ -995,6 +1041,11 @@ def _call_screening_litellm_completion(
     call_kwargs: dict[str, object],
     model_list: list[dict[str, object]] | None = None,
 ):
+    """在 LLM 调用前/后做参数兼容修复：JSON 模式不被支持时降级重试。
+
+    注意：仅在 provider 明确不支持 JSON 模式时移除 ``response_format``；
+    超时/连接类错误绝不在这里重试（本地 OpenAI 兼容服务可能仍在生成）。
+    """
     try:
         return call_litellm_with_param_recovery(
             call,
@@ -1025,6 +1076,7 @@ def _call_screening_litellm_completion(
 
 
 def _silence_litellm_logs(litellm) -> None:
+    """静默 LiteLLM 自己的 verbose/debug 日志，避免污染应用日志。"""
     os.environ.setdefault("LITELLM_LOG", "ERROR")
     try:
         litellm.set_verbose = False
@@ -1042,6 +1094,7 @@ def _build_litellm_attempts(
     base_url: str,
     channels: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    """按 channel 列表展开 litellm 调用尝试项；无匹配 channel 时退化为单次直连。"""
     attempts = []
     matched_channel = False
     for channel in channels:
@@ -1051,6 +1104,7 @@ def _build_litellm_attempts(
         api_keys = channel.get("api_keys", [])
         if not isinstance(api_keys, list) or not api_keys:
             api_keys = [api_key] if api_key else [""]
+        # 兼容 OpenAI/Azure/Ollama 等不同的 "model" 协议前缀
         wire_model = apply_litellm_api_surface(
             model,
             str(channel.get("api_surface", "") or ""),
@@ -1068,6 +1122,7 @@ def _build_litellm_attempts(
 
 
 def _completion_kwargs(model: str, *, api_key: str, base_url: str) -> dict[str, object]:
+    """构造 litellm completion 的最基础 kwargs。"""
     kwargs: dict[str, object] = {"model": model}
     if api_key:
         kwargs["api_key"] = api_key
@@ -1077,6 +1132,7 @@ def _completion_kwargs(model: str, *, api_key: str, base_url: str) -> dict[str, 
 
 
 def _channel_matches_model(channel: dict[str, object], model: str) -> bool:
+    """判断 channel 是否声明支持当前 model（支持带/不带 provider 前缀的写法）。"""
     models = channel.get("models", [])
     if not isinstance(models, list) or not models:
         return False
@@ -1085,6 +1141,7 @@ def _channel_matches_model(channel: dict[str, object], model: str) -> bool:
 
 
 def _normalize_model_name(model: str, protocol: str) -> str:
+    """把裸 model 名按协议补上 litellm 期望的 provider 前缀。"""
     model = model.strip()
     if "/" in model:
         return model
@@ -1098,6 +1155,7 @@ def _normalize_model_name(model: str, protocol: str) -> str:
 
 
 def _unique_attempts(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    """去重尝试项：相同 (model, api_key, api_base) 只保留一个，避免重复调用。"""
     seen = set()
     result = []
     for item in items:
@@ -1109,6 +1167,7 @@ def _unique_attempts(items: list[dict[str, object]]) -> list[dict[str, object]]:
 
 
 def _dedupe(items: list[str]) -> list[str]:
+    """保序去重字符串列表（先 strip 后比较）。"""
     seen = set()
     result = []
     for item in items:

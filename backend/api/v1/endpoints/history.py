@@ -26,8 +26,12 @@ from api.v1.schemas.history import (
     ReportStrategy,
     ReportDetails,
     MarkdownReportResponse,
+    RunDiagnosticSummaryResponse,
+    HistoryTrendPoint,
+    HistoryTrendResponse,
 )
 from api.v1.schemas.common import ErrorResponse
+from api.v1.schemas.run_flow import RunFlowSnapshot
 from src.storage import AppUser, DatabaseManager
 from src.report_language import (
     get_sentiment_label,
@@ -54,20 +58,94 @@ router = APIRouter()
 
 
 def _current_user_id_or_none(current_user: AppUser) -> Optional[int]:
-    """Return current user's numeric id, keeping service calls tolerant in tests."""
+    """返回当前用户的数值 id，便于在测试等无 id 场景下保持服务层容错。"""
     return getattr(current_user, "id", None)
 
 
+@router.get("/by-code/{stock_code}/trend", response_model=HistoryTrendResponse)
+def get_history_trend_by_code(
+    stock_code: str,
+    limit: int = Query(100, ge=1, le=100),
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
+) -> HistoryTrendResponse:
+    """返回当前用户在指定股票上的时序 A 股分析结论。"""
+    code = str(stock_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail={"error": "invalid_request", "message": "stock_code 不能为空"})
+    items = HistoryService(db_manager).get_history_trend_by_code(
+        code,
+        user_id=_current_user_id_or_none(current_user),
+        limit=limit,
+    )
+    return HistoryTrendResponse(
+        stock_code=code,
+        stock_name=items[-1].get("stock_name") if items else None,
+        items=[HistoryTrendPoint(**{key: value for key, value in item.items() if key != "stock_name"}) for item in items],
+    )
+
+
+@router.delete("/by-code/{stock_code}", response_model=DeleteHistoryResponse)
+def delete_history_by_code(
+    stock_code: str,
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
+) -> DeleteHistoryResponse:
+    """删除当前用户范围内某只股票的全部历史分析记录。"""
+    code = str(stock_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail={"error": "invalid_request", "message": "stock_code 不能为空"})
+    deleted = HistoryService(db_manager).delete_history_by_code(
+        code,
+        user_id=_current_user_id_or_none(current_user),
+    )
+    return DeleteHistoryResponse(deleted=deleted)
+
+
+@router.get("/{record_id}/diagnostics", response_model=RunDiagnosticSummaryResponse)
+def get_history_diagnostics(
+    record_id: str,
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
+) -> RunDiagnosticSummaryResponse:
+    """返回当前用户拥有的 A 股报告的脱敏诊断摘要。"""
+    summary = HistoryService(db_manager).resolve_and_get_diagnostics(
+        record_id,
+        user_id=_current_user_id_or_none(current_user),
+    )
+    if summary is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "Analysis report not found"})
+    return RunDiagnosticSummaryResponse.model_validate(summary)
+
+
+@router.get("/{record_id}/flow", response_model=RunFlowSnapshot)
+def get_history_run_flow(
+    record_id: str,
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    current_user: AppUser = Depends(get_current_user),
+) -> RunFlowSnapshot:
+    """返回当前用户拥有的 A 股报告的脱敏运行流（节点、边、事件）。"""
+    snapshot = HistoryService(db_manager).resolve_and_get_run_flow(
+        record_id,
+        user_id=_current_user_id_or_none(current_user),
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "Analysis report not found"})
+    return RunFlowSnapshot.model_validate(snapshot)
+
+
 def _history_share_image_payload(result: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
-    """Return the persisted structured payload used to fill the poster."""
+    """选择用于填充分享图海报的持久化结构化载荷。"""
 
     if result.get("report_type") == "market_review":
+        # 盘后点评类报告：优先使用上下文快照内的市场点评专用载荷
         context_snapshot = result.get("context_snapshot")
         if isinstance(context_snapshot, Mapping):
             market_payload = context_snapshot.get("market_review_payload")
             if isinstance(market_payload, Mapping):
                 return market_payload
 
+    # 默认回退到通用的原始结果字典
     raw_result = result.get("raw_result")
     return raw_result if isinstance(raw_result, Mapping) else None
 
@@ -77,7 +155,7 @@ def _history_share_image_input(
     db_manager: DatabaseManager,
     user_id: Optional[int],
 ) -> tuple[Mapping[str, Any], str]:
-    """Load one user-owned report for both PNG and desktop HTML renderers."""
+    """为 PNG 与桌面端 HTML 渲染器加载同一份用户拥有的报告。"""
 
     service = HistoryService(db_manager)
     result = service.resolve_and_get_detail(record_id, user_id=user_id)
@@ -132,11 +210,11 @@ def get_history_list(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HistoryListResponse:
-    """Return paginated analysis-history summaries for the current user."""
+    """返回当前登录用户的历史分析摘要，支持分页与股票代码/日期范围筛选。"""
     try:
         service = HistoryService(db_manager)
-        
-        # HistoryService performs synchronous DB/file work; keep the endpoint sync so FastAPI uses a worker thread.
+
+        # HistoryService 内部执行同步 DB/文件 IO；endpoint 用 def 让 FastAPI 在线程池中调度。
         result = service.get_history_list(
             stock_code=stock_code,
             start_date=start_date,
@@ -145,7 +223,7 @@ def get_history_list(
             limit=limit,
             user_id=_current_user_id_or_none(current_user),
         )
-        
+
         # 服务层返回 dict，endpoint 收敛为公开 schema，避免存储字段直接泄漏给前端。
         items = [
             HistoryItem(
@@ -160,14 +238,14 @@ def get_history_list(
             )
             for item in result.get("items", [])
         ]
-        
+
         return HistoryListResponse(
             total=result.get("total", 0),
             page=page,
             limit=limit,
             items=items
         )
-        
+
     except Exception as e:
         logger.error(f"查询历史列表失败: {e}", exc_info=True)
         raise HTTPException(
@@ -195,7 +273,8 @@ def delete_history_records(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> DeleteHistoryResponse:
-    """Delete selected history records after de-duplicating request ids."""
+    """在请求 id 去重后删除所选历史记录。"""
+    # 用 set 去重 + sorted 保证删除顺序稳定，便于日志与审计对齐
     record_ids = sorted({record_id for record_id in request.record_ids if record_id is not None})
     if not record_ids:
         raise HTTPException(
@@ -242,16 +321,16 @@ def get_history_detail(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> AnalysisReport:
-    """Return one structured report by numeric history id or legacy query_id."""
+    """根据数字 id 或历史 query_id 返回一条结构化报告。"""
     try:
         service = HistoryService(db_manager)
-        
-        # Try integer ID first, then fall back to query_id string lookup for old links.
+
+        # 先按整数 id 查找，未命中再用 query_id 字符串兜底，兼容老链接
         result = service.resolve_and_get_detail(
             record_id,
             user_id=_current_user_id_or_none(current_user),
         )
-        
+
         if result is None:
             raise HTTPException(
                 status_code=404,
@@ -260,7 +339,7 @@ def get_history_detail(
                     "message": f"未找到 id/query_id={record_id} 的分析记录"
                 }
             )
-        
+
         # 从 context_snapshot 中提取价格信息
         # 注意：使用 `is None` 而非 `or`，避免把 0.0（平盘）误判为缺失值；
         # 同时不混用 `change_60d`（60 日累计涨跌幅）作为日内 change_pct 的兜底。
@@ -283,11 +362,13 @@ def get_history_detail(
             if change_pct is None:
                 change_pct = realtime_quote_raw.get("change_pct")
             if change_pct is None:
+                # 旧字段名 pct_chg 也作为最后兜底
                 change_pct = realtime_quote_raw.get("pct_chg")
-        
+
         raw_result = result.get("raw_result")
         if not isinstance(raw_result, dict):
             raw_result = {}
+        # 报告语言按 row -> raw_result -> context_snapshot 的顺序回退
         report_language = normalize_report_language(
             result.get("report_language")
             or raw_result.get("report_language")
@@ -297,6 +378,7 @@ def get_history_detail(
                 else None
             )
         )
+        # 按报告语言本地化股票名，未匹配则保持原始名称
         stock_name = get_localized_stock_name(
             result.get("stock_name"),
             result.get("stock_code", ""),
@@ -316,7 +398,7 @@ def get_history_detail(
             change_pct=change_pct,
             model_used=normalize_model_used(result.get("model_used"))
         )
-        
+
         summary = ReportSummary(
             analysis_summary=result.get("analysis_summary"),
             operation_advice=localize_operation_advice(
@@ -334,14 +416,15 @@ def get_history_detail(
                 else result.get("sentiment_label")
             )
         )
-        
+
         strategy = ReportStrategy(
             ideal_buy=result.get("ideal_buy"),
             secondary_buy=result.get("secondary_buy"),
             stop_loss=result.get("stop_loss"),
             take_profit=result.get("take_profit")
         )
-        
+
+        # 从数据库和 context_snapshot 中拉取结构化基本面 / 板块字段
         fallback_fundamental = db_manager.get_latest_fundamental_snapshot(
             query_id=result.get("query_id", ""),
             code=result.get("stock_code", ""),
@@ -374,14 +457,14 @@ def get_history_detail(
             market_structure_context=market_structure_context,
             price_history=result.get("price_history") or [],
         )
-        
+
         return AnalysisReport(
             meta=meta,
             summary=summary,
             strategy=strategy,
             details=details
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -411,7 +494,7 @@ def get_history_news(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> NewsIntelResponse:
-    """Return news items associated with one history record or query_id."""
+    """返回某条历史记录（按 id 或 query_id）所关联的新闻情报。"""
     try:
         service = HistoryService(db_manager)
         items = service.resolve_and_get_news(
@@ -461,7 +544,7 @@ def get_history_markdown(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> MarkdownReportResponse:
-    """Generate the notification-style Markdown report for one history item."""
+    """为某条历史记录生成通知风格的 Markdown 报告。"""
     service = HistoryService(db_manager)
 
     try:
@@ -517,7 +600,7 @@ def get_history_share_image_html(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HTMLResponse:
-    """Build the authenticated HTML poster used by browser renderers."""
+    """为浏览器渲染器构造需要鉴权的 HTML 海报页。"""
 
     result, markdown_content = _history_share_image_input(
         record_id,
@@ -578,7 +661,7 @@ def get_history_share_image(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Response:
-    """Render a user-owned historical report as a downloadable PNG."""
+    """将当前用户拥有的历史报告渲染成可下载的 PNG 分享图。"""
 
     result, markdown_content = _history_share_image_input(
         record_id,

@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Context assembly for LLM ranking."""
+"""LLM 软排序使用的上下文装配与降级。
+
+负责把人工上下文、上下文文件、事件画像、候选身份、候选外部线索、候选抓取
+线索、市场快照、候选池快照、候选因子概貌等异构材料拼成对 LLM 友好的有限
+长度文本, 并在超出 ``max_chars`` 时按优先级/权重降级裁剪。
+
+下游: ``src.services.screening.*`` 中的 LLM 调用方(尤其是 `screening/scorer.py`
+里的 scorer 在使用 LLM 加权评分时), 以及 ``src.agents`` 内基于 LLM 软排序
+的入口。
+"""
 
 from __future__ import annotations
 
@@ -38,6 +47,8 @@ _CANDIDATE_CONTEXT_COLUMNS = {
 
 @dataclass(frozen=True)
 class _ContextSection:
+    """LLM 上下文的一个候选分段：文本内容 + 排序/裁剪元数据。"""
+
     text: str
     kind: str
     priority: int
@@ -58,7 +69,7 @@ def build_llm_context(
     max_chars: int = 4000,
     degradation: list[str] | None = None,
 ) -> str:
-    """Build bounded context text for the LLM soft ranker."""
+    """组装 LLM 软排序所需的有界上下文文本。"""
     sections: list[_ContextSection] = []
     if base_context.strip():
         sections.append(_section(
@@ -168,7 +179,7 @@ def build_llm_context(
 
 
 def summarize_snapshot_context(df: pd.DataFrame | None, *, title: str) -> str:
-    """Summarize breadth, activity and extremes from a snapshot DataFrame."""
+    """根据快照 DataFrame 总结市场宽度、活跃度与涨跌极值。"""
     if df is None or df.empty:
         return ""
 
@@ -197,7 +208,7 @@ def summarize_snapshot_context(df: pd.DataFrame | None, *, title: str) -> str:
 
 
 def summarize_candidate_profile(df: pd.DataFrame | None) -> str:
-    """Summarize factor conflicts and leadership inside the candidate pool."""
+    """汇总候选池的因子分布、行业/概念结构与板块热度。"""
     if df is None or df.empty:
         return ""
 
@@ -222,6 +233,7 @@ def summarize_candidate_profile(df: pd.DataFrame | None) -> str:
         if averages:
             lines.append("因子均值: " + "，".join(averages))
 
+        # 每条因子记录 Top1(代码+名称+分数), 帮助 LLM 理解"谁的哪个轴领先"
         leaders = []
         columns = [col for col in ("code", "name") if col in df.columns]
         for label, col in available.items():
@@ -232,6 +244,7 @@ def summarize_candidate_profile(df: pd.DataFrame | None) -> str:
             row = df.loc[idx]
             leaders.append(f"{label}:{row.get('code', '')}{row.get('name', '')}({series.loc[idx]:.1f})")
         if leaders:
+            # 只取前 8 条, 避免上下文爆炸
             lines.append("因子领先: " + "，".join(leaders[:8]))
 
     if "screen_score" in df.columns:
@@ -256,7 +269,7 @@ def summarize_candidate_profile(df: pd.DataFrame | None) -> str:
 
 
 def summarize_candidate_identity(df: pd.DataFrame | None, *, limit: int = 30) -> str:
-    """Summarize top candidate identities and key ranking fields."""
+    """把前 N 只候选身份与关键排名字段整理成表格化的文本。"""
     if df is None or df.empty or "code" not in df.columns:
         return ""
 
@@ -284,13 +297,14 @@ def summarize_candidate_identity(df: pd.DataFrame | None, *, limit: int = 30) ->
             fields.append(f"board_heat_score={heat}")
         suffix = ": " + ", ".join(fields) if fields else ""
         lines.append(f"- {code} {name}{suffix}")
+    # 超额部分显式提示, 让 LLM 知道还有更多候选
     if len(df) > limit:
         lines.append(f"...[candidate_identity_omitted:{len(df) - limit}]")
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def summarize_event_profile(event_profile: dict[str, object] | None) -> str:
-    """Summarize strategy-level event preferences for the LLM."""
+    """把策略级事件偏好整理成 LLM 易读的摘要。"""
     if not event_profile:
         return ""
     lines = ["【策略事件偏好】"]
@@ -322,6 +336,7 @@ def summarize_event_profile(event_profile: dict[str, object] | None) -> str:
 
 
 def _read_context_files(paths: list[str | Path]) -> str:
+    """读取并拼接用户传入的若干上下文文件, 找不到时直接抛错。"""
     chunks: list[str] = []
     for path_like in paths:
         path = Path(path_like)
@@ -337,6 +352,7 @@ def _read_candidate_context_files(
     paths: list[str | Path],
     candidate_df: pd.DataFrame | None,
 ) -> str:
+    """从若干文件中加载候选外部线索, 仅保留命中候选池的股票。"""
     if not paths or candidate_df is None or candidate_df.empty or "code" not in candidate_df.columns:
         return ""
 
@@ -353,6 +369,7 @@ def _read_candidate_context_files(
             code = _normalize_code(row.get("code", row.get("代码", "")))
             item = _format_candidate_context_row(row, candidate_codes, candidate_names)
             if item:
+                # 排序键: 候选序号优先, 原文件行号次之, 保持候选身份稳定
                 chunks.append((candidate_order.get(code, len(candidate_order)), row_position, item))
             row_position += 1
     return "\n".join(item for _, _, item in sorted(chunks))
@@ -362,6 +379,7 @@ def _format_candidate_context_rows(
     rows: list[dict[str, object]],
     candidate_df: pd.DataFrame | None,
 ) -> str:
+    """把内存里收集到的候选外部线索行格式化为可拼接文本。"""
     if not rows or candidate_df is None or candidate_df.empty or "code" not in candidate_df.columns:
         return ""
     candidate_names, candidate_order = _candidate_maps(candidate_df)
@@ -376,6 +394,7 @@ def _format_candidate_context_rows(
 
 
 def _candidate_maps(candidate_df: pd.DataFrame) -> tuple[dict[str, str], dict[str, int]]:
+    """从候选池构建 ``{code: name}`` 与 ``{code: 出现次序}`` 两张索引。"""
     candidate_names: dict[str, str] = {}
     candidate_order: dict[str, int] = {}
     for idx, (_, row) in enumerate(candidate_df.iterrows()):
@@ -383,6 +402,7 @@ def _candidate_maps(candidate_df: pd.DataFrame) -> tuple[dict[str, str], dict[st
         if not code:
             continue
         candidate_names[code] = str(row.get("name", row.get("名称", "")) or "")
+        # 多只相同代码取首次出现的位置, 用于输出顺序的稳定性
         candidate_order.setdefault(code, idx)
     return candidate_names, candidate_order
 
@@ -392,6 +412,7 @@ def _format_candidate_context_row(
     candidate_codes: set[str],
     candidate_names: dict[str, str],
 ) -> str:
+    """把单行候选上下文裁剪到候选池范围, 并按字段标签拼接。"""
     code = _normalize_code(row.get("code", row.get("代码", "")))
     if code not in candidate_codes:
         return ""
@@ -407,6 +428,7 @@ def _format_candidate_context_row(
 
 
 def _load_candidate_context_rows(path: Path) -> list[dict[str, object]]:
+    """从 csv / jsonl / json 三种格式加载候选上下文记录。"""
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return pd.read_csv(path, dtype=str).fillna("").to_dict(orient="records")
@@ -429,6 +451,7 @@ def _load_candidate_context_rows(path: Path) -> list[dict[str, object]]:
                 return [item for item in items if isinstance(item, dict)]
             rows = []
             for code, value in data.items():
+                # 兼容 ``{"000001": {"news": "..."}}`` 这种"按代码为键"的紧凑格式
                 if isinstance(value, dict):
                     rows.append({"code": code, **value})
                 elif isinstance(value, str):
@@ -438,6 +461,7 @@ def _load_candidate_context_rows(path: Path) -> list[dict[str, object]]:
 
 
 def _safe_context_value(value: object, *, max_len: int = 280) -> str:
+    """把任意输入归一化为上下文可拼接的字符串, 自动屏蔽 NaN/None 噪声。"""
     if value is None:
         return ""
     if isinstance(value, list):
@@ -450,6 +474,7 @@ def _safe_context_value(value: object, *, max_len: int = 280) -> str:
 
 
 def _format_profile_value(value: object) -> str:
+    """把 profile 字段值(可能是 list)格式化为一段中文逗号串。"""
     if isinstance(value, list):
         return "，".join(
             item
@@ -468,11 +493,13 @@ def _section(
     weight: int,
     line_aware: bool = False,
 ) -> _ContextSection:
+    """构造一个上下文分片, 自动 strip 文本与限制 min_chars/weight 范围。"""
     return _ContextSection(
         text=text.strip(),
         kind=kind,
         priority=priority,
         min_chars=max(int(min_chars), 0),
+        # 权重至少为 1, 避免全部为 0 时分配退化为无意义
         weight=max(int(weight), 1),
         line_aware=line_aware,
     )
@@ -484,6 +511,7 @@ def _join_bounded_context_sections(
     max_chars: int,
     degradation: list[str] | None,
 ) -> str:
+    """在 ``max_chars`` 预算内拼接各分片, 超限时按优先级/权重降级裁剪。"""
     sections = [section for section in sections if section.text.strip()]
     combined = "\n\n".join(section.text for section in sections).strip()
     if not combined:
@@ -503,6 +531,7 @@ def _join_bounded_context_sections(
         trimmed = _trim_section(section, limit)
         if trimmed:
             chunks.append(trimmed)
+        # 记录触发降级的分片类型, 用于日志/前端提示
         if len(trimmed) < len(section.text):
             trimmed_kinds.append(section.kind)
 
@@ -520,16 +549,20 @@ def _join_bounded_context_sections(
 
 
 def _allocate_section_budgets(sections: list[_ContextSection], budget: int) -> list[int]:
+    """按优先级下限 + 权重分配各分片的字符预算。"""
+    # 段间用一个 "\n\n" 连接, 预留分隔预算
     separator_budget = max(len(sections) - 1, 0) * 2
     body_budget = max(budget - separator_budget, 0)
     minimums = [min(len(section.text), section.min_chars) for section in sections]
     minimum_total = sum(minimums)
+    # 总下限已经超出预算, 进入"按优先级逐段压下限"的保底模式
     if minimum_total > body_budget:
         return _priority_floor_allocations(sections, body_budget)
 
     allocations = list(minimums)
     remaining = body_budget - minimum_total
     while remaining > 0:
+        # 只对"还没分配到原文长度"的分片做加权扩张
         expandable = [
             idx
             for idx, section in enumerate(sections)
@@ -542,6 +575,7 @@ def _allocate_section_budgets(sections: list[_ContextSection], budget: int) -> l
         for idx in expandable:
             section = sections[idx]
             extra = len(section.text) - allocations[idx]
+            # 按权重比例分配剩余预算, 至少保证 1 字符, 避免死循环
             share = max(1, int(remaining * section.weight / max(total_weight, 1)))
             take = min(extra, share, remaining)
             if take <= 0:
@@ -557,12 +591,15 @@ def _allocate_section_budgets(sections: list[_ContextSection], budget: int) -> l
 
 
 def _priority_floor_allocations(sections: list[_ContextSection], budget: int) -> list[int]:
+    """当总下限超出预算时, 按优先级从高到低尽量满足各段下限。"""
     allocations = [0] * len(sections)
     remaining = max(int(budget), 0)
+    # 优先级数字越小越重要(同一优先级按列表顺序)
     for idx in sorted(range(len(sections)), key=lambda item: sections[item].priority):
         if remaining <= 0:
             break
         section = sections[idx]
+        # 下限至少保留 80 字符, 防止"几乎不可读"的输出
         floor = min(len(section.text), max(section.min_chars, 80))
         take = min(floor, remaining)
         allocations[idx] = take
@@ -571,6 +608,7 @@ def _priority_floor_allocations(sections: list[_ContextSection], budget: int) ->
 
 
 def _trim_section(section: _ContextSection, limit: int) -> str:
+    """按预算裁剪单段; line_aware 时按行裁, 否则直接按字符裁。"""
     if limit <= 0:
         return ""
     text = section.text
@@ -584,6 +622,7 @@ def _trim_section(section: _ContextSection, limit: int) -> str:
     if not section.line_aware:
         return text[:content_limit].rstrip() + marker
 
+    # 行级裁剪: 一旦加上下一行将超出预算, 就停在当前行, 并附上降级标记
     kept: list[str] = []
     for line in text.splitlines():
         candidate = "\n".join([*kept, line]).rstrip() + marker
@@ -601,6 +640,7 @@ def _trim_section(section: _ContextSection, limit: int) -> str:
 
 
 def _append_marker_within_limit(text: str, marker: str, *, max_chars: int) -> str:
+    """在不超 ``max_chars`` 的前提下把降级标记追加到文本末尾。"""
     if not text:
         return marker[:max_chars]
     candidate = f"{text}\n{marker}"
@@ -613,6 +653,7 @@ def _append_marker_within_limit(text: str, marker: str, *, max_chars: int) -> st
 
 
 def _format_extremes(df: pd.DataFrame, change: pd.Series, *, ascending: bool) -> str:
+    """挑出涨跌最高/最低的若干行, 拼接为 ``代码名称(幅度%)`` 形式的字符串。"""
     columns = [col for col in ("code", "name", "change_pct") if col in df.columns]
     if not columns:
         return ""
@@ -627,6 +668,7 @@ def _format_extremes(df: pd.DataFrame, change: pd.Series, *, ascending: bool) ->
 
 
 def _summarize_label_distribution(df: pd.DataFrame, column: str) -> str:
+    """统计指定列(industry/concepts)中各标签出现次数, 取 Top6 拼成中文串。"""
     if column not in df.columns:
         return ""
     labels: list[str] = []
@@ -642,6 +684,7 @@ def _summarize_label_distribution(df: pd.DataFrame, column: str) -> str:
 
 
 def _summarize_board_heat(df: pd.DataFrame, *, limit: int = 5) -> str:
+    """把板块热度字段汇总为前 N 行结构化文本, 包含 trend/persist/cooling 等子分。"""
     if "board_heat_score" not in df.columns:
         return ""
     values = pd.to_numeric(df["board_heat_score"], errors="coerce")

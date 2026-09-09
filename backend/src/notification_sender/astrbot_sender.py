@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class AstrbotSender:
-    """Send rendered analysis reports to an AstrBot webhook endpoint."""
+    """将渲染后的分析报告发送到 AstrBot Webhook 端点。"""
     
     def __init__(self, config: Config):
         """

@@ -217,7 +217,7 @@ _USER_ERROR_HTTP_STATUS = {
 
 
 def _user_error_response(exc: UserError) -> JSONResponse:
-    """Convert domain-level user errors into the public JSON error shape."""
+    """将领域层 UserError 映射为前端稳定的 JSON 错误响应。"""
     status = _USER_ERROR_HTTP_STATUS.get(exc.code, 400)
     return JSONResponse(
         status_code=status,
@@ -226,12 +226,14 @@ def _user_error_response(exc: UserError) -> JSONResponse:
 
 
 def _cookie_kwargs(request: Request, settings: UserModeSettings) -> dict:
-    """Build To C user-session cookie attributes from runtime settings."""
+    """根据运行时设置构造 C 端用户会话 cookie 的属性。"""
     secure = False
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
+        # 反代部署：信任反代透传的协议头决定 cookie 的 Secure 标志
         proto = request.headers.get("X-Forwarded-Proto", "").lower()
         secure = proto == "https"
     else:
+        # 直连部署：以请求 URL 的协议为准
         secure = request.url.scheme == "https"
     return {
         "key": SESSION_COOKIE_NAME,
@@ -249,13 +251,13 @@ def _attach_session_cookie(
     issued: IssuedSession,
     settings: UserModeSettings,
 ) -> None:
-    """Attach an issued user session to a FastAPI response."""
+    """将签发的 C 端用户会话写入 FastAPI 响应。"""
     params = _cookie_kwargs(request, settings)
     response.set_cookie(value=issued.cookie_value, **params)
 
 
 def _serialize_user(user, *, terms_version: str | None = None) -> dict:
-    """Serialize AppUser into the account API's frontend-facing shape."""
+    """把 AppUser 序列化为账号 API 的前端结构。"""
     current_terms_version = (terms_version or CURRENT_TERMS_VERSION).strip()
     return {
         "id": user.id,
@@ -288,6 +290,7 @@ def _build_renewal_payload(user) -> Optional[dict]:
     plan_code = (getattr(user, "plan_code", None) or "free").strip().lower()
     expires_at = getattr(user, "plan_expires_at", None)
     if plan_code == "free" or expires_at is None:
+        # 免费档 / 无到期时间：不需要续费提醒，直接返回 None 让前端不展示
         return None
 
     now = datetime.utcnow()
@@ -299,6 +302,7 @@ def _build_renewal_payload(user) -> Optional[dict]:
         days_remaining += 1
     if expired:
         days_remaining = 0
+    # 阈值取所有提醒偏移中的最大值，与调度器中 "需要提醒" 的判定对齐
     threshold = max(REMINDER_OFFSET_DAYS) if REMINDER_OFFSET_DAYS else 7
     will_expire_soon = (not expired) and days_remaining <= threshold
 
@@ -317,7 +321,7 @@ def _status_payload(
     request: Request,
     db: Session,
 ) -> dict:
-    """Build the shared account status/me response payload."""
+    """构造 /status 与 /me 共用的账户状态响应体。"""
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
 
@@ -326,6 +330,7 @@ def _status_payload(
     plan_payload = None
     renewal_payload = None
     if user is not None:
+        # 已登录用户：附套餐、配额、积分、续费提醒等完整信息
         plan = svc_resolve_user_plan(db, user)
         plan_payload = {
             "code": plan.code,
@@ -353,6 +358,7 @@ def _status_payload(
         }
         credit_payload = serialize_credit_snapshot(db, user)
         try:
+            # 仅消费读路径，但积分/续费等懒加载可能写入衍生字段，保守提交
             db.commit()
         except Exception:
             db.rollback()
@@ -374,12 +380,12 @@ def _status_payload(
 
 
 def _get_settings_or_disabled(db: Session | None = None):
-    """Load user-mode settings for endpoints that need runtime account config."""
+    """为需要运行时账户配置的端点加载用户态配置。"""
     return load_user_mode_settings(db)
 
 
 def _commit_or_rollback(db: Session) -> None:
-    """Commit DB changes and roll back before re-raising on failure."""
+    """提交数据库事务；失败时回滚并重新抛出异常。"""
     try:
         db.commit()
     except Exception:
@@ -403,7 +409,7 @@ async def account_register(
     body: RegisterRequest,
     db: Session = Depends(get_db),
 ):
-    """Register a new user and return verification requirements without logging in."""
+    """注册新用户并返回是否需要邮箱验证；不自动登录。"""
     try:
         settings = _get_settings_or_disabled(db)
         result = svc_register(
@@ -427,6 +433,7 @@ async def account_register(
         logger.exception("register failed")
         return JSONResponse(status_code=500, content={"error": "internal_error", "message": "注册失败, 请稍后重试"})
 
+    # 注册成功：写入审计日志，方便后续追溯与风控分析
     write_audit_log(
         db, "auth.register",
         user_id=int(result.user.id),
@@ -445,7 +452,7 @@ async def account_login(
     body: LoginRequest,
     db: Session = Depends(get_db),
 ):
-    """Authenticate email/password credentials and attach a session cookie."""
+    """校验邮箱密码凭据，并通过 cookie 下发用户会话。"""
     try:
         settings = _get_settings_or_disabled(db)
         issued = svc_login(
@@ -478,7 +485,7 @@ async def account_login(
 
 @router.post("/logout", summary="登出当前 session")
 async def account_logout(request: Request, db: Session = Depends(get_db)):
-    """Revoke the current session when present and always clear the browser cookie."""
+    """撤销当前会话（若存在），并始终清除浏览器中的会话 cookie。"""
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     revoked = False
     if cookie_value:
@@ -492,14 +499,14 @@ async def account_logout(request: Request, db: Session = Depends(get_db)):
     response = Response(status_code=204)
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
     if not revoked:
-        # Even if no matching record, we still clear cookie - that's fine.
+        # 即使没有匹配到 session 记录，也仍然清掉 cookie，幂等处理即可
         pass
     return response
 
 
 @router.post("/verify-email", summary="邮箱验证")
 async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
-    """Verify an email address using a code sent to the mailbox."""
+    """使用发送到邮箱的验证码完成验证。"""
     try:
         settings = _get_settings_or_disabled(db)
         user = svc_verify_email(db, email=body.email, code=body.code, settings=settings)
@@ -512,7 +519,7 @@ async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(g
 
 @router.post("/request-email-verification", summary="重新发送邮箱验证邮件")
 async def account_request_email_verification(body: RequestEmailVerificationRequest, db: Session = Depends(get_db)):
-    """Request another verification email without revealing account existence."""
+    """重新发送验证邮件，不暴露账号是否存在。"""
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -535,7 +542,7 @@ async def account_request_email_verification(body: RequestEmailVerificationReque
 
 @router.post("/request-password-reset", summary="发起密码重置邮件")
 async def account_request_reset(body: RequestResetRequest, db: Session = Depends(get_db)):
-    """Start password reset flow while keeping unknown emails indistinguishable."""
+    """发起密码重置流程，对未知邮箱保持响应一致以防账号枚举。"""
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -558,7 +565,7 @@ async def account_request_reset(body: RequestResetRequest, db: Session = Depends
 
 @router.post("/reset-password", summary="使用 token 重置密码")
 async def account_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """Reset a password using a valid one-time token."""
+    """使用一次性 token 重置密码。"""
     try:
         settings = _get_settings_or_disabled(db)
         svc_reset_password(
@@ -577,7 +584,7 @@ async def account_reset_password(body: ResetPasswordRequest, db: Session = Depen
 
 
 def _require_current_user(request: Request, db: Session):
-    """Resolve the current user from cookie or raise a domain auth error."""
+    """从 cookie 解析当前登录用户，未登录则抛出领域层鉴权错误。"""
     settings = load_user_mode_settings(db)
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
@@ -588,7 +595,7 @@ def _require_current_user(request: Request, db: Session):
 
 @router.get("/me", summary="当前登录用户信息")
 async def account_me(request: Request, db: Session = Depends(get_db)):
-    """Return the current session user and active terms version."""
+    """返回当前会话用户与当前生效的协议版本。"""
     try:
         settings, user = _require_current_user(request, db)
     except UserError as exc:
@@ -597,7 +604,7 @@ async def account_me(request: Request, db: Session = Depends(get_db)):
 
 
 def _normalize_display_name(value: str | None) -> str | None:
-    """Normalize optional display name from profile update requests."""
+    """规范化可选的昵称字段。"""
     normalized = (value or "").strip()
     if not normalized:
         return None
@@ -607,13 +614,14 @@ def _normalize_display_name(value: str | None) -> str | None:
 
 
 def _normalize_avatar_url(value: str | None) -> str | None:
-    """Normalize avatar URL and reject unsupported schemes."""
+    """规范化头像 URL，并拒绝非 http/https 协议。"""
     normalized = (value or "").strip()
     if not normalized:
         return None
     if len(normalized) > 1024:
         raise UserError(UserErrorCode.VALIDATION_ERROR, "头像 URL 过长")
     parsed = urlparse(normalized)
+    # 仅允许 http(s)，避免 javascript:/data: 等协议被利用
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise UserError(UserErrorCode.VALIDATION_ERROR, "头像 URL 必须以 http:// 或 https:// 开头")
     return normalized
@@ -625,7 +633,7 @@ async def account_update_profile(
     body: ProfileUpdateRequest,
     db: Session = Depends(get_db),
 ):
-    """Update display name and avatar URL for the current user."""
+    """更新当前用户的昵称和头像 URL。"""
     try:
         settings, user = _require_current_user(request, db)
         user.display_name = _normalize_display_name(body.display_name)
@@ -659,7 +667,7 @@ async def account_change_password(
     body: ChangePasswordRequest,
     db: Session = Depends(get_db),
 ):
-    """Change password for the current user and clear the existing session cookie."""
+    """修改当前用户密码，并清除旧 session 以强制重新登录。"""
     try:
         settings, user = _require_current_user(request, db)
         svc_change_password(
@@ -696,7 +704,7 @@ async def account_redeem(
     body: RedeemRequest,
     db: Session = Depends(get_db),
 ):
-    """Redeem a plan code for the current user and return updated entitlement data."""
+    """为当前用户兑换套餐码并返回更新后的权益信息。"""
     try:
         settings, user = _require_current_user(request, db)
         sub = svc_redeem_code(db, user, code=body.code)
@@ -751,7 +759,7 @@ async def account_redeem(
 
 
 def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> list[str]:
-    """Return model ids the current user is allowed to choose."""
+    """返回当前用户被授权可选的 LLM 模型 id 列表（去重）。"""
     service = SystemConfigService()
     platform_models = service.get_runtime_llm_models()
     seen = set()
@@ -761,12 +769,13 @@ def _allowed_models_for_user(db: Session, user, settings: UserModeSettings) -> l
         config=get_config(),
         platform_models=platform_models,
     )
+    # 列表推导同时完成去重，保持原顺序
     return [model for model in models if model and not (model in seen or seen.add(model))]
 
 
 @router.get("/model-preference", summary="获取当前用户可选模型与模型偏好")
 async def account_get_model_preference(request: Request, db: Session = Depends(get_db)):
-    """Return allowed LLM models plus stored and effective user preference."""
+    """返回当前用户可选的 LLM 模型以及已存储 / 当前生效的偏好。"""
     try:
         settings, user = _require_current_user(request, db)
     except UserError as exc:
@@ -774,6 +783,7 @@ async def account_get_model_preference(request: Request, db: Session = Depends(g
 
     models = _allowed_models_for_user(db, user, settings)
     preferred = (getattr(user, "preferred_model", None) or "").strip()
+    # 偏好如果不在白名单内（如历史偏好已下线），回退到列表首个可用模型
     effective = preferred if preferred in models else (models[0] if models else None)
     return {
         "models": models,
@@ -788,7 +798,7 @@ async def account_update_model_preference(
     body: ModelPreferenceUpdateRequest,
     db: Session = Depends(get_db),
 ):
-    """Persist the user's preferred model after plan entitlement validation."""
+    """在校验套餐权益后持久化用户的模型偏好。"""
     try:
         settings, user = _require_current_user(request, db)
         models = _allowed_models_for_user(db, user, settings)
@@ -829,13 +839,13 @@ async def account_update_model_preference(
 
 
 def _serialize_watchlist_item(item) -> dict:
-    """Serialize one watchlist row for account APIs."""
+    """把一行 watchlist 记录序列化为账号 API 所需结构。"""
     return {"stockCode": item.stock_code, "stockName": item.stock_name}
 
 
 @router.get("/watchlist", summary="获取当前用户自选股列表")
 async def account_get_watchlist(request: Request, db: Session = Depends(get_db)):
-    """Return the current user's watchlist and plan stock limit."""
+    """返回当前用户的自选股列表以及套餐允许的最大自选数。"""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -857,7 +867,7 @@ async def account_add_watchlist(
     body: WatchlistAddRequest,
     db: Session = Depends(get_db),
 ):
-    """Add one stock to the current user's watchlist within plan limits."""
+    """在套餐额度限制内向当前用户的自选股列表添加一只股票。"""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -888,10 +898,11 @@ async def account_set_watchlist(
     body: WatchlistSetRequest,
     db: Session = Depends(get_db),
 ):
-    """Replace the current user's watchlist with validated stock codes."""
+    """用校验过的股票代码列表全量替换当前用户的自选股。"""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
+        # 兼容 camelCase / snake_case 两种字段命名，避免前后端契约漂移
         stock_codes = [
             (s.get("stockCode") or s.get("stock_code") or "").strip()
             for s in body.stocks
@@ -935,7 +946,7 @@ async def account_remove_watchlist(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Remove one stock from the current user's watchlist."""
+    """从当前用户的自选股列表中删除一只股票。"""
     try:
         _, user = _require_current_user(request, db)
         deleted = svc_remove_stock(db, user_id=user.id, stock_code=stock_code)
@@ -964,7 +975,7 @@ async def account_remove_watchlist(
 
 
 def _serialize_prefs(prefs) -> dict:
-    """Serialize notification preference row using frontend camelCase keys."""
+    """把通知偏好行序列化为前端驼峰命名的 JSON 结构。"""
     return {
         "dailyPushEnabled": prefs.daily_push_enabled,
         "emailEnabled": prefs.email_enabled,
@@ -975,7 +986,7 @@ def _serialize_prefs(prefs) -> dict:
 
 @router.get("/notification-prefs", summary="获取当前用户通知偏好")
 async def account_get_notification_prefs(request: Request, db: Session = Depends(get_db)):
-    """Return notification preferences for the current user."""
+    """返回当前用户的通知偏好。"""
     try:
         _, user = _require_current_user(request, db)
     except UserError as exc:
@@ -992,7 +1003,7 @@ async def account_update_notification_prefs(
     body: NotificationPrefsUpdateRequest,
     db: Session = Depends(get_db),
 ):
-    """Update notification preferences after checking plan notification entitlements."""
+    """根据套餐通知权益校验后，增量更新当前用户的通知偏好。"""
     try:
         _, user = _require_current_user(request, db)
         plan = svc_resolve_user_plan(db, user)
@@ -1022,10 +1033,11 @@ async def account_update_notification_prefs(
 
 
 def _render_unsubscribe_page(*, success: bool, message: str) -> HTMLResponse:
-    """Render the public unsubscribe result page."""
+    """渲染公开访问的退订结果页面（嵌入退订结果与提示）。"""
     color = "#059669" if success else "#dc2626"
     title = "退订成功" if success else "退订失败"
     status_code = 200 if success else 400
+    # 对 message 中的 < > 字符做 HTML 转义，避免通过邮件内容触发 XSS
     safe_msg = (message or "").replace("<", "&lt;").replace(">", "&gt;")
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">

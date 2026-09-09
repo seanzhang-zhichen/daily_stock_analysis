@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Market strategy blueprints for CN/HK/US daily market recap.
+"""为 CN/HK/US 每日市场复盘提供策略蓝图（blueprint）。
 
-The blueprints are static prompt/report fragments shared by the market review
-analyzer. Keep region-specific trading logic here so the analyzer can focus on
-data collection and LLM orchestration rather than prompt wording.
+这些蓝图是市场复盘分析器共用的静态 prompt/报告片段。把各区域的交易逻辑集中
+放在这里，让分析器专注于数据采集与 LLM 编排，而不用关心 prompt 措辞。
 """
 
 from dataclasses import dataclass
@@ -12,11 +11,10 @@ from typing import List
 
 @dataclass(frozen=True)
 class StrategyDimension:
-    """Single strategy dimension used by market recap prompts.
+    """市场复盘 prompt 使用的单一策略维度。
 
-    ``checkpoints`` are intentionally short. They are injected into prompts as
-    concrete review anchors, so verbose prose here tends to dilute the final
-    market recap instructions.
+    ``checkpoints`` 刻意保持简短。它们会被作为具体的复盘锚点注入 prompt，
+    因此此处写得太冗长反而会稀释最终的市场复盘指令。
     """
 
     name: str
@@ -26,11 +24,10 @@ class StrategyDimension:
 
 @dataclass(frozen=True)
 class MarketStrategyBlueprint:
-    """Region specific market strategy blueprint.
+    """按区域划分的市场策略蓝图。
 
-    The same object renders both prompt instructions and fallback markdown.
-    This keeps the LLM path and non-LLM/template path aligned when strategy
-    wording changes.
+    同一个对象既能渲染 prompt 指令，也能渲染回退用的 markdown，这样在策略措辞
+    变化时，LLM 路径与非 LLM/模板路径能保持一致。
     """
 
     region: str
@@ -41,7 +38,7 @@ class MarketStrategyBlueprint:
     action_framework: List[str]
 
     def to_prompt_block(self) -> str:
-        """Render blueprint as prompt instructions."""
+        """把蓝图渲染为 prompt 指令文本。"""
         principles_text = "\n".join([f"- {item}" for item in self.principles])
         action_text = "\n".join([f"- {item}" for item in self.action_framework])
 
@@ -60,7 +57,7 @@ class MarketStrategyBlueprint:
         )
 
     def to_markdown_block(self) -> str:
-        """Render blueprint as markdown section for template fallback report."""
+        """把蓝图渲染为模板回退报告用的 markdown 小节。"""
         dims = "\n".join([f"- **{dim.name}**: {dim.objective}" for dim in self.dimensions])
         section_title = "### VI. Strategy Framework" if self.region == "us" else "### 六、策略框架"
         return f"{section_title}\n{dims}\n"
@@ -179,10 +176,9 @@ HK_BLUEPRINT = MarketStrategyBlueprint(
 
 
 def get_market_strategy_blueprint(region: str) -> MarketStrategyBlueprint:
-    """Return strategy blueprint by market region.
+    """按市场区域返回对应的策略蓝图。
 
-    Unknown regions fall back to A-share semantics because the historic default
-    for market review is ``cn``.
+    未知区域回退到 A 股语义，因为市场复盘的历史默认区域就是 ``cn``。
     """
     if region == "us":
         return US_BLUEPRINT

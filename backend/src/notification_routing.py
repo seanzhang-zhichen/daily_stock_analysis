@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Notification route configuration helpers.
+"""通知路由配置辅助函数。
 
-This module intentionally works with plain strings only. Importing
-``NotificationChannel`` here would create a dependency cycle with the runtime
-notification service.
+本模块刻意仅使用普通字符串，避免在此处导入 ``NotificationChannel``，
+否则会与会话运行时的通知服务形成循环依赖。
 """
 
 from __future__ import annotations
@@ -47,7 +46,11 @@ NOTIFICATION_ROUTE_CONFIGS: Dict[str, Dict[str, str]] = {
 
 
 def parse_notification_route_channels(raw_value: object) -> List[str]:
-    """Parse comma-separated route channel strings without dropping invalid tokens."""
+    """解析以逗号分隔的路由渠道字符串，且不丢弃非法 token。
+
+    该函数对输入做宽松解析：非法或无法识别的渠道不会被丢弃，
+    而是原样保留，交由上层逻辑决定是否过滤。
+    """
     if raw_value is None:
         return []
     if isinstance(raw_value, str):
@@ -66,7 +69,11 @@ def parse_notification_route_channels(raw_value: object) -> List[str]:
 
 
 def split_notification_route_channels(channels: Iterable[object]) -> Tuple[List[str], List[str]]:
-    """Return unique valid and invalid route channels while preserving input order."""
+    """返回去重后的合法与非法路由渠道，并保持输入顺序。
+
+    通过两个集合分别记录已出现的合法/非法渠道，确保结果中每个
+    渠道只出现一次，且相对输入顺序不变。
+    """
     valid: List[str] = []
     invalid: List[str] = []
     seen_valid = set()
@@ -84,7 +91,11 @@ def split_notification_route_channels(channels: Iterable[object]) -> Tuple[List[
 
 
 def get_notification_route_config(route_type: Optional[str]) -> Optional[Dict[str, str]]:
-    """Return route metadata for a normalized route type, or None for unknown routes."""
+    """返回规范化后路由类型对应的路由元数据；未知路由返回 None。
+
+    输入会先去除首尾空白并转为小写后再查表，因此大小写与多余
+    空格不影响匹配结果；路由类型为空时直接返回 None。
+    """
     if route_type is None:
         return None
     return NOTIFICATION_ROUTE_CONFIGS.get(str(route_type).strip().lower())

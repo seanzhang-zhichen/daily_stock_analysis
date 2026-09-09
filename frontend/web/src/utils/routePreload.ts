@@ -6,6 +6,7 @@ const pageLoaders = {
   screening: () => import('../pages/StockScreeningPage'),
   portfolio: () => import('../pages/PortfolioPage'),
   decisionSignals: () => import('../pages/DecisionSignalsPage'),
+  intelligence: () => import('../pages/IntelligencePage'),
   backtest: () => import('../pages/BacktestPage'),
   settings: () => import('../pages/SettingsPage'),
   usage: () => import('../pages/UsagePage'),
@@ -38,6 +39,7 @@ export const loadStockSelectionPage = pageLoaders.stockSelection;
 export const loadScreeningPage = pageLoaders.screening;
 export const loadPortfolioPage = pageLoaders.portfolio;
 export const loadDecisionSignalsPage = pageLoaders.decisionSignals;
+export const loadIntelligencePage = pageLoaders.intelligence;
 export const loadBacktestPage = pageLoaders.backtest;
 export const loadSettingsPage = pageLoaders.settings;
 export const loadUsagePage = pageLoaders.usage;
@@ -70,6 +72,7 @@ const preloadByPath: Record<string, () => Promise<unknown>> = {
   '/screening': pageLoaders.screening,
   '/portfolio': pageLoaders.portfolio,
   '/decision-signals': pageLoaders.decisionSignals,
+  '/intelligence': pageLoaders.intelligence,
   '/backtest': pageLoaders.backtest,
   '/settings': pageLoaders.settings,
   '/usage': pageLoaders.usage,

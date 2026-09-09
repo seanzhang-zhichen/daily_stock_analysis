@@ -17,6 +17,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
+import { Radio } from 'lucide-react';
 import { noticesApi } from '../../api/notices';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -26,6 +27,8 @@ import { BrandLogo } from '../common/BrandLogo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
 import { QuotaIndicator } from './QuotaIndicator';
+import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
+import { useUiLanguage } from '../../contexts/UiLanguageContext';
 
 type SidebarNavProps = {
   collapsed?: boolean;
@@ -53,6 +56,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'usage', label: '用量', to: '/usage', icon: Gauge },
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
   { key: 'notices', label: '公告', to: '/notices', icon: Bell },
+  { key: 'intelligence', label: 'Intelligence', to: '/intelligence', icon: Radio },
 ];
 
 const WATCHLIST_NAV_ITEM: NavItem = {
@@ -70,6 +74,7 @@ const ALERTS_NAV_ITEM: NavItem = {
 };
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate }) => {
+  const { t } = useUiLanguage();
   const { authEnabled, loggedIn, userMode, logout } = useAuth();
   const completionBadge = useAgentChatStore((state) => state.completionBadge);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -104,6 +109,15 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const navItems: NavItem[] = userModeEnabled && userLoggedIn
     ? [...mainNavItems, WATCHLIST_NAV_ITEM, ALERTS_NAV_ITEM]
     : mainNavItems;
+  const localizedLabel = (key: string, fallback: string) => {
+    const map: Record<string, Parameters<typeof t>[0]> = {
+      home: 'layout.nav.home', chat: 'layout.nav.chat', tasks: 'layout.nav.tasks', stockSelection: 'layout.nav.screening',
+      portfolio: 'layout.nav.portfolio', decisionSignals: 'layout.nav.decisionSignals', backtest: 'layout.nav.backtest',
+      research: 'layout.nav.research', usage: 'layout.nav.usage', settings: 'layout.nav.settings', notices: 'layout.nav.notices',
+      watchlist: 'layout.nav.watchlist', alerts: 'layout.nav.alerts', intelligence: 'layout.nav.intelligence',
+    };
+    return map[key] ? t(map[key]) : fallback;
+  };
   const accountAvatar = (
     <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/70 bg-primary/10 text-sm font-semibold text-primary">
       {avatarUrl && failedAvatarUrl !== avatarUrl ? (
@@ -198,7 +212,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
                   collapsed ? '' : 'ml-0.5'
                 )} />
                 {!collapsed ? (
-                  <span className="truncate font-[450]">{label}</span>
+                  <span className="truncate font-[450]">{localizedLabel(key, label)}</span>
                 ) : null}
                 {badge === 'completion' && completionBadge ? (
                   <StatusDot
@@ -230,6 +244,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
       {/* Bottom actions */}
       <div className="flex flex-col gap-0.5">
+        <UiLanguageToggle />
         {/* Help link */}
         <NavLink
           to="/help"

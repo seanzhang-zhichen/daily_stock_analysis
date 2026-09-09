@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-AgentMemory — persistent structured memory for agent learning.
+AgentMemory —— 供 Agent 自我学习使用的持久化结构化记忆。
 
-Provides:
-1. **Analysis memory** — stores past analysis results with outcomes,
-   enabling agents to learn from their own track record.
-2. **Confidence calibration** — adjusts agent confidence based on
-   historical accuracy (only after sufficient sample count).
-3. **Skill performance tracking** — per-skill win-rate and
-   signal accuracy for auto-weighting.
+主要能力：
+1. **分析记忆（analysis memory）** —— 存储带结果的历史分析，让 Agent 能
+   从自身过往预测记录中学习。
+2. **置信度校准（confidence calibration）** —— 依据历史准确率调整 Agent
+   置信度（仅在样本量足够后才启用）。
+3. **技能表现追踪（skill performance tracking）** —— 统计各技能的胜率与
+   信号准确率，用于自动加权。
 
-Storage uses the existing SQLAlchemy database layer
-(``AnalysisHistory`` + ``BacktestResult`` tables) rather than
-introducing a new store.
+存储复用现有的 SQLAlchemy 数据库层（``AnalysisHistory`` + ``BacktestResult``
+两张表），不再引入新的存储。
 
 .. note::
-   Memory features are gated behind ``AGENT_MEMORY_ENABLED=true``.
-   When disabled, all methods return neutral/default values.
+   记忆能力由 ``AGENT_MEMORY_ENABLED=true`` 开关控制。
+   关闭时，所有方法返回中性/默认值。
 """
 
 from __future__ import annotations
@@ -28,57 +27,60 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Default minimum samples before calibration kicks in
+# 校准生效前所需的最小样本数
 _MIN_CALIBRATION_SAMPLES = 30
-# Rolling window size for recent accuracy calculation
+# 近期准确率计算的滚动窗口大小
 _ROLLING_WINDOW = 50
 
 
 @dataclass
 class CalibrationResult:
-    """Confidence calibration data for an agent or skill."""
+    """Agent 或技能的置信度校准数据。"""
     agent_name: str = ""
     total_samples: int = 0
-    historical_accuracy: float = 0.5  # 0.0–1.0
+    historical_accuracy: float = 0.5  # 历史准确率，范围 0.0–1.0
     direction_accuracy: float = 0.5
     avg_confidence: float = 0.5
-    calibrated: bool = False  # True if samples >= threshold
-    calibration_factor: float = 1.0  # multiply raw confidence by this
+    calibrated: bool = False  # 样本量是否达到阈值
+    calibration_factor: float = 1.0  # 原始置信度乘以该系数得到校准值
 
 
 @dataclass
 class AnalysisMemoryEntry:
-    """A remembered past analysis for context injection."""
+    """注入上下文用的历史分析记忆条目。"""
     stock_code: str = ""
     date: str = ""
     signal: str = ""
     sentiment_score: int = 50
     price_at_analysis: float = 0.0
-    outcome_5d: Optional[float] = None  # % change after 5 days
-    outcome_20d: Optional[float] = None  # % change after 20 days
+    outcome_5d: Optional[float] = None  # 5 个交易日后的涨跌幅
+    outcome_20d: Optional[float] = None  # 20 个交易日后的涨跌幅
     was_correct: Optional[bool] = None
 
 
 class AgentMemory:
-    """Structured memory system for agent self-improvement.
+    """用于 Agent 自我改进的结构化记忆系统。
 
-    Usage::
+    用法示例::
 
         memory = AgentMemory()
-        # Get past analyses for context
+        # 获取历史分析用于注入上下文
         past = memory.get_stock_history("600519", limit=5)
-        # Calibrate confidence
+        # 校准置信度
         cal = memory.get_calibration("technical", stock_code="600519")
     """
 
     def __init__(self, enabled: bool = False, min_samples: int = _MIN_CALIBRATION_SAMPLES):
-        """Create memory access with feature flag and calibration sample threshold."""
+        """以特性开关与校准样本阈值创建记忆访问实例。"""
         self.enabled = enabled
         self.min_samples = min_samples
 
     @classmethod
     def from_config(cls) -> "AgentMemory":
-        """Create an AgentMemory from the current config."""
+        """根据当前配置创建 AgentMemory 实例。
+
+        配置读取失败时回退为关闭状态，保证记忆功能不影响主流程。
+        """
         try:
             from src.config import get_config
             config = get_config()
@@ -88,7 +90,7 @@ class AgentMemory:
             return cls(enabled=False)
 
     # -----------------------------------------------------------------
-    # Analysis history retrieval
+    # 分析历史检索
     # -----------------------------------------------------------------
 
     def get_stock_history(
@@ -96,10 +98,9 @@ class AgentMemory:
         stock_code: str,
         limit: int = 5,
     ) -> List[AnalysisMemoryEntry]:
-        """Retrieve recent analysis results for a stock.
+        """获取某只股票近期的分析结果。
 
-        Returns structured entries that can be injected into agent
-        context for learning from past predictions.
+        返回结构化条目，可注入 Agent 上下文中，用于从过往预测中学习。
         """
         if not self.enabled:
             return []
@@ -111,6 +112,7 @@ class AgentMemory:
             entries = []
             for r in records:
                 raw_result: Dict[str, Any] = {}
+                # raw_result 可能是 JSON 字符串，也可能是已解析的字典，统一解析为字典
                 if isinstance(getattr(r, "raw_result", None), str) and r.raw_result:
                     try:
                         parsed = json.loads(r.raw_result)
@@ -121,6 +123,7 @@ class AgentMemory:
                 elif isinstance(getattr(r, "raw_result", None), dict):
                     raw_result = dict(r.raw_result)
 
+                # 信号字段存在多种历史命名，按优先级回退取值
                 signal = raw_result.get("decision_type") or getattr(r, "operation_advice", "") or "hold"
                 price_at_analysis = raw_result.get("current_price")
                 if price_at_analysis is None:
@@ -140,7 +143,7 @@ class AgentMemory:
             return []
 
     # -----------------------------------------------------------------
-    # Confidence calibration
+    # 置信度校准
     # -----------------------------------------------------------------
 
     def get_calibration(
@@ -150,10 +153,10 @@ class AgentMemory:
         skill_id: Optional[str] = None,
         strategy_id: Optional[str] = None,
     ) -> CalibrationResult:
-        """Compute confidence calibration for an agent or skill.
+        """计算某个 Agent 或技能的置信度校准值。
 
-        When ``AGENT_MEMORY_ENABLED=false`` or insufficient samples,
-        returns a neutral calibration (factor = 1.0).
+        当 ``AGENT_MEMORY_ENABLED=false`` 或样本量不足时，
+        返回中性校准结果（factor = 1.0）。
         """
         result = CalibrationResult(agent_name=agent_name)
 
@@ -170,9 +173,8 @@ class AgentMemory:
 
             if result.total_samples >= self.min_samples:
                 result.calibrated = True
-                # Calibration: scale confidence towards historical accuracy
-                # If agent is overconfident: factor < 1
-                # If agent is underconfident: factor > 1
+                # 校准思路：把置信度向历史准确率靠拢
+                # 过度自信时系数 < 1，信心不足时系数 > 1
                 if result.avg_confidence > 0:
                     result.calibration_factor = min(
                         1.5,
@@ -190,9 +192,9 @@ class AgentMemory:
         return result
 
     def calibrate_confidence(self, agent_name: str, raw_confidence: float, stock_code: Optional[str] = None) -> float:
-        """Apply calibration to a raw confidence value.
+        """对原始置信度应用校准。
 
-        Returns the adjusted confidence, clamped to [0.0, 1.0].
+        返回调整后的置信度，并夹在 [0.0, 1.0] 区间内。
         """
         cal = self.get_calibration(agent_name, stock_code=stock_code)
         if not cal.calibrated:
@@ -201,13 +203,13 @@ class AgentMemory:
         return max(0.0, min(1.0, adjusted))
 
     # -----------------------------------------------------------------
-    # Skill performance
+    # 技能表现
     # -----------------------------------------------------------------
 
     def get_skill_performance(self, skill_id: str) -> Dict[str, Any]:
-        """Get performance metrics for a skill.
+        """获取某个技能的表现指标。
 
-        Used by :class:`SkillAggregator` for weight computation.
+        供 :class:`SkillAggregator` 计算权重使用。
         """
         if not self.enabled:
             return {"available": False}
@@ -230,11 +232,11 @@ class AgentMemory:
             return {"available": False}
 
     def get_strategy_performance(self, strategy_id: str) -> Dict[str, Any]:
-        """Compatibility wrapper for legacy strategy-based callers."""
+        """为旧的基于策略的调用方提供的兼容包装。"""
         return self.get_skill_performance(strategy_id)
 
     # -----------------------------------------------------------------
-    # Auto-weighting
+    # 自动加权
     # -----------------------------------------------------------------
 
     def compute_skill_weights(
@@ -242,13 +244,12 @@ class AgentMemory:
         skill_ids: List[str],
         use_backtest: bool = True,
     ) -> Dict[str, float]:
-        """Compute normalized weights for a set of skills.
+        """为一组技能计算归一化权重。
 
-        Skills with higher historical performance get higher weights.
-        Skills with insufficient samples get neutral weight (1.0).
+        历史表现越好的技能权重越高；样本量不足的技能取中性权重（1.0）。
 
         Returns:
-            Dict mapping skill_id → weight (normalized so mean ≈ 1.0)
+            字典：skill_id → 权重（归一化后均值约等于 1.0）
         """
         if not self.enabled or not use_backtest:
             return {sid: 1.0 for sid in skill_ids}
@@ -257,12 +258,12 @@ class AgentMemory:
         for sid in skill_ids:
             perf = self.get_skill_performance(sid)
             if perf.get("sufficient_samples"):
-                # Weight = 0.5 + win_rate (range: 0.5 to 1.5)
+                # 权重 = 0.5 + 胜率，范围 0.5 到 1.5
                 raw_weights[sid] = 0.5 + perf.get("win_rate", 0.5)
             else:
                 raw_weights[sid] = 1.0
 
-        # Normalize so mean = 1.0
+        # 归一化，使均值 = 1.0
         if raw_weights:
             mean_w = sum(raw_weights.values()) / len(raw_weights)
             if mean_w > 0:
@@ -275,11 +276,11 @@ class AgentMemory:
         strategy_ids: List[str],
         use_backtest: bool = True,
     ) -> Dict[str, float]:
-        """Compatibility wrapper for legacy strategy-based callers."""
+        """为旧的基于策略的调用方提供的兼容包装。"""
         return self.compute_skill_weights(strategy_ids, use_backtest=use_backtest)
 
     # -----------------------------------------------------------------
-    # Internal
+    # 内部实现
     # -----------------------------------------------------------------
 
     def _get_accuracy_stats(
@@ -288,7 +289,7 @@ class AgentMemory:
         stock_code: Optional[str],
         skill_id: Optional[str],
     ) -> Dict[str, Any]:
-        """Aggregate accuracy statistics from backtest history."""
+        """从回测历史中聚合准确率统计。"""
         try:
             from src.services.backtest_service import BacktestService
             service = BacktestService()
@@ -298,7 +299,7 @@ class AgentMemory:
             elif stock_code:
                 summary = service.get_stock_summary(stock_code)
             else:
-                # Global summary across all analyses
+                # 无技能与股票维度时退化为全局汇总
                 summary = service.get_global_summary() if hasattr(service, "get_global_summary") else None
 
             if summary:
@@ -306,7 +307,7 @@ class AgentMemory:
                     "total": summary.get("total_evaluations", 0),
                     "accuracy": summary.get("win_rate", 0.5),
                     "direction_accuracy": summary.get("direction_accuracy", 0.5),
-                    "avg_confidence": 0.6,  # approximate from historical data
+                    "avg_confidence": 0.6,  # 历史数据近似值
                 }
         except Exception:
             pass

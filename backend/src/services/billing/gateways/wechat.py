@@ -63,7 +63,19 @@ class WechatGateway(PaymentGateway):
         merchant_private_key_pem: str = "",
         notify_url: Optional[str] = None,
     ) -> None:
-        """Store WeChat Pay credentials, keys, and callback URL."""
+        """保存微信支付 Native (V3) 所需凭据、密钥与回调地址。
+
+        Args:
+            app_id: 微信公众账号 / 小程序 / App 的 AppID。
+            mch_id: 微信支付分配的商户号。
+            apiv3_key: APIv3 密钥（32 字节），用于 AES-GCM 解密回调密文。
+            platform_cert_pem: 微信平台证书 PEM（含 ``BEGIN CERTIFICATE``）或
+                公钥 PEM（``BEGIN PUBLIC KEY``），两种格式都会被识别。
+            cert_serial_no: 平台证书序列号，构造 ``Authorization`` 请求头时必填。
+            merchant_private_key_pem: 商户私钥 PEM；只有真正调用 ``place_order`` /
+                ``refund`` / ``fetch_settlements`` 时才需要。
+            notify_url: 默认异步回调地址；``place_order`` 允许单次覆盖。
+        """
         self.app_id = app_id
         self.mch_id = mch_id
         self.apiv3_key = apiv3_key.encode("utf-8") if isinstance(apiv3_key, str) else apiv3_key
@@ -75,7 +87,7 @@ class WechatGateway(PaymentGateway):
     # ── 内部: 平台证书加载 ─────────────────────────────────────────────────
 
     def _load_platform_public_key(self):  # type: ignore[no-untyped-def]
-        """Load the WeChat platform certificate/public-key PEM."""
+        """加载微信平台证书/公钥 PEM, 同时支持 ``BEGIN CERTIFICATE`` 与 ``BEGIN PUBLIC KEY`` 两种格式。"""
         from cryptography import x509
         from cryptography.hazmat.primitives.serialization import (
             load_pem_public_key,
@@ -93,13 +105,14 @@ class WechatGateway(PaymentGateway):
     # ── 验签 ───────────────────────────────────────────────────────────────
 
     def verify_callback(self, headers: dict, body: bytes) -> CallbackResult:
-        """Verify, decrypt, and normalize a WeChat Pay V3 callback."""
+        """校验、解密并规范化一条微信支付 V3 异步回调, 任意阶段失败都返回带原因的 ``CallbackResult``。"""
         ts = (headers.get("Wechatpay-Timestamp") or headers.get("wechatpay-timestamp") or "").strip()
         nonce = (headers.get("Wechatpay-Nonce") or headers.get("wechatpay-nonce") or "").strip()
         sig_b64 = (headers.get("Wechatpay-Signature") or headers.get("wechatpay-signature") or "").strip()
         serial = (headers.get("Wechatpay-Serial") or headers.get("wechatpay-serial") or "").strip()
 
         body_text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
+        # 即使后续签名/解密全部失败，也回填一个稳定的 event_id，便于调用方幂等去重与日志检索。
         event_id_fallback = f"wechat-{serial}-{ts}-{nonce}" if (serial or ts or nonce) else f"wechat-{int(time.time() * 1000)}"
 
         result = CallbackResult(
@@ -113,6 +126,7 @@ class WechatGateway(PaymentGateway):
         # 1) 时间戳校验
         try:
             ts_int = int(ts)
+            # 防回放：偏离当前时间过远就直接丢弃，不进入签名校验环节。
             if abs(time.time() - ts_int) > _TIMESTAMP_TOLERANCE_SECONDS:
                 logger.warning("wechat callback timestamp skew too large: %s", ts)
                 return result
@@ -441,7 +455,7 @@ def _parse_wechat_bill_csv(raw_bytes: bytes, date_str: str) -> List[ChannelSettl
     results: List[ChannelSettlement] = []
 
     def _strip(s: str) -> str:
-        """Strip WeChat bill CSV backtick prefixes and whitespace."""
+        """剥离微信账单 CSV 字段前的反引号前缀与首尾空白。"""
         return s.lstrip("`").strip()
 
     reader = csv.reader(io.StringIO(content))

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-AkShare fundamental adapter (fail-open).
+AkShare 基本面适配器（失败开放，fail-open）。
 
-This adapter intentionally uses capability probing against multiple AkShare
-endpoint candidates. It should never raise to caller; partial data is allowed.
+该适配器对多个 AkShare 接口候选做能力探测（capability probing），
+按顺序尝试直到拿到非空结果。它绝不应向调用方抛出异常，允许返回部分数据。
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _DIVIDEND_KEYWORD_MAP: Dict[str, List[str]] = {
 
 
 def _safe_float(value: Any) -> Optional[float]:
-    """Best-effort float conversion."""
+    """尽力而为地将值转换为 float，失败返回 None。"""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -63,14 +63,14 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _safe_str(value: Any) -> str:
-    """Return a stripped string, using an empty string for missing values."""
+    """返回去除首尾空白的字符串，缺失值用空字符串表示。"""
     if value is None:
         return ""
     return str(value).strip()
 
 
 def _safe_datetime(value: Any) -> Optional[datetime]:
-    """Parse heterogeneous AkShare date values into ``datetime`` when possible."""
+    """在可能的情况下，将 AkShare 各种异构日期值解析为 ``datetime``。"""
     if value is None:
         return None
     try:
@@ -86,7 +86,7 @@ def _safe_datetime(value: Any) -> Optional[datetime]:
 
 
 def _normalize_code(raw: Any) -> str:
-    """Normalize exchange-prefixed or suffixed stock codes for row matching."""
+    """规范化带交易所前缀或后缀的股票代码，便于按行匹配。"""
     s = _safe_str(raw).upper()
     if "." in s:
         s = s.split(".", 1)[0]
@@ -96,7 +96,7 @@ def _normalize_code(raw: Any) -> str:
 
 def _pick_by_keywords(row: pd.Series, keywords: List[str]) -> Optional[Any]:
     """
-    Return first non-empty row value whose column name contains any keyword.
+    返回列名包含任一关键字、且非空的第一个行值。
     """
     for col in row.index:
         col_s = str(col)
@@ -108,7 +108,7 @@ def _pick_by_keywords(row: pd.Series, keywords: List[str]) -> Optional[Any]:
 
 
 def _parse_dividend_plan_to_per_share(plan_text: str) -> Optional[float]:
-    """Parse per-share cash dividend from Chinese plan text."""
+    """从中文化分红方案文本中解析每股现金分红。"""
     text = _safe_str(plan_text)
     if not text:
         return None
@@ -132,9 +132,9 @@ def _parse_dividend_plan_to_per_share(plan_text: str) -> Optional[float]:
 
 
 def _extract_cash_dividend_per_share(row: pd.Series) -> Optional[float]:
-    """Extract pre-tax cash dividend per share from a row."""
+    """从一行数据中抽取税前每股现金分红。"""
     plan_text = _safe_str(_pick_by_keywords(row, _DIVIDEND_KEYWORD_MAP["plan_text"]))
-    # Keep pre-tax semantics; skip explicit after-tax plans unless pre-tax marker exists.
+    # 保持税前语义；除非存在税前标记，否则跳过明确的税后方案。
     if "税后" in plan_text and "税前" not in plan_text and "含税" not in plan_text:
         return None
 
@@ -145,7 +145,7 @@ def _extract_cash_dividend_per_share(row: pd.Series) -> Optional[float]:
 
 
 def _filter_rows_by_code(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
-    """Filter dataframe rows by stock code when code-like columns are present."""
+    """当存在代码类列时，按股票代码筛选 DataFrame 行。"""
     if df is None or df.empty:
         return pd.DataFrame()
     code_cols = [c for c in df.columns if any(k in str(c) for k in ("代码", "股票代码", "证券代码", "symbol", "ts_code"))]
@@ -165,7 +165,7 @@ def _filter_rows_by_code(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
 
 
 def _normalize_report_date(value: Any) -> Optional[str]:
-    """Convert report date-like values to ISO date strings."""
+    """将报告日期类的值转换为 ISO 日期字符串。"""
     parsed = _safe_datetime(value)
     return parsed.date().isoformat() if parsed else None
 
@@ -175,7 +175,7 @@ def _build_dividend_payload(
     stock_code: str,
     max_events: int = 5,
 ) -> Dict[str, Any]:
-    """Build recent and trailing-year pre-tax cash dividend payloads."""
+    """构造近期与过去一年（TTM）的税前每股现金分红数据。"""
     work_df = _filter_rows_by_code(dividend_df, stock_code)
     if work_df.empty:
         return {}
@@ -245,7 +245,7 @@ def _build_dividend_payload(
 
 def _extract_latest_row(df: pd.DataFrame, stock_code: str) -> Optional[pd.Series]:
     """
-    Select the most relevant row for the given stock.
+    为给定股票选取最相关的一行。
     """
     if df is None or df.empty:
         return None
@@ -263,18 +263,18 @@ def _extract_latest_row(df: pd.DataFrame, stock_code: str) -> Optional[pd.Series
                 continue
         return None
 
-    # Fallback: use latest row
+    # 兜底：使用最新一行
     return df.iloc[0]
 
 
 class AkshareFundamentalAdapter:
-    """AkShare adapter for fundamentals, capital flow and dragon-tiger signals."""
+    """AkShare 基本面适配器：覆盖基本面、资金流向与龙虎榜信号。"""
 
     def _call_df_candidates(
         self,
         candidates: List[Tuple[str, Dict[str, Any]]],
     ) -> Tuple[Optional[pd.DataFrame], Optional[str], List[str]]:
-        """Try AkShare dataframe functions in order and return the first non-empty result."""
+        """按顺序尝试 AkShare 的 DataFrame 函数，返回第一个非空结果。"""
         errors: List[str] = []
         try:
             import akshare as ak
@@ -298,7 +298,7 @@ class AkshareFundamentalAdapter:
 
     def get_fundamental_bundle(self, stock_code: str) -> Dict[str, Any]:
         """
-        Return normalized fundamental blocks from AkShare with partial tolerance.
+        从 AkShare 返回标准化的基本面数据块，支持部分容错。
         """
         result: Dict[str, Any] = {
             "status": "not_supported",
@@ -309,7 +309,7 @@ class AkshareFundamentalAdapter:
             "errors": [],
         }
 
-        # Financial indicators
+        # 财务指标
         fin_df, fin_source, fin_errors = self._call_df_candidates([
             ("stock_financial_abstract", {"symbol": stock_code}),
             ("stock_financial_analysis_indicator", {"symbol": stock_code}),
@@ -346,7 +346,7 @@ class AkshareFundamentalAdapter:
                     result["earnings"]["financial_report"] = financial_report_payload
                 result["source_chain"].append(f"growth:{fin_source}")
 
-        # Earnings forecast
+        # 业绩预告
         forecast_df, forecast_source, forecast_errors = self._call_df_candidates([
             ("stock_yjyg_em", {"symbol": stock_code}),
             ("stock_yjyg_em", {}),
@@ -362,7 +362,7 @@ class AkshareFundamentalAdapter:
                 )[:200]
                 result["source_chain"].append(f"earnings_forecast:{forecast_source}")
 
-        # Earnings quick report
+        # 业绩快报
         quick_df, quick_source, quick_errors = self._call_df_candidates([
             ("stock_yjkb_em", {"symbol": stock_code}),
             ("stock_yjkb_em", {}),
@@ -376,7 +376,7 @@ class AkshareFundamentalAdapter:
                 )[:200]
                 result["source_chain"].append(f"earnings_quick:{quick_source}")
 
-        # Dividend details (cash dividend, pre-tax)
+        # 分红明细（每股现金分红，税前）
         dividend_df, dividend_source, dividend_errors = self._call_df_candidates([
             ("stock_fhps_detail_em", {"symbol": stock_code}),
             ("stock_history_dividend_detail", {"symbol": stock_code, "indicator": "分红", "date": ""}),
@@ -389,7 +389,7 @@ class AkshareFundamentalAdapter:
                 result["earnings"]["dividend"] = dividend_payload
                 result["source_chain"].append(f"dividend:{dividend_source}")
 
-        # Institution / top shareholders
+        # 机构持仓 / 十大股东
         inst_df, inst_source, inst_errors = self._call_df_candidates([
             ("stock_institute_hold", {}),
             ("stock_institute_recommend", {}),
@@ -422,7 +422,7 @@ class AkshareFundamentalAdapter:
 
     def get_capital_flow(self, stock_code: str, top_n: int = 5) -> Dict[str, Any]:
         """
-        Return stock + sector capital flow.
+        返回个股 + 板块资金流向。
         """
         result: Dict[str, Any] = {
             "status": "not_supported",
@@ -479,7 +479,7 @@ class AkshareFundamentalAdapter:
 
     def get_dragon_tiger_flag(self, stock_code: str, lookback_days: int = 20) -> Dict[str, Any]:
         """
-        Return dragon-tiger signal in lookback window.
+        返回回看窗口内的龙虎榜信号。
         """
         result: Dict[str, Any] = {
             "status": "not_supported",
@@ -499,7 +499,7 @@ class AkshareFundamentalAdapter:
         if df is None:
             return result
 
-        # Try code filter
+        # 尝试按代码筛选
         code_cols = [c for c in df.columns if any(k in str(c) for k in ("代码", "股票代码", "证券代码"))]
         target = _normalize_code(stock_code)
         matched = pd.DataFrame()

@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Main pipeline — orchestrates L1 → L2 → result."""
+"""选股主流程编排器。
 
+把选股流水线串起来：加载策略 → 抓取全市场快照 → 行业/概念富集 → L1 硬过滤 →
+日线特征富集 → L2 LLM 重排 → 风险叠加 → 组合分散叠加 → L3 后置分析 →
+seeded 选股变体 → 输出最终 :class:`ScreenResult`。
+
+设计要点：
+- 每一步都收集 ``degradation`` 说明，便于上层排障与报告展示
+- LLM 步骤在配置缺失或失败时可回退到 ``screen_score``，不阻断流水线
+- L3 变体（seeded selection）放在所有评分之后，确保轮换尊重 ``final_score`` 不变量
+"""
 import copy
 import logging
 import uuid
@@ -71,39 +80,35 @@ def screen(
     progress_callback: Callable[[int, str], None] | None = None,
     daily_history_fetcher: Callable[..., pd.DataFrame] | None = None,
 ) -> ScreenResult:
-    """Execute stock screening with the given strategy.
+    """执行一次完整的股票筛选流程。
 
     Args:
-        strategy: Strategy name (matches a YAML file in strategies/).
-        market: Market scope, currently only "cn".
-        max_output: Override max output count from strategy.
-        use_llm: Whether to use LLM for L2 ranking.
-        llm_context: Optional market/news/theme context supplied to the LLM ranker.
-        llm_context_files: Optional text files appended to LLM context.
-        candidate_context_files: Optional CSV/JSON/JSONL files keyed by code with candidate-level context.
-        collect_llm_candidate_context: Whether to fetch Top-K candidate news/fund-flow context for LLM.
-        candidate_context_max_candidates: Max candidates to fetch external context for.
-        candidate_context_providers: Optional provider names: news, fund_flow, announcement.
-        industry_map_files: Optional code->industry/concepts files used before L1/L2.
-        industry_provider: Optional provider for board mapping, e.g. "akshare".
-        post_analyzers: Optional L3 analyzers, e.g. ["scorecard", "dsa"].
-        post_analysis_max_picks: Override the remote post-analyzer candidate
-            cap. The local scorecard always evaluates the shortlisted pool.
-        daily_enrich: Whether to enrich shortlisted candidates with daily K-line features.
-        daily_enrich_max_candidates: Max candidates to enrich after snapshot filtering.
-        explain_filters: Whether to include sequential hard-filter waterfall diagnostics.
-        deep_analysis: Backward-compatible alias for post_analyzers=["dsa"].
-        deep_analysis_max_picks: Backward-compatible max-picks alias for DSA.
-        selection_seed: Optional opaque client seed used for bounded per-run
-            sampling among near-score candidates. The seed is never persisted.
-        context: Optional host runtime context. DSA may provide LLM settings and
-            callable data providers under context["dsa"].
-        config: Runtime config. Defaults to Config.from_env().
-        daily_history_fetcher: Optional request-scoped daily-history provider.
-            It is tried in place of the bundled fetcher without global patching.
+        strategy: 策略名称（对应 ``strategies/`` 目录里的 YAML 文件）。
+        market: 市场范围，目前支持 ``cn`` 与 ``us``。
+        max_output: 覆盖策略默认的最大输出数。
+        use_llm: 是否使用 LLM 做 L2 重排。
+        llm_context: 注入 LLM 排序器的市场/新闻/主题上下文。
+        llm_context_files: 追加到 LLM 上下文的可选文本文件。
+        candidate_context_files: 按股票代码为键的候选上下文文件（CSV/JSON/JSONL）。
+        collect_llm_candidate_context: 是否为 Top-K 候选抓取新闻/资金流上下文。
+        candidate_context_max_candidates: 抓取候选上下文的最大候选数。
+        candidate_context_providers: 可选的 provider 名：``news`` / ``fund_flow`` / ``announcement``。
+        industry_map_files: L1/L2 之前的 ``代码 -> 行业/概念`` 映射文件。
+        industry_provider: 行业映射的 provider（如 ``akshare``）。
+        post_analyzers: L3 后置分析器列表，如 ``["scorecard", "dsa"]``。
+        post_analysis_max_picks: 覆盖远程后置分析器的候选数上限；本地 scorecard 仍评估完整候选池。
+        daily_enrich: 是否在快照筛选后用日线 K 线特征富集候选。
+        daily_enrich_max_candidates: 日线富集的最大候选数。
+        explain_filters: 是否在结果中包含硬过滤瀑布诊断。
+        deep_analysis: ``post_analyzers=["dsa"]`` 的向后兼容别名。
+        deep_analysis_max_picks: DSA 候选数上限的向后兼容别名。
+        selection_seed: 客户端可选的不透明种子，用于在分数接近时做有界采样，永不持久化。
+        context: 可选的主机运行时上下文；DSA 会在 ``context["dsa"]`` 下放置 LLM 配置与可调用的数据 provider。
+        config: 运行时配置；缺省时使用 ``Config.from_env()``。
+        daily_history_fetcher: 可选的请求级日线数据 provider；优先于内置 fetcher，且不污染全局。
 
     Returns:
-        ScreenResult with ranked picks.
+        包含已排序候选的 :class:`ScreenResult`。
     """
     if config is None:
         config = Config.from_env()
@@ -563,6 +568,7 @@ def _emit_progress(
     progress: int,
     message: str,
 ) -> None:
+    """向宿主进度回调汇报当前阶段；回调自身异常仅记 debug，不影响流水线。"""
     if callback is None:
         return
     try:
@@ -572,7 +578,7 @@ def _emit_progress(
 
 
 def _df_to_picks(df: pd.DataFrame) -> list[Pick]:
-    """Convert DataFrame rows to Pick objects."""
+    """把候选 DataFrame 行转换为 :class:`Pick` 列表。"""
     picks = []
     factor_cols = factor_score_columns()
     for i, (_, row) in enumerate(df.iterrows()):
@@ -633,7 +639,7 @@ def _df_to_picks(df: pd.DataFrame) -> list[Pick]:
 
 
 def _sort_screened_candidates(df: pd.DataFrame, screening=None) -> pd.DataFrame:
-    """Sort scored candidates deterministically with factor-aware tie breakers."""
+    """对打分候选做确定性排序：先 ``screen_score`` 再各 factor，最后按代码兜底。"""
     factor_order = ["stability", "activity", "momentum", "value"]
     if screening is not None and screening.factor_weights:
         factor_order = [
@@ -658,6 +664,7 @@ def _sort_screened_candidates(df: pd.DataFrame, screening=None) -> pd.DataFrame:
 
 
 def _required_snapshot_columns(filters) -> list[str]:
+    """根据硬过滤规则推导出快照必须提供的列清单。"""
     columns: list[str] = []
     if filters.exclude_st:
         columns.append("name")
@@ -677,10 +684,12 @@ def _required_snapshot_columns(filters) -> list[str]:
         columns.append("turnover_rate")
     if filters.change_pct_min is not None or filters.change_pct_max is not None:
         columns.append("change_pct")
+    # dict.fromkeys 保序去重，避免同一列被多次添加
     return list(dict.fromkeys(columns))
 
 
 def _event_source_weights(event_profile: dict[str, object]) -> dict[str, float] | None:
+    """把策略配置里的事件源权重解析为 ``{源名: 权重}`` 字典。"""
     value = (event_profile or {}).get("source_weights")
     if not isinstance(value, dict):
         return None
@@ -694,6 +703,7 @@ def _event_source_weights(event_profile: dict[str, object]) -> dict[str, float] 
 
 
 def _daily_source_health_notes(health: dict[str, object], *, limit: int = 4) -> list[str]:
+    """把日线数据源健康度快照折叠成少量可读字符串，便于排障展示。"""
     source_states: list[tuple[tuple[int, float, float, str], str, dict[object, object]]] = []
     for source, raw_state in health.items():
         if not isinstance(raw_state, dict):
@@ -703,6 +713,7 @@ def _daily_source_health_notes(health: dict[str, object], *, limit: int = 4) -> 
         disabled = bool(raw_state.get("disabled"))
         if not disabled and failures <= 0 and total_failures <= 0:
             continue
+        # 排序键：先按 disabled / 失败计数 / 总失败次数优先级，最后按源名
         severity_key = (
             0 if disabled else 1 if failures > 0 else 2,
             -failures,
@@ -737,6 +748,7 @@ def _daily_source_health_notes(health: dict[str, object], *, limit: int = 4) -> 
 
 
 def _format_filter_waterfall(steps: list[dict[str, object]], *, limit: int = 8) -> str:
+    """把硬过滤瀑布步骤格式化为单行可读的字符串。"""
     parts: list[str] = []
     for step in steps[:limit]:
         text = (
@@ -763,6 +775,7 @@ def _format_filter_waterfall(steps: list[dict[str, object]], *, limit: int = 8) 
 
 
 def _safe_text(v: object) -> str:
+    """包装 :func:`safe_text`，限制最大长度 120 字符，避免长文本污染 Pick。"""
     return safe_text(v, max_len=120)
 
 

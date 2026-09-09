@@ -1,24 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-===================================
-A股自选股智能分析系统 - 存储层
-===================================
+存储层（Storage）公共入口。
 
-职责：
-1. 管理 SQLite 数据库连接（单例模式）
-2. 定义 ORM 数据模型
-3. 提供数据存取接口
-4. 实现智能更新逻辑（断点续传）
+为减小单文件体积, ORM 模型与 ``DatabaseManager`` 被拆分为多个子模块，
+本文件统一 re-export 所有公共符号，保持外部 ``from src.storage import X``
+调用方式不变。
 
-为减小单文件体积, 拆分为多个子模块：
+子模块拆分：
 
 - ``base``                共享的 SQLAlchemy ``Base``
 - ``models.*``            按业务域拆分的 ORM 模型
 - ``manager._base``       ``DatabaseManager`` 的基础设施层
-- ``manager.<feature>``   各业务 Mixin
+- ``manager.<feature>``   各业务 Mixin（日线、新闻、对话、LLM 用量等）
 - ``manager.manager``     最终装配的 ``DatabaseManager`` 与便捷函数
 
-本 ``__init__`` 统一 re-export, 保持外部 ``from src.storage import X`` 调用兼容。
+``DatabaseManager`` / ``get_db`` / ``persist_llm_usage`` 通过 ``__getattr__``
+按需懒加载，避免仅 ``import`` 模型时触发数据库初始化。
 """
 
 from src.storage.base import Base
@@ -61,10 +58,19 @@ from src.storage.models import (
     BacktestResult,
     BacktestSummary,
     ConversationMessage,
+    ConversationSessionState,
+    ConversationSummary,
     DecisionSignalRecord,
+    DecisionSignalOutcomeRecord,
+    DecisionSignalFeedbackRecord,
+    SkillOpinionSampleRecord,
+    SkillOpinionOutcomeRecord,
     FundamentalSnapshot,
     LLMUsage,
     NewsIntel,
+    IntelligenceSource,
+    IntelligenceItem,
+    INTELLIGENCE_ITEM_NULL_SCOPE_VALUE,
     ScreeningRun,
     PortfolioAccount,
     PortfolioCashLedger,
@@ -105,6 +111,9 @@ __all__ = [
     # core models
     "StockDaily",
     "NewsIntel",
+    "IntelligenceSource",
+    "IntelligenceItem",
+    "INTELLIGENCE_ITEM_NULL_SCOPE_VALUE",
     "FundamentalSnapshot",
     "AnalysisHistory",
     "ScreeningRun",
@@ -124,9 +133,15 @@ __all__ = [
     "PortfolioFxRate",
     # conversation / llm
     "ConversationMessage",
+    "ConversationSessionState",
+    "ConversationSummary",
     "LLMUsage",
     # decision signals
     "DecisionSignalRecord",
+    "DecisionSignalOutcomeRecord",
+    "DecisionSignalFeedbackRecord",
+    "SkillOpinionSampleRecord",
+    "SkillOpinionOutcomeRecord",
     # alert
     "AlertRuleRecord",
     "AlertTriggerRecord",

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Shared data modules (stock mappings, etc.).
+共享数据模块（股票映射等）。
 """
 
 from src.data.stock_mapping import STOCK_NAME_MAP

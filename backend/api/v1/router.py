@@ -28,6 +28,7 @@ from api.v1.endpoints import (
     stocks,
     system_config,
     usage,
+    intelligence,
 )
 
 # v1 版本主路由；所有下面 include 的 prefix 都会自动拼到 /api/v1 之后。
@@ -139,6 +140,12 @@ router.include_router(
     notices.router,
     prefix="/notices",
     tags=["Notices"]
+)
+
+router.include_router(
+    intelligence.router,
+    prefix="/intelligence",
+    tags=["Intelligence"],
 )
 
 router.include_router(

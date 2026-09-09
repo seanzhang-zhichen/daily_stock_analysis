@@ -1,12 +1,23 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Independent risk overlay for shortlisted picks."""
+"""独立风险叠加层（risk overlay）。
+
+对筛选出的候选标的（shortlisted picks）在最终打分之上叠加风险扣分，
+输出带风险标签、风险等级与最终排名（rank）的候选列表，供 API 层与报告生成使用。
+
+主要能力：
+- 基于默认风险参数（可用 profile 覆盖）逐项评估单一标的风险
+- 组合层面的行业/主题集中度扣分，避免 Top N 全压在同一个拥挤交易
+- 支持高风险否决（veto）与降级说明（degradation）输出
+"""
 
 from __future__ import annotations
 
 from src.services.screening.models import Pick
 
+# 默认风险参数：各风险项的触发阈值与对应扣分。
+# 可通过 profile 覆盖任意键，实现不改动代码的策略调参
 _DEFAULT_RISK_PROFILE = {
     "chase_change_pct": 8.0,
     "chase_points": 4.0,
@@ -54,7 +65,13 @@ def apply_risk_overlay(
     veto_high_risk: bool = False,
     profile: dict[str, object] | None = None,
 ) -> tuple[list[Pick], list[str]]:
-    """Attach risk flags and subtract a bounded penalty from final_score."""
+    """为候选附上风险标签，并从 final_score 中扣除有上限的风险罚分。
+
+    逐个候选计算风险扣分，写入 risk_penalty / risk_score / risk_level / risk_flags，
+    并按 max_penalty 截断后从 final_score 中扣减；可选地否决（veto）高风险候选，
+    被否决者进入 degradation 说明而非结果列表。返回按最终得分降序并重新排序的
+    候选列表与降级说明。
+    """
     if not picks:
         return picks, []
 
@@ -67,6 +84,7 @@ def apply_risk_overlay(
         points, flags = assess_pick_risk(pick, profile=risk_profile)
         penalty = min(points, max_penalty)
         pick.risk_penalty = round(penalty, 4)
+        # max_penalty 为 0 时分母为 0，直接记 0 分，避免除零
         pick.risk_score = round(0.0 if max_penalty == 0 else min(points / max_penalty * 100, 100), 4)
         pick.risk_level = _risk_level(points, max_penalty)
         pick.risk_flags = _unique([*pick.risk_flags, *flags])
@@ -90,7 +108,7 @@ def apply_portfolio_overlay(
     concentration_penalty: float = 4.0,
     profile: dict[str, object] | None = None,
 ) -> tuple[list[Pick], list[str]]:
-    """Penalize repeated LLM sectors so Top N is not only one crowded trade."""
+    """对重复出现的 LLM 行业/主题施加扣分，避免 Top N 全压在同一个拥挤交易。"""
     if not picks:
         return picks, []
 
@@ -116,6 +134,7 @@ def apply_portfolio_overlay(
         if excess <= 0:
             continue
 
+        # 超出额度的扣分封顶为单次扣分的 3 倍，避免同行业堆得越多罚得越重
         penalty = min(penalty_step * excess, penalty_step * 3)
         flag = f"portfolio_sector_concentration:{bucket}"
         pick.portfolio_penalty = round(float(pick.portfolio_penalty) + penalty, 4)
@@ -143,7 +162,12 @@ def assess_pick_risk(
     *,
     profile: dict[str, float] | None = None,
 ) -> tuple[float, list[str]]:
-    """Return risk points and human-readable flags for one pick."""
+    """计算单个候选的风险扣分与可读风险标签。
+
+    Returns:
+        ``(points, flags)``；points 为未截断的原始扣分，截断由调用方按
+        max_penalty 完成。
+    """
     profile = _risk_profile(profile)
     points = 0.0
     flags: list[str] = []
@@ -200,7 +224,12 @@ def assess_pick_risk(
 
 
 def _assess_daily_data_risk(pick: Pick, profile: dict[str, float]) -> tuple[float, list[str]]:
-    """Convert row-level daily-history quality metadata into risk points."""
+    """把日线历史数据的质量元信息转换为风险扣分。
+
+    根据 daily_quality_score 与 daily_quality_flags 判定数据可信度：
+    取数失败、缓存过期、数据源回退等“软”问题分别扣分，而 OHLC 非法、
+    价格非正、成交量异常等“硬”问题意味着 K 线本身不可信，另加较重扣分。
+    """
     points = 0.0
     flags: list[str] = []
 
@@ -219,6 +248,7 @@ def _assess_daily_data_risk(pick: Pick, profile: dict[str, float]) -> tuple[floa
         points += profile["fallback_daily_errors_points"]
         flags.append("daily_source_fallback_errors")
 
+    # 这三类标记意味着 K 线数据本身不可信，比缓存过期等"软"问题严重得多
     severe_quality_flags = {"invalid_ohlc", "non_positive_price", "negative_volume"}
     if quality_flags & severe_quality_flags:
         points += profile["bad_daily_quality_flag_points"]
@@ -228,7 +258,9 @@ def _assess_daily_data_risk(pick: Pick, profile: dict[str, float]) -> tuple[floa
 
 
 def _daily_quality_flag_set(value: str) -> set[str]:
+    """把质量标记字符串解析为标记集合；兼容中英文逗号、竖线与空格分隔。"""
     text = str(value or "").strip()
+    # pandas 把缺失值写成 "nan"/"<NA>"，需先识别为空集合
     if not text or text.lower() in {"nan", "none", "<na>"}:
         return set()
     normalized = text
@@ -238,6 +270,7 @@ def _daily_quality_flag_set(value: str) -> set[str]:
 
 
 def _risk_level(points: float, max_penalty: float) -> str:
+    """按扣分相对 max_penalty 的比例把风险划分为 low/medium/high 三档。"""
     if max_penalty <= 0:
         return "low"
     if points >= max_penalty * 0.66:
@@ -248,6 +281,7 @@ def _risk_level(points: float, max_penalty: float) -> str:
 
 
 def _canonical_sector(label: str) -> str:
+    """把行业/板块标签归一化为标准行业名，未命中别名表时返回原标签前 40 字符。"""
     cleaned = str(label or "").strip()[:40]
     if not cleaned:
         return ""
@@ -269,10 +303,12 @@ def _canonical_sector(label: str) -> str:
 
 
 def _pick_sector(pick: Pick) -> str:
+    """取候选的行业：优先 LLM 判定的行业，回退到基础行业字段。"""
     return pick.llm_sector or pick.industry
 
 
 def _risk_profile(profile: dict[str, object] | None) -> dict[str, float]:
+    """用外部覆盖项合并默认风险参数，忽略默认表中不存在的键。"""
     result = dict(_DEFAULT_RISK_PROFILE)
     for key, value in (profile or {}).items():
         if key in result:
@@ -286,6 +322,7 @@ def _portfolio_bucket(
     *,
     buckets: object = None,
 ) -> str:
+    """把（行业 + 主题）文本映射到组合集中度分桶，未命中自定义分桶时回退到行业名。"""
     text = f"{sector} {theme or ''}"
     bucket_map = _portfolio_buckets(buckets)
     for bucket, needles in bucket_map.items():
@@ -295,6 +332,7 @@ def _portfolio_bucket(
 
 
 def _portfolio_buckets(custom_buckets: object = None) -> dict[str, tuple[str, ...]]:
+    """合并默认分桶与自定义分桶，把字符串/列表形式的自定义项统一为元组。"""
     bucket_map = {key: tuple(value) for key, value in _DEFAULT_PORTFOLIO_BUCKETS.items()}
     if not isinstance(custom_buckets, dict):
         return bucket_map
@@ -311,6 +349,7 @@ def _portfolio_buckets(custom_buckets: object = None) -> dict[str, tuple[str, ..
 
 
 def _format_penalty_codes(items: list[tuple[str, str, float]], limit: int = 5) -> str:
+    """把被扣分的候选格式化为 ``CODE:行业(-扣分)`` 的紧凑字符串，超出部分折叠。"""
     shown = [
         f"{code}:{sector}(-{penalty:.1f})"
         for code, sector, penalty in items[:limit]
@@ -321,6 +360,7 @@ def _format_penalty_codes(items: list[tuple[str, str, float]], limit: int = 5) -
 
 
 def _unique(items: list[str]) -> list[str]:
+    """对字符串列表去重并去除空白项，保持首次出现顺序。"""
     seen = set()
     result = []
     for item in items:

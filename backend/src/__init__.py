@@ -1,1 +1,2 @@
-"""Backend application package for stock analysis, reporting and integrations."""
+# -*- coding: utf-8 -*-
+"""股票分析、报告与集成的后端应用包。"""

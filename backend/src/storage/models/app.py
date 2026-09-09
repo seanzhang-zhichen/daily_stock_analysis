@@ -32,7 +32,7 @@ from src.storage.base import Base
 
 
 class AppUser(Base):
-    """C 端用户表（与单管理员 .admin_password_hash 解耦）。"""
+    """C 端用户表（与单管理员 ``.admin_password_hash`` 解耦，承载登录/套餐/积分等状态）。"""
 
     __tablename__ = 'app_users'
 
@@ -59,7 +59,7 @@ class AppUser(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     def to_dict(self) -> Dict[str, Any]:
-        """序列化给 API 使用，避免泄露 password_hash / session 等敏感字段。"""
+        """序列化为 API 响应载荷（不含 password_hash / session 等敏感字段）。"""
         return {
             'id': self.id,
             'email': self.email,
@@ -81,7 +81,7 @@ class AppUser(Base):
 
 
 class AppUserSession(Base):
-    """服务端 session（cookie 仅承载 token，详细信息查表）。"""
+    """服务端会话表；cookie 仅承载 token，会话元信息（IP、UA、过期等）落库。"""
 
     __tablename__ = 'app_user_sessions'
 
@@ -96,7 +96,7 @@ class AppUserSession(Base):
 
 
 class AppUserEmailVerification(Base):
-    """邮箱验证 / 密码重置一次性 token。"""
+    """邮箱验证 / 密码重置的一次性 token 表。"""
 
     __tablename__ = 'app_user_email_verifications'
 
@@ -110,7 +110,7 @@ class AppUserEmailVerification(Base):
 
 
 class AppUserUsageCounter(Base):
-    """按用户 + 日期 + kind 的用量计数（quota 服务读写）。"""
+    """按用户 + 日期 + 维度统计的用量计数（quota 服务读写）。"""
 
     __tablename__ = 'app_user_usage_counters'
 
@@ -126,10 +126,10 @@ class AppUserUsageCounter(Base):
 
 
 class AppUserReferral(Base):
-    """User invitation relationship.
+    """用户邀请关系表。
 
-    One invitee can have at most one inviter. Rewards are recorded through
-    ``AppCreditLedger`` so operators can audit why a balance changed.
+    每个被邀请人至多对应一名邀请人；邀请奖励通过 ``AppCreditLedger`` 落账，
+    便于运营侧审计积分变动原因。
     """
 
     __tablename__ = 'app_user_referrals'
@@ -146,11 +146,10 @@ class AppUserReferral(Base):
 
 
 class AppCreditLedger(Base):
-    """Credit balance ledger.
+    """积分余额流水表。
 
-    Positive ``delta`` values grant/refund credits; negative values consume
-    credits. ``idempotency_key`` prevents duplicate rewards from callback
-    retries or repeated admin operations.
+    ``delta`` 为正表示赠送/退还，为负表示消费；``idempotency_key`` 保证支付回调
+    重试或运营操作重复执行时不会重复入账。
     """
 
     __tablename__ = 'app_credit_ledger'
@@ -168,11 +167,10 @@ class AppCreditLedger(Base):
 
 
 class AppCreditPackage(Base):
-    """Purchasable credit package.
+    """可购买的积分包定义。
 
-    Credit packages are intentionally separate from subscription plans: buying
-    credits changes the user's balance only, while buying a plan changes
-    subscription entitlement.
+    积分包和订阅套餐是两条独立产品线：购买积分包只改变余额，购买套餐改变
+    订阅权益；二者不互通，避免账务语义混淆。
     """
 
     __tablename__ = 'app_credit_packages'
@@ -190,10 +188,10 @@ class AppCreditPackage(Base):
 
 
 class AppCreditOrder(Base):
-    """Credit purchase order.
+    """积分购买订单。
 
-    This mirrors the payment state machine used by subscription orders but is a
-    separate table so revenue, refunds, and fulfillment semantics do not mix.
+    与订阅订单使用相同的状态机骨架，但作为独立表持久化，避免收入、退款与
+    履约语义被混入订阅流水中。
     """
 
     __tablename__ = 'app_credit_orders'
@@ -226,7 +224,7 @@ class AppCreditOrder(Base):
 
 
 class AppCreditPaymentEvent(Base):
-    """Payment callback ledger for credit orders."""
+    """积分订单的支付通道回调流水。"""
 
     __tablename__ = 'app_credit_payment_events'
 
@@ -246,7 +244,8 @@ class AppCreditPaymentEvent(Base):
 class AppPlan(Base):
     """套餐定义表 (Phase 2)。
 
-    与 ``AppUser.plan_code`` 通过 ``code`` 软关联。
+    与 ``AppUser.plan_code`` 通过 ``code`` 软关联，决定每日调用上限、自选股上限
+    与允许使用的模型集合等权益。
     """
 
     __tablename__ = 'app_plans'
@@ -267,7 +266,7 @@ class AppPlan(Base):
 
 
 class AppPlatformSetting(Base):
-    """平台运行时配置表，由管理后台维护并可覆盖环境变量默认值。"""
+    """平台运行时配置表，由管理后台维护；可覆盖环境变量默认值。"""
 
     __tablename__ = 'app_platform_settings'
 
@@ -280,9 +279,9 @@ class AppPlatformSetting(Base):
 
 
 class AppSubscription(Base):
-    """用户订阅历史 (含 trial / paid / invite)。
+    """用户订阅历史（含 trial / paid / invite）。
 
-    Phase 2 MVP 不接支付, 仅记录手动开通 / 兑换码 / 邀请码三种来源。
+    Phase 2 MVP 不接入在线支付, 仅记录手动开通 / 兑换码 / 邀请码三种来源。
     """
 
     __tablename__ = 'app_subscriptions'
@@ -298,7 +297,7 @@ class AppSubscription(Base):
 
 
 class AppRedeemCode(Base):
-    """兑换码 (一次性, 与邀请码不同, 兑换后赠送套餐时长)。"""
+    """兑换码表（一次性，与邀请码不同；兑换后赠送套餐时长）。"""
 
     __tablename__ = 'app_redeem_codes'
 
@@ -316,8 +315,8 @@ class AppRedeemCode(Base):
 class AppUserWatchlist(Base):
     """用户自选股表 (Phase 3)。
 
-    每个用户有独立的自选股列表，上限由 ``plan.max_stocks`` 控制。
-    各套餐上限由 ``AppPlan.max_stocks`` 决定。
+    每个用户有独立的自选股列表，上限由 ``plan.max_stocks`` 控制；
+    各套餐的具体上限由 ``AppPlan.max_stocks`` 决定。
     """
 
     __tablename__ = 'app_user_watchlists'
@@ -353,12 +352,14 @@ class AppUserNotificationPref(Base):
 
 
 class AppOrder(Base):
-    """订单主表 (Phase 5)。
+    """订阅/套餐订单主表 (Phase 5)。
 
     一笔付费对应一条订单记录；支付成功后通过 ``grant_plan`` 开通订阅。
-    状态机：created → pending → paid → refunded/partial_refunded
-                          └→ failed
-             created → closed (超时或用户主动取消)
+    状态机::
+
+        created → pending → paid → refunded / partial_refunded
+                            └→ failed
+        created → closed (超时或用户主动取消)
     """
 
     __tablename__ = 'app_orders'
@@ -415,9 +416,9 @@ class AppPaymentEvent(Base):
 
 
 class AppRefund(Base):
-    """退款记录 (Phase 5)。
+    """退款记录表 (Phase 5)。
 
-    申请退款后等待运营审核；审核通过后调用通道退款 API。
+    申请退款后等待运营审核；审核通过后调用通道退款 API；可同步撤销对应订阅。
     """
 
     __tablename__ = 'app_refunds'
@@ -439,9 +440,9 @@ class AppRefund(Base):
 
 
 class AppInvoice(Base):
-    """电子发票申请 (Phase 5)。
+    """电子发票申请表 (Phase 5)。
 
-    MVP 阶段手工开具，后期接电子发票 SaaS 自动开票。
+    MVP 阶段手工开具，后期接电子发票 SaaS 自动开票；
     仅开电子普通发票（增值税普通发票）。
     """
 
@@ -464,7 +465,7 @@ class AppInvoice(Base):
 
 
 class AppUserConsent(Base):
-    """用户协议同意历史 (Phase 6)。
+    """用户协议同意历史表 (Phase 6)。
 
     每当用户首次注册、或在协议升版后重新接受协议时, 写入一条记录。
     用于合规审计 (PIPL / 用户协议变更) 与争议追溯。
@@ -482,10 +483,10 @@ class AppUserConsent(Base):
 
 
 class AppReconciliationDiff(Base):
-    """对账差异落库 (Phase 5)。
+    """对账差异落库表 (Phase 5)。
 
-    由 ``scripts/reconcile_payments.py`` 每日跑后写入: 通道有/本地无, 本地有/通道无,
-    金额不一致, 状态不一致等类型。
+    由 ``scripts/reconcile_payments.py`` 每日跑批写入：通道有/本地无、
+    本地有/通道无、金额不一致、状态不一致等类型。
     """
 
     __tablename__ = 'app_reconciliation_diffs'
@@ -509,9 +510,9 @@ class AppReconciliationDiff(Base):
 
 
 class AppReconciliationReport(Base):
-    """每日对账总览 (Phase 5)。
+    """每日对账总览表 (Phase 5)。
 
-    一次对账任务跑完后写一条; 便于审计 / 追溯当日是否成功对账。
+    一次对账任务跑完后写入一条；便于审计 / 追溯当日是否成功对账。
     """
 
     __tablename__ = 'app_reconciliation_reports'
@@ -532,9 +533,9 @@ class AppReconciliationReport(Base):
 
 
 class AppPlanReminder(Base):
-    """Plan 到期 / 续费提醒发送记录 (Phase 2 + Phase 4 收尾)。
+    """套餐到期 / 续费提醒发送记录 (Phase 2 + Phase 4 收尾)。
 
-    用于 ``run_plan_lifecycle_check`` 的幂等控制：同一个 ``(user_id, plan_code,
+    用于 ``run_plan_lifecycle_check`` 的幂等控制：同一 ``(user_id, plan_code,
     expires_at, reminder_type)`` 只发送一次邮件，避免重复打扰。
 
     ``reminder_type`` 取值::
@@ -562,7 +563,7 @@ class AppPlanReminder(Base):
 
 
 class AppAuditLog(Base):
-    """用户 / 管理员关键操作审计日志 (Phase 6)。
+    """用户 / 管理员关键操作审计日志表 (Phase 6)。
 
     永不删除；写入后只读，便于合规追溯。
 
@@ -619,7 +620,7 @@ class AppGrowthEvent(Base):
 class AppNotice(Base):
     """平台公告表（Phase 6 公告中心）。
 
-    运营通过管理后台创建公告，用户通过 /notices 页面和顶栏铃铛查看。
+    运营通过管理后台创建公告，用户通过 ``/notices`` 页面和顶栏铃铛查看。
     支持 priority（info/warning/danger）、is_pinned（置顶）、is_published（发布状态）。
     """
 
@@ -644,7 +645,7 @@ class AppNotice(Base):
 
 
 class AppResearchReport(Base):
-    """Operator-authored paid research report."""
+    """运营撰写的付费研究报告表。"""
 
     __tablename__ = 'app_research_reports'
 
@@ -669,7 +670,7 @@ class AppResearchReport(Base):
 
 
 class AppResearchReportPurchase(Base):
-    """Per-user unlock ledger for research reports."""
+    """用户对研究报告的解锁记录。"""
 
     __tablename__ = 'app_research_report_purchases'
 
@@ -686,7 +687,7 @@ class AppResearchReportPurchase(Base):
 
 
 class AppResearchReportReaction(Base):
-    """One like/dislike reaction per user per research report."""
+    """用户对研究报告的点赞 / 点踩反应表。"""
 
     __tablename__ = 'app_research_report_reactions'
 
@@ -703,7 +704,7 @@ class AppResearchReportReaction(Base):
 
 
 class AppResearchReportComment(Base):
-    """User comments for research reports."""
+    """用户对研究报告的评论表。"""
 
     __tablename__ = 'app_research_report_comments'
 

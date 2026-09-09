@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Strategy YAML loader."""
+"""策略 YAML 加载与策略目录元数据构建。
+
+提供：
+- 加载单个策略文件（``load_strategy``）并做严格字段白名单校验；
+- 加载目录全部策略（``load_all_strategies``），按目录签名缓存避免重复 IO；
+- 生成 UI/Agent 用的策略目录 facets、详情、对比 diff。
+
+被调用方：选股 API 层（`src/api/v1/endpoints/screening.py`）与
+策略编辑器 UI。
+"""
 
 import hashlib
 import logging
@@ -19,6 +28,7 @@ from src.services.screening.models import (
 )
 
 logger = logging.getLogger(__name__)
+# 顶层字段白名单：未列出的 key 一律报错，避免 YAML 漂移导致静默失败
 _TOP_LEVEL_KEYS = {
     "name",
     "display_name",
@@ -30,6 +40,7 @@ _TOP_LEVEL_KEYS = {
     "style",
     "screening",
 }
+# screening 段落白名单
 _SCREENING_KEYS = {
     "enabled",
     "market_scope",
@@ -44,7 +55,9 @@ _SCREENING_KEYS = {
     "ranking_hints",
     "max_output",
 }
+# 硬过滤白名单直接由 HardFilterConfig 数据类字段派生，避免双份维护
 _HARD_FILTER_KEYS = set(HardFilterConfig.__dataclass_fields__.keys())
+# scoring_profile 白名单：评分模型的逐项加权/罚分参数
 _SCORING_PROFILE_KEYS = {
     "momentum_base",
     "momentum_intraday_slope",
@@ -110,6 +123,7 @@ _SCORING_PROFILE_KEYS = {
     "theme_heat_overheat_score",
     "theme_heat_overheat_penalty_slope",
 }
+# risk_profile 白名单：扣分项阈值与分数
 _RISK_PROFILE_KEYS = {
     "chase_change_pct",
     "chase_points",
@@ -139,7 +153,9 @@ _RISK_PROFILE_KEYS = {
     "fallback_daily_errors_points",
     "fetch_failed_daily_points",
 }
+# 组合画像白名单
 _PORTFOLIO_PROFILE_KEYS = {"max_same_bucket", "concentration_penalty", "buckets"}
+# 评分卡白名单：组合评分时的额外加成/罚分阈值
 _SCORECARD_PROFILE_KEYS = {
     "value_quality_value_min",
     "value_quality_stability_min",
@@ -164,6 +180,7 @@ _SCORECARD_PROFILE_KEYS = {
     "llm_risk_penalty_cap",
     "score_delta_cap",
 }
+# event_profile 白名单：偏好事件类型/权重等
 _EVENT_PROFILE_KEYS = {
     "preferred_event_tags",
     "avoided_event_tags",
@@ -172,6 +189,7 @@ _EVENT_PROFILE_KEYS = {
     "source_weights",
     "notes",
 }
+# style 段落白名单
 _STYLE_KEYS = {
     "risk_profile",
     "holding_period",
@@ -180,6 +198,7 @@ _STYLE_KEYS = {
     "capital_profile",
     "ui_badge",
 }
+# 进程级缓存：目录路径 → (签名, 策略字典)，签名变化即重读
 _STRATEGY_DIR_CACHE: dict[
     Path,
     tuple[tuple[tuple[str, int, int, str], ...], dict[str, Strategy]],
@@ -187,7 +206,7 @@ _STRATEGY_DIR_CACHE: dict[
 
 
 def load_strategy(filepath: Path) -> Strategy:
-    """Load a screening strategy from a YAML file."""
+    """从 YAML 文件加载一个策略，做严格字段白名单校验。"""
     with open(filepath, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
@@ -247,7 +266,7 @@ def load_strategy(filepath: Path) -> Strategy:
 
 
 def load_all_strategies(strategies_dir: Path) -> dict[str, Strategy]:
-    """Load all strategies from a directory."""
+    """加载目录下所有启用策略；按目录签名缓存，签名变更才重新 IO。"""
     resolved_dir = strategies_dir.resolve()
     signature = _strategy_dir_signature(resolved_dir)
     cached = _STRATEGY_DIR_CACHE.get(resolved_dir)
@@ -271,6 +290,7 @@ def load_all_strategies(strategies_dir: Path) -> dict[str, Strategy]:
 
 
 def _strategy_dir_signature(strategies_dir: Path) -> tuple[tuple[str, int, int, str], ...]:
+    """构造目录签名：(文件名, mtime_ns, size, sha256) 列表；任一变化即失效。"""
     if not strategies_dir.is_dir():
         return ()
     signature = []
@@ -285,7 +305,7 @@ def _strategy_dir_signature(strategies_dir: Path) -> tuple[tuple[str, int, int, 
 
 
 def list_strategies(strategies_dir: Path | None = None) -> list[StrategyInfo]:
-    """List available screening strategies."""
+    """列出可用的策略目录（含 UI 展示所需的派生字段）。"""
     from src.services.screening.config import Config
     from src.services.screening.filter import requires_daily_features
 
@@ -318,12 +338,12 @@ def list_strategies(strategies_dir: Path | None = None) -> list[StrategyInfo]:
 
 
 def strategy_facets(strategies_dir: Path | None = None) -> dict[str, object]:
-    """Return UI-ready filter facets for the strategy catalog."""
+    """返回 UI 用的策略目录 facet（按 category/style/tag 等维度聚合）。"""
     return strategy_facets_from_infos(list_strategies(strategies_dir))
 
 
 def strategy_facets_from_infos(strategies: list[StrategyInfo]) -> dict[str, object]:
-    """Build strategy catalog facets from already loaded strategy metadata."""
+    """从已加载的策略元数据构造 facet：包含 schema_version 与各维度分组。"""
     return {
         "schema_version": 1,
         "strategy_count": len(strategies),
@@ -421,6 +441,7 @@ def _strategy_facet(
     values_fn,
     filterable: bool = True,
 ) -> dict[str, object]:
+    """按 values_fn 抽取策略的多值/单值属性，聚合为 facet dict（含 count 与策略列表）。"""
     groups: dict[str, list[str]] = {}
     for item in strategies:
         raw_values = values_fn(item) or []
@@ -438,6 +459,7 @@ def _strategy_facet(
         }
         for value, strategy_names in groups.items()
     ]
+    # 按计数降序、同计数按 value 字典序，让 facet 列表稳定可读
     values.sort(key=lambda item: (-int(item["count"]), str(item["value"])))
     return {
         "name": name,
@@ -463,7 +485,11 @@ def match_strategies(
     strict: bool = False,
     limit: int | None = None,
 ) -> list[dict[str, object]]:
-    """Rank strategies by UI/agent-facing selection preferences."""
+    """按 UI/Agent 选择偏好对策略做加权匹配排序，返回 score + matched/missing 详情。
+
+    各项偏好有不同的权重（见 ``_match_single`` 调用处的字面量），缺失项
+    不计入分数。``strict=True`` 时任一缺失都会被过滤掉。
+    """
     criteria = {
         "risk_profile": risk_profile,
         "holding_period": holding_period,
@@ -575,7 +601,7 @@ def compare_strategies(
     target_name: str,
     strategies_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Compare two enabled strategies for strategy review and UI diff views."""
+    """对比两条启用策略：返回差异字典 + 兼容性备注，方便策略评审与 UI diff。"""
     from src.services.screening.config import Config
     from src.services.screening.filter import requires_daily_features
 
@@ -587,7 +613,7 @@ def compare_strategies(
         target = strategies[target_name]
     except KeyError as exc:
         missing = exc.args[0]
-        raise ValueError(f"Strategy '{missing}' not found") from exc
+        raise ValueError(f"Strategy '{ '{'}missing{'}' }' not found") from exc
 
     base_daily = requires_daily_features(base.screening.hard_filters)
     target_daily = requires_daily_features(target.screening.hard_filters)
@@ -646,10 +672,12 @@ def compare_strategies(
 
 
 def _strategy_data_requirements(strategy: Strategy, *, daily_required: bool) -> list[str]:
+    """根据策略特征推断"策略运行所需的数据类型"，用于 UI 展示。"""
     requirements = ["snapshot"]
     if daily_required:
         requirements.append("daily_k")
     factors = set(strategy.screening.factor_weights)
+    # 主题热度/概念对齐类因子需要行业/概念上下文
     if factors & {"theme_heat", "topic_alignment"}:
         requirements.append("industry_context")
     if strategy.screening.event_profile:
@@ -658,22 +686,24 @@ def _strategy_data_requirements(strategy: Strategy, *, daily_required: bool) -> 
 
 
 def _strategy_compare_summary(strategy: Strategy, *, daily_required: bool) -> dict[str, object]:
+    """构造策略对比时单边的"概要"信息（不包含差异）。"""
     return {
-        "name": strategy.name,
-        "display_name": strategy.display_name,
-        "version": strategy.version,
-        "category": strategy.category,
-        "tags": list(strategy.tags),
-        "style": _style_to_dict(strategy.style),
-        "data_requirements": _strategy_data_requirements(strategy, daily_required=daily_required),
-        "requires_daily_features": daily_required,
-        "active_filters": _active_hard_filters(strategy.screening.hard_filters),
-        "factor_weights": {key: float(value) for key, value in strategy.screening.factor_weights.items()},
-        "profile_keys": _strategy_profile_keys(strategy.screening),
-    }
+            "name": strategy.name,
+            "display_name": strategy.display_name,
+            "version": strategy.version,
+            "category": strategy.category,
+            "tags": list(strategy.tags),
+            "style": _style_to_dict(strategy.style),
+            "data_requirements": _strategy_data_requirements(strategy, daily_required=daily_required),
+            "requires_daily_features": daily_required,
+            "active_filters": _active_hard_filters(strategy.screening.hard_filters),
+            "factor_weights": {key: float(value) for key, value in strategy.screening.factor_weights.items()},
+            "profile_keys": _strategy_profile_keys(strategy.screening),
+        }
 
 
 def _strategy_compare_summary_notes(differences: dict[str, object]) -> dict[str, object]:
+    """从 differences 中提取变化的部分并生成可读的兼容性备注。"""
     changed_sections = [
         name
         for name, value in differences.items()
@@ -689,6 +719,7 @@ def _strategy_compare_summary_notes(differences: dict[str, object]) -> dict[str,
         if removed:
             notes.append("target_removes_data:" + ",".join(str(item) for item in removed))
     identity_diff = differences.get("identity", {})
+    # "requires_daily_features" 改变尤其需要标记，影响数据可用性
     if isinstance(identity_diff, dict) and "requires_daily_features" in identity_diff.get("changed", {}):
         notes.append("daily_feature_requirement_changed")
     return {
@@ -699,6 +730,7 @@ def _strategy_compare_summary_notes(differences: dict[str, object]) -> dict[str,
 
 
 def _diff_has_changes(value: object) -> bool:
+    """递归判断 diff 结构是否包含任何变更（added/removed/changed 非空）。"""
     if not isinstance(value, dict):
         return bool(value)
     for key in ("added", "removed", "changed"):
@@ -712,6 +744,7 @@ def _diff_has_changes(value: object) -> bool:
 
 
 def _active_filter_values(filters_config: HardFilterConfig) -> dict[str, object]:
+    """返回"已被用户主动设置"的硬过滤字段及其值；默认值会被过滤掉。"""
     active = set(_active_hard_filters(filters_config))
     values = asdict(filters_config)
     return {
@@ -722,6 +755,7 @@ def _active_filter_values(filters_config: HardFilterConfig) -> dict[str, object]
 
 
 def _list_diff(base: list[object], target: list[object]) -> dict[str, list[object]]:
+    """两个列表的 shared/added/removed diff。"""
     base_values = list(dict.fromkeys(base))
     target_values = list(dict.fromkeys(target))
     return {
@@ -732,6 +766,7 @@ def _list_diff(base: list[object], target: list[object]) -> dict[str, list[objec
 
 
 def _mapping_diff(base: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+    """两个 dict 的 added/removed/changed diff；changed 包含 base/target 两个值。"""
     base_keys = set(base)
     target_keys = set(target)
     changed = {}
@@ -749,6 +784,7 @@ def _mapping_diff(base: dict[str, object], target: dict[str, object]) -> dict[st
 
 
 def _numeric_mapping_diff(base: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+    """数值映射 diff：在 changed 项里额外计算 delta 字段便于 UI 直接展示。"""
     diff = _mapping_diff(
         {key: float(value) for key, value in base.items()},
         {key: float(value) for key, value in target.items()},
@@ -765,6 +801,7 @@ def _nested_list_diff(
     base: dict[str, list[str]],
     target: dict[str, list[str]],
 ) -> dict[str, object]:
+    """逐键比较两个 list-valued mapping，输出每个 key 的 shared/added/removed。"""
     keys = sorted(set(base) | set(target))
     return {
         key: _list_diff(base.get(key, []), target.get(key, []))
@@ -773,12 +810,14 @@ def _nested_list_diff(
 
 
 def _active_hard_filters(filters_config: HardFilterConfig) -> list[str]:
+    """枚举出当前策略与默认值不同的"被启用"硬过滤字段名。"""
     active: list[str] = []
     defaults = HardFilterConfig()
     for item in fields(HardFilterConfig):
         name = item.name
         value = getattr(filters_config, name)
         default = getattr(defaults, name)
+        # exclude_st 是 bool 开关：true 即视为启用，与其他字段的"非默认值"逻辑不同
         if name == "exclude_st":
             if bool(value):
                 active.append(name)
@@ -789,6 +828,7 @@ def _active_hard_filters(filters_config: HardFilterConfig) -> list[str]:
 
 
 def _required_snapshot_fields(filters_config: HardFilterConfig) -> list[str]:
+    """根据硬过滤字段推断候选池需要哪些快照字段（用于 UI 数据依赖展示）。"""
     fields: list[str] = []
     if filters_config.exclude_st:
         fields.append("name")
@@ -812,6 +852,7 @@ def _required_snapshot_fields(filters_config: HardFilterConfig) -> list[str]:
 
 
 def _required_daily_fields(filters_config: HardFilterConfig) -> list[str]:
+    """根据硬过滤字段推断候选池需要哪些日线特征字段。"""
     checks = [
         ("change_60d", filters_config.change_60d_min is not None or filters_config.change_60d_max is not None),
         ("ma_bullish", filters_config.require_ma_bullish),
@@ -857,6 +898,7 @@ def _required_daily_fields(filters_config: HardFilterConfig) -> list[str]:
 
 
 def _strategy_profile_keys(screening: ScreeningConfig) -> dict[str, list[str]]:
+    """汇总各 profile 中"实际填了值的 key"，便于 UI 显示"用户自定义项"。"""
     profile_values = {
         "scoring": screening.scoring_profile,
         "risk": screening.risk_profile,
@@ -872,6 +914,7 @@ def _strategy_profile_keys(screening: ScreeningConfig) -> dict[str, list[str]]:
 
 
 def _strategy_style(data: dict, filepath: Path) -> StrategyStyle:
+    """合并显式 style 字段与基于 category/tags 的推断值，未填字段由推断兜底。"""
     raw = data.get("style", {})
     if raw is None:
         raw = {}
@@ -893,6 +936,7 @@ def _strategy_style(data: dict, filepath: Path) -> StrategyStyle:
 
 
 def _infer_strategy_style(*, category: str, tags: list[str]) -> StrategyStyle:
+    """基于 category 与 tags 推断策略风格（risk/holding/execution/regime 等）。"""
     tag_set = {tag.lower() for tag in tags}
     if category == "value" or "defensive" in tag_set:
         risk_profile = "defensive"
@@ -937,6 +981,7 @@ def _infer_strategy_style(*, category: str, tags: list[str]) -> StrategyStyle:
 
 
 def _style_to_dict(style: StrategyStyle) -> dict[str, object]:
+    """把 StrategyStyle 转为普通 dict，便于序列化。"""
     return {
         "risk_profile": style.risk_profile,
         "holding_period": style.holding_period,
@@ -948,6 +993,7 @@ def _style_to_dict(style: StrategyStyle) -> dict[str, object]:
 
 
 def _string_list(value: object) -> list[str]:
+    """把 list 或逗号分隔字符串归一化为字符串列表；其他类型返回空。"""
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     if isinstance(value, str):
@@ -956,6 +1002,7 @@ def _string_list(value: object) -> list[str]:
 
 
 def _normalized_values(values: object) -> list[str]:
+    """字符串值统一小写、去空、去重；供匹配使用。"""
     raw = _string_list(values)
     normalized = []
     seen = set()
@@ -976,6 +1023,7 @@ def _match_single(
     matched: list[str],
     missing: list[str],
 ) -> float:
+    """单值匹配：相等得 weight、不等记 0、缺省 expected 不计入分数。"""
     expected_normalized = expected.strip().lower()
     if not expected_normalized:
         return 0.0
@@ -994,6 +1042,7 @@ def _match_many(
     matched: list[str],
     missing: list[str],
 ) -> float:
+    """多值匹配：每个 expected 在 actual 中出现就得一份 weight；缺省期望得 0。"""
     if not expected:
         return 0.0
     actual_set = set(actual)
@@ -1008,6 +1057,7 @@ def _match_many(
 
 
 def _raise_unknown_keys(data: dict, allowed_keys: set[str], context: str) -> None:
+    """发现白名单之外的字段立刻报错，避免 YAML 拼写错误造成静默失配。"""
     unknown_keys = sorted(set(data.keys()) - allowed_keys)
     if unknown_keys:
         raise ValueError(
@@ -1022,6 +1072,7 @@ def _optional_mapping(
     *,
     allowed_keys: set[str],
 ) -> dict:
+    """读取可选的 dict 子段落，None 视为空 dict，非 dict 报错。"""
     value = data.get(key, {})
     if value is None:
         return {}

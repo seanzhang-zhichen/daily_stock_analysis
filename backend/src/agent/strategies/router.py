@@ -1,4 +1,4 @@
-"""Compatibility wrapper for the legacy strategy router import path."""
+"""旧版 strategy 路由导入路径的兼容包装。"""
 
 from src.agent.skills.router import SkillRouter, StrategyRouter, _DEFAULT_STRATEGIES, _DEFAULT_SKILLS
 

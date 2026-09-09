@@ -38,13 +38,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConfigIssue:
-    """Structured configuration validation issue with a severity level.
+    """一条带严重级别的结构化配置校验问题。
 
     Attributes:
-        severity: One of "error", "warning", or "info".
-        message:  Human-readable description of the issue.
-        field:    The environment variable / config field name most relevant to
-                  this issue (empty string when not applicable).
+        severity: 问题级别，取值为 "error"、"warning" 或 "info"。
+        message:  问题的可读描述文案。
+        field:    与该问题最相关的环境变量 / 配置字段名（不适用时为空字符串）。
     """
 
     severity: Literal["error", "warning", "info"]
@@ -52,28 +51,32 @@ class ConfigIssue:
     field: str = ""
 
     def __str__(self) -> str:  # noqa: D105
-        """Return the human-readable issue message."""
+        """返回该问题的可读描述文案。"""
         return self.message
 
 
+# API Key 由本模块显式管理的 provider 集合；其余 provider 交给 litellm 从环境变量直连
 _MANAGED_LITELLM_KEY_PROVIDERS = {"gemini", "vertex_ai", "anthropic", "openai", "deepseek"}
+# LLM_CHANNELS 中允许声明的协议（对应 LiteLLM 的 provider 标识）
 SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama")
+# 环境变量中判定为“假”的取值（比较前统一小写化）
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 
 
 def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
-    """Return whether an ntfy URL points at a concrete topic endpoint."""
+    """判断 ntfy URL 是否指向了具体 topic endpoint（path 中存在非空片段）。"""
     raw_url = (value or "").strip()
     if not raw_url:
         return False
     parsed = urlparse(raw_url)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return False
+    # ntfy 的 topic 直接编码在 URL path 中，缺少 topic 时推送无落点，必须判为非法
     return any(unquote(segment).strip() for segment in parsed.path.split("/") if segment)
 
 
 def _has_gotify_base_url(value: Optional[str]) -> bool:
-    """Return whether a Gotify URL points at a server base URL, not /message."""
+    """判断 Gotify URL 是否为 server base URL（发送端会自行拼接 /message）。"""
     raw_url = (value or "").strip().rstrip("/")
     if not raw_url:
         return False
@@ -83,11 +86,15 @@ def _has_gotify_base_url(value: Optional[str]) -> bool:
     if parsed.query or parsed.fragment:
         return False
     path_segments = [segment for segment in parsed.path.split("/") if segment]
+    # 末尾已是 /message 说明用户填的是发送端点而不是 base URL，会导致路径重复拼接
     return not (path_segments and path_segments[-1].lower() == "message")
 
 
+# Agent 单轮任务默认最大步数，防止工具调用陷入死循环
 AGENT_MAX_STEPS_DEFAULT = 10
+# 基本面聚合阶段的默认总预算（秒），超时即降级返回
 FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT = 8.0
+# 新闻策略档位对应的最大回溯窗口（天）
 NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
     "ultra_short": 1,
     "short": 3,
@@ -96,8 +103,35 @@ NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
 }
 
 
+@dataclass(frozen=True)
+class AgentContextCompressionPreset:
+    """Default values for a visible chat-history compression profile."""
+
+    trigger_tokens: int
+    protected_turns: int
+    summary_tokens: int
+
+
+AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE = "balanced"
+AGENT_CONTEXT_COMPRESSION_PROFILES: Dict[str, AgentContextCompressionPreset] = {
+    "cost": AgentContextCompressionPreset(6000, 2, 900),
+    "balanced": AgentContextCompressionPreset(12000, 4, 1500),
+    "long_context_raw_first": AgentContextCompressionPreset(24000, 6, 2600),
+}
+
+
 def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
-    """Parse common truthy/falsey environment-style values."""
+    """把环境变量风格的字符串解析为布尔值。
+
+    除 `0/false/no/off`（大小写不敏感）外均视为真；空值与 None 返回 default。
+
+    Args:
+        value: 原始环境变量值。
+        default: 值为 None 或空字符串时的回退值。
+
+    Returns:
+        解析后的布尔值。
+    """
     if value is None:
         return default
     normalized = value.strip().lower()
@@ -114,7 +148,18 @@ def parse_env_int(
     minimum: Optional[int] = None,
     maximum: Optional[int] = None,
 ) -> int:
-    """Parse an integer env value with warning + fallback semantics."""
+    """解析整型环境变量，非法值记警告并回退，越界则夹取到边界。
+
+    Args:
+        value: 原始环境变量值。
+        default: 缺省或解析失败时使用的值。
+        field_name: 环境变量名，仅用于日志定位。
+        minimum: 下界，超出时夹取到下界。
+        maximum: 上界，超出时夹取到上界。
+
+    Returns:
+        落在 [minimum, maximum] 区间内的整型配置值。
+    """
     raw_value = value
     if raw_value is None or not str(raw_value).strip():
         parsed = int(default)
@@ -159,7 +204,18 @@ def parse_env_float(
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
 ) -> float:
-    """Parse a float env value with warning + fallback semantics."""
+    """解析浮点型环境变量，非法值记警告并回退，越界则夹取到边界。
+
+    Args:
+        value: 原始环境变量值。
+        default: 缺省或解析失败时使用的值。
+        field_name: 环境变量名，仅用于日志定位。
+        minimum: 下界，超出时夹取到下界。
+        maximum: 上界，超出时夹取到上界。
+
+    Returns:
+        落在 [minimum, maximum] 区间内的浮点配置值。
+    """
     raw_value = value
     if raw_value is None or not str(raw_value).strip():
         parsed = float(default)
@@ -197,20 +253,47 @@ def parse_env_float(
 
 
 def normalize_news_strategy_profile(value: Optional[str]) -> str:
-    """Normalize news strategy profile to known values."""
+    """把新闻策略档位归一化到已知取值，未知档位回退为 short。"""
     candidate = (value or "short").strip().lower()
     return candidate if candidate in NEWS_STRATEGY_WINDOWS else "short"
 
 
 def resolve_news_window_days(news_max_age_days: int, news_strategy_profile: Optional[str]) -> int:
-    """Resolve effective news window days from profile and global max-age."""
+    """计算新闻实际回溯天数：全局时效与策略档位窗口取更严格的那个。
+
+    Args:
+        news_max_age_days: NEWS_MAX_AGE_DAYS 配置的全局最大时效（天）。
+        news_strategy_profile: 新闻策略档位名。
+
+    Returns:
+        实际生效的新闻窗口天数，最小为 1。
+    """
     profile = normalize_news_strategy_profile(news_strategy_profile)
     profile_days = NEWS_STRATEGY_WINDOWS.get(profile, NEWS_STRATEGY_WINDOWS["short"])
     return max(1, min(max(1, int(news_max_age_days)), profile_days))
 
 
+def normalize_agent_context_compression_profile(value: Optional[str]) -> str:
+    """Return a supported chat compression profile, defaulting to balanced."""
+    candidate = (value or AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE).strip().lower()
+    if candidate in AGENT_CONTEXT_COMPRESSION_PROFILES:
+        return candidate
+    logger.warning(
+        "Invalid AGENT_CONTEXT_COMPRESSION_PROFILE=%r; falling back to %s",
+        value,
+        AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE,
+    )
+    return AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE
+
+
+def get_agent_context_compression_preset(value: Optional[str]) -> AgentContextCompressionPreset:
+    return AGENT_CONTEXT_COMPRESSION_PROFILES[
+        normalize_agent_context_compression_profile(value)
+    ]
+
+
 def canonicalize_llm_channel_protocol(value: Optional[str]) -> str:
-    """Normalize a protocol label into a LiteLLM provider identifier."""
+    """把协议别名归一化成 LiteLLM 的 provider 标识（如 claude → anthropic）。"""
     candidate = (value or "").strip().lower().replace("-", "_")
     aliases = {
         "openai_compatible": "openai",
@@ -230,7 +313,20 @@ def resolve_llm_channel_protocol(
     models: Optional[List[str]] = None,
     channel_name: Optional[str] = None,
 ) -> str:
-    """Resolve the effective protocol for a channel."""
+    """推断渠道实际使用的协议（provider）。
+
+    优先级：显式 protocol > 模型名前缀 > 渠道名 > base_url 推断；
+    全部无法判定且无 base_url 时返回空字符串，由调用方按缺省处理。
+
+    Args:
+        protocol: 显式声明的协议。
+        base_url: 渠道 base URL，用于本地服务的兜底推断。
+        models: 渠道声明的模型列表，可携带 provider 前缀。
+        channel_name: 渠道名，例如 "deepseek"。
+
+    Returns:
+        归一化后的协议名，无法判定时为空字符串。
+    """
     explicit = canonicalize_llm_channel_protocol(protocol)
     if explicit in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
         return explicit
@@ -242,7 +338,7 @@ def resolve_llm_channel_protocol(
         if prefix in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
             return prefix
 
-    # Infer from channel name (e.g. "deepseek" -> deepseek, "gemini" -> gemini)
+    # 再按渠道名推断（例如 "deepseek" -> deepseek，"gemini" -> gemini）
     if channel_name:
         name_protocol = canonicalize_llm_channel_protocol(channel_name)
         if name_protocol in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
@@ -251,8 +347,8 @@ def resolve_llm_channel_protocol(
     if base_url:
         parsed = urlparse(base_url)
         if parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0"}:
-            # Default to openai for local servers (vLLM, LM Studio, LocalAI, etc.).
-            # Ollama users should set PROTOCOL=ollama explicitly or name the channel "ollama".
+            # 本地服务（vLLM、LM Studio、LocalAI 等）默认按 openai 协议处理。
+            # Ollama 用户需显式设置 PROTOCOL=ollama，或把渠道命名为 "ollama"。
             return "openai"
         return "openai"
 
@@ -260,7 +356,7 @@ def resolve_llm_channel_protocol(
 
 
 def channel_allows_empty_api_key(protocol: Optional[str], base_url: Optional[str]) -> bool:
-    """Return True when a channel can run without an API key."""
+    """判断渠道是否允许缺省 API Key（Ollama 与本地自建服务通常免鉴权）。"""
     resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url)
     if resolved_protocol == "ollama":
         return True
@@ -269,7 +365,11 @@ def channel_allows_empty_api_key(protocol: Optional[str], base_url: Optional[str
 
 
 def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: Optional[str] = None) -> str:
-    """Attach a provider prefix when the model omits it."""
+    """为缺少 provider 前缀的模型名补齐前缀，保证 LiteLLM 能正确路由。
+
+    已带前缀且前缀是已知 provider（如 SiliconFlow 上的 HuggingFace 风格 ID）时保持原样，
+    避免破坏用户显式声明的路由。
+    """
     normalized_model = model.strip()
     if not normalized_model:
         return normalized_model
@@ -277,10 +377,10 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
     resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url, models=[normalized_model])
 
     if "/" in normalized_model:
-        # The model already has a slash, e.g. 'deepseek-ai/DeepSeek-V3'.
-        # Check if the prefix is a known LiteLLM provider; if so, keep it.
-        # Otherwise (e.g. HuggingFace-style IDs on SiliconFlow), prepend
-        # the resolved protocol so LiteLLM routes via the correct handler.
+        # 模型名已带斜杠，例如 'deepseek-ai/DeepSeek-V3'。
+        # 先判断前缀是否为已知 LiteLLM provider，是则原样保留；
+        # 否则（如 SiliconFlow 上的 HuggingFace 风格 ID）补上推断出的协议，
+        # 让 LiteLLM 走正确的 handler。
         raw_prefix, remainder = normalized_model.split("/", 1)
         prefix = raw_prefix.lower()
         canonical_prefix = canonicalize_llm_channel_protocol(prefix)
@@ -294,7 +394,7 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
             return normalized_model
         if canonical_prefix in known_providers:
             return f"{canonical_prefix}/{remainder}"
-        # Not a real provider prefix — add one so LiteLLM routes correctly.
+        # 前缀不是真实 provider，补一个协议前缀以保证 LiteLLM 正确路由
         if resolved_protocol:
             return f"{resolved_protocol}/{normalized_model}"
         return normalized_model
@@ -305,19 +405,23 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
 
 
 def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
-    """Return model names declared in Router model_list order.
+    """按 Router model_list 的声明顺序返回模型名，并保持去重。
 
-    Uses the top-level ``model_name`` (the routing alias that users set in
-    LITELLM_MODEL) rather than ``litellm_params.model`` (the wire-level
-    model identifier).  For channel-built entries both are identical, but
-    YAML configs may define a friendly alias that differs from the
-    underlying provider/model path.
+    优先取顶层 ``model_name``（即用户在 LITELLM_MODEL 中填写的路由别名），
+    而不是 ``litellm_params.model``（实际发给 provider 的模型标识）。
+    由渠道构造的条目两者相同，但 YAML 配置可能定义与底层 provider/model 路径
+    不同的友好别名。
+
+    Args:
+        model_list: LiteLLM Router 的 model_list。
+
+    Returns:
+        去重后的模型名列表，保持首次出现顺序。
     """
     models: List[str] = []
     seen: set = set()
     for entry in model_list or []:
-        # Prefer top-level model_name (router routing key); fall back to
-        # litellm_params.model for entries that omit it.
+        # 优先取顶层 model_name（Router 路由键）；缺失时退回 litellm_params.model
         name = str(entry.get("model_name") or "").strip()
         if not name:
             params = entry.get("litellm_params", {}) or {}
@@ -329,10 +433,10 @@ def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
     return models
 
 
-# Screening and newer LLM channel consumers share these compatibility helpers.
-# Keep them here so older deployments can load the screening engine without
-# requiring a separate configuration implementation.
+# 选股引擎与较新的 LLM 渠道消费方共用下面这些兼容性辅助函数。
+# 保留在此处，便于旧部署加载选股引擎时无需再引入另一套配置实现。
 def normalize_llm_channel_api_surface(value: Optional[str]) -> str:
+    """把 API 形态别名归一化为 chat_completions / responses，缺省取 chat_completions。"""
     candidate = (value or "").strip().lower().replace("-", "_")
     aliases = {
         "chat": "chat_completions",
@@ -346,6 +450,7 @@ def normalize_llm_channel_api_surface(value: Optional[str]) -> str:
 
 
 def is_supported_llm_channel_api_surface_value(value: Optional[str]) -> bool:
+    """判断 API 形态取值是否合法；空值表示未配置，同样视为合法。"""
     candidate = (value or "").strip().lower().replace("-", "_")
     return not candidate or candidate in {
         "chat", "chat_completion", "completions", "chat_completions",
@@ -354,6 +459,7 @@ def is_supported_llm_channel_api_surface_value(value: Optional[str]) -> bool:
 
 
 def _screening_model_provider(model: str) -> str:
+    """取模型名中的 provider 前缀，无前缀时返回空字符串。"""
     normalized = (model or "").strip()
     if "/" not in normalized:
         return ""
@@ -366,6 +472,20 @@ def find_incompatible_llm_channel_models(
     api_surface: Optional[str],
     base_url: Optional[str] = None,
 ) -> List[str]:
+    """找出与 Responses API 形态不兼容的模型。
+
+    仅当渠道声明为 responses 形态时才校验：非 openai 协议全部不兼容，
+    openai 协议下前缀不是 openai 的模型同样无法走 Responses 路由。
+
+    Args:
+        models: 渠道声明的模型列表。
+        protocol: 渠道协议。
+        api_surface: 渠道声明的 API 形态。
+        base_url: 渠道 base URL，用于协议兜底推断。
+
+    Returns:
+        不兼容的模型名列表；形态非 responses 时直接返回空列表。
+    """
     if normalize_llm_channel_api_surface(api_surface) != "responses":
         return []
     resolved = resolve_llm_channel_protocol(protocol, base_url=base_url, models=models)
@@ -378,6 +498,14 @@ def find_incompatible_llm_channel_models(
 
 
 def find_llm_channel_surface_conflicts(channels: List[Dict[str, Any]]) -> Dict[str, Tuple[str, ...]]:
+    """检测同一模型是否被多个启用的渠道声明成了不同的 API 形态。
+
+    Args:
+        channels: 解析后的渠道字典列表。
+
+    Returns:
+        模型名 → 冲突形态元组的映射；无冲突时为空字典。
+    """
     route_surfaces: Dict[str, set[str]] = {}
     for channel in channels:
         if not isinstance(channel, dict) or not channel.get("enabled", True):
@@ -397,6 +525,18 @@ def find_llm_channel_surface_conflicts(channels: List[Dict[str, Any]]) -> Dict[s
 
 
 def apply_litellm_api_surface(model: str, api_surface: Optional[str]) -> str:
+    """按声明的 API 形态改写模型路由；responses 形态需转成 openai/responses/<model>。
+
+    Args:
+        model: 原始模型路由（带 provider 前缀）。
+        api_surface: 目标 API 形态。
+
+    Returns:
+        改写后的模型路由；非 responses 形态原样返回。
+
+    Raises:
+        ValueError: 声明 responses 形态但模型不是 openai/<model> 路由。
+    """
     normalized_model = (model or "").strip()
     if not normalized_model or normalize_llm_channel_api_surface(api_surface) != "responses":
         return normalized_model
@@ -411,7 +551,7 @@ def resolve_litellm_wire_model(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Resolve a router alias to its underlying LiteLLM wire model."""
+    """把 Router 别名解析为其底层实际请求的 LiteLLM wire model。"""
     return llm_generation_params.resolve_litellm_wire_model(model, model_list)
 
 
@@ -420,7 +560,7 @@ def resolve_litellm_thinking_enabled(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
-    """Resolve whether the outgoing LiteLLM request explicitly enables thinking."""
+    """解析本次 LiteLLM 请求是否显式开启思考（thinking）模式。"""
     return llm_generation_params.resolve_litellm_thinking_enabled(
         model,
         model_list=model_list,
@@ -433,7 +573,7 @@ def get_fixed_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
-    """Return a provider-mandated temperature for known strict models."""
+    """返回 provider 强制要求的固定温度值（针对已知的严格模型）。"""
     return llm_generation_params.get_fixed_litellm_temperature(
         model,
         model_list=model_list,
@@ -449,7 +589,7 @@ def normalize_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> float:
-    """Normalize temperature before sending a LiteLLM request."""
+    """发送 LiteLLM 请求前对温度参数做归一化（含 provider 强制值处理）。"""
     return llm_generation_params.normalize_litellm_temperature(
         model,
         temperature,
@@ -460,7 +600,12 @@ def normalize_litellm_temperature(
 
 
 def resolve_unified_llm_temperature(model: str) -> float:
-    """Resolve the raw unified LLM temperature with backward-compatible fallbacks."""
+    """解析统一温度（LLM_TEMPERATURE），失败时按 provider 专属变量逐级回退。
+
+    回退顺序：LLM_TEMPERATURE → 当前模型 provider 对应的专属变量 →
+    GEMINI/ANTHROPIC/OPENAI_TEMPERATURE 依次尝试 → 0.7。
+    这样老版本只配 provider 专属变量的部署无需改动即可继续生效。
+    """
     llm_temperature_raw = os.getenv("LLM_TEMPERATURE")
     if llm_temperature_raw and llm_temperature_raw.strip():
         try:
@@ -496,7 +641,7 @@ def resolve_unified_llm_temperature(model: str) -> float:
 
 
 def _get_litellm_provider(model: str) -> str:
-    """Extract the LiteLLM provider prefix from a model string."""
+    """从模型字符串中提取 LiteLLM provider 前缀；无前缀时按 openai 处理。"""
     if not model:
         return ""
     if "/" in model:
@@ -505,7 +650,11 @@ def _get_litellm_provider(model: str) -> str:
 
 
 def _uses_direct_env_provider(model: str) -> bool:
-    """Whether runtime handles the model via direct litellm env/provider resolution."""
+    """判断运行时是否通过 litellm 的环境变量直连方式解析该模型。
+
+    非本模块托管 Key 的 provider（如 cohere/*）不会进入 Router model_list，
+    因此校验与调用都要走直连分支。
+    """
     provider = _get_litellm_provider(model)
     return bool(provider) and provider not in _MANAGED_LITELLM_KEY_PROVIDERS
 
@@ -514,7 +663,7 @@ def normalize_agent_litellm_model(
     model: str,
     configured_models: Optional[set[str]] = None,
 ) -> str:
-    """Normalize AGENT_LITELLM_MODEL while preserving configured router aliases."""
+    """归一化 AGENT_LITELLM_MODEL，同时保留已配置的 Router 别名不被加前缀。"""
     normalized_model = (model or "").strip()
     if not normalized_model:
         return ""
@@ -526,7 +675,7 @@ def normalize_agent_litellm_model(
 
 
 def get_effective_agent_primary_model(config: "Config") -> str:
-    """Return the effective Agent primary model with fallback inheritance."""
+    """返回 Agent 实际生效的主模型；未单独配置时继承全局 LITELLM_MODEL。"""
     configured_router_models = set(
         get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
@@ -540,7 +689,7 @@ def get_effective_agent_primary_model(config: "Config") -> str:
 
 
 def get_effective_agent_models_to_try(config: "Config") -> List[str]:
-    """Return Agent model try-order: primary + global fallbacks (deduped)."""
+    """返回 Agent 的模型尝试顺序：主模型 + 全局备选模型（已去重）。"""
     configured_router_models = set(
         get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
@@ -566,16 +715,15 @@ def get_effective_agent_models_to_try(config: "Config") -> List[str]:
 
 def setup_env(override: bool = False):
     """
-    Initialize environment variables from .env file.
+    从 .env 文件初始化环境变量。
 
     Args:
-        override: If True, overwrite existing environment variables with values
-                  from .env file. Set to True when reloading config after updates.
-                  Default is False to preserve behavior on initial load where
-                  system environment variables take precedence.
+        override: 为 True 时用 .env 中的值覆盖已存在的环境变量；
+                  配置热更新后重新加载时应设为 True。默认 False，
+                  保持首次加载时“系统环境变量优先”的历史行为。
     """
     Config._capture_bootstrap_runtime_env_overrides()
-    # src/config.py -> src/ -> root
+    # src/config.py -> src/ -> 项目根目录
     env_file = os.getenv("ENV_FILE")
     if env_file:
         env_path = Path(env_file)
@@ -602,6 +750,9 @@ class Config:
     feishu_app_id: Optional[str] = None
     feishu_app_secret: Optional[str] = None
     feishu_folder_token: Optional[str] = None  # 目标文件夹 Token
+    feishu_chat_id: Optional[str] = None
+    feishu_domain: str = "feishu"
+    feishu_send_as_file: bool = False
 
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
@@ -613,30 +764,35 @@ class Config:
     longbridge_access_token: Optional[str] = None
 
     # === AI 分析配置 ===
-    # LiteLLM unified model config (provider/model format, e.g. gemini/gemini-3.1-pro-preview)
+    # LiteLLM 统一模型配置（provider/model 格式，例如 gemini/gemini-3.1-pro-preview）
+    generation_backend: str = "litellm"
+    generation_fallback_backend: str = "litellm"
+    generation_backend_timeout_seconds: int = 300
+    generation_backend_max_output_bytes: int = 1048576
+    opencode_cli_model: str = ""
     litellm_model: str = ""  # Primary model; must include provider prefix when set explicitly
     litellm_fallback_models: List[str] = field(default_factory=list)  # Cross-model fallback list
 
-    # Unified temperature for all LLM calls (LLM_TEMPERATURE)
+    # 所有 LLM 调用的统一温度（LLM_TEMPERATURE）
     llm_temperature: float = 0.7
 
     # --- Multi-channel LLM config (new) ---
-    # LITELLM_CONFIG: path to a standard litellm_config.yaml file (most powerful)
+    # LITELLM_CONFIG：标准 litellm_config.yaml 文件路径（能力最强）
     litellm_config_path: Optional[str] = None
-    # Internal metadata: which config layer actually produced llm_model_list
+    # 内部元数据：记录 llm_model_list 实际由哪一层配置生成
     llm_models_source: str = ""
-    # LLM_CHANNELS: list of channel dicts, each with name/base_url/api_keys/models
+    # LLM_CHANNELS：渠道字典列表，每项含 name/base_url/api_keys/models
     llm_channels: List[Dict[str, Any]] = field(default_factory=list)
-    # Pre-built LiteLLM Router model_list (populated from channels or YAML)
+    # 预构建的 LiteLLM Router model_list（由渠道或 YAML 填充）
     llm_model_list: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Provider API key lists parsed from explicit provider env vars
+    # 由 provider 专属环境变量解析出的 API Key 列表
     gemini_api_keys: List[str] = field(default_factory=list)
     anthropic_api_keys: List[str] = field(default_factory=list)
     openai_api_keys: List[str] = field(default_factory=list)
     deepseek_api_keys: List[str] = field(default_factory=list)
 
-    # Provider-specific fields used by direct LiteLLM calls and diagnostics
+    # provider 专属字段，供 LiteLLM 直连调用与诊断使用
     gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-3.1-pro-preview"  # 主模型
     gemini_model_fallback: str = "gemini-3-flash-preview"  # 备选模型
@@ -661,10 +817,10 @@ class Config:
     openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
 
     # === Vision 配置 ===
-    # VISION_MODEL: litellm model string used for image understanding calls.
-    # Fallback chain: VISION_MODEL → OPENAI_VISION_MODEL → gemini/gemini-2.0-flash
+    # VISION_MODEL：用于图片理解调用的 litellm 模型字符串
+    # 回退链：VISION_MODEL → OPENAI_VISION_MODEL → gemini/gemini-2.0-flash
     vision_model: str = ""
-    # VISION_PROVIDER_PRIORITY: comma-separated provider order for Vision fallback.
+    # VISION_PROVIDER_PRIORITY：Vision 回退时的 provider 顺序（逗号分隔）
     vision_provider_priority: str = "gemini,anthropic,openai"
 
     # === 搜索引擎配置（支持多 Key 负载均衡）===
@@ -684,10 +840,15 @@ class Config:
     # === 新闻与分析筛选配置 ===
     news_max_age_days: int = 3   # 新闻最大时效（天）
     news_strategy_profile: str = "short"  # 新闻窗口策略档位：ultra_short/short/medium/long
+    news_intel_retention_days: int = 30
+    news_intel_fetch_timeout_sec: float = 8.0
+    news_intel_max_items_per_source: int = 50
+    news_intel_auto_fetch_enabled: bool = False
+    newsnow_base_url: str = "https://newsnow.busiyi.world"
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === Agent 模式配置 ===
-    agent_litellm_model: str = ""  # Optional Agent-only primary model; empty inherits LITELLM_MODEL
+    agent_litellm_model: str = ""  # 可选的 Agent 专用主模型；留空时继承 LITELLM_MODEL
     agent_mode: bool = False
     _agent_mode_explicit: bool = False  # True when AGENT_MODE was explicitly set in env
     agent_max_steps: int = AGENT_MAX_STEPS_DEFAULT
@@ -697,6 +858,16 @@ class Config:
     agent_arch: str = "single"     # Agent architecture: 'single' (legacy) or 'multi' (orchestrator)
     agent_orchestrator_mode: str = "standard"  # Orchestrator mode: quick/standard/full/specialist
     agent_orchestrator_timeout_s: int = 600  # Cooperative timeout budget for the whole multi-agent pipeline
+    agent_skill_max_concurrency: int = 3  # Maximum parallel specialist skill workers (1-4)
+    agent_data_tool_timeout_s: float = 0.0
+    agent_search_tool_timeout_s: float = 0.0
+    agent_analysis_tool_timeout_s: float = 0.0
+    agent_action_tool_timeout_s: float = 0.0
+    agent_context_compression_enabled: bool = False
+    agent_context_compression_profile: str = AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE
+    agent_context_compression_trigger_tokens: int = 12000
+    agent_context_protected_turns: int = 4
+    agent_context_compression_summary_tokens: int = 1500
     agent_risk_override: bool = True  # Allow risk agent to veto buy signals
     agent_deep_research_budget: int = 30000  # Max token budget for deep research
     agent_deep_research_timeout: int = 600  # Max seconds for /research command before returning timeout
@@ -707,7 +878,7 @@ class Config:
     agent_skill_routing: str = "auto"  # Skill routing: 'auto' (regime-based) or 'manual'
     agent_event_monitor_enabled: bool = False  # Enable periodic event-driven alert checks in schedule mode
     agent_event_monitor_interval_minutes: int = 5  # Polling interval for event monitor background checks
-    agent_event_alert_rules_json: str = ""  # JSON array of serialized EventMonitor rules
+    agent_event_alert_rules_json: str = ""  # 序列化的 EventMonitor 规则 JSON 数组
 
     # === 通知配置（可同时配置多个，全部推送）===
     
@@ -730,8 +901,8 @@ class Config:
     email_password: Optional[str] = None  # 邮箱密码/授权码
     email_receivers: List[str] = field(default_factory=list)  # 收件人列表（留空则发给自己）
 
-    # Stock-to-email group routing (Issue #268): STOCK_GROUP_N + EMAIL_GROUP_N
-    # When configured, each group's report is sent to that group's emails only.
+    # 股票→邮件分组路由（Issue #268）：STOCK_GROUP_N + EMAIL_GROUP_N
+    # 配置后，每组的报告只发送给该组配置的收件人。
     stock_email_groups: List[Tuple[List[str], List[str]]] = field(default_factory=list)
 
     # Pushover 配置（手机/桌面推送通知）
@@ -792,7 +963,7 @@ class Config:
     report_summary_only: bool = False
     report_show_llm_model: bool = True
 
-    # Report Engine P0: Jinja2 renderer and integrity checks
+    # 报告引擎 P0：Jinja2 渲染器与内容完整性校验
     report_templates_dir: str = "backend/templates"  # Template directory (relative to project root)
     report_renderer_enabled: bool = False  # Enable Jinja2 rendering (default off for zero regression)
     report_integrity_enabled: bool = True  # Content integrity validation after LLM output
@@ -809,7 +980,7 @@ class Config:
     # 分析间隔时间（秒）- 用于避免API限流
     analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟
 
-    # Merge stock + market report into one notification (Issue #190)
+    # 把个股报告与大盘报告合并为一条通知推送（Issue #190）
     merge_email_notification: bool = False
 
     # 消息长度限制（字节）- 超长自动分批发送
@@ -858,6 +1029,7 @@ class Config:
     schedule_enabled: bool = False            # 是否启用定时任务
     schedule_time: str = "18:00"              # 每日推送时间（HH:MM 格式）
     schedule_run_immediately: bool = True     # 启动时是否立即执行一次
+    runtime_scheduler_timeout_seconds: int = 2700  # API/Web scheduler watchdog budget
     run_immediately: bool = True              # 启动时是否立即执行一次（非定时模式）
     market_review_enabled: bool = True        # 是否启用大盘复盘
     daily_market_context_enabled: bool = True  # 是否将当日大盘摘要注入个股分析
@@ -907,7 +1079,7 @@ class Config:
     # 基本面缓存最大条目数（避免长时间运行内存增长）
     fundamental_cache_max_entries: int = 256
 
-    # === Portfolio PR2: import/risk/fx settings ===
+    # === Portfolio PR2：导入/风险/汇率设置 ===
     portfolio_risk_concentration_alert_pct: float = 35.0
     portfolio_risk_drawdown_alert_pct: float = 15.0
     portfolio_risk_stop_loss_alert_pct: float = 10.0
@@ -952,6 +1124,8 @@ class Config:
     dingtalk_app_key: Optional[str] = None      # 应用 AppKey
     dingtalk_app_secret: Optional[str] = None   # 应用 AppSecret
     dingtalk_stream_enabled: bool = False       # 是否启用 Stream 模式（无需公网IP）
+    dingtalk_webhook_url: Optional[str] = None
+    dingtalk_secret: Optional[str] = None
     
     # 企业微信机器人（回调模式）
     wecom_corpid: Optional[str] = None              # 企业 ID
@@ -963,8 +1137,8 @@ class Config:
     telegram_webhook_secret: Optional[str] = None   # Webhook 密钥
 
     # === 配置校验模式 ===
-    # CONFIG_VALIDATE_MODE=warn (default): log all issues but always continue startup
-    # CONFIG_VALIDATE_MODE=strict: exit(1) when any "error" severity issue is found
+    # CONFIG_VALIDATE_MODE=warn（默认）：记录所有问题但始终继续启动
+    # CONFIG_VALIDATE_MODE=strict：发现任意 "error" 级别问题时 exit(1)
     config_validate_mode: str = "warn"
 
     # --- Post-init validation ---------------------------------------------------
@@ -984,7 +1158,7 @@ class Config:
     _BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS = frozenset()
 
     def __post_init__(self) -> None:
-        """Normalize enum-like config values after dataclass construction."""
+        """在 dataclass 构造完成后，对枚举型配置值做归一化校验与回退。"""
         _log = logging.getLogger(__name__)
         if self.agent_arch not in self._VALID_AGENT_ARCH:
             _log.warning(
@@ -1097,21 +1271,21 @@ class Config:
             stock_list = ['600519', '000001', '300750']
         
         # === LiteLLM multi-key parsing ===
-        # GEMINI_API_KEYS (comma-separated) > GEMINI_API_KEY (single)
+        # GEMINI_API_KEYS（逗号分隔多个）优先于 GEMINI_API_KEY（单个）
         _gemini_keys_raw = os.getenv('GEMINI_API_KEYS', '')
         gemini_api_keys = [k.strip() for k in _gemini_keys_raw.split(',') if k.strip()]
         _single_gemini = os.getenv('GEMINI_API_KEY', '').strip()
         if not gemini_api_keys and _single_gemini:
             gemini_api_keys = [_single_gemini]
 
-        # ANTHROPIC_API_KEYS > ANTHROPIC_API_KEY
+        # ANTHROPIC_API_KEYS 优先于 ANTHROPIC_API_KEY
         _anthropic_keys_raw = os.getenv('ANTHROPIC_API_KEYS', '')
         anthropic_api_keys = [k.strip() for k in _anthropic_keys_raw.split(',') if k.strip()]
         _single_anthropic = os.getenv('ANTHROPIC_API_KEY', '').strip()
         if not anthropic_api_keys and _single_anthropic:
             anthropic_api_keys = [_single_anthropic]
 
-        # OPENAI_API_KEYS > AIHUBMIX_KEY > OPENAI_API_KEY
+        # 取值优先级：OPENAI_API_KEYS > AIHUBMIX_KEY > OPENAI_API_KEY
         _aihubmix = os.getenv('AIHUBMIX_KEY', '').strip()
         _openai_keys_raw = os.getenv('OPENAI_API_KEYS', '')
         openai_api_keys = [k.strip() for k in _openai_keys_raw.split(',') if k.strip()]
@@ -1124,7 +1298,7 @@ class Config:
             'https://aihubmix.com/v1' if _aihubmix else None
         )
 
-        # DEEPSEEK_API_KEYS > DEEPSEEK_API_KEY (independent from OpenAI-compatible layer)
+        # DEEPSEEK_API_KEYS 优先于 DEEPSEEK_API_KEY（独立于 OpenAI 兼容层）
         _deepseek_keys_raw = os.getenv('DEEPSEEK_API_KEYS', '')
         deepseek_api_keys = [k.strip() for k in _deepseek_keys_raw.split(',') if k.strip()]
         if not deepseek_api_keys:
@@ -1138,7 +1312,7 @@ class Config:
         _openai_model_env = os.getenv('OPENAI_MODEL', '').strip()
         _openai_model_name = _openai_model_env or 'gpt-5.5'
 
-        # LITELLM_FALLBACK_MODELS: comma-separated list of fallback models
+        # LITELLM_FALLBACK_MODELS：逗号分隔的备选模型列表
         _fallback_str = os.getenv('LITELLM_FALLBACK_MODELS', '')
         litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
 
@@ -1148,13 +1322,13 @@ class Config:
         llm_channels: List[Dict[str, Any]] = []
         llm_model_list: List[Dict[str, Any]] = []
 
-        # Priority 1: LITELLM_CONFIG (standard LiteLLM YAML config file)
+        # 优先级 1：LITELLM_CONFIG（标准 LiteLLM YAML 配置文件）
         if litellm_config_path:
             llm_model_list = cls._parse_litellm_yaml(litellm_config_path)
             if llm_model_list:
                 llm_models_source = "litellm_config"
 
-        # Priority 2: LLM_CHANNELS (env var based channel config)
+        # 优先级 2：LLM_CHANNELS（基于环境变量的渠道配置）
         if not llm_model_list:
             _channels_str = os.getenv('LLM_CHANNELS', '').strip()
             if _channels_str:
@@ -1241,11 +1415,21 @@ class Config:
         if report_show_llm_model_raw is not None and not report_show_llm_model_raw.strip():
             report_show_llm_model = False
 
+        agent_context_compression_profile = normalize_agent_context_compression_profile(
+            os.getenv('AGENT_CONTEXT_COMPRESSION_PROFILE')
+        )
+        agent_context_compression_preset = get_agent_context_compression_preset(
+            agent_context_compression_profile
+        )
+
         return cls(
             stock_list=stock_list,
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
+            feishu_chat_id=os.getenv('FEISHU_CHAT_ID'),
+            feishu_domain=(os.getenv('FEISHU_DOMAIN', 'feishu') or 'feishu').strip().lower(),
+            feishu_send_as_file=os.getenv('FEISHU_SEND_AS_FILE', '').lower() in ('true', '1', 'yes'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
@@ -1253,6 +1437,17 @@ class Config:
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
             longbridge_app_secret=os.getenv('LONGBRIDGE_APP_SECRET') or None,
             longbridge_access_token=os.getenv('LONGBRIDGE_ACCESS_TOKEN') or None,
+            generation_backend=(os.getenv('GENERATION_BACKEND') or 'litellm').strip().lower(),
+            generation_fallback_backend=(os.getenv('GENERATION_FALLBACK_BACKEND') or 'litellm').strip().lower(),
+            generation_backend_timeout_seconds=parse_env_int(
+                os.getenv('GENERATION_BACKEND_TIMEOUT_SECONDS'), 300,
+                field_name='GENERATION_BACKEND_TIMEOUT_SECONDS', minimum=1, maximum=3600,
+            ),
+            generation_backend_max_output_bytes=parse_env_int(
+                os.getenv('GENERATION_BACKEND_MAX_OUTPUT_BYTES'), 1048576,
+                field_name='GENERATION_BACKEND_MAX_OUTPUT_BYTES', minimum=1024, maximum=33554432,
+            ),
+            opencode_cli_model=(os.getenv('OPENCODE_CLI_MODEL') or '').strip(),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
             llm_temperature=resolve_unified_llm_temperature(litellm_model),
@@ -1275,18 +1470,18 @@ class Config:
             anthropic_model=os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
             anthropic_temperature=parse_env_float(os.getenv('ANTHROPIC_TEMPERATURE'), 0.7, field_name='ANTHROPIC_TEMPERATURE'),
             anthropic_max_tokens=parse_env_int(os.getenv('ANTHROPIC_MAX_TOKENS'), 8192, field_name='ANTHROPIC_MAX_TOKENS', minimum=1),
-            # AIHubmix is the preferred OpenAI-compatible provider (one key, all models, no VPN required).
-            # Within the OpenAI-compatible layer: AIHUBMIX_KEY takes priority over OPENAI_API_KEY.
-            # Overall provider fallback order: Gemini > Anthropic > OpenAI-compatible (incl. AIHubmix).
-            # base_url is auto-set to aihubmix.com/v1 when AIHUBMIX_KEY is used and no explicit
-            # OPENAI_BASE_URL override is provided.
-            # Model names match upstream (e.g. gemini-3.1-pro-preview, gpt-5.5, deepseek-v4-flash).
+            # AIHubmix 是首选的 OpenAI 兼容 provider（一把 Key 通吃所有模型，无需梯子）。
+            # 在 OpenAI 兼容层内部：AIHUBMIX_KEY 优先于 OPENAI_API_KEY。
+            # 整体 provider 回退顺序：Gemini > Anthropic > OpenAI 兼容层（含 AIHubmix）。
+            # 使用 AIHUBMIX_KEY 且未显式设置 OPENAI_BASE_URL 时，
+            # base_url 自动设为 aihubmix.com/v1。
+            # 模型名与上游保持一致（如 gemini-3.1-pro-preview、gpt-5.5、deepseek-v4-flash）。
             openai_api_key=openai_api_keys[0] if openai_api_keys else None,
             openai_base_url=openai_base_url,
             openai_model=_openai_model_name,
             openai_vision_model=os.getenv('OPENAI_VISION_MODEL') or None,
             openai_temperature=parse_env_float(os.getenv('OPENAI_TEMPERATURE'), 0.7, field_name='OPENAI_TEMPERATURE'),
-            # Vision model: VISION_MODEL > OPENAI_VISION_MODEL (alias) > default
+            # Vision 模型取值优先级：VISION_MODEL > OPENAI_VISION_MODEL（别名）> 默认值
             vision_model=(
                 os.getenv('VISION_MODEL')
                 or os.getenv('OPENAI_VISION_MODEL')
@@ -1307,6 +1502,11 @@ class Config:
             news_strategy_profile=cls._parse_news_strategy_profile(
                 os.getenv('NEWS_STRATEGY_PROFILE', 'short')
             ),
+            news_intel_retention_days=parse_env_int(os.getenv('NEWS_INTEL_RETENTION_DAYS'), 30, field_name='NEWS_INTEL_RETENTION_DAYS', minimum=1),
+            news_intel_fetch_timeout_sec=parse_env_float(os.getenv('NEWS_INTEL_FETCH_TIMEOUT_SEC'), 8.0, field_name='NEWS_INTEL_FETCH_TIMEOUT_SEC', minimum=1.0),
+            news_intel_max_items_per_source=parse_env_int(os.getenv('NEWS_INTEL_MAX_ITEMS_PER_SOURCE'), 50, field_name='NEWS_INTEL_MAX_ITEMS_PER_SOURCE', minimum=1),
+            news_intel_auto_fetch_enabled=os.getenv('NEWS_INTEL_AUTO_FETCH_ENABLED', 'false').lower() == 'true',
+            newsnow_base_url=(os.getenv('NEWSNOW_BASE_URL') or 'https://newsnow.busiyi.world').strip().rstrip('/'),
             bias_threshold=parse_env_float(os.getenv('BIAS_THRESHOLD'), 5.0, field_name='BIAS_THRESHOLD', minimum=1.0),
             agent_litellm_model=agent_litellm_model,
             agent_mode=os.getenv('AGENT_MODE', 'false').lower() == 'true',
@@ -1327,6 +1527,48 @@ class Config:
                 600,
                 field_name='AGENT_ORCHESTRATOR_TIMEOUT_S',
                 minimum=0,
+            ),
+            agent_skill_max_concurrency=parse_env_int(
+                os.getenv('AGENT_SKILL_MAX_CONCURRENCY'),
+                3,
+                field_name='AGENT_SKILL_MAX_CONCURRENCY',
+                minimum=1,
+                maximum=4,
+            ),
+            agent_data_tool_timeout_s=parse_env_float(
+                os.getenv('AGENT_DATA_TOOL_TIMEOUT_S'), 0.0,
+                field_name='AGENT_DATA_TOOL_TIMEOUT_S', minimum=0.0,
+            ),
+            agent_search_tool_timeout_s=parse_env_float(
+                os.getenv('AGENT_SEARCH_TOOL_TIMEOUT_S'), 0.0,
+                field_name='AGENT_SEARCH_TOOL_TIMEOUT_S', minimum=0.0,
+            ),
+            agent_analysis_tool_timeout_s=parse_env_float(
+                os.getenv('AGENT_ANALYSIS_TOOL_TIMEOUT_S'), 0.0,
+                field_name='AGENT_ANALYSIS_TOOL_TIMEOUT_S', minimum=0.0,
+            ),
+            agent_action_tool_timeout_s=parse_env_float(
+                os.getenv('AGENT_ACTION_TOOL_TIMEOUT_S'), 0.0,
+                field_name='AGENT_ACTION_TOOL_TIMEOUT_S', minimum=0.0,
+            ),
+            agent_context_compression_enabled=parse_env_bool(
+                os.getenv('AGENT_CONTEXT_COMPRESSION_ENABLED'), default=False,
+            ),
+            agent_context_compression_profile=agent_context_compression_profile,
+            agent_context_compression_trigger_tokens=parse_env_int(
+                os.getenv('AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS'),
+                agent_context_compression_preset.trigger_tokens,
+                field_name='AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS', minimum=1000,
+            ),
+            agent_context_protected_turns=parse_env_int(
+                os.getenv('AGENT_CONTEXT_PROTECTED_TURNS'),
+                agent_context_compression_preset.protected_turns,
+                field_name='AGENT_CONTEXT_PROTECTED_TURNS', minimum=0, maximum=50,
+            ),
+            agent_context_compression_summary_tokens=parse_env_int(
+                os.getenv('AGENT_CONTEXT_COMPRESSION_SUMMARY_TOKENS'),
+                agent_context_compression_preset.summary_tokens,
+                field_name='AGENT_CONTEXT_COMPRESSION_SUMMARY_TOKENS', minimum=200, maximum=8000,
             ),
             agent_risk_override=os.getenv('AGENT_RISK_OVERRIDE', 'true').lower() == 'true',
             agent_deep_research_budget=parse_env_int(
@@ -1503,6 +1745,12 @@ class Config:
             ).lower() == 'true',
             schedule_time=(schedule_time_value or '18:00').strip() or '18:00',
             schedule_run_immediately=schedule_run_immediately,
+            runtime_scheduler_timeout_seconds=parse_env_int(
+                os.getenv('RUNTIME_SCHEDULER_TIMEOUT_SECONDS'),
+                2700,
+                field_name='RUNTIME_SCHEDULER_TIMEOUT_SECONDS',
+                minimum=60,
+            ),
             run_immediately=schedule_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             daily_market_context_enabled=os.getenv('DAILY_MARKET_CONTEXT_ENABLED', 'true').lower() == 'true',
@@ -1554,6 +1802,8 @@ class Config:
             dingtalk_app_key=os.getenv('DINGTALK_APP_KEY'),
             dingtalk_app_secret=os.getenv('DINGTALK_APP_SECRET'),
             dingtalk_stream_enabled=os.getenv('DINGTALK_STREAM_ENABLED', 'false').lower() == 'true',
+            dingtalk_webhook_url=os.getenv('DINGTALK_WEBHOOK_URL'),
+            dingtalk_secret=os.getenv('DINGTALK_SECRET'),
             # 企业微信机器人
             wecom_corpid=os.getenv('WECOM_CORPID'),
             wecom_token=os.getenv('WECOM_TOKEN'),
@@ -1640,10 +1890,16 @@ class Config:
     
     @classmethod
     def _parse_litellm_yaml(cls, config_path: str) -> List[Dict[str, Any]]:
-        """Parse a standard LiteLLM config YAML file into Router model_list.
+        """把标准 LiteLLM YAML 配置解析为 Router 的 model_list。
 
-        Supports the ``os.environ/VAR_NAME`` syntax for secret references.
-        Returns an empty list on any error (logged, never raises).
+        支持 ``os.environ/VAR_NAME`` 语法引用密钥。任何异常都只记日志并返回空列表，
+        保证配置错误不会让进程启动失败。
+
+        Args:
+            config_path: YAML 路径；相对路径按项目根目录解析。
+
+        Returns:
+            Router model_list；解析失败时为空列表。
         """
         import logging
         _logger = logging.getLogger(__name__)
@@ -1672,7 +1928,7 @@ class Config:
             _logger.warning("LITELLM_CONFIG: model_list must be a list")
             return []
 
-        # Resolve os.environ/ references in string params
+        # 解析字符串参数中的 os.environ/ 引用，替换为真实环境变量值
         for entry in model_list:
             params = entry.get('litellm_params', {})
             for key in list(params.keys()):
@@ -1686,15 +1942,21 @@ class Config:
 
     @classmethod
     def _parse_llm_channels(cls, channels_str: str) -> List[Dict[str, Any]]:
-        """Parse LLM_CHANNELS env var and per-channel env vars.
+        """解析 LLM_CHANNELS 以及每个渠道的专属环境变量。
 
-        Format:
+        约定格式（渠道名大写后拼在 LLM_ 前缀之后）：
             LLM_CHANNELS=aihubmix,deepseek,gemini
             LLM_AIHUBMIX_PROTOCOL=openai
             LLM_AIHUBMIX_BASE_URL=https://aihubmix.com/v1
-            LLM_AIHUBMIX_API_KEY=sk-xxx           (or LLM_AIHUBMIX_API_KEYS=k1,k2)
+            LLM_AIHUBMIX_API_KEY=sk-xxx           (或 LLM_AIHUBMIX_API_KEYS=k1,k2)
             LLM_AIHUBMIX_MODELS=gpt-5.5,claude-sonnet-4-6
             LLM_AIHUBMIX_ENABLED=true
+
+        Args:
+            channels_str: LLM_CHANNELS 的原始逗号分隔字符串。
+
+        Returns:
+            解析成功的渠道字典列表；缺 Key / 缺模型 / 被禁用的渠道会被跳过。
         """
         import logging
         _logger = logging.getLogger(__name__)
@@ -1712,20 +1974,20 @@ class Config:
             enabled_raw = os.getenv(f'LLM_{ch_upper}_ENABLED')
             enabled = parse_env_bool(enabled_raw, default=True)
 
-            # API keys: LLM_{NAME}_API_KEYS (multi) > LLM_{NAME}_API_KEY (single)
+            # API Key 取值：LLM_{NAME}_API_KEYS（多个）优先于 LLM_{NAME}_API_KEY（单个）
             api_keys_raw = os.getenv(f'LLM_{ch_upper}_API_KEYS', '')
             api_keys = [k.strip() for k in api_keys_raw.split(',') if k.strip()]
             if not api_keys:
                 single_key = os.getenv(f'LLM_{ch_upper}_API_KEY', '').strip()
                 if single_key:
                     api_keys = [single_key]
-            # Models
+            # 模型列表
             models_raw = os.getenv(f'LLM_{ch_upper}_MODELS', '')
             raw_models = [m.strip() for m in models_raw.split(',') if m.strip()]
             protocol = resolve_llm_channel_protocol(protocol_raw, base_url=base_url, models=raw_models, channel_name=ch_name)
             models = [normalize_llm_channel_model(m, protocol, base_url) for m in raw_models]
 
-            # Extra headers (JSON string, optional)
+            # 附加请求头（JSON 字符串，可选）
             extra_headers_raw = os.getenv(f'LLM_{ch_upper}_EXTRA_HEADERS', '').strip()
             extra_headers = None
             if extra_headers_raw:
@@ -1771,7 +2033,10 @@ class Config:
 
     @classmethod
     def _channels_to_model_list(cls, channels: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert parsed LLM channels to LiteLLM Router model_list format."""
+        """把解析后的渠道列表展开成 LiteLLM Router 的 model_list 格式。
+
+        模型 × API Key 做笛卡尔展开，使 Router 能在多 Key 之间做负载均衡。
+        """
         model_list: List[Dict[str, Any]] = []
         for ch in channels:
             for model_name in ch['models']:
@@ -1783,7 +2048,7 @@ class Config:
                         litellm_params['api_key'] = api_key
                     if ch['base_url']:
                         litellm_params['api_base'] = ch['base_url']
-                    # Auto-inject aihubmix sponsored header
+                    # 自动注入 aihubmix 的推广渠道请求头
                     headers = dict(ch.get('extra_headers') or {})
                     if ch['base_url'] and 'aihubmix.com' in ch['base_url']:
                         headers.setdefault('APP-Code', 'GPIJ3886')
@@ -1799,10 +2064,10 @@ class Config:
     @classmethod
     def _parse_stock_email_groups(cls) -> List[Tuple[List[str], List[str]]]:
         """
-        Parse STOCK_GROUP_N and EMAIL_GROUP_N from environment.
-        Returns [(stocks, emails), ...] ordered by group index.
-        Stock codes are canonicalized via normalize_stock_code so that
-        runtime routing matches the same equivalence used in validation.
+        从环境变量解析 STOCK_GROUP_N 与 EMAIL_GROUP_N。
+        返回按分组序号升序排列的 [(stocks, emails), ...]。
+        股票代码统一经过 normalize_stock_code 标准化，
+        以保证运行期路由与校验阶段使用的是同一套等价规则。
         """
         from data_provider.base import normalize_stock_code
 
@@ -1832,7 +2097,7 @@ class Config:
 
     @classmethod
     def _parse_report_type(cls, value: str) -> str:
-        """Parse REPORT_TYPE, fallback to simple for invalid values (supports brief)."""
+        """解析 REPORT_TYPE，非法值记警告后回退为 simple（支持 brief）。"""
         v = (value or 'simple').strip().lower()
         if v in ('simple', 'full', 'brief'):
             return v
@@ -1844,7 +2109,7 @@ class Config:
 
     @classmethod
     def _get_env_file_value(cls, key: str) -> Optional[str]:
-        """Read one config key directly from the active `.env` file."""
+        """直接从当前生效的 `.env` 文件中读取指定配置项（不经 os.environ）。"""
         env_file = os.getenv("ENV_FILE")
         env_path = Path(env_file) if env_file else (Path(__file__).resolve().parents[2] / ".env")
         if not env_path.exists():
@@ -1874,7 +2139,20 @@ class Config:
         default: Optional[str] = None,
         prefer_env_file: bool = False,
     ) -> Optional[str]:
-        """Resolve one env value, optionally preferring the persisted `.env` copy."""
+        """解析单个环境变量值，可指定是否优先采用持久化的 `.env` 副本。
+
+        运行期可被 WebUI 改写的键（见 _WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS）默认以
+        `.env` 为准，除非该键在进程启动时被显式覆盖，从而兼顾“界面改配置即时生效”
+        与“容器环境变量不被静默覆盖”。
+
+        Args:
+            key: 环境变量名。
+            default: 环境变量与 `.env` 都不存在时的回退值。
+            prefer_env_file: 为 True 时对该键强制采用 `.env` 优先策略。
+
+        Returns:
+            解析到的字符串值，均不存在时返回 default。
+        """
         env_value = os.getenv(key)
         file_value = cls._get_env_file_value(key)
 
@@ -1891,20 +2169,18 @@ class Config:
 
     @classmethod
     def _capture_bootstrap_runtime_env_overrides(cls) -> None:
-        """Remember process-provided runtime env overrides before dotenv mutates os.environ.
+        """在 dotenv 改写 os.environ 之前，记录进程级显式传入的运行期环境变量。
 
-        Called by ``setup_env()`` **before** ``load_dotenv()``, so ``os.environ``
-        only contains genuine process-level values (Docker ``environment:``,
-        Dockerfile ``ENV``, shell exports, etc.).
+        由 ``setup_env()`` 在 ``load_dotenv()`` **之前**调用，此时 ``os.environ``
+        中只含真正的进程级取值（Docker ``environment:``、Dockerfile ``ENV``、
+        shell export 等）。
 
-        A key is treated as an explicit override when it is present in
-        ``os.environ`` and either:
-        * absent from the persisted ``.env`` file, **or**
-        * present with a **different** value.
+        一个键被判定为“显式覆盖”的条件是：它存在于 ``os.environ`` 且
+        * 持久化的 ``.env`` 文件中不存在，**或**
+        * 两处取值 **不同**。
 
-        When both values are identical, the distinction is irrelevant and we
-        do **not** flag the key, so that a later ``.env`` update by WebUI can
-        take effect on config reload without requiring a container restart.
+        两者完全相同时不做标记，因为区分没有意义 —— 这样 WebUI 后续改写
+        ``.env`` 能在配置热加载时生效，无需重启容器。
         """
         if cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES_CAPTURED:
             return
@@ -1927,13 +2203,13 @@ class Config:
 
     @classmethod
     def _has_bootstrap_runtime_env_override(cls, key: str) -> bool:
-        """Return whether a key was explicitly overridden outside the env file."""
+        """判断某个键是否在 `.env` 之外被进程级显式覆盖过。"""
         cls._capture_bootstrap_runtime_env_overrides()
         return key in cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES
 
     @classmethod
     def _had_bootstrap_runtime_env_key(cls, key: str) -> bool:
-        """Return whether a watched key existed in the bootstrap process env."""
+        """判断受监控的键在启动时的进程环境变量中是否存在（无论是否被覆盖）。"""
         cls._capture_bootstrap_runtime_env_overrides()
         return key in cls._BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS
 
@@ -1942,7 +2218,12 @@ class Config:
         cls,
         preexisting_env_value: Optional[str],
     ) -> str:
-        """Resolve REPORT_LANGUAGE while preserving real process env overrides."""
+        """解析 REPORT_LANGUAGE，同时保证真正的进程级覆盖不被 `.env` 静默改写。
+
+        Args:
+            preexisting_env_value: dotenv 加载前记录的 REPORT_LANGUAGE 值，
+                为 None 表示进程启动时未设置该变量。
+        """
         file_value = cls._get_env_file_value("REPORT_LANGUAGE")
         env_value = os.getenv("REPORT_LANGUAGE")
 
@@ -1966,7 +2247,7 @@ class Config:
 
     @classmethod
     def _parse_report_language(cls, value: Optional[str]) -> str:
-        """Parse REPORT_LANGUAGE, fallback to zh for invalid values."""
+        """解析 REPORT_LANGUAGE，非法值记警告后回退为 zh。"""
         normalized = normalize_report_language(value, default="zh")
         raw = (value or "").strip()
         if raw and not is_supported_report_language_value(raw):
@@ -1978,7 +2259,7 @@ class Config:
 
     @classmethod
     def _parse_news_strategy_profile(cls, value: Optional[str]) -> str:
-        """Parse NEWS_STRATEGY_PROFILE, fallback to short for invalid values."""
+        """解析 NEWS_STRATEGY_PROFILE，非法值记警告后回退为 short。"""
         normalized = normalize_news_strategy_profile(value)
         raw = (value or "short").strip().lower()
         if raw != normalized:
@@ -1990,7 +2271,7 @@ class Config:
         return normalized
 
     def get_effective_news_window_days(self) -> int:
-        """Return effective news window days after profile + max-age merge."""
+        """返回策略档位与全局时效合并后的实际新闻窗口天数。"""
         return resolve_news_window_days(
             news_max_age_days=self.news_max_age_days,
             news_strategy_profile=self.news_strategy_profile,
@@ -2010,7 +2291,7 @@ class Config:
 
     @classmethod
     def _parse_market_review_color_scheme(cls, value: str) -> str:
-        """Parse market-review index change color scheme."""
+        """解析大盘复盘涨跌幅配色方案，非法值记警告后回退为 green_up。"""
         import logging
         v = (value or 'green_up').strip().lower().replace('-', '_')
         if v in ('green_up', 'red_up'):
@@ -2023,7 +2304,7 @@ class Config:
 
     @classmethod
     def _parse_md2img_engine(cls, value: str) -> str:
-        """Parse MD2IMG_ENGINE, fallback to wkhtmltoimage for invalid values (Issue #455)."""
+        """解析 MD2IMG_ENGINE，非法值记警告后回退为 wkhtmltoimage（Issue #455）。"""
         v = (value or 'wkhtmltoimage').strip().lower()
         if v in ('wkhtmltoimage', 'markdown-to-file'):
             return v
@@ -2038,23 +2319,22 @@ class Config:
     @classmethod
     def _resolve_realtime_source_priority(cls) -> str:
         """
-        Resolve realtime source priority with automatic tushare injection.
+        解析实时行情数据源优先级，并在配置 Tushare 时自动注入 tushare。
 
-        When TUSHARE_TOKEN is configured but REALTIME_SOURCE_PRIORITY is not
-        explicitly set, automatically prepend 'tushare' to the default priority
-        so that the paid data source is utilized for realtime quotes as well.
+        当配置了 TUSHARE_TOKEN 但未显式设置 REALTIME_SOURCE_PRIORITY 时，
+        自动把 'tushare' 前置到默认优先级之前，让付费数据源也用于实时行情。
         """
         explicit = os.getenv('REALTIME_SOURCE_PRIORITY')
         default_priority = 'tencent,akshare_sina,efinance,akshare_em'
 
         if explicit:
-            # User explicitly set priority, respect it
+            # 用户显式设置了优先级，直接采用
             return explicit
 
         tushare_token = os.getenv('TUSHARE_TOKEN', '').strip()
         if tushare_token:
-            # Token configured but no explicit priority override
-            # Prepend tushare so the paid source is tried first
+            # 已配置 Token 但没有显式优先级覆盖
+            # 把 tushare 前置，让付费数据源优先被尝试
             import logging
             logger = logging.getLogger(__name__)
             resolved = f'tushare,{default_priority}'
@@ -2074,11 +2354,11 @@ class Config:
         cls._BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS = frozenset()
 
     def has_searxng_enabled(self) -> bool:
-        """Whether SearXNG fallback is enabled via self-hosted or public mode."""
+        """判断 SearXNG 兜底是否可用（自建实例或公共实例任一开启）。"""
         return bool(self.searxng_base_urls) or bool(self.searxng_public_instances_enabled)
 
     def has_search_capability_enabled(self) -> bool:
-        """Whether any search provider is configured or SearXNG fallback is enabled."""
+        """判断是否配置了任意搜索 provider，或启用了 SearXNG 兜底。"""
         return bool(
             self.anspire_api_keys
             or self.bocha_api_keys
@@ -2090,9 +2370,9 @@ class Config:
         )
 
     def is_agent_available(self) -> bool:
-        """Check whether agent capabilities are usable.
+        """判断 Agent 能力是否可用。
 
-        Decision table:
+        判定表：
 
         +-----------------------+----------------------------------+---------+
         | AGENT_MODE env        | effective Agent primary model set| Result  |
@@ -2103,15 +2383,14 @@ class Config:
         | not set (default)     | no                               | False   |
         +-----------------------+----------------------------------+---------+
 
-        This keeps backward compatibility: users who never touch
-        ``AGENT_MODE`` get agent features automatically once they configure an
-        Agent-effective model, while ``AGENT_MODE=false`` acts as an explicit
-        kill-switch.
+        这样保持了向后兼容：从未设置 ``AGENT_MODE`` 的用户，一旦配置了
+        Agent 可用模型就自动获得 Agent 能力；而 ``AGENT_MODE=false``
+        始终作为显式的总开关。
         """
-        # Explicit AGENT_MODE takes full precedence
+        # 显式设置 AGENT_MODE 时优先级最高
         if self._agent_mode_explicit:
             return self.agent_mode
-        # Auto-detect: Agent inherits global model when AGENT_LITELLM_MODEL is empty.
+        # 自动探测：AGENT_LITELLM_MODEL 为空时 Agent 继承全局模型
         return bool(get_effective_agent_primary_model(self))
 
     def refresh_stock_list(self) -> None:
@@ -2148,17 +2427,16 @@ class Config:
         self.stock_list = stock_list
     
     def validate_structured(self) -> List[ConfigIssue]:
-        """Return structured validation issues with severity levels.
+        """返回带严重级别的结构化配置校验问题列表。
 
-        Covers all three LLM configuration tiers introduced by PR #494:
+        覆盖 PR #494 引入的三层 LLM 配置：
         - LITELLM_CONFIG (YAML)
         - LLM_CHANNELS (env)
-        - Legacy per-provider keys
+        - 旧版各 provider 独立 Key
 
         Returns:
-            List of ConfigIssue objects, each carrying a severity
-            ("error" | "warning" | "info"), a human-readable message, and the
-            primary environment variable / field name it relates to.
+            ConfigIssue 列表，每项携带级别（"error" | "warning" | "info"）、
+            可读描述文案，以及最相关的环境变量 / 字段名。
         """
         issues: List[ConfigIssue] = []
 
@@ -2210,9 +2488,9 @@ class Config:
             ))
 
         # --- LLM availability ---
-        # llm_model_list is populated for YAML / channels.
-        # Other LiteLLM-native providers (for example cohere/*) run through the
-        # direct litellm env path and therefore do not populate llm_model_list.
+        # llm_model_list 由 YAML / 渠道配置填充。
+        # 其它 LiteLLM 原生 provider（例如 cohere/*）走 litellm 环境变量直连，
+        # 因此不会出现在 llm_model_list 中，需要单独判定。
         has_direct_env_model = bool(self.litellm_model) and _uses_direct_env_provider(self.litellm_model)
         if not self.llm_model_list and not has_direct_env_model:
             issues.append(ConfigIssue(
@@ -2237,7 +2515,7 @@ class Config:
         available_router_model_set = set(available_router_models)
 
         def _has_runtime_source_for_model(model: str) -> bool:
-            """Return whether a model has a direct provider key or router entry."""
+            """判断模型是否存在可用的运行期来源（provider Key 或 Router 条目）。"""
             if not model or _uses_direct_env_provider(model):
                 return True
             provider = _get_litellm_provider(model)
@@ -2438,9 +2716,15 @@ class Config:
             and has_feishu_app_secret
             and has_feishu_doc_token
         )
+        has_feishu_file_bot_credentials = (
+            has_feishu_app_id
+            and has_feishu_app_secret
+            and bool((self.feishu_chat_id or "").strip())
+        )
         if (
             has_feishu_app_credentials
             and not has_feishu_full_cloud_doc_credentials
+            and not has_feishu_file_bot_credentials
             and not self.feishu_webhook_url
             and not (self.feishu_stream_enabled and has_feishu_app_id and has_feishu_app_secret)
         ):
@@ -2465,13 +2749,13 @@ class Config:
                 field="OPENAI_VISION_MODEL",
             ))
 
-        # --- Vision key availability ---
-        # Only warn when user explicitly set VISION_MODEL (or OPENAI_VISION_MODEL alias).
-        # Skipped when vision_model is empty (Vision not intentionally configured).
+        # --- Vision Key 可用性 ---
+        # 仅在用户显式配置 VISION_MODEL（或别名 OPENAI_VISION_MODEL）时才告警。
+        # vision_model 为空说明并未有意启用 Vision，跳过检查。
         if self.vision_model:
-            # Maps provider prefix → the corresponding key list tracked by Config.
-            # vertex_ai shares gemini keys; other LiteLLM-native providers are not
-            # in this map (their keys come from env vars, which we cannot inspect here).
+            # provider 前缀 → Config 中维护的对应 Key 列表。
+            # vertex_ai 与 gemini 共用同一份 Key；其它 LiteLLM 原生 provider 不在该映射中
+            # （其 Key 来自环境变量，此处无法检查）。
             _VISION_KEY_MAP = {
                 "gemini": self.gemini_api_keys,
                 "vertex_ai": self.gemini_api_keys,
@@ -2479,8 +2763,8 @@ class Config:
                 "openai": self.openai_api_keys,
                 "deepseek": self.deepseek_api_keys,
             }
-            # Derive the primary model's provider prefix so that its key is also
-            # checked even when the provider is absent from VISION_PROVIDER_PRIORITY.
+            # 推导主模型的 provider 前缀，即使该 provider 未出现在
+            # VISION_PROVIDER_PRIORITY 中，也要一并检查其 Key。
             _primary_prefix = (
                 self.vision_model.split("/")[0]
                 if "/" in self.vision_model
@@ -2491,10 +2775,10 @@ class Config:
                 for p in self.vision_provider_priority.split(",")
                 if p.strip()
             ]
-            # Union: fallback providers + primary model's own provider
+            # 取并集：回退 provider + 主模型自身的 provider
             _all_providers = {_primary_prefix} | set(_priority_providers)
 
-            # Align with get_api_keys_for_model: keys must be non-empty and len >= 8
+            # 与 get_api_keys_for_model 保持一致：Key 非空且长度 >= 8 才算有效
             _has_any_key = any(
                 any(k and len(k) >= 8 for k in (_VISION_KEY_MAP.get(p) or []))
                 for p in _all_providers
@@ -2533,13 +2817,12 @@ class Config:
         return issues
 
     def validate(self) -> List[str]:
-        """Return validation messages as plain strings (backward-compatible).
+        """以纯字符串形式返回校验信息（向后兼容接口）。
 
-        Internally delegates to validate_structured().  Callers that only need
-        the human-readable strings can continue to use this method unchanged.
+        内部委托 validate_structured()，只需要可读文案的调用方无需改动。
 
         Returns:
-            List of message strings, one per ConfigIssue.
+            每个 ConfigIssue 的 message 组成的字符串列表。
         """
         return [issue.message for issue in self.validate_structured()]
     
@@ -2564,15 +2847,14 @@ def get_config() -> Config:
 
 
 # ============================================================
-# Shared LLM helpers (used by both analyzer and agent/llm_adapter)
+# 共用的 LLM 辅助函数（analyzer 与 agent/llm_adapter 都会使用）
 # ============================================================
 
 def get_api_keys_for_model(model: str, config: Config) -> List[str]:
-    """Return explicitly managed API keys for a litellm model (legacy path only).
+    """返回指定 litellm 模型对应的托管 API Key 列表（仅旧版直连路径使用）。
 
-    When llm_model_list is populated (channels / YAML), the Router handles key
-    selection, so this function is not needed.  Kept for backward compat when
-    no Router is built and a direct litellm.completion() call is needed.
+    llm_model_list 非空（渠道 / YAML）时由 Router 负责选 Key，无需调用本函数；
+    保留它是为了兼容未构建 Router、需要直接 litellm.completion() 的场景。
     """
     provider = _get_litellm_provider(model)
     if provider in {"gemini", "vertex_ai"}:
@@ -2583,18 +2865,18 @@ def get_api_keys_for_model(model: str, config: Config) -> List[str]:
         return [k for k in config.deepseek_api_keys if k and len(k) >= 8]
     if provider == "openai":
         return [k for k in config.openai_api_keys if k and len(k) >= 8]
-    # Other LiteLLM-native providers – API key resolved from env vars
+    # 其它 LiteLLM 原生 provider 的 API Key 由环境变量解析，这里不返回
     return []
 
 
 def extra_litellm_params(model: str, config: Config) -> Dict[str, Any]:
-    """Build extra litellm params for a model (legacy path only).
+    """构造模型的 litellm 附加参数（仅旧版直连路径使用）。
 
-    When llm_model_list is populated, the Router already carries api_base
-    and headers per-deployment, so this is not called.
+    llm_model_list 非空时，Router 已按 deployment 携带 api_base 与请求头，
+    因此不会调用本函数。
     """
     params: Dict[str, Any] = {}
-    # deepseek/ provider: litellm auto-resolves api_base, no manual override needed
+    # deepseek/ provider：litellm 会自动解析 api_base，无需手动覆盖
     if model.startswith("deepseek/"):
         return params
     if model.startswith("openai/") or "/" not in model:

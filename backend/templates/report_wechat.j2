@@ -20,8 +20,34 @@
 
 ### {{ e.signal_emoji }} **{{ e.signal_text }}** | {{ e.stock_name }}({{ result.code }})
 
+{% if e.market_status_line %}
+{{ e.market_status_line }}
+{% endif %}
+
 {% if e.empty_news_disclosure %}
 {{ e.empty_news_disclosure }}
+{% endif %}
+
+{% set fundamental = result.fundamental_context if result.fundamental_context else {} %}
+{% set financial = ((fundamental.get('earnings') or {}).get('data') or {}).get('financial_report') or {} %}
+{% if fundamental.get('market') == 'cn' and financial %}
+💼 **财务**：营收 {{ financial.get('revenue', 'N/A') }} | 归母净利润 {{ financial.get('net_profit_parent', 'N/A') }} | ROE {{ financial.get('roe', 'N/A') }}
+{% endif %}
+
+{% set market_context = result.market_structure_context if result.market_structure_context else {} %}
+{% set market_position = market_context.get('stock_market_position') or {} %}
+{% set related_boards = market_position.get('related_boards') or [] %}
+{% if market_context.get('market', 'cn') == 'cn' and related_boards %}
+🧩 **关联板块**：{% for board in related_boards[:3] if board.get('name') %}{{ board.name }}{{ '（' ~ (board.get('type') or '概念') ~ '）' }}{{ '、' if not loop.last else '' }}{% endfor %}
+{% endif %}
+
+{% set phase = dashboard.get('phase_decision') or {} %}
+{% if phase.get('immediate_action') %}
+🛡️ **阶段决策**：{{ phase.immediate_action[:60] }}
+{% endif %}
+
+{% if result.data_sources %}
+📋 数据来源：{{ result.data_sources[:100] }}
 {% endif %}
 
 {% set one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary %}

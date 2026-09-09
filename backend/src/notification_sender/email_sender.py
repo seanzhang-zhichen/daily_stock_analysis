@@ -49,7 +49,7 @@ SMTP_CONFIGS = {
 
 
 class EmailSender:
-    """Send report notifications by SMTP with optional inline images."""
+    """通过 SMTP 发送报告通知，支持可选的内联图片。"""
     
     def __init__(self, config: Config):
         """
@@ -71,11 +71,10 @@ class EmailSender:
         return bool(self._email_config['sender'] and self._email_config['password'])
     
     def get_receivers_for_stocks(self, stock_codes: List[str]) -> List[str]:
-        """
-        Look up email receivers for given stock codes based on stock_email_groups.
-        Returns union of receivers for all matching groups; falls back to default if none match.
-        Stock codes are canonicalized before comparison so that equivalent
-        formats (e.g. SH600519 vs 600519) match correctly.
+        """根据 ``stock_email_groups`` 解析股票代码对应的收件人列表。
+
+        返回所有匹配分组的收件人去重并集；没有匹配时回退到默认收件人。
+        股票代码会先归一化（``SH600519`` / ``600519`` 等价）再比较。
         """
         if not stock_codes or not self._stock_email_groups:
             return self._email_config['receivers']
@@ -93,10 +92,7 @@ class EmailSender:
         return result if result else self._email_config['receivers']
 
     def get_all_email_receivers(self) -> List[str]:
-        """
-        Return union of all configured email receivers (all groups + default).
-        Used for market review which should go to everyone.
-        """
+        """返回所有已配置收件人的并集（所有分组 + 默认收件人），用于大盘复盘等广播场景。"""
         seen: set = set()
         result: List[str] = []
         for _, emails in self._stock_email_groups:
@@ -111,16 +107,16 @@ class EmailSender:
         return result
 
     def _format_sender_address(self, sender: str) -> str:
-        """Encode display name safely so non-ASCII sender names work across SMTP providers."""
+        """安全编码发件人显示名，保证非 ASCII 名称在各 SMTP 服务商下可用。"""
         sender_name = self._email_config.get('sender_name') or '股票分析助手'
         return formataddr((str(Header(str(sender_name), 'utf-8')), sender))
 
     @staticmethod
     def _close_server(server: Optional[smtplib.SMTP]) -> None:
-        """Best-effort SMTP cleanup to avoid leaving sockets open on header/build errors.
+        """尽力关闭 SMTP 连接，避免头/构建错误时留下悬挂 socket。
 
-        Exceptions from quit()/close() are intentionally silenced — connection may already
-        be in a broken state, and there is nothing useful to do at this point.
+        quit()/close() 的异常被有意静默——连接可能已处于损坏状态，
+        此时继续清理没有意义。
         """
         if server is None:
             return
@@ -230,7 +226,7 @@ class EmailSender:
         receivers: Optional[List[str]] = None,
         subject: Optional[str] = None,
     ) -> bool:
-        """Send email with inline image attachment (Issue #289)."""
+        """发送带内联图片附件的邮件（Issue #289）。"""
         if not self._is_email_configured():
             return False
         sender = self._email_config['sender']

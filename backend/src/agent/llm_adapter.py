@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Multi-provider LLM Tool-Calling Adapter.
+多 Provider LLM 工具调用适配器。
 
-Normalizes function-calling / tool-use across all providers into a unified
-interface consumed by the AgentExecutor, via LiteLLM.
+通过 LiteLLM 把各家 Provider 的 function-calling / tool-use
+归一化为 AgentExecutor 消费的统一接口。
 """
 
 import json
@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_litellm_exception(name: str) -> type[BaseException]:
-    """Return a catchable LiteLLM exception class even in stubbed test environments."""
+    """返回可捕获的 LiteLLM 异常类，即便在桩测试环境下也能生效。"""
     exc = getattr(litellm, name, None)
     if isinstance(exc, type) and issubclass(exc, BaseException):
         return exc
 
     class _FallbackLiteLLMError(Exception):
-        """Fallback exception used when LiteLLM stubs omit the named error class."""
+        """LiteLLM 桩缺少具名错误类时使用的兜底异常。"""
 
         pass
 
@@ -48,12 +48,12 @@ def _resolve_litellm_exception(name: str) -> type[BaseException]:
 
 
 # ============================================================
-# Unified response types
+# 统一响应类型
 # ============================================================
 
 @dataclass
 class ToolCall:
-    """A single tool call requested by the LLM."""
+    """LLM 请求的单次工具调用。"""
     id: str
     name: str
     arguments: Dict[str, Any]
@@ -62,27 +62,27 @@ class ToolCall:
 
 @dataclass
 class LLMResponse:
-    """Normalized response from any LLM provider."""
-    content: Optional[str] = None          # text response (final answer)
-    tool_calls: List[ToolCall] = field(default_factory=list)  # tool calls to execute
-    reasoning_content: Optional[str] = None  # Chain-of-thought (CoT) from DeepSeek thinking mode; must be passed back in multi-turn assistant messages; None for other providers
-    usage: Dict[str, Any] = field(default_factory=dict)       # token usage info
-    provider: str = ""                     # which provider handled this call
-    model: str = ""                        # full model name used (e.g. gemini/gemini-2.0-flash), for report meta
-    raw: Any = None                        # raw provider response for debugging
+    """任意 LLM 提供商的归一化响应。"""
+    content: Optional[str] = None          # 文本响应（最终答案）
+    tool_calls: List[ToolCall] = field(default_factory=list)  # 需要执行的工具调用
+    reasoning_content: Optional[str] = None  # DeepSeek 思考模式返回的思维链（CoT）；多轮对话中必须回传给 assistant 消息；其他提供商为 None
+    usage: Dict[str, Any] = field(default_factory=dict)       # token 用量信息
+    provider: str = ""                     # 处理本次调用的提供商
+    model: str = ""                        # 实际使用的完整模型名（例如 gemini/gemini-2.0-flash），用于报告元信息
+    raw: Any = None                        # 原始提供商响应，用于调试
 
 
-# Models that auto-return reasoning_content; do NOT send extra_body (may cause 400).
+# 自动返回 reasoning_content 的模型；不要发送 extra_body（可能触发 400）。
 _AUTO_THINKING_MODELS: List[str] = ["deepseek-reasoner", "deepseek-r1", "qwq"]
 
-# Models that need explicit opt-in via extra_body; payload decoupled from model name.
+# 需要通过 extra_body 显式开启的模型；载荷与模型名解耦。
 _OPT_IN_THINKING_MODELS: Dict[str, dict] = {
     "deepseek-chat": {"thinking": {"type": "enabled"}},
 }
 
-# Custom model pricing for models not in LiteLLM's built-in price list
-# Official MiniMax pricing: https://platform.minimax.io/docs/guides/pricing-paygo
-# - MiniMax-M2.7 / M2.5: $0.3/M input tokens, $1.2/M output tokens
+# 不在 LiteLLM 内置价格表中的自定义模型定价
+# MiniMax 官方定价：https://platform.minimax.io/docs/guides/pricing-paygo
+# - MiniMax-M2.7 / M2.5：$0.3/M 输入 token，$1.2/M 输出 token
 _CUSTOM_MODEL_PRICING: Dict[str, dict] = {
     "MiniMax-M2.7": {
         "supports_function_calling": True,
@@ -91,8 +91,8 @@ _CUSTOM_MODEL_PRICING: Dict[str, dict] = {
         "supports_audio_output": False,
         "context_window": 100000,
         "max_tokens": 10000,
-        "input_cost_per_token": 0.0000003,   # $0.3 / 1M tokens
-        "output_cost_per_token": 0.0000012,   # $1.2 / 1M tokens
+        "input_cost_per_token": 0.0000003,   # $0.3 / 1M token
+        "output_cost_per_token": 0.0000012,   # $1.2 / 1M token
     },
     "MiniMax-M2.5": {
         "supports_function_calling": True,
@@ -101,14 +101,14 @@ _CUSTOM_MODEL_PRICING: Dict[str, dict] = {
         "supports_audio_output": False,
         "context_window": 100000,
         "max_tokens": 10000,
-        "input_cost_per_token": 0.0000003,   # $0.3 / 1M tokens
-        "output_cost_per_token": 0.0000012,   # $1.2 / 1M tokens
+        "input_cost_per_token": 0.0000003,   # $0.3 / 1M token
+        "output_cost_per_token": 0.0000012,   # $1.2 / 1M token
     },
 }
 
 
 def _model_matches(model: str, entries: List[str]) -> bool:
-    """Check if model name matches any entry (exact or prefix with version suffix)."""
+    """检查模型名是否匹配任一入口（精确匹配或带版本后缀的前缀匹配）。"""
     if not model:
         return False
     m = model.lower().strip()
@@ -119,7 +119,7 @@ def _model_matches(model: str, entries: List[str]) -> bool:
 
 
 def _get_opt_in_payload(model: str, opt_in: Dict[str, dict]) -> Optional[dict]:
-    """Return extra_body payload for opt-in thinking models, or None."""
+    """返回需显式开启思考模型的 extra_body 载荷，未命中则返回 None。"""
     if not model:
         return None
     m = model.lower().strip()
@@ -130,15 +130,13 @@ def _get_opt_in_payload(model: str, opt_in: Dict[str, dict]) -> Optional[dict]:
 
 
 def get_thinking_extra_body(model: str) -> Optional[dict]:
-    """Return extra_body for thinking mode, or None.
+    """返回思考模式所需的 extra_body，否则返回 None。
 
-    - Auto-thinking models (_AUTO_THINKING_MODELS: deepseek-reasoner, deepseek-r1, qwq):
-      These models automatically return reasoning_content in API responses; sending
-      extra_body would cause 400 because the API already enables thinking by default.
-      Return None to avoid duplicate activation.
-    - Opt-in models (_OPT_IN_THINKING_MODELS: deepseek-chat): Return the activation
-      payload to explicitly enable thinking mode.
-    - All other models: Return None (no thinking mode).
+    - 自动思考模型（_AUTO_THINKING_MODELS：deepseek-reasoner、deepseek-r1、qwq）：
+      这些模型在 API 响应中自动返回 reasoning_content；再发送 extra_body 会导致 400，
+      因为 API 默认已开启思考。返回 None 以避免重复激活。
+    - 需显式开启的模型（_OPT_IN_THINKING_MODELS：deepseek-chat）：返回激活载荷以显式开启思考模式。
+    - 其他模型：返回 None（无思考模式）。
     """
     if _model_matches(model, _AUTO_THINKING_MODELS):
         return None
@@ -146,30 +144,29 @@ def get_thinking_extra_body(model: str) -> Optional[dict]:
 
 
 # ============================================================
-# LLM Tool Adapter
+# LLM 工具适配器
 # ============================================================
 
 class LLMToolAdapter:
-    """Unified adapter for tool-calling via LiteLLM.
+    """通过 LiteLLM 进行工具调用的统一适配器。
 
-    Supports all providers (Gemini, Anthropic, OpenAI, DeepSeek, etc.) through
-    a single litellm.completion() interface with optional Router for multi-key
-    load balancing.
+    借助单一的 litellm.completion() 接口支持所有提供商（Gemini、Anthropic、
+    OpenAI、DeepSeek 等），并可选使用 Router 实现多 key 负载均衡。
     """
 
     def __init__(self, config=None, user_id: Optional[int] = None):
-        """Initialise LiteLLM routing for platform defaults and optional user model prefs."""
+        """初始化 LiteLLM 路由，应用平台默认值与可选的用户模型偏好。"""
         config = config or get_config()
         self._config = config
         self._user_id = user_id
-        self._router = None          # litellm Router (multi-key primary model)
+        self._router = None          # litellm Router（主模型多 key）
         self._direct_router_model_list: List[Dict[str, Any]] = []
         self._litellm_available = False
         self._register_custom_model_pricing()
         self._init_litellm()
 
     def _resolve_user_model_route(self, models_to_try: List[str]) -> Optional[ModelRoute]:
-        """Resolve per-user model restrictions/preferences from the database."""
+        """从数据库解析按用户粒度的模型限制/偏好。"""
         user_id = getattr(self, "_user_id", None)
         if not user_id:
             return None
@@ -195,9 +192,9 @@ class LLMToolAdapter:
 
     @staticmethod
     def _register_custom_model_pricing() -> None:
-        """Register custom model pricing for models not in LiteLLM's built-in price list.
+        """为不在 LiteLLM 内置价格表中的模型注册自定义定价。
 
-        This prevents cost calculation errors for MiniMax-M2.7 and similar models.
+        这能避免 MiniMax-M2.7 及类似模型出现成本计算错误。
         """
         for model_name, pricing in _CUSTOM_MODEL_PRICING.items():
             try:
@@ -211,11 +208,11 @@ class LLMToolAdapter:
                 logger.debug(f"Model {model_name} may already be registered or pricing error: {e}")
 
     def _has_channel_config(self) -> bool:
-        """Check if multi-channel config (channels / YAML) is active."""
+        """检查多通道配置（channels / YAML）是否生效。"""
         return bool(self._config.llm_model_list)
 
     def _init_litellm(self) -> None:
-        """Initialize litellm Router from channels / YAML or explicit direct keys."""
+        """从 channels / YAML 或显式直连 key 初始化 litellm Router。"""
         config = self._config
         self._direct_router_model_list = []
         litellm_model = get_effective_agent_primary_model(config)
@@ -242,7 +239,7 @@ class LLMToolAdapter:
             )
             return
 
-        # --- Direct key path ---
+        # --- 直连 key 路径 ---
         keys = get_api_keys_for_model(litellm_model, config)
         if not keys:
             logger.info(
@@ -279,19 +276,19 @@ class LLMToolAdapter:
 
     @property
     def is_available(self) -> bool:
-        """True if litellm is configured and at least one API key is present."""
+        """litellm 已配置且至少存在一个 API key 时为 True。"""
         return self._router is not None or self._litellm_available
 
     @property
     def primary_provider(self) -> str:
-        """Provider name extracted from litellm_model prefix."""
+        """从 litellm_model 前缀提取的提供商名称。"""
         model = get_effective_agent_primary_model(self._config)
         if "/" in model:
             return model.split("/")[0]
         return model or "none"
 
     # ============================================================
-    # Unified call
+    # 统一调用入口
     # ============================================================
 
     def call_with_tools(
@@ -301,16 +298,16 @@ class LLMToolAdapter:
         provider: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> LLMResponse:
-        """Send messages + tool declarations to LLM, return normalized response.
+        """将消息与工具声明发送给 LLM，返回归一化响应。
 
         Args:
-            messages: Conversation history in provider-neutral format:
+            messages: 提供商无关格式的对话历史：
                       [{"role": "system"/"user"/"assistant"/"tool", "content": ...}, ...]
-            tools: OpenAI-format tool declarations; litellm converts to each provider's format.
-            provider: Ignored (kept for backward compatibility).
+            tools: OpenAI 格式的工具声明；litellm 会转换为各提供商的格式。
+            provider: 已忽略（仅为向后兼容保留）。
 
         Returns:
-            LLMResponse with either content (final answer) or tool_calls.
+            LLMResponse，含 content（最终答案）或 tool_calls 之一。
         """
         return self.call_completion(messages, tools=tools, provider=provider, timeout=timeout)
 
@@ -323,7 +320,7 @@ class LLMToolAdapter:
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
     ) -> LLMResponse:
-        """Send a text-only completion through the shared routing stack."""
+        """通过共享路由栈发送纯文本补全。"""
         return self.call_completion(
             messages,
             tools=None,
@@ -343,7 +340,7 @@ class LLMToolAdapter:
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
     ) -> LLMResponse:
-        """Shared completion path for both tool and text-only calls."""
+        """工具调用与纯文本调用共用的补全路径。"""
         config = self._config
         models_to_try = get_effective_agent_models_to_try(config)
         model_route = self._resolve_user_model_route(models_to_try)
@@ -386,8 +383,7 @@ class LLMToolAdapter:
                     last_error = e
                     hit_rate_limit = True
 
-                    # Avoid blind backoff across different providers; cross-provider
-                    # fallback usually means different accounts/rate-limit buckets.
+                    # 避免跨提供商盲目退避；跨提供商回退通常意味着不同账户/限流桶。
                     should_backoff = (
                         idx + 1 < len(models_to_try)
                         and providers[idx] == providers[idx + 1]
@@ -416,7 +412,7 @@ class LLMToolAdapter:
 
     @staticmethod
     def _get_model_provider(model: str) -> str:
-        """Return LiteLLM provider namespace for model fallback grouping."""
+        """返回 LiteLLM 提供商命名空间，用于模型回退分组。"""
         if "/" in model:
             return model.split("/", 1)[0]
         return "openai"
@@ -432,10 +428,10 @@ class LLMToolAdapter:
         timeout: Optional[float] = None,
         model_route: Optional[ModelRoute] = None,
     ) -> LLMResponse:
-        """Call a specific litellm model with OpenAI-format messages and tools."""
+        """使用 OpenAI 格式的消息与工具调用指定的 litellm 模型。"""
         openai_messages = self._convert_messages(messages)
 
-        # Use short model name (without provider prefix) for thinking model lookup
+        # 用短模型名（去掉提供商前缀）查找思考模型
         model_short = model.split("/")[-1] if "/" in model else model
         extra = get_thinking_extra_body(model_short)
 
@@ -454,7 +450,7 @@ class LLMToolAdapter:
         if tools:
             call_kwargs["tools"] = tools
 
-        # Use Router for primary model (multi-key), direct litellm for others
+        # 主模型（多 key）使用 Router，其他模型使用直接 litellm 调用
         use_channel_router = self._has_channel_config()
         _router_model_names = set(get_configured_llm_models(self._config.llm_model_list))
         agent_primary_model = get_effective_agent_primary_model(self._config)
@@ -481,7 +477,7 @@ class LLMToolAdapter:
             model_list=recovery_model_list,
         )
         if use_channel_router and self._router and model in _router_model_names:
-            # Channel / YAML path: Router manages all models in its model_list
+            # Channel / YAML 路径：Router 管理其 model_list 中的所有模型
             response = call_litellm_with_param_recovery(
                 lambda kwargs: self._router.completion(**kwargs),
                 model=model,
@@ -494,7 +490,7 @@ class LLMToolAdapter:
             and model == agent_primary_model
             and not use_channel_router
         ):
-            # Direct key path: Router for primary model multi-key
+            # 直连 key 路径：Router 承载主模型的多 key
             response = call_litellm_with_param_recovery(
                 lambda kwargs: self._router.completion(**kwargs),
                 model=model,
@@ -503,9 +499,8 @@ class LLMToolAdapter:
                 logger=logger,
             )
         else:
-            # Direct call path (also handles direct-env
-            # providers like groq/ or bedrock/ that are not in the Router
-            # model_list even when channel mode is active)
+            # 直接调用路径（也处理 groq/、bedrock/ 这类不在 Router
+            # model_list 中的直连环境提供商，即便处于 channel 模式下也一样）
             response = call_litellm_with_param_recovery(
                 lambda kwargs: litellm.completion(**kwargs),
                 model=model,
@@ -517,11 +512,11 @@ class LLMToolAdapter:
         return self._parse_litellm_response(response, model)
 
     def _get_temperature(self) -> float:
-        """Return the raw configured temperature before per-model normalization."""
+        """返回逐模型归一化之前的原始配置温度。"""
         return float(self._config.llm_temperature)
 
     def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert internal message format to OpenAI-compatible format for litellm."""
+        """将内部消息格式转换为 litellm 可用的 OpenAI 兼容格式。"""
         openai_messages: List[Dict[str, Any]] = []
         for msg in messages:
             if msg["role"] == "tool":
@@ -561,14 +556,14 @@ class LLMToolAdapter:
         return openai_messages
 
     def _parse_litellm_response(self, response: Any, model: str) -> LLMResponse:
-        """Parse litellm OpenAI-compatible response into LLMResponse."""
+        """将 litellm 的 OpenAI 兼容响应解析为 LLMResponse。"""
         choice = response.choices[0]
         tool_calls: List[ToolCall] = []
 
-        # Handle MiniMax-specific content_blocks format
-        # MiniMax-M2.7 may return content_blocks at choice level or inside message
-        # Check both possible locations for content_blocks to ensure consistency
-        # Concatenate ALL text blocks to avoid truncating multi-block responses
+        # 处理 MiniMax 特有的 content_blocks 格式
+        # MiniMax-M2.7 可能把 content_blocks 放在 choice 层级或 message 内部
+        # 两处位置都要检查以保证一致性
+        # 拼接所有文本块，避免截断多块响应
         text_content = choice.message.content
         if text_content is None:
             content_blocks = None
@@ -578,8 +573,8 @@ class LLMToolAdapter:
                 content_blocks = choice.message.content_blocks
 
             if content_blocks:
-                # MiniMax response format: content_blocks[].text
-                # Concatenate ALL text blocks to preserve complete response
+                # MiniMax 响应格式：content_blocks[].text
+                # 拼接所有文本块以保留完整响应
                 text_parts = []
                 for block in content_blocks:
                     if getattr(block, "type", None) == "text":
@@ -590,7 +585,7 @@ class LLMToolAdapter:
                         text_parts.append(block.content)
                 text_content = "".join(text_parts).strip()
 
-        # DeepSeek/Qwen thinking mode; not in standard OpenAI type, accessed via getattr
+        # DeepSeek/Qwen 思考模式；不在标准 OpenAI 类型中，需通过 getattr 访问
         reasoning_content = getattr(choice.message, "reasoning_content", None)
 
         if choice.message.tool_calls:
@@ -602,7 +597,7 @@ class LLMToolAdapter:
                     except json.JSONDecodeError:
                         args = {"raw": tc.function.arguments}
 
-                # Extract thought_signature: stored in provider_specific_fields (Gemini 3 via LiteLLM proxy)
+                # 提取 thought_signature：存放在 provider_specific_fields（Gemini 3 经 LiteLLM 代理）
                 psf = getattr(tc, "provider_specific_fields", None)
                 if psf is not None:
                     sig = psf.get("thought_signature") if isinstance(psf, dict) else getattr(psf, "thought_signature", None)

@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
-"""
-EventMonitor — lightweight event-driven alert system.
+"""EventMonitor —— 轻量级事件驱动告警系统。
 
-Monitors a set of stocks for threshold events and triggers
-notifications when conditions are met.  Designed to run as a
-background task (e.g. via ``--schedule`` or a dedicated loop).
+对一组股票监控阈值事件，条件满足时触发通知。设计为作为后台任务运行
+（例如通过 ``--schedule`` 或专用循环）。
 
-Currently supported runtime events:
-- Price crossing threshold (above / below)
-- Price change percentage threshold (up / down)
-- Volume spike (> N× average)
+当前支持的运行时事件：
+- 价格穿越阈值（上穿 / 下穿）
+- 价格涨跌幅阈值（上涨 / 下跌）
+- 成交量放量（> N 倍均值）
 
-Other alert types remain defined as enum placeholders for future
-extension, but config validation rejects them until the monitor can
-actually evaluate them.
+其余告警类型保留为枚举占位符供未来扩展，但在监控器真正能评估它们之前，
+配置校验会拒绝这些类型。
 
-Usage::
+用法::
 
     from src.agent.events import EventMonitor, PriceAlert
     monitor = EventMonitor()
@@ -37,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class AlertType(str, Enum):
-    """Supported alert rule categories, including placeholders for future runtime support."""
+    """告警规则类别，包括未来运行时支持的占位类型。"""
 
     PRICE_CROSS = "price_cross"
     PRICE_CHANGE_PERCENT = "price_change_percent"
@@ -48,7 +45,7 @@ class AlertType(str, Enum):
 
 
 class AlertStatus(str, Enum):
-    """Lifecycle status for an alert rule."""
+    """告警规则的生命周期状态。"""
 
     ACTIVE = "active"
     TRIGGERED = "triggered"
@@ -64,12 +61,12 @@ _RUNTIME_SUPPORTED_ALERT_TYPES = frozenset({
 
 
 def _supported_alert_type_names() -> str:
-    """Return a readable list of alert types this runtime can evaluate."""
+    """返回当前运行时能评估的告警类型的可读列表。"""
     return ", ".join(sorted(alert_type.value for alert_type in _RUNTIME_SUPPORTED_ALERT_TYPES))
 
 
 def _ensure_runtime_supported_alert_type(alert_type: AlertType) -> None:
-    """Reject configured alert types that currently have no evaluation implementation."""
+    """拒绝当前还没有评估实现的已配置告警类型。"""
     if alert_type not in _RUNTIME_SUPPORTED_ALERT_TYPES:
         raise ValueError(
             f"unsupported alert_type for current EventMonitor runtime: {alert_type.value} "
@@ -78,7 +75,7 @@ def _ensure_runtime_supported_alert_type(alert_type: AlertType) -> None:
 
 
 def _read_quote_float(quote: Any, *field_names: str) -> Optional[float]:
-    """Read a numeric field from quote objects or dict-like payloads."""
+    """从行情对象或类字典载荷中读取数值字段。"""
     if quote is None:
         return None
 
@@ -88,6 +85,7 @@ def _read_quote_float(quote: Any, *field_names: str) -> Optional[float]:
         else:
             raw_value = getattr(quote, field_name, None)
 
+        # 对象既无该属性也取不到值，回退到 to_dict() 序列化后的字典再取一次
         if raw_value is None and hasattr(quote, "to_dict"):
             try:
                 raw_value = quote.to_dict().get(field_name)
@@ -114,71 +112,71 @@ def _read_quote_float(quote: Any, *field_names: str) -> Optional[float]:
 
 @dataclass
 class AlertRule:
-    """Base alert rule definition."""
+    """告警规则基类定义。"""
     stock_code: str
     alert_type: AlertType
     description: str = ""
     status: AlertStatus = AlertStatus.ACTIVE
     created_at: float = field(default_factory=time.time)
     triggered_at: Optional[float] = None
-    ttl_hours: float = 24.0  # auto-expire after this many hours
+    ttl_hours: float = 24.0  # 超过该小时数后自动过期
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class PriceAlert(AlertRule):
-    """Alert when price crosses a threshold."""
+    """价格穿越阈值时告警。"""
     alert_type: AlertType = AlertType.PRICE_CROSS
-    direction: str = "above"  # "above" or "below"
+    direction: str = "above"  # 取值 "above" 或 "below"
     price: float = 0.0
 
     def __post_init__(self):
-        """Fill a human-readable default description."""
+        """填充人类可读的默认描述。"""
         if not self.description:
             self.description = f"{self.stock_code} price {self.direction} {self.price}"
 
 
 @dataclass
 class PriceChangeAlert(AlertRule):
-    """Alert when intraday price change crosses a percentage threshold."""
+    """盘中涨跌幅穿越百分比阈值时告警。"""
     alert_type: AlertType = AlertType.PRICE_CHANGE_PERCENT
-    direction: str = "up"  # "up" or "down"
+    direction: str = "up"  # 取值 "up" 或 "down"
     change_pct: float = 3.0
 
     def __post_init__(self):
-        """Fill a human-readable default description."""
+        """填充人类可读的默认描述。"""
         if not self.description:
             self.description = f"{self.stock_code} change {self.direction} {self.change_pct}%"
 
 
 @dataclass
 class VolumeAlert(AlertRule):
-    """Alert when volume exceeds N× average."""
+    """成交量超过均量 N 倍时告警。"""
     alert_type: AlertType = AlertType.VOLUME_SPIKE
-    multiplier: float = 2.0  # trigger when volume > multiplier × avg
+    multiplier: float = 2.0  # 当 volume > multiplier × 均量时触发
 
     def __post_init__(self):
-        """Fill a human-readable default description."""
+        """填充人类可读的默认描述。"""
         if not self.description:
             self.description = f"{self.stock_code} volume > {self.multiplier}× average"
 
 
 @dataclass
 class SentimentAlert(AlertRule):
-    """Alert on sentiment direction change."""
+    """情绪方向变化时告警。"""
     alert_type: AlertType = AlertType.SENTIMENT_SHIFT
-    from_sentiment: str = "positive"  # "positive", "negative", "neutral"
+    from_sentiment: str = "positive"  # 取值 "positive"、"negative"、"neutral"
     to_sentiment: str = "negative"
 
     def __post_init__(self):
-        """Fill a human-readable default description for future sentiment hooks."""
+        """为未来的情绪钩子填充人类可读的默认描述。"""
         if not self.description:
             self.description = f"{self.stock_code} sentiment shift: {self.from_sentiment} → {self.to_sentiment}"
 
 
 @dataclass
 class TriggeredAlert:
-    """An alert that was triggered, ready for notification."""
+    """一条已触发的告警，准备进入通知流程。"""
     rule: AlertRule
     triggered_at: float = field(default_factory=time.time)
     current_value: Any = None
@@ -186,29 +184,28 @@ class TriggeredAlert:
 
 
 class EventMonitor:
-    """Monitor stocks for event-driven alerts.
+    """监控股票的事件驱动告警。
 
-    This class manages a list of :class:`AlertRule` objects and checks
-    them against current market data.  Triggered alerts are collected
-    and can be forwarded to the notification system.
+    该类管理一组 :class:`AlertRule` 对象，并用当前市场数据逐一检查。
+    触发的告警被收集起来，可转发给通知系统。
     """
 
     def __init__(self):
-        """Create an empty in-memory rule set and callback list."""
+        """创建空的内存规则集与回调列表。"""
         self.rules: List[AlertRule] = []
         self._callbacks: List[Callable[[TriggeredAlert], None]] = []
 
     def add_alert(self, rule: AlertRule) -> None:
-        """Register a new alert rule."""
+        """注册一条新的告警规则。"""
         _ensure_runtime_supported_alert_type(rule.alert_type)
         self.rules.append(rule)
         logger.info("[EventMonitor] Added alert: %s", rule.description)
 
     def remove_expired(self) -> int:
-        """Remove alerts that have expired based on TTL.
+        """按 TTL 移除已过期的告警。
 
         Returns:
-            Number of expired alerts removed.
+            移除的过期告警数量。
         """
         now = time.time()
         before = len(self.rules)
@@ -223,14 +220,14 @@ class EventMonitor:
         return removed
 
     def on_trigger(self, callback: Callable[[TriggeredAlert], None]) -> None:
-        """Register a callback for when an alert triggers."""
+        """注册告警触发时调用的回调。"""
         self._callbacks.append(callback)
 
     async def check_all(self) -> List[TriggeredAlert]:
-        """Check all active rules against current market data.
+        """用当前市场数据检查所有激活的规则。
 
         Returns:
-            List of triggered alerts.
+            已触发告警的列表。
         """
         self.remove_expired()
         triggered: List[TriggeredAlert] = []
@@ -245,7 +242,7 @@ class EventMonitor:
                     triggered.append(result)
                     rule.status = AlertStatus.TRIGGERED
                     rule.triggered_at = time.time()
-                    # Notify callbacks (offload slow/sync ones to thread)
+                    # 通知回调（慢速/同步的回调卸载到线程执行）
                     for cb in self._callbacks:
                         try:
                             if asyncio.iscoroutinefunction(cb):
@@ -260,29 +257,29 @@ class EventMonitor:
         return triggered
 
     async def _check_rule(self, rule: AlertRule) -> Optional[TriggeredAlert]:
-        """Check a single rule.  Returns TriggeredAlert if condition met."""
+        """检查单条规则，条件满足时返回 TriggeredAlert。"""
         if isinstance(rule, PriceAlert):
             return await self._check_price(rule)
         elif isinstance(rule, PriceChangeAlert):
             return await self._check_price_change(rule)
         elif isinstance(rule, VolumeAlert):
             return await self._check_volume(rule)
-        # SentimentAlert and custom alerts require more context —
-        # implemented as hooks for future extension
+        # SentimentAlert 与 custom 告警需要更多上下文——
+        # 作为未来扩展的钩子保留
         return None
 
     def _fetch_realtime_quote(self, stock_code: str) -> Any:
-        """Fetch realtime quote synchronously so async wrapper can offload it."""
+        """同步获取实时行情，便于异步包装层将其卸载到线程执行。"""
         from data_provider import DataFetcherManager
 
         return DataFetcherManager().get_realtime_quote(stock_code)
 
     async def _get_realtime_quote(self, stock_code: str) -> Any:
-        """Fetch realtime quote without blocking the event loop."""
+        """在不阻塞事件循环的情况下获取实时行情。"""
         return await asyncio.to_thread(self._fetch_realtime_quote, stock_code)
 
     async def _check_price(self, rule: PriceAlert) -> Optional[TriggeredAlert]:
-        """Check price alert against realtime quote."""
+        """根据实时行情检查价格告警。"""
         try:
             quote = await self._get_realtime_quote(rule.stock_code)
             if quote is None:
@@ -310,7 +307,7 @@ class EventMonitor:
         return None
 
     async def _check_price_change(self, rule: PriceChangeAlert) -> Optional[TriggeredAlert]:
-        """Check price-change percentage alert against realtime quote."""
+        """根据实时行情检查涨跌幅告警。"""
         try:
             quote = await self._get_realtime_quote(rule.stock_code)
             if quote is None:
@@ -346,17 +343,17 @@ class EventMonitor:
         return None
 
     async def _check_volume(self, rule: VolumeAlert) -> Optional[TriggeredAlert]:
-        """Check volume spike against recent average."""
+        """对照近期均量检查是否放量。"""
         try:
             def _fetch_daily_data():
-                """Fetch recent daily bars in a worker thread."""
+                """在工作线程中获取近期日线数据。"""
                 from data_provider import DataFetcherManager
 
                 fm = DataFetcherManager()
                 return fm.get_daily_data(rule.stock_code, days=20)
 
             result = await asyncio.to_thread(_fetch_daily_data)
-            # get_daily_data returns (df, source) tuple or None
+            # get_daily_data 返回 (df, source) 元组或 None
             if result is None:
                 return None
             df, _source = result
@@ -378,11 +375,11 @@ class EventMonitor:
         return None
 
     # -----------------------------------------------------------------
-    # Persistence helpers
+    # 持久化辅助方法
     # -----------------------------------------------------------------
 
     def to_dict_list(self) -> List[Dict[str, Any]]:
-        """Serialize all rules for persistence."""
+        """将所有规则序列化以便持久化。"""
         results = []
         for rule in self.rules:
             entry: Dict[str, Any] = {
@@ -406,7 +403,7 @@ class EventMonitor:
 
     @classmethod
     def from_dict_list(cls, data: List[Dict[str, Any]]) -> "EventMonitor":
-        """Restore an EventMonitor from serialized data."""
+        """从序列化数据还原一个 EventMonitor。"""
         monitor = cls()
         for index, entry in enumerate(data, start=1):
             try:
@@ -447,7 +444,7 @@ class EventMonitor:
 
 
 def parse_event_alert_rules(raw_rules: Any) -> List[Dict[str, Any]]:
-    """Parse event alert rules from config JSON or already-loaded objects."""
+    """从配置 JSON 或已加载的对象中解析事件告警规则。"""
     if raw_rules is None:
         return []
 
@@ -475,7 +472,7 @@ def parse_event_alert_rules(raw_rules: Any) -> List[Dict[str, Any]]:
 
 
 def validate_event_alert_rule(rule: Dict[str, Any]) -> None:
-    """Validate one serialized EventMonitor rule."""
+    """校验一条序列化后的 EventMonitor 规则。"""
     if not isinstance(rule, dict):
         raise ValueError("Event alert rule must be an object")
 
@@ -535,7 +532,7 @@ def validate_event_alert_rule(rule: Dict[str, Any]) -> None:
 
 
 def build_event_monitor_from_config(config=None, notifier=None) -> Optional[EventMonitor]:
-    """Build an EventMonitor from runtime config and attach notification callbacks."""
+    """从运行时配置构建 EventMonitor 并挂载通知回调。"""
     if config is None:
         from src.config import get_config
         config = get_config()
@@ -563,7 +560,7 @@ def build_event_monitor_from_config(config=None, notifier=None) -> Optional[Even
     notification_service = notifier or NotificationService()
 
     def _notify(triggered: TriggeredAlert) -> None:
-        """Convert a triggered alert into the existing notification payload."""
+        """将触发的告警转换为既有通知载荷。"""
         title = f"Event Alert | {triggered.rule.stock_code}"
         content = triggered.message or triggered.rule.description or "Alert triggered"
         alert_text = NotificationBuilder.build_simple_alert(title=title, content=content, alert_type="warning")
@@ -577,5 +574,5 @@ def build_event_monitor_from_config(config=None, notifier=None) -> Optional[Even
 
 
 def run_event_monitor_once(monitor: EventMonitor) -> List[TriggeredAlert]:
-    """Run one synchronous monitor cycle."""
+    """执行一次同步的监控周期。"""
     return asyncio.run(monitor.check_all())

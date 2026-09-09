@@ -133,7 +133,7 @@ class TrendAnalysisResult:
     risk_factors: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize technical-analysis fields to primitive API/report values."""
+        """将技术分析字段序列化为 API/报告使用的原始值。"""
         return {
             'code': self.code,
             'trend_status': self.trend_status.value,

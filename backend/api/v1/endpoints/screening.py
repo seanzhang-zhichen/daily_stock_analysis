@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Stock screening routes."""
+"""选股（Screening）相关的 HTTP 路由。
+
+该模块对外暴露选股服务状态、策略清单、热点主题、选股任务提交/查询、
+选股历史与抓取源历史等接口。任务型操作通过 `get_task_queue()` 走后台队列，
+同步接口则直接调用 `ScreeningService`。所有路由统一挂载在调用方 router 之下。
+"""
 
 from __future__ import annotations
 
@@ -20,10 +25,13 @@ router = APIRouter()
 
 
 def api_error(status_code: int, error: str, message: str) -> HTTPException:
+    """构造统一格式的 HTTPException，使前端能按 error/message 解析业务错误。"""
     return HTTPException(status_code=status_code, detail={"error": error, "message": message})
 
 
 class ScreeningScreenRequest(BaseModel):
+    """同步/异步执行一次选股任务的请求载荷。"""
+
     market: str = Field("cn", min_length=1, max_length=16)
     strategy: str = Field("dual_low", min_length=1, max_length=64)
     max_results: int = Field(20, ge=1, le=100)
@@ -31,6 +39,8 @@ class ScreeningScreenRequest(BaseModel):
 
 
 class ScreeningStrategyResponse(BaseModel):
+    """单个选股策略的可序列化元数据。"""
+
     id: str
     name: str = ""
     title: str = ""
@@ -44,6 +54,8 @@ class ScreeningStrategyResponse(BaseModel):
 
 
 class ScreeningScreenAccepted(BaseModel):
+    """异步选股任务被接受后的即时响应（HTTP 202）。"""
+
     task_id: str
     trace_id: str
     status: str = "pending"
@@ -54,6 +66,8 @@ class ScreeningScreenAccepted(BaseModel):
 
 
 class ScreeningScreenTaskStatus(BaseModel):
+    """异步选股任务的状态轮询响应。"""
+
     task_id: str
     trace_id: Optional[str] = None
     status: str
@@ -64,11 +78,14 @@ class ScreeningScreenTaskStatus(BaseModel):
 
 
 def _service(config: Config, db_manager: Any = None, user_id: Optional[int] = None) -> ScreeningService:
+    """构造 ScreeningService：当 db_manager 缺少写接口时降级为 None，避免服务层崩溃。"""
+    # 仅在 db_manager 实现了 save_screening_run 等写接口时才注入，否则视作不可用
     usable_db = db_manager if callable(getattr(db_manager, "save_screening_run", None)) else None
     return ScreeningService(config=config, db_manager=usable_db, user_id=user_id)
 
 
 def _screening_task_not_found(task_id: str) -> HTTPException:
+    """构造统一的"选股任务不存在或已过期"错误响应。"""
     return api_error(
         404,
         "screening_screen_task_not_found",
@@ -81,6 +98,7 @@ def screening_status(
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """返回选股服务的整体运行状态（配置可用性、依赖健康度等）。"""
     _ = current_user
     return _service(config).status()
 
@@ -91,6 +109,7 @@ def screening_strategies(
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """返回当前可选的选股策略清单及其元数据。"""
     _ = current_user
     return _service(config).strategies()
 
@@ -104,7 +123,9 @@ def screening_hotspots(
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """拉取近期热点主题列表，可选强制刷新与是否包含详情。"""
     _ = current_user
+    # 兼容 FastAPI 在某些情况下把 Query 对象传进来的边缘场景，确保得到原生 bool
     refresh_value = refresh if isinstance(refresh, bool) else bool(getattr(refresh, "default", False))
     include_details_value = (
         include_details
@@ -128,6 +149,7 @@ def screening_hotspot_detail(
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """获取某个热点主题的详情（含关联搜索结果）。"""
     _ = current_user
     refresh_value = refresh if isinstance(refresh, bool) else bool(getattr(refresh, "default", False))
     include_search_value = (
@@ -151,10 +173,13 @@ def screening_start_screen_task(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> ScreeningScreenAccepted:
+    """提交一次异步选股任务，立即返回 task_id，调用方按 task_id 轮询结果。"""
     task_id = uuid.uuid4().hex
     task_queue = get_task_queue()
 
     def run_screen() -> Dict[str, Any]:
+        """在后台执行整轮选股并随阶段回调进度，最终返回候选结果。"""
+        # 选股可能耗时较长，先把进度推到 20%，避免前端误以为任务卡住
         task_queue.update_task_progress(
             task_id,
             20,
@@ -162,6 +187,8 @@ def screening_start_screen_task(
         )
 
         def report_progress(progress: int, message: str) -> None:
+            """把服务层回调的阶段进度转发到任务队列。"""
+            # 服务层在抓取/打分各阶段回调，将进度反馈到任务队列
             task_queue.update_task_progress(task_id, progress, message)
 
         result = _service(config, db_manager, current_user.id).screen(
@@ -203,7 +230,9 @@ def screening_screen_task_status(
     task_id: str,
     current_user: AppUser = Depends(get_current_user),
 ) -> ScreeningScreenTaskStatus:
+    """轮询一次异步选股任务的进度、状态与最终结果。"""
     task = get_task_queue().get_task(task_id, user_id=current_user.id)
+    # 仅允许查询属于本用户、且类型为选股的 task；其它情况统一按"不存在"返回
     if task is None or task.report_type != "screening_screen":
         raise _screening_task_not_found(task_id)
 
@@ -227,6 +256,7 @@ def screening_screen(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """同步执行一次选股并立即返回结果（适合短时调试或小规模数据）。"""
     _ = current_user
     return _service(config, db_manager, current_user.id).screen(
         strategy=request.strategy,
@@ -245,6 +275,7 @@ def screening_history(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """查询当前用户近期的选股运行历史，可按策略/市场过滤。"""
     _ = current_user
     return _service(config, db_manager, current_user.id).history(
         limit=limit,
@@ -260,6 +291,7 @@ def screening_history_detail(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """获取单次选股运行（run_id）的详情与候选结果。"""
     _ = current_user
     return _service(config, db_manager, current_user.id).history_detail(run_id)
 
@@ -271,4 +303,5 @@ def screening_source_history(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """查询选股过程中各数据源抓取历史的统计结果。"""
     return _service(config, db_manager, current_user.id).source_history(limit=limit)

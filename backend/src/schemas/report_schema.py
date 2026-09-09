@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-Report Engine - Pydantic Schema
+报告引擎 - Pydantic Schema
 ===================================
 
-Defines AnalysisReportSchema for validating LLM JSON output.
-Aligns with SYSTEM_PROMPT in src/analyzer.py.
-Uses Optional for lenient parsing; business-layer integrity checks are separate.
+定义用于校验 LLM JSON 输出的 AnalysisReportSchema。
+与 src/analyzer.py 中的 SYSTEM_PROMPT 对齐。
+使用 Optional 做宽松解析；业务层的完整性检查另行处理。
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -15,14 +15,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PositionAdvice(BaseModel):
-    """Position advice for no-position vs has-position."""
+    """针对空仓与持仓两种情形的仓位建议。"""
 
     no_position: Optional[str] = None
     has_position: Optional[str] = None
 
 
 class CoreConclusion(BaseModel):
-    """Core conclusion block."""
+    """核心结论块。"""
 
     one_sentence: Optional[str] = None
     signal_type: Optional[str] = None
@@ -31,7 +31,7 @@ class CoreConclusion(BaseModel):
 
 
 class TrendStatus(BaseModel):
-    """Trend status."""
+    """趋势状态。"""
 
     ma_alignment: Optional[str] = None
     is_bullish: Optional[bool] = None
@@ -39,7 +39,7 @@ class TrendStatus(BaseModel):
 
 
 class PricePosition(BaseModel):
-    """Price position (may contain N/A strings)."""
+    """价格位置（可能包含 N/A 字符串）。"""
 
     current_price: Optional[Union[int, float, str]] = None
     ma5: Optional[Union[int, float, str]] = None
@@ -52,7 +52,7 @@ class PricePosition(BaseModel):
 
 
 class VolumeAnalysis(BaseModel):
-    """Volume analysis."""
+    """成交量分析。"""
 
     volume_ratio: Optional[Union[int, float, str]] = None
     volume_status: Optional[str] = None
@@ -61,7 +61,7 @@ class VolumeAnalysis(BaseModel):
 
 
 class ChipStructure(BaseModel):
-    """Chip structure."""
+    """筹码结构。"""
 
     profit_ratio: Optional[Union[int, float, str]] = None
     avg_cost: Optional[Union[int, float, str]] = None
@@ -70,7 +70,7 @@ class ChipStructure(BaseModel):
 
 
 class DataPerspective(BaseModel):
-    """Data perspective block."""
+    """数据视角块。"""
 
     trend_status: Optional[TrendStatus] = None
     price_position: Optional[PricePosition] = None
@@ -79,7 +79,7 @@ class DataPerspective(BaseModel):
 
 
 class Intelligence(BaseModel):
-    """Intelligence block."""
+    """情报块。"""
 
     latest_news: Optional[str] = None
     risk_alerts: Optional[List[str]] = None
@@ -89,7 +89,7 @@ class Intelligence(BaseModel):
 
 
 class SniperPoints(BaseModel):
-    """Sniper points (ideal_buy, stop_loss, etc.)."""
+    """狙击点位（ideal_buy、stop_loss 等）。"""
 
     ideal_buy: Optional[Union[str, int, float]] = None
     secondary_buy: Optional[Union[str, int, float]] = None
@@ -98,7 +98,7 @@ class SniperPoints(BaseModel):
 
 
 class PositionStrategy(BaseModel):
-    """Position strategy."""
+    """仓位策略。"""
 
     suggested_position: Optional[str] = None
     entry_plan: Optional[str] = None
@@ -106,7 +106,7 @@ class PositionStrategy(BaseModel):
 
 
 class BattlePlan(BaseModel):
-    """Battle plan block."""
+    """作战计划块。"""
 
     sniper_points: Optional[SniperPoints] = None
     position_strategy: Optional[PositionStrategy] = None
@@ -114,7 +114,7 @@ class BattlePlan(BaseModel):
 
 
 class Dashboard(BaseModel):
-    """Dashboard block."""
+    """仪表盘块。"""
 
     core_conclusion: Optional[CoreConclusion] = None
     data_perspective: Optional[DataPerspective] = None
@@ -124,11 +124,11 @@ class Dashboard(BaseModel):
 
 class AnalysisReportSchema(BaseModel):
     """
-    Top-level schema for LLM report JSON.
-    Aligns with SYSTEM_PROMPT output format.
+    LLM 报告 JSON 的顶层 schema。
+    与 SYSTEM_PROMPT 的输出格式对齐。
     """
 
-    model_config = ConfigDict(extra="allow")  # Allow extra fields from LLM
+    model_config = ConfigDict(extra="allow")  # 允许 LLM 返回额外字段
 
     stock_name: Optional[str] = None
     sentiment_score: Optional[int] = Field(None, ge=0, le=100)

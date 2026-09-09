@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-TickFlowFetcher - market review only
+TickFlowFetcher - 仅用于大盘复盘
 ===================================
 
-Issue #632 only requires TickFlow for A-share market review stability.
-This fetcher intentionally implements a narrow P0 surface:
+Issue #632 仅要求 TickFlow 用于 A 股大盘复盘稳定性。
+该 fetcher 刻意只实现窄范围的 P0 能力：
 
-1. Main A-share indices quotes
-2. A-share market breadth statistics
+1. A 股主要指数行情
+2. A 股涨跌家数统计
 
-It does not participate in the general daily-data or per-stock realtime
-pipelines and should only be called explicitly by DataFetcherManager.
+它不参与通用的日线数据或个股实时行情流水线，
+只能由 DataFetcherManager 显式调用。
 """
 
 import logging
@@ -47,13 +47,13 @@ _UNIVERSE_PERMISSION_NEGATIVE_CACHE_TTL_SECONDS = 900
 
 
 class TickFlowFetcher(BaseFetcher):
-    """TickFlow-backed market review helper."""
+    """基于 TickFlow 的大盘复盘辅助类。"""
 
     name = "TickFlowFetcher"
     priority = 99
 
     def __init__(self, api_key: Optional[str], timeout: float = 30.0):
-        """Store TickFlow credentials and lazy-client state for market review calls."""
+        """保存 TickFlow 凭证与懒加载客户端状态，供大盘复盘调用。"""
         self.api_key = (api_key or "").strip()
         self.timeout = timeout
         self._client = None
@@ -62,7 +62,7 @@ class TickFlowFetcher(BaseFetcher):
         self._universe_query_checked_at: Optional[float] = None
 
     def close(self) -> None:
-        """Close the underlying TickFlow client if it was created."""
+        """关闭已创建的底层 TickFlow 客户端（若存在）。"""
         with self._client_lock:
             client = self._client
             self._client = None
@@ -75,21 +75,21 @@ class TickFlowFetcher(BaseFetcher):
                 logger.debug("[TickFlowFetcher] 关闭客户端失败: %s", exc)
 
     def __del__(self) -> None:
-        """Best-effort cleanup for interpreter shutdown paths."""
+        """解释器退出路径下的尽力清理。"""
         try:
             self.close()
         except Exception:
-            # Best-effort cleanup during interpreter shutdown.
+            # 解释器退出期间尽力清理。
             pass
 
     def _build_client(self):
-        """Construct the TickFlow SDK client lazily."""
+        """懒构造 TickFlow SDK 客户端。"""
         from tickflow import TickFlow
 
         return TickFlow(api_key=self.api_key, timeout=self.timeout)
 
     def _get_client(self):
-        """Return a cached TickFlow client or None when no API key is configured."""
+        """返回缓存的 TickFlow 客户端；未配置 API key 时返回 None。"""
         if not self.api_key:
             return None
         if self._client is not None:
@@ -103,20 +103,20 @@ class TickFlowFetcher(BaseFetcher):
     def _fetch_raw_data(
         self, stock_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        """Reject generic OHLCV fetches; this fetcher is market-review only."""
+        """拒绝通用 OHLCV 拉取；该 fetcher 仅用于大盘复盘。"""
         raise DataFetchError(
             "TickFlowFetcher P0 only supports market review endpoints"
         )
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
-        """Reject generic normalization; TickFlow P0 does not return daily bars."""
+        """拒绝通用标准化；TickFlow P0 不返回日线 K 线。"""
         raise DataFetchError(
             "TickFlowFetcher P0 only supports market review endpoints"
         )
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
-        """Convert quote fields to float, treating blanks/dashes as missing."""
+        """将行情字段转为 float，空白或短横视为缺失。"""
         if value in (None, "", "-"):
             return None
         try:
@@ -126,7 +126,7 @@ class TickFlowFetcher(BaseFetcher):
 
     @classmethod
     def _ratio_to_percent(cls, value: Any) -> Optional[float]:
-        """Convert ratio values to percentage units."""
+        """将比率值转换为百分比单位（乘以 100）。"""
         ratio = cls._safe_float(value)
         if ratio is None:
             return None
@@ -134,14 +134,14 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _extract_name(quote: Dict[str, Any]) -> str:
-        """Extract display name from TickFlow quote payload."""
+        """从 TickFlow 行情负载中提取展示名称。"""
         ext = quote.get("ext") or {}
         name = ext.get("name") or quote.get("name") or ""
         return str(name).strip()
 
     @staticmethod
     def _is_universe_permission_error(exc: Exception) -> bool:
-        """Detect TickFlow permission errors for universe queries."""
+        """识别 TickFlow 标的池查询的权限错误。"""
         status_code = getattr(exc, "status_code", None)
         code = str(getattr(exc, "code", "") or "").upper()
         message = (
@@ -164,7 +164,7 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _is_cn_equity_symbol(symbol: str) -> bool:
-        """Return True for explicit SH/SZ/BJ six-digit equity symbols."""
+        """判断是否为显式的沪/深/北交易所 6 位股票符号。"""
         normalized = normalize_stock_code(symbol)
         upper_symbol = (symbol or "").strip().upper()
         return (
@@ -175,12 +175,12 @@ class TickFlowFetcher(BaseFetcher):
 
     @staticmethod
     def _round_limit_price(prev_close: float, ratio: float) -> float:
-        """Round Chinese limit-up/down theoretical price to two decimals."""
+        """将 A 股涨停/跌停理论价四舍五入保留两位小数的规则价。"""
         return math.floor(prev_close * (1 + ratio) * 100 + 0.5) / 100.0
 
     @classmethod
     def _get_limit_ratio(cls, pure_code: str, name: str) -> float:
-        """Return price-limit ratio for BSE, STAR/ChiNext, ST and regular stocks."""
+        """返回北交所、科创板/创业板、ST 及普通股票的涨跌幅限制比例。"""
         if is_bse_code(pure_code):
             return 0.30
         if is_kc_cy_stock(pure_code):
@@ -190,7 +190,7 @@ class TickFlowFetcher(BaseFetcher):
         return 0.10
 
     def get_main_indices(self, region: str = "cn") -> Optional[List[Dict[str, Any]]]:
-        """Fetch main A-share indices via TickFlow quotes."""
+        """通过 TickFlow 行情获取 A 股主要指数。"""
         if region != "cn":
             return None
 
@@ -259,7 +259,7 @@ class TickFlowFetcher(BaseFetcher):
         return results or None
 
     def get_market_stats(self) -> Optional[Dict[str, Any]]:
-        """Calculate A-share market breadth from TickFlow universe quotes."""
+        """基于 TickFlow 标的池行情计算 A 股涨跌家数统计。"""
         client = self._get_client()
         if client is None:
             return None

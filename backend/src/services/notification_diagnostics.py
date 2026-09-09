@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Read-only notification configuration diagnostics.
+"""通知配置诊断(只读)。
 
-Diagnostics are designed for CLI/API display and must never include secret
-values. The module checks presence, pairing, routing, and noise-control settings
-without attempting to send any notification.
+诊断模块面向 CLI / API 展示, **绝不打印任何密钥值**。它只检查:
+
+- 各个渠道的最小必填 key 与高级 key 是否齐备
+- 成对配置(例如 BOT_TOKEN + CHAT_ID)是否同时存在
+- ntfy / Gotify 等 URL 格式是否合法
+- P3 路由配置、P4 降噪配置、P6 ntfy/Gotify 渠道
+- 上下文型渠道(钉钉会话 / 飞书会话)等运行时信息
+
+调用方: ``notification:diagnose`` CLI、API 端点; 仅做读取和结果汇总, 不发起
+任何实际通知发送。
 """
 
 from __future__ import annotations
@@ -28,14 +35,17 @@ from src.notification_routing import (
 from src.notification_sender.gotify_sender import resolve_gotify_message_endpoint
 from src.notification_sender.ntfy_sender import resolve_ntfy_endpoint
 
+# key 的重要性等级：minimal 是启用渠道必须；advanced 是可选优化项
 KeyTier = Literal["minimal", "advanced"]
+# 诊断问题的严重程度：error 必须修复，warning 提示配置可能失效，info 仅说明
 IssueSeverity = Literal["error", "warning", "info"]
+# 渠道分类：configured 来自静态环境变量，fallback 是兜底枚举，context 仅运行时可见
 ChannelKind = Literal["configured", "fallback", "context"]
 
 
 @dataclass(frozen=True)
 class NotificationKeySpec:
-    """Metadata for a notification-related configuration key."""
+    """单个通知相关环境变量的元信息，供诊断页/CLI 表格展示。"""
 
     key: str
     tier: KeyTier
@@ -45,7 +55,7 @@ class NotificationKeySpec:
 
 @dataclass(frozen=True)
 class NotificationChannelSpec:
-    """Baseline metadata for one notification channel."""
+    """单个通知渠道的基线元信息（最小 key、可选高级 key、备注等）。"""
 
     channel: str
     display_name: str
@@ -58,7 +68,7 @@ class NotificationChannelSpec:
 
 @dataclass(frozen=True)
 class NotificationDiagnosticIssue:
-    """One diagnostic message."""
+    """单条诊断结果，含严重等级、错误码、描述与关联环境变量。"""
 
     severity: IssueSeverity
     code: str
@@ -68,7 +78,7 @@ class NotificationDiagnosticIssue:
 
 @dataclass(frozen=True)
 class NotificationDiagnosticResult:
-    """Structured notification diagnostic result."""
+    """结构化的通知诊断结果，包含已配置渠道与三类问题列表。"""
 
     configured_channels: Tuple[str, ...]
     errors: Tuple[NotificationDiagnosticIssue, ...]
@@ -77,10 +87,11 @@ class NotificationDiagnosticResult:
 
     @property
     def ok(self) -> bool:
-        """Return whether the diagnostic run has no blocking errors."""
+        """返回是否不存在阻塞性问题；用于 CLI 退出码判定。"""
         return not self.errors
 
 
+# 全部渠道的基线规格；新增渠道时同时把 minimal/advanced key 写到这里
 CHANNEL_SPECS: Tuple[NotificationChannelSpec, ...] = (
     NotificationChannelSpec(
         channel=NotificationChannel.WECHAT.value,
@@ -177,6 +188,13 @@ CHANNEL_SPECS: Tuple[NotificationChannelSpec, ...] = (
         advanced_keys=("ASTRBOT_TOKEN", "WEBHOOK_VERIFY_SSL"),
     ),
     NotificationChannelSpec(
+        channel=NotificationChannel.DINGTALK.value,
+        display_name=ChannelDetector.get_channel_name(NotificationChannel.DINGTALK),
+        kind="configured",
+        minimal_keys=("DINGTALK_WEBHOOK_URL",),
+        advanced_keys=("DINGTALK_SECRET",),
+    ),
+    NotificationChannelSpec(
         channel=NotificationChannel.UNKNOWN.value,
         display_name=ChannelDetector.get_channel_name(NotificationChannel.UNKNOWN),
         kind="fallback",
@@ -199,6 +217,7 @@ CHANNEL_SPECS: Tuple[NotificationChannelSpec, ...] = (
     ),
 )
 
+# 展开后的"渠道 → key"明细表，供前端渠道诊断页与 CLI 全量扫描
 KEY_SPECS: Tuple[NotificationKeySpec, ...] = tuple(
     NotificationKeySpec(key=key, tier="minimal", description="Required to enable the channel.", channel=spec.channel)
     for spec in CHANNEL_SPECS
@@ -228,6 +247,7 @@ KEY_SPECS: Tuple[NotificationKeySpec, ...] = tuple(
     for key in P4_NOISE_ENV_KEYS
 )
 
+# P0 基础设置类环境变量
 P0_ACTIONS_ENV_KEYS: Tuple[str, ...] = (
     "CUSTOM_WEBHOOK_BODY_TEMPLATE",
     "WEBHOOK_VERIFY_SSL",
@@ -236,12 +256,15 @@ P0_ACTIONS_ENV_KEYS: Tuple[str, ...] = (
     "PUSHPLUS_TOPIC",
 )
 
+# P3 路由类环境变量（按 severity/route_type 路由到不同渠道）
 P3_ROUTE_ENV_KEYS: Tuple[str, ...] = tuple(
     route["env_key"] for route in NOTIFICATION_ROUTE_CONFIGS.values()
 )
 
+# P4 降噪类环境变量（与 P4_NOISE_ENV_KEYS 同源，避免重复维护）
 P4_NOISE_ACTIONS_ENV_KEYS: Tuple[str, ...] = P4_NOISE_ENV_KEYS
 
+# P6 渠道类环境变量：当前主要覆盖 ntfy 与 Gotify
 P6_CHANNEL_ACTIONS_ENV_KEYS: Tuple[str, ...] = (
     "NTFY_URL",
     "NTFY_TOKEN",
@@ -251,12 +274,12 @@ P6_CHANNEL_ACTIONS_ENV_KEYS: Tuple[str, ...] = (
 
 
 def _value(config: Config, attr: str):
-    """Read a config attribute using the normalized runtime attribute name."""
+    """读取 config 上某一属性，缺省返回 ``None``（屏蔽 ``AttributeError``）。"""
     return getattr(config, attr, None)
 
 
 def _has(config: Config, attr: str) -> bool:
-    """Return whether a config attribute is meaningfully populated."""
+    """判断 config 上某属性是否"有值"：容器要看是否非空，标量要看是否为非空白字符串。"""
     value = _value(config, attr)
     if isinstance(value, (list, tuple, set, dict)):
         return bool(value)
@@ -269,7 +292,7 @@ def _issue(
     message: str,
     key: Optional[str] = None,
 ) -> NotificationDiagnosticIssue:
-    """Create a structured diagnostic issue."""
+    """构造一条结构化的诊断问题。"""
     return NotificationDiagnosticIssue(severity=severity, code=code, message=message, key=key)
 
 
@@ -285,11 +308,12 @@ def _require_pair(
     warnings: Optional[List[NotificationDiagnosticIssue]] = None,
     severity: IssueSeverity = "error",
 ) -> None:
-    """Validate paired notification settings such as token/chat-id combos."""
+    """校验成对出现的通知配置（如 BOT_TOKEN + CHAT_ID）；单边存在时记 warning/error。"""
     left = _has(config, left_attr)
     right = _has(config, right_attr)
     target = errors if severity == "error" else warnings
     if target is None:
+        # 调用方传了 warning 但没传 warnings 容器时回落到 errors，避免漏报
         target = errors
     if left and not right:
         target.append(
@@ -312,7 +336,7 @@ def _require_pair(
 
 
 def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult:
-    """Run read-only diagnostics for notification configuration."""
+    """对通知配置执行只读诊断，汇总 errors / warnings / info 三类问题。"""
 
     configured = tuple(channel.value for channel in NotificationService.detect_configured_channels(config))
     errors: List[NotificationDiagnosticIssue] = []
@@ -331,6 +355,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
     ]
 
     if not configured:
+        # 没有任何渠道启用 → 通知功能不可用，必须报 error
         errors.append(
             _issue(
                 "error",
@@ -399,6 +424,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
         channel_name="Gotify",
         errors=errors,
     )
+    # Discord/Slack：若同时配置了 Webhook 渠道则 Bot 缺一边只是 warning，否则视为 error
     _require_pair(
         config,
         left_attr="discord_bot_token",
@@ -422,6 +448,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
         severity="warning" if _has(config, "slack_webhook_url") else "error",
     )
 
+    # 高级 key 已配置但最小 key 缺失：渠道不会启用，给 warning
     if (_has(config, "feishu_webhook_secret") or _has(config, "feishu_webhook_keyword")) and not _has(config, "feishu_webhook_url"):
         warnings.append(
             _issue(
@@ -491,6 +518,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
                 )
             )
 
+        # 路由指向尚未启用的渠道时给 warning：路由不会报错但实际收不到消息
         disabled_channels = [channel for channel in valid_channels if channel not in configured_set]
         if disabled_channels:
             warnings.append(
@@ -546,6 +574,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
         )
 
     if getattr(config, "notification_daily_digest_enabled", False):
+        # 每日摘要目前是预留配置，不做任何实际行为，单独提醒
         warnings.append(
             _issue(
                 "warning",
@@ -567,7 +596,7 @@ def run_notification_diagnostics(config: Config) -> NotificationDiagnosticResult
 
 
 def _format_issues(title: str, issues: Sequence[NotificationDiagnosticIssue]) -> List[str]:
-    """Format one severity bucket for human-readable CLI output."""
+    """把同类问题格式化成给人读的 CLI 多行文本。"""
     if not issues:
         return [f"{title}: 无"]
     lines = [f"{title}:"]
@@ -578,7 +607,7 @@ def _format_issues(title: str, issues: Sequence[NotificationDiagnosticIssue]) ->
 
 
 def format_notification_diagnostics(result: NotificationDiagnosticResult) -> str:
-    """Format diagnostics for CLI output without exposing secret values."""
+    """把诊断结果格式化成 CLI 文本输出，全程不展示任何密钥值。"""
 
     lines = [
         "通知配置诊断",

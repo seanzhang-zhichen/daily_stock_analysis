@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Seed and synchronize the generated stock index resource into the database."""
+"""把生成的股票索引资源灌入并同步到数据库。"""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ STOCK_INDEX_RESOURCE_PATH = Path(__file__).resolve().parent / "resources" / STOC
 
 
 def get_stock_index_source_path() -> Path:
-    """Return the bundled stock index resource path."""
+    """返回随包分发的股票索引资源路径。"""
     return STOCK_INDEX_RESOURCE_PATH
 
 
 def _tuple_to_entry(item: list[Any]) -> dict[str, Any] | None:
-    """Convert compact list-form resource rows into named entry dictionaries."""
+    """把紧凑的列表形式资源行转换为命名字典条目。"""
     if len(item) < 3:
         return None
     return {
@@ -41,7 +41,7 @@ def _tuple_to_entry(item: list[Any]) -> dict[str, Any] | None:
 
 
 def load_stock_index_source(path: Path | None = None) -> tuple[list[dict[str, Any]], str]:
-    """Load stock index entries and return them with a content hash version."""
+    """加载股票索引条目，并连同内容哈希版本一起返回。"""
     source_path = path or get_stock_index_source_path()
     raw = source_path.read_bytes()
     version = hashlib.sha256(raw).hexdigest()
@@ -63,13 +63,13 @@ def load_stock_index_source(path: Path | None = None) -> tuple[list[dict[str, An
 
 
 def sync_stock_index_to_db(path: Path | None = None) -> int:
-    """Upsert stock index resource entries into persistent storage."""
+    """把股票索引资源条目 upsert 到持久化存储。"""
     entries, version = load_stock_index_source(path)
     return StockIndexRepository().upsert_entries(entries, version=version)
 
 
 def ensure_stock_index_seeded() -> None:
-    """Best-effort seed of the stock index when the database table is empty."""
+    """数据库表为空时尽力而为地灌入股票索引数据。"""
     repo = StockIndexRepository()
     try:
         if repo.count() > 0:

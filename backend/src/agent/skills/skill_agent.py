@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SkillAgent — runtime specialist adapter for a selected skill.
+SkillAgent —— 针对选定技能（skill）的运行时专家适配器。
 
-This is an optional multi-agent execution layer. The primary skill abstraction
-in this repository is the instruction bundle loaded by :mod:`src.agent.skills.base`;
-this adapter only exists for the orchestrator's specialist mode.
+这是可选的多智能体执行层。本仓库中主要的技能抽象是
+:mod:`src.agent.skills.base` 加载的指令包；该适配器仅服务于
+编排器的专家（specialist）模式。
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class SkillAgent(BaseAgent):
-    """Agent that evaluates a single trading skill for a stock."""
+    """对某只股票评估单个交易技能的 Agent。"""
 
     max_steps = 4
 
     def __init__(self, skill_id: Optional[str] = None, strategy_id: Optional[str] = None, **kwargs):
-        """Initialise one runtime agent bound to a single skill definition."""
+        """初始化一个绑定到单个技能定义的运行时 Agent。"""
         super().__init__(**kwargs)
         resolved_skill_id = skill_id or strategy_id
         if not resolved_skill_id:
@@ -43,7 +43,7 @@ class SkillAgent(BaseAgent):
 
     @staticmethod
     def _load_skill(skill_id: str):
-        """Load the Skill definition for a skill id."""
+        """按技能 id 加载 Skill 定义。"""
         try:
             from src.agent.factory import get_skill_manager
 
@@ -54,7 +54,7 @@ class SkillAgent(BaseAgent):
         return None
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """Build the prompt that applies this specific skill's instructions."""
+        """构造应用该特定技能指令的提示词。"""
         if self._skill:
             instructions = self._skill.instructions or self._skill.description
             display = self._skill.display_name
@@ -86,7 +86,7 @@ Return **only** a JSON object:
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """Provide stock identity and technical context to the skill evaluator."""
+        """向技能评估器提供股票身份与技术上下文。"""
         parts = [
             f"Evaluate **{self.skill_id}** skill for stock "
             f"**{ctx.stock_code}** ({ctx.stock_name or 'unknown'}).",
@@ -104,7 +104,7 @@ Return **only** a JSON object:
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """Parse the skill evaluation JSON into a standard AgentOpinion."""
+        """把技能评估 JSON 解析为标准 AgentOpinion。"""
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[SkillAgent:%s] failed to parse opinion JSON", self.skill_id)

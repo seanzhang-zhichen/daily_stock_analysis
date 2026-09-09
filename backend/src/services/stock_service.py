@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-股票数据服务层
-===================================
+"""股票数据服务层。
 
 职责：
 1. 封装股票数据获取逻辑
-2. 提供实时行情和历史数据接口
+2. 提供实时行情与历史数据接口
 """
 
 import logging
@@ -26,18 +23,18 @@ class StockService:
     """
     
     def __init__(self):
-        """初始化股票数据服务"""
+        """初始化股票数据服务，构造仓储对象。"""
         self.repo = StockRepository()
-    
+
     def get_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """
-        获取股票实时行情
-        
+        获取单只股票的实时行情快照。
+
         Args:
-            stock_code: 股票代码
-            
+            stock_code: 股票代码。
+
         Returns:
-            实时行情数据字典
+            标准化的行情字典；行情源缺失或返回空时回落到占位数据 / None。
         """
         try:
             # 调用数据获取器获取实时行情

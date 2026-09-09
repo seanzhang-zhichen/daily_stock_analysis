@@ -57,7 +57,7 @@ router = APIRouter()
 
 
 def _bad_request(exc: Exception) -> HTTPException:
-    """Map validation errors from portfolio services to HTTP 400."""
+    """将组合服务的校验错误映射为 HTTP 400。"""
     return HTTPException(
         status_code=400,
         detail={"error": "validation_error", "message": str(exc)},
@@ -65,7 +65,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 
 def _internal_error(message: str, exc: Exception) -> HTTPException:
-    """Log unexpected portfolio failures and map them to HTTP 500."""
+    """记录未预期的组合异常并映射为 HTTP 500。"""
     logger.error(f"{message}: {exc}", exc_info=True)
     return HTTPException(
         status_code=500,
@@ -74,7 +74,7 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
 
 
 def _conflict_error(*, error: str, message: str) -> HTTPException:
-    """Return HTTP 409 for portfolio busy/oversell/conflict states."""
+    """为组合忙/超卖/冲突等状态返回 HTTP 409。"""
     return HTTPException(
         status_code=409,
         detail={"error": error, "message": message},
@@ -82,7 +82,7 @@ def _conflict_error(*, error: str, message: str) -> HTTPException:
 
 
 def _serialize_import_record(item: dict) -> PortfolioImportTradeItem:
-    """Normalize parsed import records before validating response schema."""
+    """在导入记录进入响应 schema 之前将其字段规范化。"""
     payload = dict(item)
     trade_date = payload.get("trade_date")
     if isinstance(trade_date, date):
@@ -102,7 +102,7 @@ def create_account(
     request: PortfolioAccountCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
-    """Create a portfolio account owned by the current user."""
+    """创建一个属于当前用户的投资组合账户。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -130,7 +130,7 @@ def list_accounts(
     include_inactive: bool = Query(False, description="Whether to include inactive accounts"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountListResponse:
-    """List portfolio accounts visible to the current user."""
+    """列出当前登录用户可见的投资组合账户。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -151,7 +151,7 @@ def update_account(
     request: PortfolioAccountUpdateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
-    """Update mutable metadata for a portfolio account."""
+    """更新投资组合账户的可变元数据。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -188,7 +188,7 @@ def delete_account(
     account_id: int,
     current_user: AppUser = Depends(get_current_user),
 ):
-    """Deactivate a portfolio account without physically deleting event history."""
+    """停用一个投资组合账户，但保留历史事件记录不做物理删除。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -215,7 +215,7 @@ def create_trade(
     request: PortfolioTradeCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """Record one buy/sell trade and recalculate affected portfolio state."""
+    """记录一笔买入/卖出交易，并重算受影响的组合状态。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -263,7 +263,7 @@ def list_trades(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioTradeListResponse:
-    """List trade events with optional account/date/symbol filters."""
+    """按可选的账户/日期/股票代码维度分页列出交易事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -294,7 +294,7 @@ def delete_trade(
     trade_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """Delete one trade event and report the deletion count."""
+    """删除一笔交易事件，并返回实际删除数量。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -323,7 +323,7 @@ def create_cash_ledger(
     request: PortfolioCashLedgerCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """Record one cash in/out event for a portfolio account."""
+    """为投资组合账户记录一笔资金存取事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -360,7 +360,7 @@ def list_cash_ledger(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCashLedgerListResponse:
-    """List cash ledger events with optional filters."""
+    """按可选筛选条件分页列出资金存取事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -390,7 +390,7 @@ def delete_cash_ledger(
     entry_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """Delete one cash ledger event."""
+    """删除一笔资金存取事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -419,7 +419,7 @@ def create_corporate_action(
     request: PortfolioCorporateActionCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """Record one dividend or split-adjustment event."""
+    """记录一笔分红或拆合股等公司行为事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -460,7 +460,7 @@ def list_corporate_actions(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCorporateActionListResponse:
-    """List corporate action events with optional filters."""
+    """按可选筛选条件分页列出公司行为事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -491,7 +491,7 @@ def delete_corporate_action(
     action_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """Delete one corporate action event."""
+    """删除一笔公司行为事件。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -526,7 +526,7 @@ def get_snapshot(
     ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioSnapshotResponse:
-    """Return a portfolio valuation snapshot for one or all accounts."""
+    """返回单个或全部账户的投资组合估值快照。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -561,7 +561,7 @@ def analyze_position(
     request: PortfolioPositionAnalysisRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskAccepted | JSONResponse:
-    """Submit an asynchronous analysis task enriched with private position context."""
+    """提交一个带有私有持仓上下文的异步分析任务。"""
     service = PortfolioService()
     owner_id = str(current_user.id)
     try:
@@ -616,11 +616,12 @@ def _resolve_position_analysis_context(
     account_id: Optional[int],
     owner_id: str,
 ) -> dict:
-    """Resolve one non-zero position owned by the current user."""
+    """从当前用户的持仓快照中解析一个非零持仓。"""
     target = service._normalize_symbol_for_position(symbol)
     if not target:
         raise ValueError("symbol must not be empty")
 
+    # 取一次完整快照后从中筛选目标股票，避免对每个持仓单独查询
     snapshot = service.get_portfolio_snapshot(
         account_id=account_id,
         cost_method="fifo",
@@ -638,6 +639,7 @@ def _resolve_position_analysis_context(
                 quantity = float(position.get("quantity") or 0)
             except (TypeError, ValueError):
                 quantity = 0.0
+            # 只把实际有持仓的数量纳入匹配，避免对零持仓发起分析
             if quantity > 0:
                 matches.append((account, position, position_symbol))
 
@@ -647,6 +649,7 @@ def _resolve_position_analysis_context(
             detail={"error": "not_found", "message": f"No non-zero portfolio position for {target}"},
         )
     if account_id is None:
+        # 未指定账户时要求持仓唯一，否则让前端显式选择账户
         account_ids = {
             int(account["account_id"])
             for account, _, _ in matches
@@ -692,7 +695,7 @@ def parse_csv_import(
     broker: str = Form(..., description="Broker id: huatai/citic/cmb"),
     file: UploadFile = File(...),
 ) -> PortfolioImportParseResponse:
-    """Parse an uploaded broker CSV without writing trades."""
+    """解析上传的券商 CSV 但不写入交易事件。"""
     importer = PortfolioImportService()
     try:
         content = file.file.read()
@@ -718,7 +721,7 @@ def parse_csv_import(
     summary="List supported broker CSV parsers",
 )
 def list_csv_brokers() -> PortfolioImportBrokerListResponse:
-    """List broker CSV parsers supported by the import service."""
+    """列出导入服务当前支持的券商 CSV 解析器。"""
     importer = PortfolioImportService()
     try:
         return PortfolioImportBrokerListResponse(brokers=importer.list_supported_brokers())
@@ -739,10 +742,11 @@ def commit_csv_import(
     file: UploadFile = File(...),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioImportCommitResponse:
-    """Parse and commit broker CSV rows with duplicate detection."""
+    """解析券商 CSV 并带去重地提交交易记录。"""
     importer = PortfolioImportService()
     owner_id_str = str(current_user.id)
     if owner_id_str is not None:
+        # 提交前先校验账户归属于当前用户，避免越权写入他人账户
         _svc = PortfolioService()
         try:
             _acct = _svc.repo.get_account(account_id, include_inactive=True)
@@ -782,7 +786,7 @@ def refresh_fx_rates(
     as_of: Optional[date] = Query(None, description="Rate date, default today"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioFxRefreshResponse:
-    """Refresh FX rates used for portfolio valuation, preserving stale fallback."""
+    """在线刷新组合估值所用的汇率，保留过期值作为兜底。"""
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -810,7 +814,7 @@ def get_risk_report(
     ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioRiskResponse:
-    """Return concentration, drawdown, and stop-loss risk dimensions."""
+    """返回集中度、回撤、止损等多个维度的组合风险报告。"""
     service = PortfolioRiskService()
     owner_id_str = str(current_user.id)
     try:

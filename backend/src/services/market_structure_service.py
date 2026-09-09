@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Market structure context composer for stock reports."""
+"""个股报告所用的市场结构上下文组装服务。
+
+把"市场题材层"与"个股在题材中的位置层"组合为单个 :class:`MarketStructureContext`，
+供个股分析 / 报告渲染时注入到 prompt 上下文。
+
+主要职责：
+- 从板块/概念榜单抽取个股相关题材、龙头股与成分股信息
+- 推断主题材（primary theme）与个股角色（leader / follower / edge / unknown）
+- 在题材数据不完整时输出 risk_tag 供上层做降级提示
+- 第一版仅支持 A 股；其它市场直接返回 ``not_supported`` 上下文
+"""
 
 from __future__ import annotations
 
@@ -31,18 +41,21 @@ from src.utils.data_processing import extract_board_detail_fields
 
 logger = logging.getLogger(__name__)
 
+# 主题材来源的有效取值；不在集合内的统一降级为 ``unknown``
 _VALID_THEME_SOURCES = {"industry", "concept", "mixed", "unknown"}
+# 题材阶段的有效取值；用于主题材 phase 推断
 _VALID_THEME_PHASES = {"warming", "accelerating", "cooling", "unknown"}
 
 
 class MarketStructureService:
-    """Compose market-theme and stock-position layers into one context."""
+    """把市场题材层与个股位置层组装为一份 :class:`MarketStructureContext`。"""
 
     def __init__(
         self,
         fetcher_manager: Optional[DataFetcherManager] = None,
         hotspot_service: Optional[MarketHotspotService] = None,
     ) -> None:
+        """注入数据抓取器与热点服务；默认构造全局实例。"""
         self.fetcher_manager = fetcher_manager or DataFetcherManager()
         self.hotspot_service = hotspot_service or MarketHotspotService(
             fetcher_manager=self.fetcher_manager,
@@ -58,6 +71,7 @@ class MarketStructureService:
         trade_date: Any = None,
         market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """组装个股的"市场结构"上下文；非 A 股或缺关键数据时返回 ``not_supported``。"""
         normalized_market = str(market or "cn").strip().lower() or "cn"
         trade_date_text = self._resolve_trade_date(trade_date, market_phase_summary)
         stock_code = str(code or "").strip()
@@ -98,6 +112,7 @@ class MarketStructureService:
         )
         market_theme_context = MarketThemeContext.model_validate(market_theme_payload)
 
+        # 板块匹配时把"领涨/领跌"榜单合并进 top/bottom，扩大后续匹配命中率
         related_sector_rankings = self._merge_rankings_for_board_matching(
             sector_rankings=sector_rankings,
             leading_items=market_theme_payload.get("leading_industries", []),
@@ -152,6 +167,7 @@ class MarketStructureService:
             missing_fields.append("leader_stocks")
         risk_tags: List[MarketStructureRiskTag] = []
         if market_theme_context.status != "ok":
+            # 题材数据本身不完整时输出降级提示
             risk_tags.append(
                 MarketStructureRiskTag(
                     code="theme_data_partial",
@@ -182,6 +198,7 @@ class MarketStructureService:
         else:
             stock_status = "unknown"
 
+        # 题材层与个股层综合状态：任一为 ok → ok；任一为 ok/partial → partial；其它 unknown
         if market_theme_context.status == "ok" and stock_status == "ok":
             combined_status = "ok"
         elif market_theme_context.status in {"ok", "partial"} or stock_status in {"ok", "partial"}:
@@ -214,6 +231,7 @@ class MarketStructureService:
     def _is_unsupported_fundamental_context(
         fundamental_context: Optional[Dict[str, Any]],
     ) -> bool:
+        """判断基本面上下文是否声明 ``not_supported``（顶层 / boards.status / coverage.boards 三处）。"""
         if not isinstance(fundamental_context, dict):
             return False
 
@@ -231,6 +249,7 @@ class MarketStructureService:
 
     @staticmethod
     def _is_not_supported_status(value: Any) -> bool:
+        """大小写不敏感地判断值是否为 ``not_supported``。"""
         return str(value or "").strip().lower() == "not_supported"
 
     @staticmethod
@@ -243,6 +262,7 @@ class MarketStructureService:
         missing_fields: List[str],
         message: str,
     ) -> Dict[str, Any]:
+        """构造一份 ``not_supported`` 状态的上下文字典，供上层透明降级。"""
         theme_context = MarketThemeContext(
             status="not_supported",
             market=market,
@@ -284,6 +304,7 @@ class MarketStructureService:
         sector_rankings: Dict[str, Any],
         concept_rankings: Dict[str, Any],
     ) -> List[StockBoardPosition]:
+        """把"个股所属板块"列表转为带榜单名次的 :class:`StockBoardPosition`。"""
         if not isinstance(boards, list):
             return []
 
@@ -321,11 +342,13 @@ class MarketStructureService:
         sector_rankings: Dict[str, Any],
         concept_rankings: Dict[str, Any],
     ) -> tuple[ThemeRankSource, Optional[Dict[str, Any]]]:
+        """决定板块名称对应的榜单数据来源（industry / concept）与命中的榜单条目。"""
         if board_type is not None:
             source: ThemeRankSource = "concept" if self._is_concept_type(board_type) else "industry"
             ranking_payload = concept_rankings if source == "concept" else sector_rankings
             return source, self._find_ranking_item(name, ranking_payload)
 
+        # 未声明类型时，先按概念名匹配，缺失则尝试行业，最后再根据名称启发式分类
         concept_item = self._find_ranking_item(name, concept_rankings)
         if concept_item is not None:
             return "concept", concept_item
@@ -346,10 +369,12 @@ class MarketStructureService:
         lagging_items: Any,
         lagging_allowed_sources: set[str],
     ) -> Dict[str, List[Dict[str, Any]]]:
+        """合并原榜单与领涨/领跌项，构造供个股板块匹配用的 top/bottom 列表。"""
         top: List[Dict[str, Any]] = []
         bottom: List[Dict[str, Any]] = []
 
         def append_if_dict(target: List[Dict[str, Any]], item: Any) -> None:
+            """把非空 dict 项（且带 name）追加进目标列表。"""
             if not isinstance(item, dict):
                 return
             name = item.get("name")
@@ -366,6 +391,7 @@ class MarketStructureService:
         for item in leading_items if isinstance(leading_items, list) else []:
             append_if_dict(top, item)
 
+        # 领跌项需过滤来源，避免把其它类型榜单的数据错配到当前榜单
         for item in lagging_items if isinstance(lagging_items, list) else []:
             source = str(item.get("source") or "unknown").strip().lower()
             if source not in lagging_allowed_sources:
@@ -379,6 +405,7 @@ class MarketStructureService:
         market_theme_payload: Dict[str, Any],
         related_boards: List[StockBoardPosition],
     ) -> tuple[Optional[PrimaryTheme], bool]:
+        """在活跃/领涨/领跌题材中寻找个股板块匹配的第一个作为主题材。"""
         if not related_boards:
             return None, False
 
@@ -399,6 +426,7 @@ class MarketStructureService:
             if not name or name not in related_names:
                 continue
             source = self._theme_source(item.get("source"))
+            # 题材声明了 industry/concept 来源时必须与个股板块的 source 一致
             if source in {"concept", "industry"}:
                 if not any(
                     board.name == name and board.source == source
@@ -406,6 +434,7 @@ class MarketStructureService:
                 ):
                     continue
             phase = self._theme_phase(item.get("phase"))
+            # 缺失 phase 时用涨跌幅粗略推断阶段
             if phase == "unknown":
                 phase = self._phase_from_change(self._safe_float(item.get("change_pct")))
             return PrimaryTheme(
@@ -416,6 +445,7 @@ class MarketStructureService:
                 change_pct=self._safe_float(item.get("change_pct")),
             ), True
 
+        # 匹配不到活跃题材时，退而取相关板块中第一个有排名/涨跌幅的作为"降级主题材"
         first = self._select_ranked_related_board(related_boards)
         return PrimaryTheme(
             name=first.name,
@@ -429,6 +459,7 @@ class MarketStructureService:
     def _select_ranked_related_board(
         related_boards: List[StockBoardPosition],
     ) -> StockBoardPosition:
+        """挑选第一个含排名或涨跌幅的板块作为降级主题材。"""
         for board in related_boards:
             if board.rank is not None or board.change_pct is not None:
                 return board
@@ -447,10 +478,12 @@ class MarketStructureService:
         hotspot_constituents: List[Dict[str, Any]],
         leader_stocks: List[Dict[str, Any]],
     ) -> str:
+        """根据主题材与个股在成分股/龙头股名单中的归属，推断 leader/follower/edge/unknown。"""
         if primary_theme is None:
             return "edge" if related_boards else "unknown"
         if not has_market_match:
             return "edge" if related_boards else "unknown"
+        # 任一关键证据不足都只能保守地视为 "edge"，避免错把个股误判为龙头/跟随
         if not has_primary_market_evidence or not has_stock_role_evidence:
             return "edge" if related_boards else "unknown"
         for board in related_boards:
@@ -472,6 +505,7 @@ class MarketStructureService:
 
     @staticmethod
     def _is_non_empty_list(value: Any) -> bool:
+        """判断值是否非空列表。"""
         return isinstance(value, list) and bool(value)
 
     @classmethod
@@ -482,6 +516,7 @@ class MarketStructureService:
         hotspot_constituents: List[Dict[str, Any]],
         leader_stocks: List[Dict[str, Any]],
     ) -> bool:
+        """个股在热点成分股或龙头股名单中能命中主题材，才视为有角色证据。"""
         if primary_theme is None:
             return False
         if not stock_code:
@@ -501,6 +536,7 @@ class MarketStructureService:
 
     @staticmethod
     def _safe_cast_market_list(value: Any) -> List[Dict[str, Any]]:
+        """把 list-like 输入中的 dict 项过滤出来，非列表返回空列表。"""
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
         return []
@@ -512,6 +548,7 @@ class MarketStructureService:
         theme_name: str,
         items: List[Dict[str, Any]],
     ) -> bool:
+        """判断个股是否出现在某题材的成分股列表中。"""
         return cls._match_stock_in_thematic_list(
             stock_code,
             theme_name,
@@ -525,6 +562,7 @@ class MarketStructureService:
         theme_name: str,
         items: List[Dict[str, Any]],
     ) -> bool:
+        """判断个股是否出现在某题材的领涨股列表中。"""
         return cls._match_stock_in_thematic_list(
             stock_code,
             theme_name,
@@ -538,6 +576,7 @@ class MarketStructureService:
         theme_name: str,
         items: List[Dict[str, Any]],
     ) -> bool:
+        """判断个股代码是否在某题材的成分股/龙头股列表中。"""
         normalized_stock_code = cls._normalize_stock_code(stock_code)
         normalized_theme = cls._normalize_theme_name(theme_name)
         if not normalized_stock_code or not normalized_theme:
@@ -556,6 +595,7 @@ class MarketStructureService:
 
     @staticmethod
     def _extract_stock_code(item: Dict[str, Any]) -> str:
+        """从候选条目中按多种常见 key 抽取股票代码，未找到时返回空串。"""
         for key in ("code", "stock_code", "ts_code", "ticker", "symbol"):
             value = item.get(key)
             if value is None:
@@ -567,6 +607,7 @@ class MarketStructureService:
 
     @staticmethod
     def _extract_item_themes(item: Dict[str, Any]) -> set[str]:
+        """汇总条目里所有可能的题材/行业/概念字段，统一转小写后返回。"""
         themes: set[str] = set()
         for key in (
             "theme",
@@ -591,14 +632,17 @@ class MarketStructureService:
 
     @staticmethod
     def _normalize_theme_name(value: str) -> str:
+        """归一化题材名：去空白、转小写，用于不区分大小写匹配。"""
         return str(value or "").strip().lower()
 
     @staticmethod
     def _normalize_stock_code(value: str) -> str:
+        """归一化股票代码：去空白、转大写，便于跨源对比。"""
         return str(value or "").strip().upper()
 
     @staticmethod
     def _has_primary_market_evidence(primary_theme: Optional[PrimaryTheme]) -> bool:
+        """主题材是否带有可用的市场证据（排名 / 涨跌幅 / 非 unknown 阶段）。"""
         if primary_theme is None:
             return False
         return (
@@ -612,6 +656,7 @@ class MarketStructureService:
         trade_date: Any,
         market_phase_summary: Optional[Dict[str, Any]],
     ) -> Optional[str]:
+        """解析交易日期；优先用显式 ``trade_date``，缺失时回落到 ``market_phase_summary``。"""
         if trade_date is not None:
             if isinstance(trade_date, date):
                 return trade_date.isoformat()
@@ -627,6 +672,7 @@ class MarketStructureService:
 
     @staticmethod
     def _find_ranking_item(name: str, rankings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """在榜单的 top/bottom 列表中按名称精确匹配，返回命中的条目或 ``None``。"""
         if not isinstance(rankings, dict):
             return None
         for field in ("top", "bottom"):
@@ -640,21 +686,25 @@ class MarketStructureService:
 
     @staticmethod
     def _is_concept_type(value: Optional[str]) -> bool:
+        """判断板块类型/名称是否属于"概念/题材"（含中文与英文关键词）。"""
         text = str(value or "").strip().lower()
         return any(keyword in text for keyword in ("概念", "题材", "concept", "theme"))
 
     @staticmethod
     def _theme_source(value: Any) -> ThemeRankSource:
+        """白名单归一化主题材来源字段；非法值降级为 ``unknown``。"""
         text = str(value or "unknown").strip()
         return text if text in _VALID_THEME_SOURCES else "unknown"
 
     @staticmethod
     def _theme_phase(value: Any) -> ThemePhase:
+        """白名单归一化主题材阶段字段；非法值降级为 ``unknown``。"""
         text = str(value or "unknown").strip()
         return text if text in _VALID_THEME_PHASES else "unknown"
 
     @staticmethod
     def _phase_from_change(value: Optional[float]) -> ThemePhase:
+        """用涨跌幅粗略推断题材阶段（>=3% 加速，>0 升温，否则降温）。"""
         if value is None:
             return "unknown"
         if value >= 3:
@@ -665,6 +715,7 @@ class MarketStructureService:
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
+        """安全解析 float：自动剥离百分号与空白；解析失败返回 ``None``。"""
         if value is None:
             return None
         try:
@@ -681,6 +732,7 @@ class MarketStructureService:
 
     @staticmethod
     def _safe_int(value: Any) -> Optional[int]:
+        """安全解析 int；解析失败返回 ``None``。"""
         if value is None:
             return None
         try:
@@ -690,6 +742,7 @@ class MarketStructureService:
 
     @staticmethod
     def _optional_text(value: Any) -> Optional[str]:
+        """转字符串并去空白，空串归一为 ``None``，便于上游统一处理。"""
         if value is None:
             return None
         text = str(value).strip()

@@ -4,6 +4,7 @@ import type { HistoryItem } from '../../types/analysis';
 import { Badge, Button, ScrollArea } from '../common';
 import { DashboardPanelHeader, DashboardStateBlock } from '../dashboard';
 import { HistoryListItem } from './HistoryListItem';
+import { useUiLanguage } from '../../contexts/UiLanguageContext';
 
 interface HistoryListProps {
   items: HistoryItem[];
@@ -40,6 +41,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   onDeleteSelected,
   className = '',
 }) => {
+  const { t } = useUiLanguage();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -116,7 +118,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
         <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-3 space-y-2.5 border-b border-subtle bg-surface/95 px-3 pb-3 pt-3 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
           <DashboardPanelHeader
             className="mb-0"
-            title="历史分析"
+            title={t('history.title')}
             titleClassName="text-sm font-medium"
             leading={(
               <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -127,11 +129,11 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             actions={
               selectedCount > 0 ? (
                 <Badge variant="info" size="sm" className="animate-in fade-in zoom-in duration-200">
-                  已选 {selectedCount}
+                  {t('history.selected', { count: selectedCount })}
                 </Badge>
               ) : items.length > 0 ? (
                 <Badge variant="default" size="sm" className="shadow-none">
-                  {visibleCountLabel} 条
+                  {t('history.count', { count: visibleCountLabel })}
                 </Badge>
               ) : undefined
             }
@@ -154,8 +156,8 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                   type="search"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
-                  placeholder="按代码或名称筛选"
-                  aria-label="按股票代码或名称筛选历史记录"
+                  placeholder={t('history.searchPlaceholder')}
+                  aria-label={t('history.searchAria')}
                   className="ui-input min-h-8 w-full rounded-xl bg-surface py-1.5 pl-8 pr-3 text-[11px] shadow-none"
                 />
               </div>
@@ -172,10 +174,10 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                     checked={allVisibleSelected}
                     onChange={() => onToggleSelectAll(visibleIds)}
                     disabled={isDeleting}
-                    aria-label="全选当前已加载历史记录"
+                  aria-label={t('history.selectAll')}
                     className="ui-checkbox h-3.5 w-3.5 disabled:opacity-50"
                   />
-                  <span className="select-none text-[11px] text-muted-text">全选当前</span>
+                  <span className="select-none text-[11px] text-muted-text">{t('history.selectAll')}</span>
                 </label>
                 <Button
                   variant="danger-subtle"
@@ -185,7 +187,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                   isLoading={isDeleting}
                   className="disabled:!border-transparent disabled:!bg-transparent disabled:!text-muted-text"
                 >
-                  {isDeleting ? '删除中' : '删除'}
+                  {isDeleting ? t('history.deleting') : t('history.delete')}
                 </Button>
               </div>
             </div>
@@ -196,12 +198,12 @@ export const HistoryList: React.FC<HistoryListProps> = ({
           <DashboardStateBlock
             loading
             compact
-            title="加载历史记录中..."
+            title={t('history.loading')}
           />
         ) : items.length === 0 ? (
           <DashboardStateBlock
-            title="暂无历史分析记录"
-            description="完成首次分析后，这里会保留最近结果。"
+            title={t('history.emptyTitle')}
+            description={t('history.emptyDescription')}
             icon={(
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -211,8 +213,8 @@ export const HistoryList: React.FC<HistoryListProps> = ({
         ) : filteredItems.length === 0 ? (
           <DashboardStateBlock
             compact
-            title="无匹配记录"
-            description={`没有代码或名称包含「${searchText.trim()}」的历史记录。`}
+            title={t('history.noMatch')}
+            description={t('history.noMatchDescription', { query: searchText.trim() })}
           />
         ) : (
           <div className="space-y-2">
@@ -239,7 +241,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             {!hasMore && items.length > 0 && (
               <div className="text-center py-5">
                 <div className="h-px bg-subtle w-full mb-3" />
-                <span className="text-[10px] text-secondary-text uppercase tracking-[0.2em]">已到底部</span>
+                <span className="text-[10px] text-secondary-text uppercase tracking-[0.2em]">{t('history.end')}</span>
               </div>
             )}
           </div>

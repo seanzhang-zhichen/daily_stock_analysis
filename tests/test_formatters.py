@@ -17,6 +17,9 @@ from src.formatters import (
     MIN_MAX_BYTES,
     _slice_at_effective_len,
     _chunk_by_max_words,
+    chunk_markdown_preserving_blocks,
+    utf8_len,
+    strip_hidden_markdown_metadata,
 )
 
 
@@ -176,3 +179,42 @@ class TestChunkContentByMaxBytes(unittest.TestCase):
         chunk, remaining = slice_at_max_bytes("测试ABC", 7)
         self.assertEqual(chunk, "测试A")
         self.assertEqual(remaining, "BC")
+
+    def test_markdown_chunker_removes_hidden_metadata_and_preserves_fences(self):
+        content = "[dsa-trace]: # (internal)\n\n```python\n" + ("x = 1\n" * 80) + "```"
+        cleaned = strip_hidden_markdown_metadata(content)
+        chunks = chunk_markdown_preserving_blocks(cleaned, 120, len_fn=utf8_len, add_page_marker=True)
+
+        self.assertNotIn("dsa-trace", "\n".join(chunks))
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(utf8_len(chunk) <= 120 for chunk in chunks))
+        self.assertTrue(all(chunk.count("```") >= 2 for chunk in chunks))
+
+    def test_markdown_chunker_does_not_split_inline_link_or_code(self):
+        content = " ".join(["see [A股报告](https://example.com/report) and `600519`"] * 30)
+        chunks = chunk_markdown_preserving_blocks(content, 120, len_fn=utf8_len)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.count("`") % 2 == 0 for chunk in chunks))
+        self.assertTrue(all(chunk.count("[") == chunk.count("]") for chunk in chunks))
+
+    def test_markdown_chunker_keeps_indented_code_after_a_fence_continuation(self):
+        text = "```python\n" + "\n".join(f"    print({index})" for index in range(20)) + "\n```"
+        chunks = chunk_markdown_preserving_blocks(text, 120, len_fn=utf8_len)
+
+        carried = [chunk for chunk in chunks[1:] if chunk.startswith("```python\n")]
+        self.assertTrue(carried)
+        self.assertTrue(any(chunk.startswith("```python\n    print(") for chunk in carried))
+
+    def test_markdown_chunker_keeps_space_when_continuing_a_fenced_line(self):
+        text = "```python\nvalue =" + (" item" * 30) + "\n```"
+        chunks = chunk_markdown_preserving_blocks(text, 70, len_fn=utf8_len)
+
+        carried = [chunk for chunk in chunks[1:] if chunk.startswith("```python\n")]
+        self.assertTrue(any(chunk.startswith("```python\n item") for chunk in carried))
+
+    def test_markdown_chunker_keeps_nested_list_indentation(self):
+        text = "- parent with enough words here\n  - nested child keeps indentation after chunking " + ("word " * 20)
+        chunks = chunk_markdown_preserving_blocks(text, 70, len_fn=utf8_len)
+
+        self.assertTrue(any(chunk.startswith("  - nested child") for chunk in chunks[1:]))

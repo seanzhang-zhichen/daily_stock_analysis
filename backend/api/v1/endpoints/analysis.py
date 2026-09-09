@@ -92,7 +92,7 @@ _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
 
 
 def _current_user_id_or_none(current_user: Any) -> Optional[int]:
-    """Extract a numeric user id from AppUser-like objects."""
+    """从 AppUser 之类的对象中提取数值型 user id。"""
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
@@ -103,24 +103,25 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
 
 
 def _db_user(db: Session, current_user: AppUser) -> AppUser:
-    """Reload the current user from DB when possible for fresh quota/credit state."""
+    """在配额/积分扣减前尽量从 DB 重新加载当前用户，保证状态最新。"""
     user_id = _current_user_id_or_none(current_user)
     if user_id is None or not hasattr(db, "query"):
         return current_user
     try:
         row = db.query(AppUser).filter(AppUser.id == user_id).first()
     except Exception:  # noqa: BLE001
+        # DB 查询失败时回退到请求上下文中的 user 对象，避免阻塞请求
         return current_user
     return row if isinstance(row, AppUser) else current_user
 
 
 def _market_review_lock_path(config: Config) -> Path:
-    """Return the filesystem lock path used to serialize market-review runs."""
+    """返回用于串行化大盘复盘任务的本地文件系统锁路径。"""
     return market_review_lock_path(config)
 
 
 def _compute_market_review_override_region(config: Config) -> Optional[str]:
-    """Apply trading-calendar filtering to the configured market-review region."""
+    """按交易日历过滤大盘复盘区域，非交易日时返回空串以提示跳过。"""
     if not getattr(config, "trading_day_check_enabled", True):
         return None
 
@@ -136,12 +137,13 @@ def _compute_market_review_override_region(config: Config) -> Optional[str]:
             open_markets,
         )
     except Exception as exc:
+        # 交易日历服务不可用时，按配置继续执行大盘复盘
         logger.warning("大盘复盘交易日过滤失败，按配置继续执行: %s", exc)
         return None
 
 
 def _build_market_review_runtime(config: Config, source_message: Optional[Any] = None) -> tuple[Any, Any, Any]:
-    """Build notifier/analyzer/search-service runtime dependencies."""
+    """构造大盘复盘所需的通知器、分析器、检索服务等运行时依赖。"""
     return _runtime_build_market_review_runtime(config, source_message)
 
 
@@ -152,7 +154,7 @@ def _run_market_review_background(
     config: Optional[Config] = None,
     query_id: Optional[str] = None,
 ) -> None:
-    """Run market review after the API response has been accepted."""
+    """在 API 响应已受理后再真正执行大盘复盘任务。"""
     from src.core.market_review import run_market_review
 
     runtime_config = config or get_config_dep()
@@ -172,11 +174,12 @@ def _run_market_review_background(
             raise RuntimeError("大盘复盘未返回可持久化报告")
         return {"result": report}
     finally:
+        # 无论成功失败，都要释放本地锁，避免长期占用阻塞下一次提交
         _release_market_review_lock(lock_token)
 
 
 def _invalid_analysis_input_error() -> HTTPException:
-    """Return the shared 400 response for unsupported free-text analysis input."""
+    """针对不合法自由文本输入返回统一的 400 响应。"""
     return HTTPException(
         status_code=400,
         detail={
@@ -187,32 +190,32 @@ def _invalid_analysis_input_error() -> HTTPException:
 
 
 def _is_obviously_invalid_analysis_input(text: str) -> bool:
-    """Reject mixed alphanumeric noise and unsupported symbols early."""
+    """早期拒绝明显是乱码或不支持字符的输入，减少后续昂贵的解析开销。"""
     if not text or is_code_like(text):
         return False
 
     if not _SUPPORTED_FREE_TEXT_RE.fullmatch(text):
         return True
 
+    # 形如 "abc123" 的字母数字混合通常是 OCR 噪声，直接拒绝避免进入名称解析
     has_letters = any(ch.isalpha() and ch.isascii() for ch in text)
     has_digits = any(ch.isdigit() for ch in text)
     return has_letters and has_digits
 
 
 def _resolve_and_normalize_input(raw_value: str) -> str:
-    """
-    Resolve and normalize a stock input for analysis requests.
+    """解析并归一化分析请求的股票输入。
 
-    Code-like values keep the existing canonical path.
-    Non-code inputs must resolve to a known stock code. Obvious garbage
-    input is rejected before expensive resolver and task-queue work.
+    - 类代码输入：走原有的规范化路径。
+    - 非代码输入：必须能解析为已知股票代码。
+    - 明显的无效输入会在进入昂贵的解析/任务队列前被拒绝。
     """
     text = (raw_value or "").strip()
     if not text:
         return ""
 
-    # Preserve registered index identity (including CSI canonical IDs) before
-    # the legacy stock-code normalizer strips exchange information.
+    # 优先识别已注册的指数身份（包括 CSI canonical id），
+    # 避免被旧版股票代码规范化器丢失交易所信息
     try:
         from src.services.stock_list_parser import ParseStatus, parse_analysis_target
         target = parse_analysis_target(text)
@@ -263,7 +266,7 @@ def trigger_analysis(
         db: Session = Depends(get_db),
         current_user: AppUser = Depends(get_current_user),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
-    """Trigger sync or async stock analysis after input/quota normalization."""
+    """在输入/配额归一化后，触发同步或异步的股票分析任务。"""
     current_user_id = _current_user_id_or_none(current_user)
     if current_user_id is not None:
         current_user = _db_user(db, current_user)
@@ -283,23 +286,23 @@ def trigger_analysis(
             }
         )
 
-    # Normalize and de-duplicate inputs while preserving compatibility.
+    # 归一化并去重输入，保留向后兼容的输入顺序
     resolved = [_resolve_and_normalize_input(c) for c in stock_codes]
-    
+
     seen = set()
     unique_codes = []
     for code in resolved:
         if not code:
             continue
-        # Use normalize_stock_code to ensure '600519' and '600519.SH' are merged
+        # 使用 normalize_stock_code 把 "600519" 与 "600519.SH" 合并为同一标的
         norm = normalize_stock_code(code)
         if norm not in seen:
             seen.add(norm)
             unique_codes.append(code)
-    
+
     stock_codes = unique_codes
 
-    # Limit the number of stocks in a single request to prevent DoS
+    # 限制单次请求的股票数量，避免被滥用造成服务端 DoS
     MAX_BATCH_SIZE = 50
     if len(stock_codes) > MAX_BATCH_SIZE:
         raise HTTPException(
@@ -319,7 +322,7 @@ def trigger_analysis(
             }
         )
 
-    # Sync mode only supports single-stock analysis.
+    # 同步模式仅支持单只股票，批量请走异步模式
     if not request.async_mode:
         if len(stock_codes) > 1:
             raise HTTPException(
@@ -344,6 +347,7 @@ def trigger_analysis(
                 related_id=stock_codes[0],
             )
             if credit_outcome.exceeded:
+                # 积分不足时同步回滚本次分析已扣的日额度，保持一致
                 if outcome.consumed:
                     refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
                 db.commit()
@@ -357,6 +361,7 @@ def trigger_analysis(
                 user_id=current_user_id,
             )
         except Exception:
+            # 同步分析失败：把已扣的积分与日额度返还给用户
             if credit_outcome and credit_outcome.consumed:
                 refund_consumed_credits(
                     db,
@@ -400,6 +405,7 @@ def trigger_analysis(
                 related_id=stock_code,
             )
             if credit_outcome.exceeded:
+                # 积分不足：本次分析本次额度 + 本批此前额度全部回滚
                 if outcome.consumed:
                     refund_quota(db, user=current_user, kind=KIND_ANALYSIS, on_date=outcome.on_date)
                 for _i in range(consumed_count):
@@ -424,7 +430,7 @@ def trigger_analysis(
         elif consumed_credit_outcomes:
             db.commit()
 
-    # Async mode submits one task per stock.
+    # 异步模式：每只股票提交一个独立任务
     try:
         response = _handle_async_analysis_batch(
             stock_codes,
@@ -487,16 +493,14 @@ def _handle_async_analysis_batch(
     refund_analysis_credits: bool = False,
     analysis_credit_cost: int = 0,
 ) -> JSONResponse:
-    """
-    Handle asynchronous analysis requests, including batch submission.
+    """处理异步分析请求，含批量提交与重复任务识别。
 
     ``user_id`` 来自 ``current_user.id``。
     """
     task_queue = get_task_queue()
-    
-    # Preserve metadata for single-stock requests. For batch requests,
-    # only carry through metadata that semantically applies to the whole
-    # batch, such as import/image source tracking.
+
+    # 单只股票请求会透传其元数据；批量请求仅保留语义上对整批生效的元数据，
+    # 例如导入/图片来源追踪
     is_single = len(stock_codes) == 1
     preserve_batch_metadata = request.selection_source in {"import", "image"}
 
@@ -545,8 +549,8 @@ def _handle_async_analysis_batch(
         )
         for dup in duplicate_errors
     ]
-    
-    # 单只股票且被拒绝：保持 409 兼容性
+
+    # 单只股票且全部被拒绝：保持 409 兼容性
     if len(stock_codes) == 1 and duplicates:
         dup = duplicates[0]
         error_response = DuplicateTaskErrorResponse(
@@ -559,7 +563,7 @@ def _handle_async_analysis_batch(
             status_code=409,
             content=error_response.model_dump()
         )
-    
+
     # 单只股票成功：保持原有响应格式兼容性
     if len(stock_codes) == 1 and accepted:
         task_accepted = TaskAccepted(
@@ -571,7 +575,7 @@ def _handle_async_analysis_batch(
             status_code=202,
             content=task_accepted.model_dump()
         )
-    
+
     # 批量：返回汇总结果
     batch_response = BatchTaskAcceptedResponse(
         accepted=accepted,
@@ -589,17 +593,16 @@ def _handle_sync_analysis(
     request: AnalyzeRequest,
     user_id: Optional[int] = None,
 ) -> AnalysisResultResponse:
-    """
-    处理同步分析请求
-    
+    """处理同步分析请求。
+
     直接执行分析，等待完成后返回结果。
     ``user_id`` 来自 ``current_user.id``。
     """
     import uuid
     from src.services.analysis_service import AnalysisService
-    
+
     query_id = uuid.uuid4().hex
-    
+
     try:
         service = AnalysisService()
         result = service.analyze_stock(
@@ -622,7 +625,7 @@ def _handle_sync_analysis(
                 }
             )
 
-        # 构建报告结构
+        # 加载补充信息后再组装结构化报告
         report_data = result.get("report", {})
         context_snapshot, fundamental_snapshot, price_history = _load_sync_fundamental_sources(
             query_id=query_id,
@@ -673,25 +676,18 @@ def _handle_sync_analysis(
         500: {"description": "提交失败", "model": ErrorResponse},
     },
     summary="触发大盘复盘",
-    description="提交一个后台大盘复盘任务，复用 CLI 的大盘复盘链路并保存报告。接口内部仅提供进程内/单机防重，如多实例（多 Worker/多容器）部署，需结合外部幂等机制避免重复触发。",
+    description="提交一个后台大盘复盘任务，复用 CLI 的大盘复盘链路并保存报告。人工触发不因交易日历跳过，便于 A 股盘后、周末或节假日复盘；接口内部仅提供进程内/单机防重，如多实例（多 Worker/多容器）部署，需结合外部幂等机制避免重复触发。",
 )
 def trigger_market_review(
     request: Optional[MarketReviewRequest] = Body(None),
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> MarketReviewAccepted:
-    """Trigger market review from Web/API without blocking the request."""
+    """以非阻塞方式从 Web/API 提交大盘复盘任务。"""
     request = request or MarketReviewRequest()
     current_user_id = _current_user_id_or_none(current_user)
 
-    override_region = _compute_market_review_override_region(config)
-    if override_region == "":
-        return MarketReviewAccepted(
-            status="accepted",
-            message="今日大盘复盘相关市场均为非交易日，已跳过大盘复盘",
-            send_notification=request.send_notification,
-        )
-
+    # 进程内/单机级别的防重锁，避免在同一进程内并发触发多次复盘
     lock_token = _try_acquire_market_review_lock(config)
     if lock_token is None:
         raise HTTPException(
@@ -707,7 +703,8 @@ def trigger_market_review(
         task = get_task_queue().submit_background_task(
             lambda: _run_market_review_background(
                 request.send_notification,
-                override_region=override_region,
+                # 手动入口始终遵循配置的 A 股区域；交易日过滤仅属于自动调度。
+                override_region=None,
                 lock_token=lock_token,
                 config=config,
                 query_id=task_id,
@@ -719,6 +716,7 @@ def trigger_market_review(
             user_id=current_user_id,
         )
     except Exception:
+        # 提交后台任务失败：立即释放锁，避免后续请求持续被拦截
         _release_market_review_lock(lock_token)
         raise
 
@@ -751,22 +749,22 @@ def get_task_list(
     limit: int = Query(20, description="返回数量限制", ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskListResponse:
-    """Return current user's in-memory analysis task queue snapshot."""
+    """返回当前用户在内存任务队列中的快照。"""
     task_queue = get_task_queue()
     current_user_id = _current_user_id_or_none(current_user)
-    
-    # 获取所有任务
+
+    # 拉取当前用户可见的全部任务
     all_tasks = task_queue.list_all_tasks(limit=limit, user_id=current_user_id)
-    
-    # 状态筛选
+
+    # 按状态过滤，支持逗号分隔的多个状态
     if status:
         status_list = [s.strip().lower() for s in status.split(",")]
         all_tasks = [t for t in all_tasks if t.status.value in status_list]
-    
-    # 统计信息
+
+    # 拉取统计信息，与过滤后的列表并存用于前端展示
     stats = task_queue.get_task_stats(user_id=current_user_id)
-    
-    # 转换为 Schema
+
+    # 转换为对外 schema
     task_infos = [
         TaskInfo(
             task_id=t.task_id,
@@ -786,7 +784,7 @@ def get_task_list(
         )
         for t in all_tasks
     ]
-    
+
     return TaskListResponse(
         total=stats["total"],
         pending=stats["pending"],
@@ -808,9 +806,8 @@ def get_task_list(
     description="通过 Server-Sent Events 实时推送任务状态变化"
 )
 async def task_stream(current_user: AppUser = Depends(get_current_user)):
-    """
-    SSE 任务状态流
-    
+    """SSE 任务状态流。
+
     事件类型：
     - connected: 连接成功
     - task_created: 新任务创建
@@ -819,36 +816,36 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
     - task_completed: 任务完成
     - task_failed: 任务失败
     - heartbeat: 心跳（每 30 秒）
-    
+
     Returns:
         StreamingResponse: SSE 事件流
     """
     current_user_id = _current_user_id_or_none(current_user)
 
     async def event_generator():
-        """Yield task lifecycle events and heartbeat frames for one SSE client."""
+        """为单个 SSE 客户端产出任务生命周期事件与心跳帧。"""
         task_queue = get_task_queue()
         event_queue: asyncio.Queue = asyncio.Queue()
-        
-        # 发送连接成功事件
+
+        # 连接建立后立即告知客户端
         yield _format_sse_event("connected", {"message": "Connected to task stream"})
-        
-        # 发送当前进行中的任务
+
+        # 先把当前进行中的任务同步给客户端，避免前端错失启动时的状态
         pending_tasks = task_queue.list_pending_tasks(user_id=current_user_id)
         for task in pending_tasks:
             yield _format_sse_event("task_created", task.to_dict())
-        
-        # 订阅任务事件
+
+        # 订阅任务事件，按用户隔离
         task_queue.subscribe(event_queue, user_id=current_user_id)
-        
+
         try:
             while True:
                 try:
-                    # 等待事件，超时发送心跳
+                    # 等待事件，超时后发送心跳保持连接
                     event = await asyncio.wait_for(event_queue.get(), timeout=30)
                     yield _format_sse_event(event["type"], event["data"])
                 except asyncio.TimeoutError:
-                    # 心跳
+                    # 30s 心跳，防止反代/浏览器超时断开
                     yield _format_sse_event("heartbeat", {
                         "timestamp": datetime.now().isoformat()
                     })
@@ -856,21 +853,22 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
             logger.debug("SSE client disconnected, cancelling event generator")
             raise
         finally:
+            # 客户端断开时务必退订，避免队列里堆积失效订阅者
             task_queue.unsubscribe(event_queue)
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲，保证 SSE 实时推送
         }
     )
 
 
 def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
-    """Format one Server-Sent Event frame with UTF-8 JSON payload."""
+    """构造一帧 Server-Sent Event，data 部分为 UTF-8 JSON。"""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -892,18 +890,19 @@ def get_analysis_status(
     task_id: str,
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskStatus:
-    """Return task status from memory first, then persisted history fallback."""
+    """优先从内存任务队列查询，再回退到持久化历史记录。"""
     current_user_id = _current_user_id_or_none(current_user)
     # 1. 先从任务队列查询
     task_queue = get_task_queue()
     task = task_queue.get_task(task_id, user_id=current_user_id)
-    
+
     if task:
         result: Optional[AnalysisResultResponse] = None
         market_review_report = None
 
         if task.status == TaskStatusEnum.COMPLETED and isinstance(task.result, dict):
             if task.stock_code == "market_review":
+                # 大盘复盘任务：直接透传文本报告
                 report_text = task.result.get("result")
                 if isinstance(report_text, str) and report_text.strip():
                     market_review_report = report_text
@@ -911,6 +910,7 @@ def get_analysis_status(
                 try:
                     result = AnalysisResultResponse.model_validate(task.result)
                 except Exception:
+                    # 旧版本/异常 schema：回退为空结果而不是直接报错
                     logger.warning(
                         "解析任务结果失败，回退为空返回: task_id=%s",
                         task.task_id,
@@ -928,7 +928,7 @@ def get_analysis_status(
             selection_source=task.selection_source,
             skills=getattr(task, "skills", None),
         )
-    
+
     # 2. 从数据库查询已完成的记录
     try:
         from src.storage import DatabaseManager
@@ -944,6 +944,7 @@ def get_analysis_status(
                     report_text = raw_result.get("raw_response") or raw_result.get("market_review_report")
                     if isinstance(report_text, str) and report_text.strip():
                         market_review_report = report_text
+                # 兼容旧格式：把正文当作复盘报告兜底
                 if not market_review_report and record.news_content:
                     market_review_report = record.news_content
 
@@ -965,7 +966,7 @@ def get_analysis_status(
             )
             stock_name = get_localized_stock_name(record.name, record.code, report_language)
 
-            # Extract current_price / change_pct from context_snapshot
+            # 从 context_snapshot 中提取当前价格、涨跌幅与技能标签
             current_price = None
             change_pct = None
             skills = None
@@ -984,9 +985,10 @@ def get_analysis_status(
                 if change_pct is None:
                     change_pct = realtime_quote_raw.get('change_pct')
                 if change_pct is None:
+                    # 兼容历史字段名 pct_chg
                     change_pct = realtime_quote_raw.get('pct_chg')
 
-            # Build report from DB record so completed tasks return real data
+            # 基于 DB 记录构建结构化报告，使已完成任务返回真实数据
             report_dict = AnalysisReport(
                 meta=ReportMeta(
                     id=record.id,
@@ -1051,7 +1053,7 @@ def get_analysis_status(
             }
         )
 
-    # 3. 任务不存在
+    # 3. 队列和数据库都没有该任务，视为不存在或已过期
     raise HTTPException(
         status_code=404,
         detail={
@@ -1069,9 +1071,9 @@ def _load_sync_fundamental_sources(
     query_id: str,
     stock_code: str,
 ) -> tuple[Optional[Any], Optional[Dict[str, Any]], list[Dict[str, Any]]]:
-    """Load optional context/fundamental/price details for sync analyze response.
+    """为同步分析响应加载可选的上下文、基本面与价格历史信息。
 
-    这些补充信息只用于丰富同步响应的结构化报告；读取失败时 fail-open，避免分析已经
+    这些补充信息仅用于丰富同步响应的结构化报告；读取失败时 fail-open，避免分析已经
     成功但附加历史/基本面读取异常导致整个接口失败。
     """
     try:
@@ -1097,6 +1099,7 @@ def _load_sync_fundamental_sources(
 
         return context_snapshot, fallback_fundamental, price_history
     except Exception as e:
+        # 任何加载失败都吞掉并降级返回空，避免影响主分析结果返回
         logger.debug(
             "load sync fundamental sources failed (fail-open): query_id=%s stock_code=%s err=%s",
             query_id,
@@ -1107,7 +1110,7 @@ def _load_sync_fundamental_sources(
 
 
 def _stringify_report_strategy_value(value: Any) -> Optional[str]:
-    """Convert strategy point values to the string shape expected by history schema."""
+    """将策略点位转换为历史 schema 期望的字符串类型。"""
     if value is None:
         return None
     if isinstance(value, str):
@@ -1124,7 +1127,7 @@ def _build_analysis_report(
         fallback_fundamental_payload: Optional[Dict[str, Any]] = None,
         price_history: Optional[list[Dict[str, Any]]] = None,
 ) -> AnalysisReport:
-    """Build the public structured analysis report response.
+    """组装对外公开的结构化分析报告。
 
     原始分析结果可能来自同步执行、历史记录或不同版本的报告生成器；这里统一补齐
     meta/summary/strategy/details，并从 context/fallback 中提取财务、分红、板块和
@@ -1134,6 +1137,7 @@ def _build_analysis_report(
     summary_data = report_data.get("summary", {})
     strategy_data = report_data.get("strategy", {})
     details_data = report_data.get("details", {})
+    # 报告语言按 meta -> context_snapshot -> 全局默认的顺序回退
     report_language = normalize_report_language(
         meta_data.get("report_language")
         or (context_snapshot or {}).get("report_language")

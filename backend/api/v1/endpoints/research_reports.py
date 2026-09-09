@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Paid research report endpoints.
+"""付费研报相关接口。
 
 公开端允许浏览已发布研报、购买解锁全文、点赞/点踩和评论；运营端允许具备
 ``is_research_operator`` 身份的用户维护自己的研报。购买、互动和序列化逻辑集中在
@@ -40,7 +40,7 @@ router = APIRouter()
 
 
 class ResearchReportCreateRequest(BaseModel):
-    """Research-operator request body for creating a report draft."""
+    """研报运营者创建报告草稿的请求体。"""
 
     title: str = Field(..., min_length=2, max_length=255)
     summary: str = Field(..., min_length=2, max_length=4000)
@@ -53,7 +53,7 @@ class ResearchReportCreateRequest(BaseModel):
 
 
 class ResearchReportUpdateRequest(BaseModel):
-    """Research-operator partial update body for an existing report."""
+    """研报运营者局部更新已有报告的请求体。"""
 
     title: Optional[str] = Field(default=None, min_length=2, max_length=255)
     summary: Optional[str] = Field(default=None, min_length=2, max_length=4000)
@@ -66,24 +66,25 @@ class ResearchReportUpdateRequest(BaseModel):
 
 
 class ReactionRequest(BaseModel):
-    """Like/dislike request; null clears the current user's reaction."""
+    """点赞/点踩请求；值为 null 时清除当前用户的表态。"""
 
     reaction: Optional[str] = Field(default=None, pattern="^(like|dislike)$")
 
 
 class CommentRequest(BaseModel):
-    """Visible user comment payload for a published report."""
+    """已发布研报的可见用户评论载荷。"""
 
     content: str = Field(..., min_length=1, max_length=2000)
 
 
 def _optional_user(request: Request) -> Optional[AppUser]:
-    """Resolve an optional user so public endpoints can personalize output."""
+    """解析可选登录用户，让公开接口能按查看者个性化输出。"""
     return get_optional_current_user(request)
 
 
 def get_research_operator_user(current_user: AppUser = Depends(get_current_user)) -> AppUser:
-    """Require a logged-in user with research-operator permissions."""
+    """校验当前登录用户具备研报运营身份，否则拒绝访问。"""
+    # 用 getattr 兜底缺失属性的旧数据/不同账号体系，避免属性不存在时直接 500。
     if not bool(getattr(current_user, "is_research_operator", False)):
         raise HTTPException(
             status_code=403,
@@ -93,7 +94,7 @@ def get_research_operator_user(current_user: AppUser = Depends(get_current_user)
 
 
 def _get_report_or_404(db: Session, report_id: int) -> AppResearchReport:
-    """Load any research report or raise a public 404."""
+    """按 ID 加载任意研报，不存在则抛出公开 404。"""
     report = db.query(AppResearchReport).filter(AppResearchReport.id == int(report_id)).first()
     if report is None:
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -101,7 +102,7 @@ def _get_report_or_404(db: Session, report_id: int) -> AppResearchReport:
 
 
 def _get_published_report_or_404(db: Session, report_id: int) -> AppResearchReport:
-    """Load a published research report, hiding drafts as 404."""
+    """加载已发布研报，草稿统一伪装成 404 以隐藏其存在。"""
     report = _get_report_or_404(db, report_id)
     if not bool(report.is_published):
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -116,7 +117,7 @@ def list_research_reports(
     db: Session = Depends(get_db),
     current_user: Optional[AppUser] = Depends(_optional_user),
 ) -> dict:
-    """List published research reports, optionally personalized for the viewer."""
+    """列出已发布研报，并可按当前查看者个性化输出。"""
     query = db.query(AppResearchReport).filter(AppResearchReport.is_published == True)  # noqa: E712
     if category:
         query = query.filter(AppResearchReport.category == category)
@@ -143,7 +144,7 @@ def operator_list_research_reports(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
-    """List reports authored by the current research operator."""
+    """列出当前研报运营者本人创作的报告。"""
     query = db.query(AppResearchReport).filter(AppResearchReport.author_id == int(operator.id))
     total = query.count()
     reports = (
@@ -164,7 +165,7 @@ def get_research_report(
     db: Session = Depends(get_db),
     current_user: Optional[AppUser] = Depends(_optional_user),
 ) -> dict:
-    """Return one published report, including full content when user can access it."""
+    """返回单篇已发布研报；用户具备权限时才包含全文内容。"""
     report = _get_published_report_or_404(db, report_id)
     return {"report": serialize_report(db, report, user=current_user, include_full=True)}
 
@@ -175,7 +176,7 @@ def unlock_research_report(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
-    """Purchase/unlock a published report using the current user's credits."""
+    """使用当前用户积分购买/解锁一篇已发布研报。"""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -218,7 +219,7 @@ def react_research_report(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
-    """Set, change, or clear the current user's reaction to a report."""
+    """设置、修改或清除当前用户对研报的表态。"""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -239,7 +240,7 @@ def list_comments(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    """List visible comments for one published research report."""
+    """列出一篇已发布研报的可见评论。"""
     report = _get_published_report_or_404(db, report_id)
     rows = (
         db.query(AppResearchReportComment, AppUser)
@@ -271,7 +272,7 @@ def create_comment(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ) -> dict:
-    """Create a visible comment on a published research report."""
+    """在已发布研报下创建一条可见评论。"""
     report = _get_published_report_or_404(db, report_id)
     user = db.query(AppUser).filter(AppUser.id == int(current_user.id)).first()
     if user is None:
@@ -283,7 +284,7 @@ def create_comment(
 
 
 def _get_operator_report_or_404(db: Session, report_id: int, operator: AppUser) -> AppResearchReport:
-    """Load a report owned by the operator, hiding others as 404."""
+    """加载运营者本人所有的研报，他人的研报统一伪装成 404。"""
     report = _get_report_or_404(db, report_id)
     if int(report.author_id or 0) != int(operator.id):
         raise HTTPException(status_code=404, detail="Research report not found")
@@ -296,7 +297,7 @@ def operator_create_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
-    """Create a research report draft owned by the operator."""
+    """创建归运营者所有的研报草稿。"""
     report = create_report(
         db,
         author=operator,
@@ -321,7 +322,7 @@ def operator_update_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
-    """Update an operator-owned research report."""
+    """更新运营者本人所有的研报。"""
     report = _get_operator_report_or_404(db, report_id, operator)
     report = update_report(
         db,
@@ -346,8 +347,9 @@ def operator_delete_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> Response:
-    """Delete an operator-owned report only while it has no related records."""
+    """仅在研报无任何关联记录时删除运营者本人所有的报告。"""
     report = _get_operator_report_or_404(db, report_id, operator)
+    # 已有购买/表态/评论的研报不可物理删除，否则破坏外键与用户已购权益，需引导改为下架。
     related_count = (
         db.query(AppResearchReportPurchase.id)
         .filter(AppResearchReportPurchase.report_id == int(report.id))
@@ -372,7 +374,7 @@ def operator_publish_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
-    """Publish an operator-owned research report."""
+    """发布运营者本人所有的研报。"""
     report = publish_report(db, _get_operator_report_or_404(db, report_id, operator))
     db.commit()
     db.refresh(report)
@@ -385,7 +387,7 @@ def operator_unpublish_research_report(
     db: Session = Depends(get_db),
     operator: AppUser = Depends(get_research_operator_user),
 ) -> dict:
-    """Unpublish an operator-owned research report."""
+    """下架运营者本人所有的研报。"""
     report = unpublish_report(db, _get_operator_report_or_404(db, report_id, operator))
     db.commit()
     db.refresh(report)

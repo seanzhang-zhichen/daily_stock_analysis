@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Service layer for running stock selection strategies."""
+"""运行股票选择策略的服务层。
+
+负责加载股票池、按策略筛选/排序候选并汇总诊断信息，
+供选股任务与相关 API 使用。
+"""
 
 from __future__ import annotations
 
@@ -23,11 +27,12 @@ from src.services.stock_selection.strategies import StockSelectionStrategyInfo, 
 logger = logging.getLogger(__name__)
 
 
+# 历史行情加载函数签名：(code, days, target_date) -> (DataFrame | None, source_name)
 HistoryLoader = Callable[[str, int, Optional[date]], tuple[Optional[pd.DataFrame], str]]
 
 
 class StockSelectionService:
-    """Run registered stock selection strategies against a stock universe."""
+    """在股票池上运行已注册的选股策略。"""
 
     def __init__(
         self,
@@ -37,6 +42,7 @@ class StockSelectionService:
         history_loader: Optional[HistoryLoader] = None,
         stock_pool_loader: Optional[Callable[[Sequence[str]], List[StockSelectionStock]]] = None,
     ) -> None:
+        """初始化服务：默认注入全局数据库、注册表与历史行情加载器。"""
         if db is None:
             from src.storage import get_db
 
@@ -47,7 +53,7 @@ class StockSelectionService:
         self._stock_pool_loader = stock_pool_loader or self.load_stock_pool
 
     def list_strategies(self) -> List[StockSelectionStrategyInfo]:
-        """Return public metadata for available selection strategies."""
+        """返回已注册选股策略的公开元数据。"""
         return self.registry.list()
 
     def select(
@@ -60,7 +66,7 @@ class StockSelectionService:
         target_date: Optional[date] = None,
         params: Optional[Dict[str, Any]] = None,
     ) -> StockSelectionResult:
-        """Run one stock selection strategy."""
+        """运行一次指定名称的选股策略并返回候选结果。"""
         strategy = self.registry.get(strategy_name)
         effective_params = strategy.default_params()
         if params:
@@ -102,6 +108,7 @@ class StockSelectionService:
                 logger.warning("Stock selection failed for %s via %s: %s", stock.code, strategy.name, exc)
 
         items = self._sort_candidates(items, str(effective_params.get("sort_by") or "volatility_then_return"))
+        # 上限压到 [1, 500]，防止调用方传入极端值导致返回过大
         max_items = max(1, min(int(limit or 50), 500))
         return StockSelectionResult(
             strategy=strategy.name,
@@ -118,13 +125,13 @@ class StockSelectionService:
         stock_codes: Optional[Sequence[str]],
         markets: Optional[Sequence[str]],
     ) -> List[StockSelectionStock]:
-        """Resolve explicit stock codes or load a market universe."""
+        """解析股票池：显式代码列表优先，否则加载市场级股票池。"""
         if stock_codes:
             return self._stocks_from_codes(stock_codes)
         return self._stock_pool_loader(markets or ["cn"])
 
     def _stocks_from_codes(self, stock_codes: Sequence[str]) -> List[StockSelectionStock]:
-        """Build a de-duplicated pool from explicit codes."""
+        """从显式代码列表构建去重的股票池（按归一化后的代码去重）。"""
         stocks: List[StockSelectionStock] = []
         seen: set[str] = set()
         for raw_code in stock_codes:
@@ -146,7 +153,7 @@ class StockSelectionService:
         return stocks
 
     def load_stock_pool(self, markets: Sequence[str]) -> List[StockSelectionStock]:
-        """Load an active stock universe from DB stock index."""
+        """从数据库股票索引加载在售股票池（按代码去重）。"""
         normalized_markets = self._normalize_markets(markets)
         rows = self._load_index_rows(normalized_markets)
         stocks: List[StockSelectionStock] = []
@@ -166,7 +173,7 @@ class StockSelectionService:
         return stocks
 
     def _load_index_rows(self, markets: set[str]) -> Iterable[Any]:
-        """Read active stocks from the local stock index."""
+        """从本地股票索引读取指定市场内启用的活跃股票行。"""
         from src.storage import StockIndexEntry
 
         with self.db.get_session() as session:
@@ -180,7 +187,7 @@ class StockSelectionService:
             )
 
     def _get_stock_name(self, stock_code: str) -> Optional[str]:
-        """Resolve a stock name from stock_index when possible."""
+        """若能命中本地索引则返回股票中文名，否则返回 None。"""
         try:
             from src.repositories.stock_index_repo import StockIndexRepository
 
@@ -190,7 +197,7 @@ class StockSelectionService:
 
     @staticmethod
     def _selection_code_from_index_row(row: Any) -> str:
-        """Choose the code shape expected by data providers and stock_daily."""
+        """按市场取数据源与 daily 模块期望的代码形态（CN 用展示码、HK 用规范码）。"""
         display = str(getattr(row, "display_code", "") or "").strip()
         canonical = str(getattr(row, "canonical_code", "") or "").strip()
         market = str(getattr(row, "market", "") or "").strip().upper()
@@ -202,13 +209,13 @@ class StockSelectionService:
 
     @staticmethod
     def _normalize_markets(markets: Sequence[str]) -> set[str]:
-        """Normalize market filters."""
+        """归一化市场过滤条件（小写去空），未指定时默认 A 股（cn）。"""
         normalized = {str(m or "").strip().lower() for m in markets if str(m or "").strip()}
         return normalized or {"cn"}
 
     @staticmethod
     def _infer_market(code: str) -> str:
-        """Infer a coarse market label from a stock code."""
+        """根据代码形态粗判所属市场（HK / CN / 其它一律 US）。"""
         normalized = str(code or "").strip().upper()
         if normalized.startswith("HK") or normalized.endswith(".HK"):
             return "HK"
@@ -221,7 +228,11 @@ class StockSelectionService:
         items: List[StockSelectionCandidate],
         sort_by: str,
     ) -> List[StockSelectionCandidate]:
-        """Sort strategy matches by the requested ranking rule."""
+        """按指定的排序规则给命中候选排序。
+
+        支持 ``return_then_volatility``、``score``，其余（含默认
+        ``volatility_then_return``）按波动率优先排序。
+        """
         normalized = sort_by.strip().lower()
         if normalized == "return_then_volatility":
             return sorted(
@@ -239,17 +250,20 @@ class StockSelectionService:
 
 
 def build_default_registry() -> StockSelectionStrategyRegistry:
-    """Build the runtime strategy registry."""
+    """构建运行时的策略注册表（当前只注册逼近新高策略）。"""
     return StockSelectionStrategyRegistry([NearNewHighStrategy()])
 
 
 def _canonical_stock_code(code: str) -> str:
-    """Return an uppercase display/storage code without importing providers."""
+    """返回大写形式的展示/存储用代码，不引入数据提供方依赖。"""
     return str(code or "").strip().upper()
 
 
 def _normalize_stock_code(stock_code: str) -> str:
-    """Normalize common CN/HK stock code shapes without provider imports."""
+    """将常见 CN / HK 代码写法归一化为标准形式（不依赖 data_provider）。
+
+    支持识别 ``HK00700`` / ``700.HK``、``SH600519`` / ``600519.SH``、``BJ8xxxxx`` 等写法。
+    """
     code = str(stock_code or "").strip()
     upper = code.upper()
 

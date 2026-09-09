@@ -1,7 +1,15 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Industry and concept enrichment for candidate snapshots."""
+"""候选快照的行业/概念与板块热度富集模块。
+
+负责把行业（industry）、概念（concepts）和板块热度（board heat）等额外维度
+合并到股票筛选后的候选快照中。数据来源支持两类：
+- 稳定的本地映射文件（CSV / JSON / JSONL），生产环境首选
+- 实时第三方 provider（目前仅 akshare），可选
+
+历史板块热度采用 ``.history.jsonl`` 旁挂文件加载，用于计算趋势、持续度、降温等指标。
+"""
 
 from __future__ import annotations
 
@@ -61,7 +69,25 @@ def enrich_industry_concepts(
     provider_cache_dir: str | Path | None | object = _CACHE_DIR_UNSET,
     provider_cache_ttl_hours: float | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Attach industry/concepts columns from stable files and optional providers."""
+    """从本地映射文件与可选 provider 中追加行业/概念相关列。
+
+    内部按以下顺序执行：
+    1. 预置行业、概念、热度列（如缺省）；
+    2. 加载每个 ``map_files`` 并合并到 ``mapping``；
+    3. 当 ``provider`` 非空时拉取第三方板块信息补充映射；
+    4. 把 ``mapping`` merge 到快照并返回新表与可观测的处理日志。
+
+    Args:
+        df: 待富集的候选快照 DataFrame。
+        map_files: 行业映射文件路径列表，支持 CSV/JSON/JSONL。
+        provider: 第三方 provider 名称；当前仅支持 ``akshare``。
+        max_boards: 拉取板块数量的上限。
+        provider_cache_dir: provider 缓存目录；缺省走环境变量或默认路径。
+        provider_cache_ttl_hours: provider 缓存有效期（小时）。
+
+    Returns:
+        ``(富集后的 DataFrame, 处理日志列表)``；输入为空或不含 ``code`` 列时返回原表与空日志。
+    """
     result = df.copy()
     notes: list[str] = []
     if result.empty or "code" not in result.columns:
@@ -117,7 +143,23 @@ def enrich_industry_concepts(
 
 
 def load_industry_map(path_like: str | Path) -> dict[str, dict[str, object]]:
-    """Load code -> industry/concepts mapping from CSV, JSON or JSONL."""
+    """从 CSV / JSON / JSONL 文件加载 ``代码 -> 行业/概念/热度`` 映射。
+
+    支持三种文件格式：
+    - ``.csv``：包含 ``code/industry/concepts`` 及任意热度列；
+    - ``.jsonl``：每行一个 dict；
+    - ``.json``：列表或 ``{code: {…}}`` 字典。
+
+    Args:
+        path_like: 文件路径。
+
+    Returns:
+        以规范化代码为键、字段字典为值的映射表。
+
+    Raises:
+        FileNotFoundError: 文件不存在。
+        ValueError: 文件后缀不被支持。
+    """
     path = Path(path_like)
     if not path.is_file():
         raise FileNotFoundError(f"Industry map file not found: {path}")
@@ -181,10 +223,19 @@ def fetch_akshare_board_map(
     cache_ttl_seconds: float | None = None,
     cache_ttl_hours: float | None = None,
 ) -> tuple[dict[str, dict[str, object]], list[str]]:
-    """Build a code mapping from AkShare industry/concept board constituents.
+    """从 AkShare 的行业/概念板块成分股中构建代码映射。
 
-    This is intentionally optional because it may require many third-party
-    requests. For production, a cached CSV/JSON map is preferred.
+    该函数被刻意设计为可选路径：可能触发大量第三方请求，
+    生产环境推荐使用缓存的 CSV/JSON 映射文件。
+
+    Args:
+        max_boards: 拉取的板块数量上限。
+        cache_dir: 缓存目录；为 ``_CACHE_DIR_UNSET`` 时走默认路径。
+        cache_ttl_seconds: 缓存有效期（秒），优先级高于小时版本。
+        cache_ttl_hours: 缓存有效期（小时）。
+
+    Returns:
+        ``(代码 -> 字段映射字典, 处理日志列表)``；拉取失败时返回空映射。
     """
     board_limit = max(int(max_boards), 1)
     notes: list[str] = []
@@ -269,7 +320,17 @@ def fetch_akshare_board_map(
 
 
 def save_industry_map(mapping: dict[str, dict[str, object]], path_like: str | Path) -> Path:
-    """Persist a code->industry/concepts mapping as CSV or JSON."""
+    """把 ``代码 -> 行业/概念/热度`` 映射落盘为 CSV 或 JSON 文件。
+
+    父目录会自动创建。按代码升序排序以便人工 review。
+
+    Args:
+        mapping: 代码到字段字典的映射。
+        path_like: 输出路径，后缀决定格式（``.json``/其它→ CSV）。
+
+    Returns:
+        写入的目标 ``Path``。
+    """
     path = Path(path_like)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -303,6 +364,11 @@ def _apply_mapping_to_snapshot(
     result: pd.DataFrame,
     mapping: dict[str, dict[str, object]],
 ) -> tuple[pd.DataFrame, int, int, int]:
+    """把 ``mapping`` 合并到候选快照并按列分别计数填充。
+
+    使用 ``__industry_code`` 作为 join 键合并，然后按列规则把缺失值替换为映射值。
+    返回的四个计数分别为：行业列填充数、概念列填充数、所有热度列填充数之和。
+    """
     map_df = _mapping_dataframe(mapping)
     if map_df.empty:
         return result, 0, 0, 0
@@ -326,6 +392,10 @@ def _apply_mapping_to_snapshot(
 
 
 def _mapping_dataframe(mapping: dict[str, dict[str, object]]) -> pd.DataFrame:
+    """把 ``mapping`` 转换为带 ``__industry_code`` 与 ``__map_<field>`` 命名的 DataFrame。
+
+    同一代码仅保留最后一次出现（``drop_duplicates`` ``keep='last'``）。
+    """
     fields = ("industry", "concepts", *_HEAT_FIELDS)
     rows: list[dict[str, object]] = []
     for code, item in mapping.items():
@@ -343,6 +413,7 @@ def _mapping_dataframe(mapping: dict[str, dict[str, object]]) -> pd.DataFrame:
 
 
 def _apply_industry_column(output: pd.DataFrame, merged: pd.DataFrame) -> int:
+    """将行业列填充到当前为空的行，返回填充行数。"""
     current = output["industry"].map(_safe_text)
     incoming = merged["__map_industry"].map(_safe_text)
     mask = current.eq("") & incoming.ne("")
@@ -352,6 +423,7 @@ def _apply_industry_column(output: pd.DataFrame, merged: pd.DataFrame) -> int:
 
 
 def _apply_concepts_column(output: pd.DataFrame, merged: pd.DataFrame) -> int:
+    """把新概念以合并方式补到现有概念列，返回被修改的行数。"""
     current = output["concepts"].map(_safe_text)
     incoming = merged["__map_concepts"].map(_safe_text)
     candidate_mask = incoming.ne("")
@@ -371,6 +443,7 @@ def _apply_concepts_column(output: pd.DataFrame, merged: pd.DataFrame) -> int:
 
 
 def _apply_numeric_column(output: pd.DataFrame, merged: pd.DataFrame, field: str) -> int:
+    """按字段专属规则用映射值替换原值，返回被替换的行数。"""
     incoming = merged[f"__map_{field}"].map(_safe_float)
     current = output[field].map(_safe_float)
     mask = _numeric_replacement_mask(field, incoming, current)
@@ -384,6 +457,10 @@ def _apply_numeric_column(output: pd.DataFrame, merged: pd.DataFrame, field: str
 
 
 def _apply_text_column(output: pd.DataFrame, merged: pd.DataFrame, field: str) -> int:
+    """把映射中的文本值合并到现有文本列，返回被修改的行数。
+
+    ``board_heat_summary`` 走专门的多源合并函数；其它列取左值优先。
+    """
     current = output[field].map(_safe_text)
     incoming = merged[f"__map_{field}"].map(_safe_text)
     candidate_mask = incoming.ne("")
@@ -409,6 +486,7 @@ def _apply_text_column(output: pd.DataFrame, merged: pd.DataFrame, field: str) -
 
 
 def _numeric_replacement_mask(field: str, incoming: pd.Series, current: pd.Series) -> pd.Series:
+    """按字段语义决定哪些行可以/应该被新值覆盖（更大更优 or 更小更优等）。"""
     candidate_mask = incoming.notna()
     missing_mask = current.isna()
     comparable_mask = candidate_mask & ~missing_mask
@@ -417,12 +495,16 @@ def _numeric_replacement_mask(field: str, incoming: pd.Series, current: pd.Serie
         new_values = incoming[comparable_mask].astype(float)
         current_values = current[comparable_mask].astype(float)
         if field == "industry_rank":
+            # 排名越靠前（值越小）越好
             wins.loc[comparable_mask] = new_values < current_values
         elif field == "board_heat_observations":
+            # 观测数越多越可信
             wins.loc[comparable_mask] = new_values > current_values
         elif field in {"board_heat_latest_score", "board_heat_persistence_score", "board_heat_cooling_score"}:
+            # 这些分数越高越好
             wins.loc[comparable_mask] = new_values > current_values
         elif field == "board_heat_trend_score":
+            # 趋势分取绝对值更大者（更明显的趋势）
             wins.loc[comparable_mask] = new_values.abs() > current_values.abs()
         elif field.endswith("heat_score"):
             wins.loc[comparable_mask] = new_values > current_values
@@ -430,6 +512,7 @@ def _numeric_replacement_mask(field: str, incoming: pd.Series, current: pd.Serie
 
 
 def _resolve_akshare_board_cache_dir(cache_dir: str | Path | None | object) -> Path | None:
+    """解析 AkShare 缓存目录：未指定走默认；指定 ``None`` 表示禁用缓存。"""
     if cache_dir is _CACHE_DIR_UNSET:
         return _default_akshare_board_cache_dir()
     if cache_dir is None:
@@ -438,6 +521,7 @@ def _resolve_akshare_board_cache_dir(cache_dir: str | Path | None | object) -> P
 
 
 def _default_akshare_board_cache_dir() -> Path:
+    """从环境变量回退到 ``<data_dir>/industry_provider_cache`` 的默认缓存目录。"""
     explicit = (
         os.getenv("SCREENING_INDUSTRY_PROVIDER_CACHE_DIR", "").strip()
         or os.getenv("INDUSTRY_PROVIDER_CACHE_DIR", "").strip()
@@ -453,6 +537,7 @@ def _resolve_cache_ttl_seconds(
     cache_ttl_seconds: float | None,
     cache_ttl_hours: float | None,
 ) -> float:
+    """解析缓存有效期（秒），优先参数，然后环境变量，默认 24 小时。"""
     if cache_ttl_seconds is not None:
         return float(cache_ttl_seconds)
     if cache_ttl_hours is not None:
@@ -466,6 +551,7 @@ def _resolve_cache_ttl_seconds(
 
 
 def _akshare_board_cache_path(cache_dir: Path, *, max_boards: int) -> Path:
+    """构造带 schema 与 ``max_boards`` 的 AkShare 缓存文件路径，便于区分版本。"""
     return cache_dir / f"akshare_board_map_{_AKSHARE_BOARD_CACHE_SCHEMA}_max_boards_{int(max_boards)}.json"
 
 
@@ -475,6 +561,11 @@ def _read_akshare_board_cache(
     max_boards: int,
     ttl_seconds: float,
 ) -> tuple[dict[str, dict[str, object]] | None, str]:
+    """读取 AkShare 缓存；过期、解析失败、schema 不匹配或 ``max_boards`` 不符都会失效。
+
+    Returns:
+        ``(缓存映射或 None, 日志说明)``。
+    """
     try:
         stat = path.stat()
     except FileNotFoundError:
@@ -508,6 +599,7 @@ def _write_akshare_board_cache(
     *,
     max_boards: int,
 ) -> str:
+    """以原子写的方式落盘 AkShare 缓存；先写临时文件再 rename，避免半写文件被读。"""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -526,6 +618,7 @@ def _write_akshare_board_cache(
 
 
 def _normalize_cached_mapping(value: object) -> dict[str, dict[str, object]] | None:
+    """校验并规范化从缓存读取的 mapping；格式异常返回 None。"""
     if not isinstance(value, dict):
         return None
     mapping: dict[str, dict[str, object]] = {}
@@ -550,6 +643,7 @@ def _normalize_cached_mapping(value: object) -> dict[str, dict[str, object]] | N
 
 
 def _json_safe_mapping(mapping: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    """按代码排序并过滤非字典项，输出可直接 JSON 化的 mapping。"""
     return {
         code: _json_safe_item(item)
         for code, item in sorted(mapping.items())
@@ -558,6 +652,7 @@ def _json_safe_mapping(mapping: dict[str, dict[str, object]]) -> dict[str, dict[
 
 
 def _json_safe_item(item: dict[str, object]) -> dict[str, object]:
+    """对单条记录做安全字段裁剪，丢弃空值/NaN，数值字段保留为 Python 基本类型。"""
     cleaned: dict[str, object] = {
         "industry": _safe_text(item.get("industry")),
         "concepts": _safe_text(item.get("concepts")),
@@ -574,6 +669,7 @@ def _json_safe_item(item: dict[str, object]) -> dict[str, object]:
 
 
 def _board_names(df: pd.DataFrame) -> list[str]:
+    """从 AkShare 板块 DataFrame 中提取名称列，返回非空名称列表。"""
     for column in ("板块名称", "名称", "name"):
         if column in df.columns:
             return [_safe_text(item) for item in df[column].tolist() if _safe_text(item)]
@@ -581,6 +677,10 @@ def _board_names(df: pd.DataFrame) -> list[str]:
 
 
 def _board_items(df: pd.DataFrame) -> list[dict[str, object]]:
+    """把 AkShare 板块 DataFrame 转成 ``{name, rank, change_pct}`` 的字典列表。
+
+    rank 缺省时按 DataFrame 行号 + 1 作为兜底。
+    """
     items: list[dict[str, object]] = []
     for idx, row in df.iterrows():
         name = _first_row_value(row, ["板块名称", "名称", "name"])
@@ -599,6 +699,7 @@ def _board_items(df: pd.DataFrame) -> list[dict[str, object]]:
 
 
 def _merge_mapping(target: dict[str, dict[str, object]], source: dict[str, dict[str, object]]) -> None:
+    """把 ``source`` 中的每条记录合并进 ``target``：行业/状态取先到先得，文本/数值按字段规则择优。"""
     for code, item in source.items():
         existing = target.setdefault(code, {"industry": "", "concepts": ""})
         if item.get("industry") and not existing.get("industry"):
@@ -622,6 +723,7 @@ def _merge_mapping(target: dict[str, dict[str, object]], source: dict[str, dict[
 
 
 def _load_companion_board_heat_trends(path_like: str | Path) -> tuple[dict[str, dict[str, object]], str]:
+    """加载行业映射旁边的 ``.history.jsonl`` 热度历史，返回 ``(趋势映射, 日志)``。"""
     path = Path(path_like)
     history_path = path.with_suffix(path.suffix + ".history.jsonl")
     if not history_path.is_file():
@@ -640,7 +742,23 @@ def load_board_heat_trends(
     hot_score: float = 60.0,
     cooling_threshold: float = 5.0,
 ) -> dict[str, dict[str, object]]:
-    """Load board heat trend stats from an industry-cache history JSONL file."""
+    """从行业缓存的历史 JSONL 文件加载板块热度趋势统计。
+
+    每个板块仅保留窗口期内最新的若干条记录，计算最新分、趋势分、
+    持续分、降温分与状态标签。
+
+    Args:
+        path_like: 历史 JSONL 文件路径。
+        window_size: 仅取最近 N 条观测。
+        hot_score: 判定"持续热"的最低热度阈值。
+        cooling_threshold: 判定升温/降温的最小变化量。
+
+    Returns:
+        板块名 -> 趋势统计字段字典的映射。
+
+    Raises:
+        FileNotFoundError: 文件不存在。
+    """
     path = Path(path_like)
     if not path.is_file():
         raise FileNotFoundError(f"Board heat history file not found: {path}")
@@ -705,6 +823,10 @@ def _apply_board_heat_trends(
     mapping: dict[str, dict[str, object]],
     trends: dict[str, dict[str, object]],
 ) -> None:
+    """把板块热度趋势按 ``board_heat_summary`` 出现的板块名匹配到 ``mapping`` 中。
+
+    同一条记录可能命中多个板块，取观测数最多、最新分与趋势分绝对值最大者优先。
+    """
     for item in mapping.values():
         boards = _summary_boards(item.get("board_heat_summary", ""))
         matches = [trends[board] for board in boards if board in trends]
@@ -731,6 +853,7 @@ def _apply_board_heat_trends(
 
 
 def _summary_boards(value: object) -> list[str]:
+    """从 ``board_heat_summary`` 中拆分出所有出现的板块名。"""
     boards = []
     for summary in _merge_summary_text("", value).split("|"):
         board = summary.strip().split(":", 1)[0].strip()
@@ -740,6 +863,7 @@ def _summary_boards(value: object) -> list[str]:
 
 
 def _merge_label_text(left: str, right: str) -> str:
+    """把两组用逗号分隔的概念标签去重合并，统一中英文分隔符。"""
     labels: list[str] = []
     seen = set()
     for raw in (left, right):
@@ -752,6 +876,7 @@ def _merge_label_text(left: str, right: str) -> str:
 
 
 def _merge_summary_text(left: object, right: object, *, limit: int = 8) -> str:
+    """把两组由 ``|`` 分隔的板块热度摘要去重合并，最多保留 ``limit`` 个片段。"""
     labels: list[str] = []
     seen = set()
     for raw in (left, right):
@@ -764,6 +889,7 @@ def _merge_summary_text(left: object, right: object, *, limit: int = 8) -> str:
 
 
 def _first_row_value(row: dict | pd.Series, columns: list[str]) -> object:
+    """按列名候选顺序在 row 中返回首个存在的字段值；都不存在返回 None。"""
     for column in columns:
         if column in row:
             return row.get(column)
@@ -771,6 +897,7 @@ def _first_row_value(row: dict | pd.Series, columns: list[str]) -> object:
 
 
 def _max_numeric(left: object, right: object) -> float | None:
+    """在忽略 None 的前提下返回两个值中的较大者；都为 None 时返回 None。"""
     left_num = _safe_float(left)
     right_num = _safe_float(right)
     if left_num is None:
@@ -781,6 +908,10 @@ def _max_numeric(left: object, right: object) -> float | None:
 
 
 def _should_replace_numeric(field: str, new_value: float, current_value: float) -> bool:
+    """按字段语义判断新值是否优于当前值。
+
+    排名取更小、观测数取更大、最新/持续/降温分取更大、趋势分取绝对值更大。
+    """
     if field == "industry_rank":
         return new_value < current_value
     if field == "board_heat_observations":
@@ -802,6 +933,7 @@ def _board_heat_state(
     hot_score: float,
     cooling_threshold: float,
 ) -> str:
+    """基于趋势/降温/持续度计算板块状态标签（cooling/warming/persistent_hot/weakening/flat）。"""
     if cooling_score >= cooling_threshold:
         return "cooling"
     if trend_score >= cooling_threshold:
@@ -814,6 +946,7 @@ def _board_heat_state(
 
 
 def _board_heat_score(*, change_pct: float | None, rank: float | None) -> float:
+    """综合涨跌幅和排名得到 0~100 的板块热度分。"""
     score = 50.0
     if change_pct is not None:
         score += change_pct * 6.0
@@ -823,6 +956,7 @@ def _board_heat_score(*, change_pct: float | None, rank: float | None) -> float:
 
 
 def _board_heat_summary(board: str, *, change_pct: float | None, rank: float | None) -> str:
+    """生成 ``板块:涨跌幅:rank`` 形式的简明热度摘要。"""
     parts = [board]
     if change_pct is not None:
         parts.append(f"{change_pct:+.2f}%")

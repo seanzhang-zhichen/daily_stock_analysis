@@ -1,8 +1,8 @@
-"""Configuration file manager with atomic read/write behavior.
+"""配置文件管理器（原子读写语义）。
 
-The web settings API updates ``.env`` through this module. It preserves comments
-and unknown raw lines where possible, skips masked sensitive values, and uses an
-atomic replace with a mounted-file fallback for Docker/Windows environments.
+Web 设置 API 通过本模块更新 ``.env`` 文件。它尽可能保留注释与无法识别的原始行，
+跳过被掩码的敏感值，并在 Docker/Windows 环境下用原子替换（atomic replace）配合
+挂载文件兜底（in-place fallback）完成写入。
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConfigLineEntry:
-    """Structured representation of a single `.env` line.
+    """单条 ``.env`` 行的结构化表示。
 
-    ``raw`` lines are intentionally preserved. They allow hand-written content
-    that python-dotenv does not parse cleanly to survive a settings save.
+    原始行（``raw``）会被刻意保留，使 python-dotenv 无法干净解析的手写内容在设置保存
+    后依然得以留存，避免破坏用户原有注释与排版。
     """
 
     kind: Literal["assignment", "comment", "blank", "raw"]
@@ -42,7 +42,7 @@ class ConfigLineEntry:
 
     @classmethod
     def parse(cls, raw_line: str) -> "ConfigLineEntry":
-        """Classify one physical line without losing its original text."""
+        """将一行物理文本分类，且不丢失其原始内容。"""
         stripped = raw_line.strip()
         if not stripped:
             return cls(kind="blank", raw_line=raw_line)
@@ -62,7 +62,7 @@ class ConfigLineEntry:
 
     @classmethod
     def assignment(cls, key: str, value: str) -> "ConfigLineEntry":
-        """Create an updated assignment line for a normalized key/value pair."""
+        """为归一化后的 key/value 对创建一条"已更新"的赋值行。"""
         return cls(
             kind="assignment",
             raw_line=f"{key}={value}",
@@ -72,32 +72,31 @@ class ConfigLineEntry:
         )
 
     def render(self) -> str:
-        """Render the original line unless this entry was replaced by an update."""
+        """还原该行的文本；除非本条已被更新替换，否则返回原始行。"""
         if self.kind == "assignment" and self.updated and self.key is not None:
             return f"{self.key}={self.value}"
         return self.raw_line
 
 
 class ConfigManager:
-    """Manage `.env` read/write operations with optimistic versioning.
+    """管理 ``.env`` 的读写操作，采用乐观版本（optimistic versioning）机制。
 
-    The class is process-thread-safe, but it is not a distributed lock. API
-    callers should still use the returned version string to detect stale edits
-    across browser sessions or processes.
+    该类是进程内线程安全的，但并非分布式锁。API 调用方仍应使用返回的版本字符串来
+    检测跨浏览器会话或跨进程的过期编辑（stale edits）。
     """
 
     def __init__(self, env_path: Optional[Path] = None):
-        """Initialize manager for the active env file path."""
+        """初始化管理器，绑定当前生效的 env 文件路径。"""
         self._env_path = env_path or self._resolve_env_path()
         self._lock = threading.RLock()
 
     @property
     def env_path(self) -> Path:
-        """Return active `.env` path."""
+        """返回当前生效的 ``.env`` 路径。"""
         return self._env_path
 
     def read_config_map(self) -> Dict[str, str]:
-        """Read key-value mapping from `.env` file."""
+        """从 ``.env`` 文件读取键值映射（key/value）。"""
         if not self._env_path.exists():
             return {}
 
@@ -109,7 +108,7 @@ class ConfigManager:
         }
 
     def get_config_version(self) -> str:
-        """Return deterministic version string based on file state."""
+        """基于文件状态（mtime + 内容哈希）返回确定性的版本字符串。"""
         if not self._env_path.exists():
             return "missing:0"
 
@@ -119,7 +118,7 @@ class ConfigManager:
         return f"{file_stat.st_mtime_ns}:{content_hash}"
 
     def get_updated_at(self) -> Optional[str]:
-        """Return `.env` last update time in ISO8601 format."""
+        """返回 ``.env`` 最后更新时间（ISO8601 格式）。"""
         if not self._env_path.exists():
             return None
 
@@ -133,11 +132,10 @@ class ConfigManager:
         sensitive_keys: Set[str],
         mask_token: str,
     ) -> Tuple[List[str], List[str], str]:
-        """Apply updates into `.env` file using atomic replace when possible.
+        """将更新写入 ``.env`` 文件（尽可能使用原子替换）。
 
-        Sensitive values equal to ``mask_token`` mean "keep the current secret".
-        Returning them in ``skipped_masked`` lets the API explain why those fields
-        were not rewritten without exposing the underlying value.
+        与 ``mask_token`` 相等的敏感值表示"保留当前密钥"。将这些字段放入
+        ``skipped_masked`` 返回，可让 API 解释为何未重写该字段，同时不暴露其真实取值。
         """
         with self._lock:
             current_values = self.read_config_map()
@@ -164,7 +162,7 @@ class ConfigManager:
             return list(mutable_updates.keys()), skipped_masked, self.get_config_version()
 
     def _atomic_upsert(self, updates: Dict[str, str]) -> None:
-        """Write updates with atomic rename and in-place fallback for mounted files."""
+        """写入更新：先原子重命名（rename），在挂载文件不支持时回退为原地重写。"""
         entries = self._read_entries()
         key_to_index = self._find_last_key_indexes(entries)
 
@@ -204,14 +202,14 @@ class ConfigManager:
                 temp_path.unlink()
 
     def _rewrite_in_place(self, content: str) -> None:
-        """Rewrite `.env` content in place when rename is unsupported by mount type."""
+        """当挂载类型不支持重命名时，原地重写 ``.env`` 内容。"""
         with self._env_path.open("w", encoding="utf-8", newline="\n") as file_obj:
             file_obj.write(content)
             file_obj.flush()
             os.fsync(file_obj.fileno())
 
     def _read_entries(self) -> List[ConfigLineEntry]:
-        """Read the current file as renderable entries, preserving line order."""
+        """将当前文件读取为可还原的条目列表，保持原有行序。"""
         if not self._env_path.exists():
             return []
         return [
@@ -221,7 +219,7 @@ class ConfigManager:
 
     @staticmethod
     def _find_last_key_indexes(entries: List[ConfigLineEntry]) -> Dict[str, int]:
-        """Map keys to their last assignment so duplicate env keys follow dotenv."""
+        """将键映射到其最后一次出现的位置，使重复的环境变量键遵循 dotenv 的覆盖规则。"""
         key_to_index: Dict[str, int] = {}
         for index, entry in enumerate(entries):
             if entry.kind != "assignment" or entry.key is None:
@@ -232,7 +230,7 @@ class ConfigManager:
 
     @staticmethod
     def _resolve_env_path() -> Path:
-        """Resolve the active `.env` path from ENV_FILE or the repository root."""
+        """从环境变量 ENV_FILE 或仓库根目录解析当前生效的 ``.env`` 路径。"""
         env_file = os.getenv("ENV_FILE")
         if env_file:
             return Path(env_file).resolve()

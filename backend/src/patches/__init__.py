@@ -1,1 +1,2 @@
-"""Runtime compatibility patches for third-party data providers."""
+# -*- coding: utf-8 -*-
+"""第三方数据提供方的运行时兼容补丁。"""

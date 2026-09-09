@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class Serverchan3Sender:
-    """Send notifications through ServerChan3 SendKey API."""
+    """通过 Server酱3 SendKey API 发送通知。"""
     
     def __init__(self, config: Config):
         """

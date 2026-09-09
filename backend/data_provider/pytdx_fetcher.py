@@ -127,7 +127,7 @@ class PytdxFetcher(BaseFetcher):
         ("59.173.18.140", 7709),   # 武汉
         ("180.153.39.51", 7709),   # 杭州
     ]
-    # Pytdx get_security_list returns at most 1000 items per page
+    # pytdx 的 get_security_list 每次最多返回 1000 条
     SECURITY_LIST_PAGE_SIZE = 1000
     
     def __init__(self, hosts: Optional[List[Tuple[str, int]]] = None):
@@ -153,11 +153,11 @@ class PytdxFetcher(BaseFetcher):
         self._last_unavailable_reason = ""
 
     def _is_in_connection_cooldown(self) -> bool:
-        """Return True while PyTDX connection retries are suppressed."""
+        """在 PyTDX 连接重试被抑制（冷却中）期间返回 True。"""
         return time.time() < self._unavailable_until
 
     def _mark_connection_cooldown(self, reason: str) -> None:
-        """Record a connection failure and start a temporary cooldown."""
+        """记录一次连接失败并启动临时冷却。"""
         self._unavailable_until = time.time() + _PYTDX_CONNECTION_COOLDOWN_SECONDS
         self._last_unavailable_reason = str(reason or "").strip()
         logger.info(
@@ -167,7 +167,7 @@ class PytdxFetcher(BaseFetcher):
         )
 
     def is_available_for_request(self, capability: str = "") -> bool:
-        """Return whether this fetcher should be attempted for the requested capability."""
+        """返回该 fetcher 是否应被尝试用于所请求的能力。"""
         return not self._is_in_connection_cooldown()
     
     def _get_pytdx(self):
@@ -270,7 +270,7 @@ class PytdxFetcher(BaseFetcher):
 
     def _build_stock_list_cache(self, api) -> None:
         """
-        Build a full stock code -> name cache from paginated security lists.
+        通过分页拉取证券列表，构建完整的股票代码 -> 名称缓存。
         """
         self._stock_list_cache = {}
 

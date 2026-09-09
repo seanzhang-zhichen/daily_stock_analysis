@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Persistence operations for stock screening runs."""
+"""内置选股（Screening）运行的持久化操作。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScreeningMixin:
-    """Read and write screening history with per-user isolation."""
+    """选股历史的读写 Mixin，按用户维度隔离。"""
 
     def save_screening_run(
         self,
@@ -24,6 +24,11 @@ class ScreeningMixin:
         *,
         user_id: Optional[int] = None,
     ) -> int:
+        """把一次选股运行的摘要与载荷落库；同 ``run_id`` 已存在则覆盖更新。
+
+        Returns:
+            写入成功返回 1；``run_id`` 缺失或写入失败返回 0。
+        """
         run_id = str(payload.get("run_id") or "").strip()
         if not run_id:
             return 0
@@ -47,6 +52,7 @@ class ScreeningMixin:
 
         try:
             def write(session: Session) -> int:
+                """Upsert 主回调: 已有 ``run_id`` 则覆盖, 否则插入新行。"""
                 row = session.execute(
                     select(ScreeningRun).where(ScreeningRun.run_id == run_id)
                 ).scalar_one_or_none()
@@ -58,7 +64,7 @@ class ScreeningMixin:
                 return 1
 
             return self._run_write_transaction(f"save_screening_run[{run_id}]", write)
-        except Exception as exc:  # Screening itself must remain fail-open.
+        except Exception as exc:  # Screening 本身必须保持 fail-open, 失败不影响业务流
             logger.warning("Failed to persist screening run %s: %s", run_id, exc)
             return 0
 
@@ -70,6 +76,8 @@ class ScreeningMixin:
         market: Optional[str] = None,
         user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
+        """按时间倒序列出选股历史（不包含完整 ``result`` 字段，节省带宽）。"""
+        # limit 在 [0, 100] 之间, 0 直接短路, 避免异常输入拖垮接口
         normalized_limit = max(0, min(int(limit), 100))
         if normalized_limit <= 0:
             return []
@@ -92,6 +100,7 @@ class ScreeningMixin:
         *,
         user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
+        """取指定 ``run_id`` 的完整记录（含 ``result`` 字段）；不存在返回 ``None``。"""
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return None
@@ -104,6 +113,7 @@ class ScreeningMixin:
 
     @staticmethod
     def _screening_optional_int(value: Any) -> Optional[int]:
+        """将输入安全转换为 ``Optional[int]``；空字符串或非数字返回 ``None``。"""
         try:
             return None if value in (None, "") else int(value)
         except (TypeError, ValueError):
@@ -111,6 +121,7 @@ class ScreeningMixin:
 
     @staticmethod
     def _screening_optional_bool(value: Any) -> Optional[bool]:
+        """将输入安全转换为 ``Optional[bool]``；支持 ``true/false/1/0/yes/no/on/off``。"""
         if value is None:
             return None
         if isinstance(value, bool):
@@ -126,6 +137,7 @@ class ScreeningMixin:
 
     @staticmethod
     def _screening_json_list(value: Optional[str]) -> List[Any]:
+        """反序列化 JSON 字符串为列表；失败返回空列表。"""
         try:
             decoded = json.loads(value or "[]")
         except (TypeError, ValueError):
@@ -134,11 +146,13 @@ class ScreeningMixin:
 
     @staticmethod
     def _screening_text_list(value: Any) -> List[str]:
+        """归一化 ``warnings`` 字段：接受字符串或列表，返回去空白字符串列表。"""
         values = value if isinstance(value, list) else [value]
         return [str(item).strip() for item in values if str(item or "").strip()]
 
     @classmethod
     def _screening_warning_values(cls, payload: Dict[str, Any]) -> List[str]:
+        """从 ``warnings`` / ``degradation`` 字段中合并去重出告警列表。"""
         warnings: List[str] = []
         for key in ("warnings", "degradation"):
             for item in cls._screening_text_list(payload.get(key)):
@@ -153,6 +167,7 @@ class ScreeningMixin:
         *,
         include_result: bool,
     ) -> Dict[str, Any]:
+        """把 ``ScreeningRun`` ORM 行序列化为 API 响应字典。"""
         payload: Dict[str, Any] = {
             "run_id": row.run_id,
             "strategy": row.strategy,

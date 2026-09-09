@@ -1,4 +1,4 @@
-"""Compatibility wrapper for the legacy strategy agent import path."""
+"""旧版 strategy Agent 导入路径的兼容包装。"""
 
 from src.agent.skills.skill_agent import SkillAgent, StrategyAgent
 

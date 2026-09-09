@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Alert API endpoints (Issue #1202 P1 MVP).
+"""告警 API 端点（Alert API endpoints）。
 
-告警 endpoint 是 ``AlertService`` 的薄 HTTP 适配层：所有规则、触发记录和通知记录
-都按当前登录用户隔离；服务层异常在这里转换成统一的 ``ErrorResponse`` 结构。
+作为 ``AlertService`` 的薄 HTTP 适配层，对外提供告警规则的增删改查、触发历史与
+通知记录的查询接口。所有数据均按当前登录用户（``current_user``）隔离；服务层抛出的
+领域异常在这里统一转换为 ``ErrorResponse`` 结构返回给客户端。
+
+依赖：
+- 服务层：``src.services.alert_service.AlertService``
+- Schema：``api.v1.schemas.alerts``
+- 鉴权：``api.deps.get_current_user``
 """
 
 from __future__ import annotations
@@ -38,7 +44,7 @@ router = APIRouter()
 
 
 def _bad_request(exc: Exception, *, error: str = "validation_error") -> HTTPException:
-    """Map validation/service-domain errors to HTTP 400."""
+    """将校验或服务层领域异常映射为 HTTP 400 响应。"""
     return HTTPException(
         status_code=400,
         detail={"error": error, "message": str(exc)},
@@ -46,7 +52,7 @@ def _bad_request(exc: Exception, *, error: str = "validation_error") -> HTTPExce
 
 
 def _not_found(exc: Exception) -> HTTPException:
-    """Map missing alert resources to HTTP 404."""
+    """将“资源不存在”类异常映射为 HTTP 404 响应。"""
     return HTTPException(
         status_code=404,
         detail={"error": "not_found", "message": str(exc)},
@@ -54,7 +60,10 @@ def _not_found(exc: Exception) -> HTTPException:
 
 
 def _internal_error(message: str, exc: Exception) -> HTTPException:
-    """Log unexpected alert failures and map them to HTTP 500."""
+    """记录告警相关的未预期异常并映射为 HTTP 500 响应。
+
+    在抛出前会先 ``logger.error`` 记录完整堆栈，便于事后排查。
+    """
     logger.error("%s: %s", message, exc, exc_info=True)
     return HTTPException(
         status_code=500,
@@ -72,7 +81,7 @@ def create_rule(
     request: AlertRuleCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
-    """Create an alert rule owned by the current user."""
+    """为当前登录用户创建一条告警规则。"""
     service = AlertService()
     try:
         return AlertRuleItem(**service.create_rule(
@@ -103,7 +112,7 @@ def list_rules(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleListResponse:
-    """List alert rules with optional filters and pagination."""
+    """分页查询告警规则，支持按启用状态、类型、作用范围等过滤。"""
     service = AlertService()
     try:
         return AlertRuleListResponse(
@@ -132,7 +141,7 @@ def get_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
-    """Return one alert rule if it belongs to the current user."""
+    """获取属于当前用户的单条告警规则。"""
     service = AlertService()
     try:
         return AlertRuleItem(**service.get_rule(
@@ -156,9 +165,10 @@ def update_rule(
     request: AlertRuleUpdateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
-    """Patch mutable fields on an existing alert rule."""
+    """局部更新现有告警规则的可变字段。"""
     service = AlertService()
     try:
+        # 仅提交请求体中显式给出的字段，未提供的字段保持原值
         payload = request.model_dump(exclude_unset=True)
         return AlertRuleItem(**service.update_rule(
             rule_id,
@@ -185,7 +195,7 @@ def delete_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertDeleteResponse:
-    """Delete one alert rule and report the deletion count."""
+    """删除单条告警规则，并返回删除数量。"""
     service = AlertService()
     try:
         if not service.delete_rule(rule_id, user_id=current_user.id):
@@ -207,7 +217,7 @@ def enable_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
-    """Enable an alert rule without changing its other configuration."""
+    """启用一条告警规则，不修改其它字段。"""
     service = AlertService()
     try:
         return AlertRuleItem(**service.enable_rule(
@@ -230,7 +240,7 @@ def disable_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleItem:
-    """Disable an alert rule without deleting historical trigger data."""
+    """禁用一条告警规则，但保留其历史触发记录。"""
     service = AlertService()
     try:
         return AlertRuleItem(**service.enable_rule(
@@ -253,7 +263,7 @@ def test_rule(
     rule_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertRuleTestResponse:
-    """Dry-run one alert rule against current market data."""
+    """用当前行情数据对一条告警规则进行试跑（dry-run），不真正触发通知。"""
     service = AlertService()
     try:
         return AlertRuleTestResponse(**service.test_rule(
@@ -280,7 +290,7 @@ def list_triggers(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertTriggerListResponse:
-    """List historical alert trigger events for the current user."""
+    """查询当前用户的告警触发历史事件。"""
     service = AlertService()
     try:
         return AlertTriggerListResponse(
@@ -311,7 +321,7 @@ def list_notifications(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> AlertNotificationListResponse:
-    """List notification delivery attempts produced by alert triggers."""
+    """查询由告警触发产生的通知发送记录。"""
     service = AlertService()
     try:
         return AlertNotificationListResponse(

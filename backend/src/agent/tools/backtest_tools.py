@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Backtest tools — read-only tools exposing backtest summaries to the agent.
+回测工具集 — 只读地把回测汇总结果暴露给 Agent。
 
-Tools:
-- get_skill_backtest_summary: skill-scoped stats when available, otherwise an explicit unsupported/info response
-- get_strategy_backtest_summary: legacy alias of the overall summary tool
-- get_stock_backtest_summary: backtest results for a specific stock
+工具列表：
+- ``get_skill_backtest_summary``：当存在按技能的回测统计时返回；否则给出明确的"不支持 / 信息提示"响应，避免编造数据
+- ``get_strategy_backtest_summary``：旧名别名，对应总体汇总工具
+- ``get_stock_backtest_summary``：单只股票的回测结果（含近期评估条目）
 """
 
 import logging
@@ -18,7 +18,7 @@ _backtest_service = None
 
 
 def _get_backtest_service():
-    """Lazy import + singleton to avoid circular deps and repeated instantiation."""
+    """惰性导入 + 单例，避免循环依赖与重复实例化。"""
     global _backtest_service
     if _backtest_service is None:
         from src.services.backtest_service import BacktestService
@@ -31,7 +31,7 @@ def _get_backtest_service():
 # ============================================================
 
 def _serialize_overall_backtest_summary(summary: dict, eval_window_days: int) -> dict:
-    """Return the public overall-summary payload exposed to the agent."""
+    """返回暴露给 Agent 的总体汇总载荷。"""
     return {
         "scope": summary.get("scope", "overall"),
         "eval_window_days": summary.get("eval_window_days", eval_window_days),
@@ -49,7 +49,7 @@ def _serialize_overall_backtest_summary(summary: dict, eval_window_days: int) ->
 
 
 def _handle_get_overall_backtest_summary(eval_window_days: int = 30) -> dict:
-    """Get the overall backtest summary for the full analysis corpus."""
+    """获取全部分析语料的总体回测汇总。"""
     try:
         svc = _get_backtest_service()
         summary = svc.get_summary(scope="overall", code=None, eval_window_days=eval_window_days)
@@ -62,7 +62,7 @@ def _handle_get_overall_backtest_summary(eval_window_days: int = 30) -> dict:
 
 
 def _handle_get_skill_backtest_summary(skill_id: str = "", eval_window_days: int = 30) -> dict:
-    """Get a skill-scoped backtest summary when real per-skill stats exist."""
+    """当存在真实的按技能统计时，获取技能维度的回测汇总。"""
     if not skill_id:
         return {
             "supported": False,
@@ -150,9 +150,9 @@ get_strategy_backtest_summary_tool = ToolDefinition(
 # ============================================================
 
 def _handle_get_stock_backtest_summary(stock_code: str, eval_window_days: int = 30, limit: int = 10) -> dict:
-    """Get backtest results for a specific stock.
+    """获取某只股票的回测结果。
 
-    Returns the summary plus recent evaluation items.
+    返回汇总信息以及近期的评估条目。
     """
     try:
         svc = _get_backtest_service()
@@ -174,10 +174,10 @@ def _handle_get_stock_backtest_summary(stock_code: str, eval_window_days: int = 
         else:
             result["summary"] = None
 
-        # Recent evaluations
+        # 近期评估记录
         evals = svc.get_recent_evaluations(code=stock_code, eval_window_days=eval_window_days, limit=limit)
         items = evals.get("items", [])
-        # Slim down items to essential fields
+        # 精简条目，只保留关键字段
         result["recent_evaluations"] = [
             {
                 "analysis_date": item.get("analysis_date"),
@@ -235,7 +235,7 @@ get_stock_backtest_summary_tool = ToolDefinition(
 
 
 # ============================================================
-# Exported tool list
+# 导出的工具列表
 # ============================================================
 
 ALL_BACKTEST_TOOLS = [

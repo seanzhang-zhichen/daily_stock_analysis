@@ -1,6 +1,19 @@
 # -*- coding: utf-8 -*-
-"""System configuration service for `.env` based settings."""
+"""基于 `.env` 的系统配置服务。
 
+负责系统运行配置的读取、校验、持久化、导入导出，以及在 Web 设置页中触发的
+通知渠道（Notification channel）测试和 LLM 渠道（LLM channel）连通性 / 模型发现测试。
+对外供 API 层（`backend/api/v1/endpoints/system_config.py` 等）调用，并为 setup 阶段
+提供首次运行检查（first-run setup check）。
+
+主要能力：
+- 暴露分组后的 schema 元数据，便于前端按类目渲染配置表单
+- 对提交值做字段级与跨字段校验（含 LLM 渠道、飞书模式、CSV / URL / 时间等）
+- 持久化更新、`.env` 导入导出，以及保存后可选的运行时重载
+- 通知渠道测试（不写盘）、LLM 渠道最小对话测试与 `/models` 模型发现
+- LLM 能力探测（json / tools / stream / vision）与诊断分类（Diagnostic classification）
+- 首次启动 setup 状态汇总（含 SSRF 防护与 LLM 主/Agent 模型合法性判断）
+"""
 from __future__ import annotations
 
 import io
@@ -50,35 +63,35 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigValidationError(Exception):
-    """Raised when one or more submitted fields fail validation."""
+    """当一个或多个提交字段未通过校验时抛出。"""
 
     def __init__(self, issues: List[Dict[str, Any]]):
-        """Store structured validation issues for API callers."""
+        """保存结构化的校验问题列表，供 API 层直接回传给前端。"""
         super().__init__("Configuration validation failed")
         self.issues = issues
 
 
 class ConfigConflictError(Exception):
-    """Raised when submitted config_version is stale."""
+    """当提交的配置版本号（config_version）已过期时抛出。"""
 
     def __init__(self, current_version: str):
-        """Expose the latest version so clients can reload and retry."""
+        """把当前最新版本号暴露给调用方，便于前端拉取并重试。"""
         super().__init__("Configuration version conflict")
         self.current_version = current_version
 
 
 class ConfigImportError(Exception):
-    """Raised when an imported `.env` payload is invalid."""
+    """当导入的 `.env` 文本内容无法解析时抛出。"""
 
     def __init__(self, message: str):
-        """Store a user-facing import failure message."""
+        """保存面向用户的导入失败提示。"""
         super().__init__(message)
         self.message = message
 
 
 @dataclass(frozen=True)
 class _LLMDiagnostic:
-    """Internal structured diagnosis for LLM test and discovery failures."""
+    """LLM 测试与模型发现失败时的内部结构化诊断结果。"""
 
     error_code: str
     retryable: bool
@@ -88,10 +101,53 @@ class _LLMDiagnostic:
 
 
 class SystemConfigService:
-    """Service layer for reading, validating, and updating runtime configuration."""
+    """系统配置的读取、校验与更新服务层。
 
+    该服务是 Web 设置页与初始化向导（setup wizard）的核心后端，
+    它在 `ConfigManager` 之上提供：
+    - 配置的查询与按类目排序的展示
+    - 单字段 / 跨字段校验（含 LLM 渠道、通知渠道、安全 SSRF 防护）
+    - 安全更新（带版本号冲突检测 + 可选运行时重载）
+    - 通知渠道与 LLM 渠道的连通性测试（不写入 .env）
+    - LLM 模型能力探测与诊断
+    - 首次运行 setup 状态汇总
+    """
+
+    # LLM 能力探测的展示与执行顺序（保持稳定顺序，避免前端抖动）
     _LLM_CAPABILITY_ORDER: Tuple[str, ...] = ("json", "tools", "stream", "vision")
+    # 流式探测时，最多检查前 N 个 chunk，避免在无内容的情况下无限循环
     _LLM_STREAM_CHUNK_LIMIT = 8
+
+    def get_generation_backend_status(self) -> Dict[str, Any]:
+        """返回所配置生成后端的轻量状态探测，无副作用。"""
+        from src.llm.backend_registry import resolve_generation_backend_id, resolve_generation_fallback_backend_id
+        from src.llm.backend_factory import build_generation_backend
+
+        config = Config.get_instance()
+        try:
+            backend_id = resolve_generation_backend_id(config)
+            fallback = resolve_generation_fallback_backend_id(config)
+            backend = build_generation_backend(config)
+            executable = None
+            available = backend is None
+            error = None
+            if backend is not None:
+                executable = "codex" if backend_id == "codex_cli" else "opencode"
+                import shutil
+                available = shutil.which(executable) is not None
+                if not available:
+                    error = f"{executable} executable not found on backend PATH"
+            return {
+                "backend": backend_id,
+                "fallback_backend": fallback,
+                "available": available,
+                "executable": executable,
+                "timeout_seconds": getattr(config, "generation_backend_timeout_seconds", 300),
+                "error": error,
+            }
+        except Exception as exc:
+            return {"backend": "unknown", "fallback_backend": None, "available": False, "error": str(exc)}
+    # 1x1 透明 PNG，用于 vision 能力探测（base64 内联，无需外部资源）
     _LLM_CAPABILITY_PROBE_IMAGE = (
         "data:image/png;base64,"
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
@@ -182,16 +238,24 @@ class SystemConfigService:
     }
 
     def __init__(self, manager: Optional[ConfigManager] = None):
-        """Initialize the config file manager dependency."""
+        """初始化配置文件管理器依赖。
+
+        Args:
+            manager: 可选的 `ConfigManager` 实例；未传入时使用默认实例。
+        """
         self._manager = manager or ConfigManager()
 
     def get_schema(self) -> Dict[str, Any]:
-        """Return grouped schema metadata for UI rendering."""
+        """返回按类目分组的 schema 元数据，供前端 UI 渲染使用。
+
+        Returns:
+            包含字段分类、控件类型、默认值与展示顺序的字典。
+        """
         return build_schema_response()
 
     @staticmethod
     def _reload_runtime_singletons() -> None:
-        """Reset runtime singleton services after config reload."""
+        """配置重载后，清理会受 `.env` 影响的运行时单例（行情 fetcher、搜索服务）。"""
         from src.agent.tools.data_tools import reset_fetcher_manager
         from src.search_service import reset_search_service
 
@@ -200,12 +264,12 @@ class SystemConfigService:
 
     @staticmethod
     def _build_display_config_map(raw_config_map: Dict[str, str]) -> Dict[str, str]:
-        """Normalize env keys to uppercase for schema lookup/display."""
+        """将读取到的 env 键统一规范为大写，便于 schema 查找与展示。"""
         return {key.upper(): value for key, value in raw_config_map.items()}
 
     @staticmethod
     def _resolve_display_value(raw_value: str, field_schema: Dict[str, Any], raw_value_exists: bool) -> str:
-        """Return displayed value, falling back to schema defaults for switches."""
+        """返回前端展示值：开关类（switch）控件在缺失时回退到 schema 默认值。"""
         if raw_value_exists:
             return raw_value
 
@@ -217,7 +281,15 @@ class SystemConfigService:
         return raw_value
 
     def get_config(self, include_schema: bool = True, mask_token: str = "******") -> Dict[str, Any]:
-        """Return current config values without server-side secret masking."""
+        """返回当前配置值列表（不进行服务端密钥脱敏，由前端按需渲染）。
+
+        Args:
+            include_schema: 是否附带每个字段的 schema 元数据，便于前端表单生成。
+            mask_token: 敏感字段回显使用的脱敏占位串。
+
+        Returns:
+            包含 `config_version`、`items`、`updated_at` 等键的字典。
+        """
         config_map = self._build_display_config_map(self._manager.read_config_map())
         registered_keys = set(get_registered_field_keys())
         all_keys = set(config_map.keys()) | registered_keys
@@ -264,7 +336,15 @@ class SystemConfigService:
         }
 
     def validate(self, items: Sequence[Dict[str, str]], mask_token: str = "******") -> Dict[str, Any]:
-        """Validate submitted items without writing to `.env`."""
+        """对提交项做校验，但不写入 `.env`。
+
+        Args:
+            items: 待校验的字段项序列，每项包含 `key` 与 `value`。
+            mask_token: 敏感字段占位符；提交值等于 mask_token 时视为未改动。
+
+        Returns:
+            包含 `valid` 布尔值与 `issues` 问题列表的字典。
+        """
         issues = self._collect_issues(items=items, mask_token=mask_token)
         valid = not any(issue["severity"] == "error" for issue in issues)
         return {
@@ -282,7 +362,19 @@ class SystemConfigService:
         content: str = "这是一条来自 DSA Web 设置页的通知测试消息。",
         timeout_seconds: float = 20.0,
     ) -> Dict[str, Any]:
-        """Send one real notification test without persisting submitted values."""
+        """对单个通知渠道做一次真实推送测试，但不会把提交值持久化到 `.env`。
+
+        Args:
+            channel: 通知渠道名（如 wechat / feishu / telegram 等）。
+            items: 本次测试携带的（未保存）字段项，会与磁盘上已有配置做合并。
+            mask_token: 敏感字段占位符；等于占位符时跳过该字段。
+            title: 测试消息标题。
+            content: 测试消息正文。
+            timeout_seconds: 单次 HTTP 调用的超时秒数。
+
+        Returns:
+            测试结果字典，包含 success、message、error_code、attempts 等字段。
+        """
         normalized_channel = (channel or "").strip().lower()
         if normalized_channel not in self._NOTIFICATION_TEST_CHANNELS:
             raise ValueError(f"Unsupported notification channel: {channel}")
@@ -352,7 +444,12 @@ class SystemConfigService:
             )
 
     def get_setup_status(self) -> Dict[str, Any]:
-        """Return read-only first-run setup status without mutating runtime state."""
+        """返回只读的首次启动 setup 状态汇总，不会修改运行时状态。
+
+        Returns:
+            包含 `is_complete`、`required_missing_keys`、`checks` 等字段的字典，
+            用于 Web 初始化向导判断下一步。
+        """
         effective_map = self._build_setup_effective_config_map()
         llm_check = self._build_setup_primary_llm_check(effective_map)
         agent_check = self._build_setup_agent_llm_check(effective_map, llm_check)
@@ -378,7 +475,11 @@ class SystemConfigService:
         }
 
     def export_env(self) -> Dict[str, Any]:
-        """Return the raw active `.env` content for backup."""
+        """返回当前 `.env` 的原始文本内容，供用户备份使用。
+
+        Returns:
+            包含 `content`、当前 `config_version` 与 `updated_at` 的字典。
+        """
         if self._manager.env_path.exists():
             content = self._manager.env_path.read_text(encoding="utf-8")
         else:
@@ -397,7 +498,19 @@ class SystemConfigService:
         content: str,
         reload_now: bool = True,
     ) -> Dict[str, Any]:
-        """Merge imported `.env` assignments into the active config."""
+        """把导入的 `.env` 文本合并到当前配置中（仍走 update 流程）。
+
+        Args:
+            config_version: 前端拿到的当前版本号，用于乐观锁。
+            content: 用户粘贴的 `.env` 文本。
+            reload_now: 是否在写入后立即重载运行时配置。
+
+        Returns:
+            update 接口的标准返回结构。
+
+        Raises:
+            ConfigConflictError: 当 config_version 已过期时抛出。
+        """
         current_version = self._manager.get_config_version()
         if current_version != config_version:
             raise ConfigConflictError(current_version=current_version)
@@ -420,7 +533,19 @@ class SystemConfigService:
         models: Sequence[str] = (),
         timeout_seconds: float = 20.0,
         ) -> Dict[str, Any]:
-        """Discover available models from an OpenAI-compatible `/models` endpoint."""
+        """从 OpenAI 兼容的 `/models` 端点拉取可用模型列表。
+
+        Args:
+            name: 渠道展示名。
+            protocol: 渠道协议（openai / deepseek 等）。
+            base_url: 渠道 base URL。
+            api_key: 渠道 API Key（可为逗号分隔的多 key 列表）。
+            models: 已存在的模型列表，用于辅助协议推断。
+            timeout_seconds: HTTP 调用超时秒数。
+
+        Returns:
+            包含 `success`、`models`、`resolved_protocol`、`details` 等字段的字典。
+        """
         channel_name = name.strip() or "channel"
         existing_models = [str(m).strip() for m in models if str(m).strip()]
         validation_issues, resolved_protocol = self._validate_llm_channel_connection(
@@ -600,7 +725,21 @@ class SystemConfigService:
         timeout_seconds: float = 20.0,
         capability_checks: Sequence[str] = (),
     ) -> Dict[str, Any]:
-        """Run a minimal completion call against one channel definition."""
+        """对单个 LLM 渠道定义发起一次最小对话测试，并按需执行能力探测。
+
+        Args:
+            name: 渠道展示名。
+            protocol: 渠道协议。
+            base_url: 渠道 base URL。
+            api_key: 渠道 API Key（可为逗号分隔的多 key 列表）。
+            models: 渠道声明的模型列表。
+            enabled: 渠道是否启用。
+            timeout_seconds: HTTP 调用超时秒数。
+            capability_checks: 需要额外探测的能力子集（json/tools/stream/vision）。
+
+        Returns:
+            包含 success、resolved_protocol、resolved_model、capability_results 等字段的结果。
+        """
         requested_capabilities = self._normalize_llm_capability_checks(capability_checks)
         raw_models = [str(model).strip() for model in models if str(model).strip()]
         channel_name = name.strip() or "channel"
@@ -751,7 +890,7 @@ class SystemConfigService:
 
     @classmethod
     def _normalize_llm_capability_checks(cls, capability_checks: Sequence[str]) -> List[str]:
-        """Keep requested LLM capability checks in a stable display/execution order."""
+        """把请求的能力子集按预定义顺序过滤并归一化输出。"""
         requested = {str(check).strip().lower() for check in capability_checks if str(check).strip()}
         return [check for check in cls._LLM_CAPABILITY_ORDER if check in requested]
 
@@ -762,7 +901,7 @@ class SystemConfigService:
         reason: str,
         message: str,
     ) -> Dict[str, Dict[str, Any]]:
-        """Build per-capability skipped results when the base model test fails."""
+        """当基础模型测试失败时，为各能力生成统一的"skipped"占位结果。"""
         return {
             capability: cls._build_llm_capability_result(
                 capability=capability,
@@ -786,7 +925,7 @@ class SystemConfigService:
         timeout_seconds: float,
         capability_checks: Sequence[str],
     ) -> Dict[str, Dict[str, Any]]:
-        """Run optional capability probes for JSON, tools, stream, and vision."""
+        """按需依次执行 JSON / tools / stream / vision 等能力探测。"""
         results: Dict[str, Dict[str, Any]] = {}
         for capability in capability_checks:
             if capability == "json":
@@ -833,7 +972,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
-        """Probe whether the model honors JSON object response formatting."""
+        """探测模型是否支持 JSON object 响应格式。"""
         try:
             started_at = time.perf_counter()
             response = litellm_module.completion(
@@ -902,7 +1041,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
-        """Probe whether the model can return an explicit tool call."""
+        """探测模型能否返回指定的工具调用（tool call）。"""
         tools = [
             {
                 "type": "function",
@@ -966,7 +1105,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
-        """Probe whether the model can stream at least one content chunk."""
+        """探测模型是否能在流式响应中产出至少一个内容 chunk。"""
         stream = None
         started_at = time.perf_counter()
         try:
@@ -1025,7 +1164,7 @@ class SystemConfigService:
         base_url: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
-        """Probe whether the model accepts image input."""
+        """探测模型能否接收并理解图片输入。"""
         try:
             started_at = time.perf_counter()
             response = litellm_module.completion(
@@ -1081,7 +1220,7 @@ class SystemConfigService:
         max_tokens: int,
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Build LiteLLM kwargs for short, isolated capability probes."""
+        """为隔离的 LLM 能力探测构造 LiteLLM 调用参数。"""
         try:
             timeout = float(timeout_seconds)
         except (TypeError, ValueError):
@@ -1117,7 +1256,7 @@ class SystemConfigService:
         latency_ms: Optional[int] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Build a sanitized capability result payload for the API."""
+        """构造用于 API 输出的、已脱敏的单个能力探测结果。"""
         return {
             "status": status,
             "message": cls._sanitize_llm_error_text(message),
@@ -1135,7 +1274,7 @@ class SystemConfigService:
         diagnostic: _LLMDiagnostic,
         error: str,
     ) -> Dict[str, Any]:
-        """Convert a classified LLM diagnostic into a capability result."""
+        """把分类后的 LLM 诊断转换为能力探测结果。"""
         details = cls._merge_llm_diagnostic_details({"error": error}, diagnostic)
         return cls._build_llm_capability_result(
             capability=capability,
@@ -1148,7 +1287,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_tool_call_names(response: Any) -> List[str]:
-        """Extract returned tool-call names from dict/object LiteLLM responses."""
+        """从 LiteLLM 响应（可能是 dict 也可能是对象）中提取工具调用名列表。"""
         choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
         if not choices:
             return []
@@ -1171,7 +1310,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_stream_chunk_content(chunk: Any) -> str:
-        """Extract text from one dict/object stream chunk."""
+        """从一个流式 chunk（dict 或对象）中提取文本内容。"""
         choices = chunk.get("choices") if isinstance(chunk, dict) else getattr(chunk, "choices", None)
         if not choices:
             return ""
@@ -1189,7 +1328,7 @@ class SystemConfigService:
 
     @classmethod
     def _classify_llm_capability_exception(cls, exc: Exception, capability: str) -> _LLMDiagnostic:
-        """Classify capability probe failures separately from base model failures."""
+        """把能力探测中的异常分类为稳定的诊断代码，与基础测试分类相互独立。"""
         text = str(exc).lower()
         capability_tokens = {
             "json": ("response_format", "json_object", "json mode"),
@@ -1226,7 +1365,21 @@ class SystemConfigService:
         mask_token: str = "******",
         reload_now: bool = True,
     ) -> Dict[str, Any]:
-        """Validate and persist updates into `.env`, then reload runtime config."""
+        """校验并把更新写入 `.env`，必要时触发运行时重载。
+
+        Args:
+            config_version: 前端拿到的版本号，用于乐观锁。
+            items: 待写入的字段项序列。
+            mask_token: 敏感字段占位符，避免覆盖原值。
+            reload_now: 是否在写入后立即调用 `Config.reset_instance` 并触发 `setup_env`。
+
+        Returns:
+            包含 `success`、`config_version`、`applied_count`、`warnings` 等字段的字典。
+
+        Raises:
+            ConfigConflictError: 版本号不一致时抛出。
+            ConfigValidationError: 任一字段未通过校验时抛出，并携带 issue 列表。
+        """
         current_version = self._manager.get_config_version()
         if current_version != config_version:
             raise ConfigConflictError(current_version=current_version)
@@ -1299,7 +1452,7 @@ class SystemConfigService:
         submitted_keys: Set[str],
         reload_now: bool,
     ) -> List[str]:
-        """Append user-facing runtime explainability warnings for key settings."""
+        """为面向用户的运行时行为差异补充解释性提示，例如哪些键需重启才生效。"""
         warnings: List[str] = []
         if not submitted_keys:
             return warnings
@@ -1347,6 +1500,7 @@ class SystemConfigService:
                     )
                 )
 
+        # 仅启动期生效的配置：保存后不会立即改变运行中进程的语义，需要重启才能用新值
         startup_only_run_keys = submitted_keys & {
             "RUN_IMMEDIATELY",
         }
@@ -1403,7 +1557,7 @@ class SystemConfigService:
         previous_map: Dict[str, str],
         updates: Dict[str, str],
     ) -> List[str]:
-        """Explain when save payload clears stale runtime model references."""
+        """当保存动作清空了已失效的运行时模型引用时，给出可读的告警说明。"""
         runtime_labels = {
             "LITELLM_MODEL": "主模型",
             "AGENT_LITELLM_MODEL": "Agent 主模型",
@@ -1449,7 +1603,7 @@ class SystemConfigService:
         updates: Sequence[Tuple[str, str]],
         mask_token: str = "******",
     ) -> None:
-        """Apply raw key updates without validation (internal service use only)."""
+        """应用未经校验的原始 (key, value) 写入（仅供内部服务使用，外部请走 `update`）。"""
         self._manager.apply_updates(
             updates=updates,
             sensitive_keys=set(),
@@ -1458,7 +1612,7 @@ class SystemConfigService:
 
     @staticmethod
     def _parse_imported_env_content(content: str) -> List[Dict[str, str]]:
-        """Parse raw `.env` text into update items using current dotenv semantics."""
+        """使用现有 dotenv 语义把原始 `.env` 文本解析为待更新项。"""
         normalized_content = content.replace("\ufeff", "")
         if not normalized_content.strip():
             raise ConfigImportError("未识别到有效 .env 配置")
@@ -1483,7 +1637,7 @@ class SystemConfigService:
         return updates
 
     def _collect_issues(self, items: Sequence[Dict[str, str]], mask_token: str) -> List[Dict[str, Any]]:
-        """Collect field-level and cross-field validation issues."""
+        """汇总字段级与跨字段校验问题，供 validate/update 共用。"""
         current_map = self._manager.read_config_map()
         effective_map = dict(current_map)
         issues: List[Dict[str, Any]] = []
@@ -1495,6 +1649,7 @@ class SystemConfigService:
             field_schema = get_field_definition(key, value)
             is_sensitive = bool(field_schema.get("is_sensitive", False))
 
+            # 敏感字段传回占位符 mask_token 表示"未改动"，保留磁盘上的原值
             if is_sensitive and value == mask_token and current_map.get(key):
                 continue
 
@@ -1507,7 +1662,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_value(key: str, value: str, field_schema: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Validate a single field value against schema metadata."""
+        """对单个字段值按 schema 元数据做字段级校验。"""
         issues: List[Dict[str, Any]] = []
         data_type = field_schema.get("data_type", "string")
         validation = field_schema.get("validation", {}) or {}
@@ -1745,7 +1900,7 @@ class SystemConfigService:
 
     @staticmethod
     def _normalize_value_for_storage(value: str, field_schema: Dict[str, Any]) -> str:
-        """Normalize submitted values before persisting to the single-line .env file."""
+        """在持久化前对字段值做规范化（仅处理 JSON 类型以保证单行 `.env` 的可解析性）。"""
         if field_schema.get("data_type", "string") != "json":
             return value
 
@@ -1761,7 +1916,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_numeric_range(key: str, numeric_value: float, validation: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Return validation issues for numeric min/max schema constraints."""
+        """根据 schema 的 min/max 约束返回数值范围问题列表。"""
         issues: List[Dict[str, Any]] = []
         min_value = validation.get("min")
         max_value = validation.get("max")
@@ -1792,13 +1947,13 @@ class SystemConfigService:
 
     @staticmethod
     def _is_valid_url(value: str, allowed_schemes: Tuple[str, ...]) -> bool:
-        """Return True when *value* looks like a valid absolute URL."""
+        """判断字符串是否为带 scheme 与 host 的合法绝对 URL。"""
         parsed = urlparse(value)
         return parsed.scheme in allowed_schemes and bool(parsed.netloc)
 
     @staticmethod
     def _split_csv(value: str) -> List[str]:
-        """Split comma-separated env values, dropping empty entries."""
+        """按逗号切分并去除空白与空项。"""
         return [item.strip() for item in (value or "").split(",") if item.strip()]
 
     def _build_notification_test_effective_map(
@@ -1807,7 +1962,7 @@ class SystemConfigService:
         items: Sequence[Dict[str, str]],
         mask_token: str,
     ) -> Dict[str, str]:
-        """Merge saved/runtime config with unsaved notification test items."""
+        """把磁盘上保存的配置、运行时 env、未保存的测试项合并为本次测试用的有效配置。"""
         allowed_keys = set(self._NOTIFICATION_TEST_KEY_MAP)
         effective = {
             key: value
@@ -1836,7 +1991,7 @@ class SystemConfigService:
         channel: str,
         effective_map: Dict[str, str],
     ) -> List[str]:
-        """Return missing keys for a channel, honoring alternative key groups."""
+        """返回渠道缺少的必填键，优先匹配任一备选组合（alternative group）。"""
         groups = self._NOTIFICATION_REQUIRED_KEY_GROUPS.get(channel, ())
         if not groups:
             return []
@@ -1855,7 +2010,7 @@ class SystemConfigService:
         channel: str,
         effective_map: Dict[str, str],
     ) -> Optional[str]:
-        """Return channel-specific config validation text before sending a test."""
+        """在真正发送测试前，对特殊渠道（ntfy / gotify）做 URL 结构校验。"""
         if channel == "ntfy":
             ntfy_url = (effective_map.get("NTFY_URL") or "").strip()
             if not ntfy_url:
@@ -1874,7 +2029,7 @@ class SystemConfigService:
         return None
 
     def _build_notification_test_config(self, effective_map: Dict[str, str]) -> Config:
-        """Build an isolated Config instance for notification testing."""
+        """为本次通知测试构造一个隔离的 `Config` 实例，避免污染运行时单例。"""
         kwargs: Dict[str, Any] = {"stock_list": []}
         for key, (attr, value_type) in self._NOTIFICATION_TEST_KEY_MAP.items():
             if key not in effective_map:
@@ -1884,7 +2039,7 @@ class SystemConfigService:
         return Config(**kwargs)
 
     def _parse_notification_test_value(self, key: str, value: str, value_type: str) -> Any:
-        """Parse one notification test env value into Config constructor shape."""
+        """把单个通知测试 env 值转换为 `Config` 构造器所需的形状。"""
         if value_type == "csv":
             return self._split_csv(value)
         if value_type == "bool":
@@ -1909,7 +2064,7 @@ class SystemConfigService:
         content: str,
         timeout_seconds: float,
     ) -> Dict[str, Any]:
-        """Dispatch one isolated notification test through the channel sender."""
+        """通过对应渠道的 sender 发起一次隔离的通知测试，并返回结构化结果。"""
         from src.notification_sender import (
             AstrbotSender,
             CustomWebhookSender,
@@ -1994,13 +2149,13 @@ class SystemConfigService:
 
     @staticmethod
     def _build_notification_test_content(title: str, content: str) -> str:
-        """Combine notification title/content for simple sender APIs."""
+        """把通知测试的标题与正文合并为简单 sender API 所需的字符串。"""
         title = title.strip()
         content = content.strip()
         return f"{title}\n\n{content}" if title else content
 
     def _resolve_notification_test_target(self, channel: str, effective_map: Dict[str, str]) -> str:
-        """Return a masked human-readable destination for test result display."""
+        """为测试结果展示返回一个被脱敏的目的地（URL / token）。"""
         for key in self._NOTIFICATION_TEST_TARGET_KEYS.get(channel, ()):
             raw_value = (effective_map.get(key) or "").strip()
             if not raw_value:
@@ -2023,7 +2178,7 @@ class SystemConfigService:
         latency_ms: Optional[int],
         attempts: Sequence[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Build the notification-test response payload with sanitized attempts."""
+        """构造通知测试响应，attempts 字段已对敏感信息做脱敏。"""
         sanitized_attempts = [cls._sanitize_notification_attempt(attempt) for attempt in attempts]
         return {
             "success": success,
@@ -2037,7 +2192,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_notification_attempt(cls, attempt: Dict[str, Any]) -> Dict[str, Any]:
-        """Sanitize one notification send attempt before returning it to clients."""
+        """在返回给前端前对单次发送尝试中的敏感字段做脱敏。"""
         sanitized = dict(attempt)
         if "message" in sanitized:
             sanitized["message"] = cls._sanitize_notification_text(sanitized["message"])
@@ -2047,7 +2202,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_notification_text(cls, text: Any) -> str:
-        """Redact tokens, sendkeys, and URLs from notification diagnostics."""
+        """从通知诊断文本中移除 token、sendkey、URL 等敏感片段。"""
         sanitized = cls._sanitize_llm_error_text(text)
         if not sanitized:
             return ""
@@ -2062,7 +2217,7 @@ class SystemConfigService:
 
     @staticmethod
     def _mask_notification_target(target: str, *, source_key: Optional[str] = None) -> str:
-        """Mask a destination URL/token while retaining enough routing context."""
+        """对目标 URL / token 做掩码处理，同时保留路由所需的最小上下文。"""
         value = (target or "").strip()
         if not value:
             return ""
@@ -2117,7 +2272,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_notification_exception(exc: Exception) -> Tuple[str, bool]:
-        """Classify notification send exceptions into API error code/retryability."""
+        """把通知发送异常映射为 API 错误码与是否可重试。"""
         if isinstance(exc, requests.exceptions.Timeout):
             return "timeout", True
         if isinstance(exc, requests.exceptions.ConnectionError):
@@ -2136,7 +2291,7 @@ class SystemConfigService:
         message: str,
         next_step: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build one setup-status checklist item."""
+        """构造 setup 状态检查清单中的一项。"""
         return {
             "key": key,
             "title": title,
@@ -2149,7 +2304,7 @@ class SystemConfigService:
 
     @staticmethod
     def _is_setup_relevant_env_key(key: str) -> bool:
-        """Return whether an env key should be included in setup-status checks."""
+        """判断某 env 键是否应纳入 setup 状态检查范围。"""
         if key in {
             "STOCK_LIST",
             "DATABASE_PATH",
@@ -2189,7 +2344,7 @@ class SystemConfigService:
         return key.startswith(prefixes) or key.endswith("_API_KEY") or key.endswith("_API_KEYS")
 
     def _build_setup_effective_config_map(self) -> Dict[str, str]:
-        """Combine saved `.env` values with injected runtime env values for status checks."""
+        """把磁盘上的 `.env` 与运行时 env 合并，得到 setup 阶段使用的有效配置视图。"""
         saved_map = self._build_display_config_map(self._manager.read_config_map())
         effective_map = dict(saved_map)
         registered_keys = {key.upper() for key in get_registered_field_keys()}
@@ -2203,7 +2358,7 @@ class SystemConfigService:
         return self._build_display_config_map(effective_map)
 
     def get_runtime_llm_models(self) -> List[str]:
-        """Return LLM models declared by the effective platform configuration."""
+        """返回当前生效平台配置所声明的全部 LLM 模型列表（去重，按优先级排序）。"""
         effective_map = self._build_setup_effective_config_map()
         declared_models = (
             self._collect_yaml_models_from_map(effective_map)
@@ -2232,18 +2387,18 @@ class SystemConfigService:
 
     @staticmethod
     def _has_any_config_value(effective_map: Dict[str, str], keys: Sequence[str]) -> bool:
-        """Return whether any of the given env keys has a non-empty value."""
+        """判断给定 env 键集合中是否存在任一非空值。"""
         return any((effective_map.get(key) or "").strip() for key in keys)
 
     @staticmethod
     def _has_valid_ntfy_endpoint(effective_map: Dict[str, str]) -> bool:
-        """Return whether NTFY_URL includes both server and topic."""
+        """判断 NTFY_URL 是否同时包含 server 与 topic。"""
         ntfy_server_url, ntfy_topic = resolve_ntfy_endpoint(effective_map.get("NTFY_URL"))
         return bool(ntfy_server_url and ntfy_topic)
 
     @staticmethod
     def _has_valid_gotify_config(effective_map: Dict[str, str]) -> bool:
-        """Return whether Gotify URL/token are sufficient for sending."""
+        """判断 Gotify 的 URL 与 token 是否足以发送通知。"""
         return bool(
             resolve_gotify_message_endpoint(effective_map.get("GOTIFY_URL"))
             and (effective_map.get("GOTIFY_TOKEN") or "").strip()
@@ -2251,7 +2406,7 @@ class SystemConfigService:
 
     @classmethod
     def _provider_has_setup_credentials(cls, provider: str, effective_map: Dict[str, str]) -> bool:
-        """Check whether a direct provider has enough credentials for setup status."""
+        """检查直连 provider 是否已具备足够的 setup 阶段凭证。"""
         normalized = canonicalize_llm_channel_protocol(provider)
         if normalized == "ollama":
             return True
@@ -2275,7 +2430,7 @@ class SystemConfigService:
 
     @classmethod
     def _has_setup_runtime_source_for_model(cls, model: str, effective_map: Dict[str, str]) -> bool:
-        """Return whether a model's provider has a usable direct runtime source."""
+        """判断模型所属的 provider 是否具备可用的直连运行时源。"""
         normalized_model = (model or "").strip()
         if not normalized_model:
             return False
@@ -2284,7 +2439,7 @@ class SystemConfigService:
 
     @classmethod
     def _collect_setup_channel_models(cls, effective_map: Dict[str, str]) -> List[str]:
-        """Collect enabled LLM channel models that have usable protocol/credentials."""
+        """收集已启用、协议/凭证齐全的 LLM 渠道模型列表。"""
         models: List[str] = []
         seen: Set[str] = set()
         for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
@@ -2323,7 +2478,7 @@ class SystemConfigService:
         return models
 
     def _resolve_setup_primary_model(self, effective_map: Dict[str, str]) -> Tuple[str, str]:
-        """Resolve the primary model used by setup status and explain failures."""
+        """解析 setup 阶段使用的主模型，并返回缺失原因（用于错误提示）。"""
         explicit_model = (effective_map.get("LITELLM_MODEL") or "").strip()
         yaml_models = self._collect_yaml_models_from_map(effective_map)
         channel_models = self._collect_setup_channel_models(effective_map)
@@ -2348,7 +2503,7 @@ class SystemConfigService:
         return "", "尚未检测到主模型配置"
 
     def _build_setup_primary_llm_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
-        """Build setup check item for the primary LLM channel."""
+        """构造主 LLM 渠道的 setup 检查项。"""
         model, source = self._resolve_setup_primary_model(effective_map)
         if model:
             source_label = {
@@ -2379,7 +2534,7 @@ class SystemConfigService:
         effective_map: Dict[str, str],
         primary_check: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Build setup check item for Agent LLM inheritance/override."""
+        """构造 Agent LLM 渠道的 setup 检查项（含主渠道继承判断）。"""
         agent_model_raw = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
         if not agent_model_raw:
             if primary_check["status"] == "configured":
@@ -2439,7 +2594,7 @@ class SystemConfigService:
         )
 
     def _build_setup_stock_list_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
-        """Build setup check item for the required watchlist."""
+        """构造"自选股列表"的 setup 检查项。"""
         stocks = self._split_csv(effective_map.get("STOCK_LIST") or "")
         if stocks:
             return self._setup_check(
@@ -2461,7 +2616,7 @@ class SystemConfigService:
         )
 
     def _build_setup_notification_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
-        """Build setup check item for optional notification channels."""
+        """构造"通知渠道"的 setup 检查项（可选，但至少检测到一种渠道时为 configured）。"""
         configured = (
             self._has_any_config_value(effective_map, ("WECHAT_WEBHOOK_URL", "FEISHU_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"))
             or (
@@ -2527,7 +2682,7 @@ class SystemConfigService:
         )
 
     def _build_setup_storage_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
-        """Build setup check item for local database path writability."""
+        """构造"本地数据库路径可写性"的 setup 检查项。"""
         db_path = Path((effective_map.get("DATABASE_PATH") or "./data/stock_analysis.db").strip()).expanduser()
         parent = db_path.parent if db_path.parent != Path("") else Path(".")
         probe = parent
@@ -2570,11 +2725,10 @@ class SystemConfigService:
 
     @staticmethod
     def _is_safe_base_url(value: str) -> bool:
-        """Block link-local and cloud metadata addresses to prevent SSRF.
+        """阻止 link-local 与云厂商元数据地址（防止 SSRF）。
 
-        Allows localhost / private-LAN addresses (e.g. Ollama on 192.168.x.x)
-        but blocks 169.254.x.x (AWS/Azure/GCP/Alibaba instance-metadata service)
-        and other known metadata hostnames.
+        允许 localhost / 内网网段（如 192.168.x.x 的本地 Ollama），
+        但屏蔽 169.254.x.x（AWS/Azure/GCP/阿里云实例元数据）以及其他已知元数据主机名。
         """
         import ipaddress
 
@@ -2582,7 +2736,7 @@ class SystemConfigService:
         host = (parsed.hostname or "").lower()
         if not host:
             return True
-        # Known cloud metadata hostnames
+        # 已知云厂商元数据主机名黑名单
         _BLOCKED_HOSTS = frozenset({
             "169.254.169.254",
             "metadata.google.internal",
@@ -2590,18 +2744,18 @@ class SystemConfigService:
         })
         if host in _BLOCKED_HOSTS:
             return False
-        # Numeric IPs: block link-local range (169.254.0.0/16)
+        # 数字 IP：屏蔽 link-local 段（169.254.0.0/16），其它私网保留
         try:
             addr = ipaddress.ip_address(host)
             if addr.is_link_local:
                 return False
         except ValueError:
-            pass  # hostname, not an IP — already checked against blocklist above
+            pass  # 不是 IP 而是主机名，已在上方做过黑名单检查
         return True
 
     @staticmethod
     def _build_llm_models_url(base_url: str) -> str:
-        """Convert a channel base URL into a `/models` endpoint."""
+        """把渠道 base URL 转换为对应的 `/models` 端点。"""
         parsed = urlparse(base_url.strip())
         normalized = (parsed.path or "").rstrip("/")
         for suffix in ("/chat/completions", "/completions"):
@@ -2616,7 +2770,7 @@ class SystemConfigService:
 
     @staticmethod
     def _get_runtime_llm_temperature() -> float:
-        """Return the current configured LLM temperature for ad-hoc channel tests."""
+        """读取当前运行时 LLM 温度参数，供临时渠道测试使用。"""
         config = Config._load_from_env()
         try:
             return float(getattr(config, "llm_temperature", 0.7))
@@ -2640,7 +2794,7 @@ class SystemConfigService:
         latency_ms: Optional[int] = None,
         capability_results: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Build a sanitized LLM channel test/discovery response."""
+        """构造已脱敏的 LLM 渠道测试 / 发现响应。"""
         payload: Dict[str, Any] = {
             "success": success,
             "message": cls._sanitize_llm_error_text(message),
@@ -2665,7 +2819,7 @@ class SystemConfigService:
         base_details: Optional[Dict[str, Any]],
         diagnostic: _LLMDiagnostic,
     ) -> Dict[str, Any]:
-        """Merge diagnostic reason/details into an existing details payload."""
+        """把诊断对象中的 reason / details 合并到既有 details 字典上。"""
         details: Dict[str, Any] = dict(base_details or {})
         if diagnostic.reason:
             details.setdefault("reason", diagnostic.reason)
@@ -2674,7 +2828,7 @@ class SystemConfigService:
 
     @staticmethod
     def _sanitize_llm_error_text(text: Any) -> str:
-        """Redact credentials from LLM errors before API/log display."""
+        """在 LLM 错误信息中清除密钥等敏感字段后用于 API 返回或日志。"""
         if text is None:
             return ""
         sanitized = str(text).strip()
@@ -2695,7 +2849,7 @@ class SystemConfigService:
 
     @classmethod
     def _sanitize_llm_details(cls, details: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Recursively sanitize string values in LLM diagnostic details."""
+        """递归地对 LLM 诊断 details 中的字符串字段做脱敏。"""
         if not details:
             return {}
         sanitized: Dict[str, Any] = {}
@@ -2715,7 +2869,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_llm_http_error(status_code: int, error_text: str) -> _LLMDiagnostic:
-        """Classify model-list HTTP failures into user-facing diagnostic codes."""
+        """把 `/models` 拉取失败时的 HTTP 错误归类为面向用户的诊断码。"""
         lowered = (error_text or "").lower()
         if SystemConfigService._has_model_access_denied_signal(error_text or ""):
             return _LLMDiagnostic(
@@ -2786,7 +2940,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_model_not_found_signal(text: str) -> bool:
-        """Detect provider text that specifically says a model id is missing."""
+        """检测 provider 文本中明确表示 model id 缺失的迹象。"""
         lowered = text.lower()
 
         model_candidates = [
@@ -2808,14 +2962,13 @@ class SystemConfigService:
 
     @staticmethod
     def _has_model_access_denied_signal(text: str) -> bool:
-        """Detect provider text that says the model exists but is inaccessible."""
+        """检测 provider 文本中"模型存在但不可用"的迹象（如停用、未授权）。"""
         lowered = text.lower()
         if "model" not in lowered:
             return False
 
-        # Best-effort classifier for observed provider messages. Keep it gated by
-        # an explicit "model" mention plus access/disabled/unavailable signals so
-        # unrelated provider-specific failures continue to use the fallback path.
+        # 尽力而为的分类器：仅在文本中显式提到 "model" 且同时出现访问受限/禁用/不可用信号时触发，
+        # 避免把无关的 provider 特定错误误判为模型访问问题。
         access_denied_tokens = (
             "not authorized",
             "not allowed",
@@ -2833,7 +2986,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_request_blocked_signal(text: str) -> bool:
-        """Detect policy/moderation blocking while excluding transport blocks."""
+        """检测策略 / 内容审核层面的拦截，并排除纯网络层封锁。"""
         lowered = text.lower()
         if SystemConfigService._has_transport_blocked_signal(lowered):
             return False
@@ -2851,7 +3004,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_transport_blocked_signal(text: str) -> bool:
-        """Detect network/firewall blocking messages."""
+        """检测网络 / 防火墙层的连接被拦截信号。"""
         lowered = text.lower()
         transport_tokens = (
             "connection blocked",
@@ -2865,7 +3018,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_provider_prefix_mismatch_signal(text: str) -> bool:
-        """Detect LiteLLM/provider-prefix mismatch messages."""
+        """检测 LiteLLM / provider 前缀不匹配的错误信息。"""
         lowered = text.lower()
         mismatch_tokens = (
             "provider prefix",
@@ -2879,7 +3032,7 @@ class SystemConfigService:
 
     @staticmethod
     def _classify_llm_exception(exc: Exception) -> _LLMDiagnostic:
-        """Classify LiteLLM exceptions into stable API diagnostic codes."""
+        """把 LiteLLM 抛出的异常归类为稳定的 API 诊断码。"""
         exc_name = type(exc).__name__.lower()
         text = str(exc).lower()
         if isinstance(exc, TimeoutError) or "timeout" in exc_name or "timed out" in text:
@@ -2951,7 +3104,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_completion_content(response: Any) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
-        """Extract text from a LiteLLM completion response with parse diagnostics."""
+        """从 LiteLLM completion 响应中提取文本，并附带解析失败时的诊断码。"""
         if response is None:
             return "", "empty_response", "Completion returned no response object", "null_response"
 
@@ -2993,7 +3146,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_llm_discovery_error(response: requests.Response) -> str:
-        """Extract a concise error message from a failed model discovery response."""
+        """从模型发现失败的响应中提取简短的错误描述。"""
         try:
             payload = response.json()
         except ValueError:
@@ -3021,7 +3174,7 @@ class SystemConfigService:
 
     @staticmethod
     def _extract_discovered_llm_models(payload: Any) -> List[str]:
-        """Normalize common `/models` response shapes into a unique model ID list."""
+        """把常见 `/models` 响应结构归一化为去重的模型 ID 列表。"""
         raw_models: List[Any] = []
         if isinstance(payload, dict):
             if isinstance(payload.get("data"), list):
@@ -3053,7 +3206,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_cross_field(effective_map: Dict[str, str], updated_keys: Set[str]) -> List[Dict[str, Any]]:
-        """Validate dependencies across multiple keys."""
+        """做跨字段依赖校验（通知渠道、LLM 渠道、模型选择等）。"""
         issues: List[Dict[str, Any]] = []
 
         token_value = (effective_map.get("TELEGRAM_BOT_TOKEN") or "").strip()
@@ -3148,7 +3301,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_llm_channel_map(effective_map: Dict[str, str], updated_keys: Set[str]) -> List[Dict[str, Any]]:
-        """Validate channel-style LLM configuration stored in `.env`."""
+        """校验以渠道风格存放在 `.env` 中的 LLM 配置（不校验 LiteLLM YAML 路径）。"""
         issues: List[Dict[str, Any]] = []
         if SystemConfigService._uses_litellm_yaml(effective_map):
             return issues
@@ -3225,7 +3378,7 @@ class SystemConfigService:
 
     @staticmethod
     def _collect_llm_channel_models_from_map(effective_map: Dict[str, str]) -> List[str]:
-        """Collect normalized model names from channel-style env values."""
+        """从渠道风格的 env 值中收集归一化后的模型名列表。"""
         raw_channels = (effective_map.get("LLM_CHANNELS") or "").strip()
         if not raw_channels:
             return []
@@ -3262,7 +3415,7 @@ class SystemConfigService:
 
     @staticmethod
     def _uses_litellm_yaml(effective_map: Dict[str, str]) -> bool:
-        """Return True when a valid LiteLLM YAML config takes precedence over channels."""
+        """当 LiteLLM YAML 配置有效且应优先于渠道配置时返回 True。"""
         config_path = (effective_map.get("LITELLM_CONFIG") or "").strip()
         if not config_path:
             return False
@@ -3270,7 +3423,7 @@ class SystemConfigService:
 
     @staticmethod
     def _collect_yaml_models_from_map(effective_map: Dict[str, str]) -> List[str]:
-        """Collect declared router model names from LiteLLM YAML config."""
+        """从 LiteLLM YAML 配置中收集已声明的 router 模型名。"""
         config_path = (effective_map.get("LITELLM_CONFIG") or "").strip()
         if not config_path:
             return []
@@ -3278,7 +3431,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_direct_key_for_provider(provider: str, effective_map: Dict[str, str]) -> bool:
-        """Return True when direct provider env config can back the provider."""
+        """判断是否存在可直接驱动 provider 的 API Key（用于模型可用性兜底判断）。"""
         normalized_provider = canonicalize_llm_channel_protocol(provider)
         if normalized_provider in {"gemini", "vertex_ai"}:
             return bool(
@@ -3305,7 +3458,7 @@ class SystemConfigService:
 
     @staticmethod
     def _has_runtime_source_for_model(model: str, effective_map: Dict[str, str]) -> bool:
-        """Whether the selected model still has a backing runtime source."""
+        """判断选定模型是否仍有可用的运行时后端源（渠道或直连 API Key）。"""
         if not model or _uses_direct_env_provider(model):
             return True
         provider = _get_litellm_provider(model)
@@ -3313,7 +3466,7 @@ class SystemConfigService:
 
     @staticmethod
     def _validate_llm_runtime_selection(effective_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Validate selected primary/fallback/vision models against configured channels."""
+        """校验主 / Agent / Fallback / Vision 模型是否都来自已启用渠道或具备 provider API Key。"""
         issues: List[Dict[str, Any]] = []
 
         available_models = (
@@ -3510,7 +3663,7 @@ class SystemConfigService:
         field_prefix: str,
         require_complete: bool,
     ) -> List[Dict[str, Any]]:
-        """Validate one normalized LLM channel definition."""
+        """校验一条已规范化的 LLM 渠道定义。"""
         if not require_complete:
             return []
 
@@ -3566,7 +3719,7 @@ class SystemConfigService:
         field_prefix: str,
         require_base_url: bool,
     ) -> Tuple[List[Dict[str, Any]], str]:
-        """Validate connection-level fields shared by test and discovery flows."""
+        """校验测试 / 发现流程中共用的连接级字段（protocol、base URL、API key）。"""
         issues: List[Dict[str, Any]] = []
         protocol_key = f"{field_prefix}_PROTOCOL" if field_prefix != "test_channel" else "protocol"
         base_url_key = f"{field_prefix}_BASE_URL" if field_prefix != "test_channel" else "base_url"

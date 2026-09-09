@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Structured Market Light snapshot schema."""
+"""结构化「市场红绿灯（Market Light）」快照 schema。"""
 
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ MARKET_LIGHT_REGIONS = frozenset(("cn", "hk", "us"))
 
 
 class MarketLightDimension(BaseModel):
-    """A single Market Light scoring dimension."""
+    """单个 Market Light 评分维度。"""
 
     score: int = Field(ge=0, le=100)
     available: bool
 
 
 class MarketLightDimensions(BaseModel):
-    """Canonical Market Light dimension scores."""
+    """规范的 Market Light 维度评分。"""
 
     breadth: MarketLightDimension
     index: MarketLightDimension
@@ -30,7 +30,7 @@ class MarketLightDimensions(BaseModel):
 
 
 class MarketLightSnapshot(BaseModel):
-    """Structured Market Light snapshot persisted and consumed by alerts."""
+    """结构化的 Market Light 快照，被持久化并供告警消费。"""
 
     region: MarketRegion
     trade_date: str

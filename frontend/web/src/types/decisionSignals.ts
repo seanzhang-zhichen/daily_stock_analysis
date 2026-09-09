@@ -1,6 +1,17 @@
 export type DecisionAction = 'buy' | 'add' | 'hold' | 'reduce' | 'sell' | 'watch' | 'avoid' | 'alert';
 export type DecisionSignalStatus = 'active' | 'expired' | 'invalidated' | 'closed' | 'archived';
 export type DecisionSignalMarket = 'cn' | 'hk' | 'us';
+export type DecisionSignalFeedbackValue = 'useful' | 'not_useful';
+
+export interface DecisionSignalFeedback {
+  signalId: number;
+  feedbackValue?: DecisionSignalFeedbackValue | null;
+  reasonCode?: string | null;
+  note?: string | null;
+  source?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
 
 export interface DecisionSignalItem {
   id: number;

@@ -40,8 +40,9 @@ from tenacity import (
     before_sleep_log,
 )
 
-# Timeout (seconds) for efinance library calls that go through eastmoney APIs
-# with no built-in timeout.  Prevents indefinite hangs when hosts are unreachable.
+# efinance 库调用（走东方财富接口）的统一超时时间（秒）。
+# efinance 底层基于 requests/urllib3 但不自带超时，主机不可达时会长时间挂起，
+# 此处用于限制调用线程的最长等待时间，避免无限期阻塞。
 try:
     _EF_CALL_TIMEOUT = int(os.environ.get("EFINANCE_CALL_TIMEOUT", "30"))
 except (ValueError, TypeError):
@@ -113,7 +114,7 @@ _ETF_SZ_PREFIXES = ("15", "16", "18")
 
 
 def _build_eastmoney_etf_secid(stock_code: str) -> str:
-    """Build Eastmoney exchange-qualified secid for an A-share ETF."""
+    """构造东方财富接口所需的 A 股 ETF secid（交易所限定标识）。"""
     code = normalize_stock_code(stock_code)
     if not code.isdigit() or len(code) != 6:
         raise DataFetchError(f"Invalid ETF code: {stock_code}")
@@ -181,31 +182,30 @@ def _is_us_code(stock_code: str) -> bool:
 
 
 def _ef_call_with_timeout(func, *args, timeout=None, **kwargs):
-    """Run an efinance library call in a thread with a timeout.
+    """在带超时的线程中执行 efinance 库调用。
 
-    efinance internally uses requests/urllib3 with no timeout, so when
-    eastmoney hosts are unreachable the call can hang for many minutes.
-    This helper caps the *calling thread's* wait time.  Note: Python threads
-    cannot be forcibly killed, so the worker thread may continue running in
-    the background until the OS-level TCP timeout fires or the process exits.
-    This is acceptable — the calling thread returns promptly on timeout.
+    efinance 底层使用 requests/urllib3 但不自带超时，当东方财富主机不可达时
+    调用可能挂起数分钟。该辅助函数限制「调用线程」的最长等待时间。
+    注意：Python 线程无法被强制终止，因此工作线程可能在后台继续运行，
+    直到操作系统级 TCP 超时触发或进程退出为止。这是可接受的——
+    调用线程会在超时后及时返回。
     """
     if timeout is None:
         timeout = _EF_CALL_TIMEOUT
-    # Do NOT use 'with ThreadPoolExecutor(...)' here: the context manager calls
-    # shutdown(wait=True) on __exit__, which would re-block on the hung thread.
+    # 此处不要使用 'with ThreadPoolExecutor(...)'：上下文管理器在 __exit__ 时会
+    # 调用 shutdown(wait=True)，会再次阻塞在挂起的工作线程上。
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         future = executor.submit(func, *args, **kwargs)
         return future.result(timeout=timeout)
     finally:
-        # wait=False: calling thread returns immediately; worker cleans up later
+        # wait=False：调用线程立即返回，工作线程稍后自行清理
         executor.shutdown(wait=False)
 
 
 def _classify_eastmoney_error(exc: Exception) -> Tuple[str, str]:
     """
-    Classify Eastmoney request failures into stable log categories.
+    将东方财富请求失败归类到稳定的日志分类中。
     """
     message = str(exc).strip()
     lowered = message.lower()
@@ -294,7 +294,10 @@ class EfinanceFetcher(BaseFetcher):
         elapsed: float,
         is_etf: bool = False,
     ) -> Tuple[str, str]:
-        """Classify an Eastmoney history failure and build its diagnostic message."""
+        """对东财历史 K 线失败分类并构造诊断消息。
+
+        返回 (失败类别, 完整诊断消息)。
+        """
         category, detail = _classify_eastmoney_error(exc)
         instrument_type = "ETF" if is_etf else "stock"
         message = (
@@ -468,32 +471,31 @@ class EfinanceFetcher(BaseFetcher):
         """
         获取 ETF 基金历史数据
 
-        Exchange-traded ETFs have OHLCV data just like regular stocks, so we use
-        ef.stock.get_quote_history (the stock K-line API) which returns full
-        open/high/low/close/volume data.
+        ETF 与普通股一样拥有 OHLCV 数据，因此复用 ef.stock.get_quote_history
+        （股票 K 线接口）即可返回完整的开/高/低/收/成交量数据。
 
-        Previously this method used ef.fund.get_quote_history which only returns
-        NAV data (单位净值/累计净值) without volume or OHLC, causing:
+        早期版本使用 ef.fund.get_quote_history，只能返回净值数据
+        （单位净值/累计净值），缺少成交量与 OHLC，导致：
         - Issue #541: 'got an unexpected keyword argument beg'
-        - Issue #527: ETF volume/turnover always showing 0
+        - Issue #527: ETF 成交量/换手率始终为 0
 
         Args:
-            stock_code: ETF code, e.g. '512400', '159883', '515120'
-            start_date: Start date, format 'YYYY-MM-DD'
-            end_date: End date, format 'YYYY-MM-DD'
+            stock_code: ETF 代码，如 '512400'、'159883'、'515120'
+            start_date: 开始日期，格式 'YYYY-MM-DD'
+            end_date: 结束日期，格式 'YYYY-MM-DD'
 
         Returns:
-            ETF historical OHLCV DataFrame
+            ETF 历史 OHLCV 的 DataFrame
         """
         import efinance as ef
 
-        # Anti-ban strategy 1: random User-Agent
+        # 防封禁策略 1: 随机 User-Agent
         self._set_random_user_agent()
 
-        # Anti-ban strategy 2: enforce rate limit
+        # 防封禁策略 2: 强制执行速率限制
         self._enforce_rate_limit()
 
-        # Format dates (efinance uses YYYYMMDD)
+        # 格式化日期（efinance 使用 YYYYMMDD）
         beg_date = start_date.replace('-', '')
         end_date_fmt = end_date.replace('-', '')
         secid = _build_eastmoney_etf_secid(stock_code)
@@ -503,14 +505,14 @@ class EfinanceFetcher(BaseFetcher):
 
         api_start = time.time()
         try:
-            # ETFs are exchange-traded securities; use the stock API to get full OHLCV data
+            # ETF 是交易所交易证券，复用股票 K 线接口即可获取完整 OHLCV 数据
             df = _ef_call_with_timeout(
                 ef.stock.get_quote_history,
                 stock_codes=secid,
                 beg=beg_date,
                 end=end_date_fmt,
-                klt=101,  # daily
-                fqt=1,    # forward-adjusted
+                klt=101,  # 日线
+                fqt=1,    # 前复权
                 timeout=60,
             )
 
@@ -565,7 +567,7 @@ class EfinanceFetcher(BaseFetcher):
         """
         df = df.copy()
         
-        # Column mapping (efinance Chinese column names -> standard English column names)
+        # 列名映射（efinance 中文列名 -> 标准英文列名）
         column_mapping = {
             '日期': 'date',
             '开盘': 'open',
@@ -582,7 +584,7 @@ class EfinanceFetcher(BaseFetcher):
         # 重命名列
         df = df.rename(columns=column_mapping)
         
-        # Fallback: if OHLC columns are missing (e.g. very old data path), fill from close
+        # 兜底：若缺少 OHLC 列（如极旧的数据路径），则用收盘价填充
         if 'close' in df.columns and 'open' not in df.columns:
             df['open'] = df['close']
             df['high'] = df['close']

@@ -129,6 +129,17 @@ function toSnakeDiscoverModelsPayload(payload: DiscoverLLMChannelModelsRequest):
 }
 
 export const systemConfigApi = {
+  async getGenerationBackendStatus(): Promise<{
+    backend: string;
+    fallbackBackend?: string | null;
+    available: boolean;
+    executable?: string | null;
+    timeoutSeconds?: number;
+    error?: string | null;
+  }> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/system/config/generation/status');
+    return toCamelCase(response.data);
+  },
   async getConfig(includeSchema = true): Promise<SystemConfigResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/system/config', {
       params: { include_schema: includeSchema },

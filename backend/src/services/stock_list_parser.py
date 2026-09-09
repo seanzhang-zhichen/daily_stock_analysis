@@ -1,4 +1,14 @@
-"""Parse user supplied analysis targets while preserving A-share indices."""
+"""解析用户提供的分析标的（股票列表），并保留 A 股指数的独立身份。
+
+用户可能输入 "600519"、"sh600519"、"600519.SH"、"000300"、"沪深300" 等多种
+写法，本模块把它们统一解析为 :class:`AnalysisTarget`，并**优先**识别为指数：
+指数与个股共用 6 位数字代码（如 000300 既可能是股票也可能是沪深300），
+若不做区分会导致分析结果张冠李戴。
+
+主要入口：
+- :func:`parse_analysis_target`：解析单个标的
+- :func:`parse_stock_list` / :func:`split_stock_list`：解析批量输入
+"""
 
 from __future__ import annotations
 
@@ -13,6 +23,8 @@ from .a_share_index_registry import AShareIndex, get_a_share_index, list_a_share
 
 
 class ParseStatus:
+    """解析结果的资产类型枚举：个股 / 指数 / 不支持的标的。"""
+
     STOCK = "stock"
     INDEX = "index"
     UNSUPPORTED = "unsupported"
@@ -20,6 +32,12 @@ class ParseStatus:
 
 @dataclass(frozen=True)
 class AnalysisTarget:
+    """解析后的分析标的统一表示。
+
+    无论输入是 6 位代码、带交易所前后缀还是指数名称，最终都归一为
+    canonical_id / display_code 与 asset_type，并保留原始输入 raw_input。
+    """
+
     asset_type: str
     canonical_id: str
     display_code: str
@@ -34,7 +52,7 @@ class AnalysisTarget:
 
 @dataclass(frozen=True)
 class IndexEntry:
-    """Manifest-compatible index entry accepted by :class:`IndexRegistry`."""
+    """与清单（manifest）兼容的指数条目，供 :class:`IndexRegistry` 使用。"""
 
     bare_code: str
     exchange: str
@@ -44,17 +62,24 @@ class IndexEntry:
 
     @property
     def code(self) -> str:
+        """返回裸代码（bare code）。"""
         return self.bare_code
 
     @property
     def name(self) -> str:
+        """返回显示名称（display name）。"""
         return self.display_name
 
 
 class IndexRegistry:
-    """Lookup registry for explicit index identities and aliases."""
+    """指数身份与别名的查找注册表。
+
+    把指数条目按规范化 key、裸代码建立索引，支持按显式 key、
+    带前缀代码与裸代码三种方式查找，并在索引冲突时抛错。
+    """
 
     def __init__(self, entries: Iterable[object] = ()) -> None:
+        """构建索引：按规范 key/裸代码登记条目，别名冲突时抛错。"""
         self._entries = tuple(entries)
         self._by_key: dict[str, AShareIndex] = {}
         self._by_bare: dict[str, AShareIndex] = {}
@@ -74,15 +99,19 @@ class IndexRegistry:
             self._by_bare.setdefault(code, entry)
 
     def __iter__(self):
+        """迭代注册表中的全部指数条目。"""
         return iter(self._entries)
 
     def __len__(self) -> int:
+        """返回注册表中的指数条目总数。"""
         return len(self._entries)
 
     def find_by_explicit_key(self, key: str) -> Optional[AShareIndex]:
+        """按规范化后的显式 key（如 ``sh000300``、``000300.SH``）查找指数。"""
         return self._by_key.get(_normalize_key(key))
 
     def find_by_prefixed_code(self, prefix: str, bare_code: str) -> Optional[AShareIndex]:
+        """按交易所前缀 + 裸代码查找指数，仅支持 sh/sz 前缀。"""
         prefix = str(prefix or "").casefold()
         if prefix not in {"sh", "sz"}:
             return None
@@ -93,13 +122,19 @@ class IndexRegistry:
         return entry if entry is not None and str(getattr(entry, "exchange", "")).upper() == prefix.upper() else None
 
     def find_by_bare_code(self, bare_code: str) -> Optional[AShareIndex]:
+        """按裸代码查找指数。"""
         return self._by_bare.get(str(bare_code or ""))
 
     def find_by_bare_conflict(self, bare_code: str) -> Optional[AShareIndex]:
+        """检测裸代码是否与某个指数重号（个股与指数代码可能相同）。"""
         return self.find_by_bare_code(bare_code)
 
 
 def _normalize_key(value: str) -> str:
+    """把任意写法归一化为查找 key：NFKC 归一、去空白、转小写，并统一前后缀顺序。
+
+    例如 ``000300.SH`` → ``sh000300``，``000300.csi`` → ``csi000300``。
+    """
     text = "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold()
     if text.endswith((".sh", ".sz", ".ss")):
         base, suffix = text.rsplit(".", 1)
@@ -113,6 +148,7 @@ def _normalize_key(value: str) -> str:
 
 
 def _entry_from_row(row: object) -> Optional[AShareIndex]:
+    """把资源文件中的一行原始数据解析为指数条目，非法行返回 None。"""
     if not isinstance(row, list) or len(row) < 8 or str(row[7]).casefold() != "index":
         return None
     canonical = str(row[0] or "").strip().casefold()
@@ -129,34 +165,43 @@ def _entry_from_row(row: object) -> Optional[AShareIndex]:
 
 
 def default_index_registry() -> IndexRegistry:
-    """Load index rows from the generated resource, with stable fallback."""
+    """从生成的资源文件加载指数条目；读取失败时回退到内置的指数清单。"""
     entries: list[AShareIndex] = []
     try:
         path = Path(__file__).resolve().parents[1] / "data" / "resources" / "stocks.index.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
         entries = [item for item in (_entry_from_row(row) for row in payload) if item is not None]
     except (OSError, TypeError, ValueError):
+        # 资源缺失或损坏不应让整个解析功能不可用，退到内置清单
         entries = []
     return IndexRegistry(entries or list(list_a_share_indices()))
 
 
+# 显式带市场标识的写法："sh000300" 或 "000300.SH"
 _EXPLICIT_RE = re.compile(
     r"^(?P<prefix>sh|sz|csi)(?P<code>\d{6})$"
     r"|^(?P<suffix>\d{1,6})\.(?P<exchange>sh|sz|ss|bj|hk|csi)$",
     re.I,
 )
+# 带市场前缀的写法："bj920819" / "hk00700" / "usAAPL"
 _MARKET_PREFIX_RE = re.compile(r"^(?P<prefix>bj|hk|us)(?P<code>[A-Za-z0-9.]+)$", re.I)
 
 
 def _clean(value: str) -> str:
+    """NFKC 归一化并去掉所有空白字符，兼容全角输入与粘贴带来的空格。"""
     return "".join(unicodedata.normalize("NFKC", str(value or "")).split())
 
 
 def _classify_bare(text: str) -> tuple[str, str]:
+    """按裸代码的形态判断所属市场与资产类型。
+
+    Returns:
+        ``(exchange, status)``；无法识别时为 ``("UNKNOWN", UNSUPPORTED)``。
+    """
     if text.isdigit():
         if len(text) == 6:
-            # Beijing Stock Exchange and related legacy instruments must be
-            # checked before the generic Shanghai 9xxxxx branch.
+            # 北交所及其历史遗留代码段必须先判断，
+            # 否则会被后面更宽泛的上海 9xxxxx 分支错误吞掉
             if text.startswith(("92", "43", "83", "87", "88", "81", "82", "889")):
                 return "BJ", ParseStatus.STOCK
             if text.startswith(("6", "900", "5", "9")):
@@ -174,6 +219,7 @@ def _classify_bare(text: str) -> tuple[str, str]:
 
 
 def _make_index_target(raw: str, entry: object, exchange: str, prefix: str) -> AnalysisTarget:
+    """根据命中的指数条目构造一个 :class:`AnalysisTarget`。"""
     code = str(getattr(entry, "code", getattr(entry, "bare_code", "")))
     canonical = getattr(entry, "canonical_id", "") or (f"csi{code}" if exchange == "CSI" else f"{prefix}{code}")
     name = str(getattr(entry, "name", getattr(entry, "display_name", canonical)))
@@ -181,12 +227,18 @@ def _make_index_target(raw: str, entry: object, exchange: str, prefix: str) -> A
 
 
 def parse_analysis_target(value: str, registry: Optional[IndexRegistry] = None) -> AnalysisTarget:
+    """解析单个标的输入为 :class:`AnalysisTarget`。
+
+    优先识别显式市场标识与指数别名，其次按裸代码形态判定市场；
+    数字代码还会检查是否与某个指数重号，以决定按指数还是个股处理。
+    """
     raw = _clean(value)
     if not raw:
         return AnalysisTarget(ParseStatus.UNSUPPORTED, "", "", "UNKNOWN", None, ParseStatus.UNSUPPORTED, raw_input=raw, unsupported_reason="empty input")
     if registry is None:
         registry = default_index_registry()
 
+    # 情况一：显式带市场标识（sh000300 / 000300.SH）
     explicit = _EXPLICIT_RE.fullmatch(raw)
     if explicit:
         prefix = (explicit.group("prefix") or explicit.group("exchange") or "").casefold()
@@ -223,6 +275,7 @@ def parse_analysis_target(value: str, registry: Optional[IndexRegistry] = None) 
         exchange = getattr(entry, "exchange", None) or ("CSI" if code.startswith("93") else "SH" if code.startswith(("0", "5", "6", "9")) else "SZ")
         return _make_index_target(raw, entry, exchange, "csi" if exchange == "CSI" else exchange.casefold())
 
+    # 情况四：按裸代码形态判市场；数字代码还需检查是否与指数重号
     exchange, asset_type = _classify_bare(raw)
     if asset_type == ParseStatus.UNSUPPORTED:
         return AnalysisTarget(ParseStatus.UNSUPPORTED, raw.casefold(), raw, exchange, None, ParseStatus.UNSUPPORTED, raw_input=raw, unsupported_reason="unrecognized code shape")
@@ -234,14 +287,17 @@ def parse_analysis_target(value: str, registry: Optional[IndexRegistry] = None) 
 
 
 def split_stock_list(value: str) -> list[str]:
+    """按中英文逗号/分号/空白拆分批量股票列表输入。"""
     return [item for item in re.split(r"[\s,;，、；]+", value or "") if item]
 
 
 def serialize_stock_list(value: str) -> str:
+    """把批量列表重新拼接成统一的英文逗号分隔串。"""
     return ",".join(split_stock_list(value))
 
 
 def parse_stock_list(value: str, registry: Optional[IndexRegistry] = None) -> list[AnalysisTarget]:
+    """解析批量输入，逐项转为 :class:`AnalysisTarget`。"""
     return [parse_analysis_target(item, registry=registry) for item in split_stock_list(value)]
 
 

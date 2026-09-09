@@ -1,4 +1,4 @@
-"""News-evidence state and user-facing disclosures."""
+"""新闻面证据状态与面向用户的披露文案。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ _DISCLOSURES = {
 }
 
 def news_evidence_present(*sources: Any) -> bool:
-    """Return whether any real news-evidence source was consumed."""
+    """判断是否真正消费了任何新闻面证据来源。"""
     for source in sources:
         if source is None or isinstance(source, bool):
             if source:
@@ -36,7 +36,7 @@ def news_evidence_present(*sources: Any) -> bool:
 
 
 def persisted_news_result_state(raw_result: Any, context_snapshot: Any = None) -> Tuple[Optional[int], bool]:
-    """Restore the persisted three-state news count without guessing legacy records."""
+    """还原持久化的三态新闻数量，而不去猜测历史遗留记录。"""
     if isinstance(raw_result, Mapping):
         if raw_result.get("news_result_count_known") is False:
             return None, False
@@ -52,12 +52,14 @@ def persisted_news_result_state(raw_result: Any, context_snapshot: Any = None) -
 
 
 def persisted_news_evidence_present(raw_result: Any, news_result_count: Optional[int]) -> bool:
+    """根据持久化结果判断本次是否纳入了新闻面证据。"""
     if isinstance(raw_result, Mapping) and "news_evidence_present" in raw_result:
         return bool(raw_result.get("news_evidence_present"))
     return bool(news_result_count)
 
 
 def _disclosure(count: Optional[int], known: bool, evidence: bool, language: str) -> Optional[str]:
+    """按已知状态与证据情况选择对应的披露文案，无需披露时返回 None。"""
     if not known or evidence:
         return None
     not_configured, zero_results = _DISCLOSURES.get(language, _DISCLOSURES["zh"])
@@ -69,6 +71,7 @@ def _disclosure(count: Optional[int], known: bool, evidence: bool, language: str
 
 
 def empty_news_disclosure(result: Any, language: str = "zh") -> Optional[str]:
+    """根据分析结果对象生成新闻面缺失披露文案。"""
     if isinstance(result, Mapping):
         count, known = persisted_news_result_state(result)
         evidence = persisted_news_evidence_present(result, count)
@@ -84,6 +87,7 @@ def empty_news_disclosure_from_stored(
     context_snapshot: Any,
     language: str = "zh",
 ) -> Optional[str]:
+    """根据已存储的原始结果与上下文快照生成新闻面缺失披露文案。"""
     count, known = persisted_news_result_state(raw_result, context_snapshot)
     return _disclosure(
         count,

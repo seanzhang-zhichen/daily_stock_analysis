@@ -750,6 +750,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(report_language_schema["options"][1]["value"], "en")
 
         self.assertEqual(items["AGENT_ORCHESTRATOR_TIMEOUT_S"]["schema"]["default_value"], "600")
+        self.assertEqual(items["AGENT_CONTEXT_COMPRESSION_PROFILE"]["schema"]["validation"]["enum"], ["cost", "balanced", "long_context_raw_first"])
         self.assertTrue(items["AGENT_DEEP_RESEARCH_BUDGET"]["schema"]["is_editable"])
         self.assertTrue(items["AGENT_EVENT_MONITOR_ENABLED"]["schema"]["is_editable"])
 

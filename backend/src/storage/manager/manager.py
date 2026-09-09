@@ -64,7 +64,7 @@ def persist_llm_usage(
     call_type: str,
     stock_code: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: write one LLM call record to llm_usage. Never raises."""
+    """Fire-and-forget：写入一条 LLM 调用记录到 ``llm_usage``，任何异常都不会向外抛出。"""
     try:
         db = DatabaseManager.get_instance()
         payload = usage or {}
@@ -81,7 +81,7 @@ def persist_llm_usage(
 
 
 def _coerce_non_negative_int(value: Any) -> int:
-    """Normalize provider counters before writing integer columns."""
+    """把上游 provider 传入的 token 计数规整成非负整数后再入库。"""
     if isinstance(value, bool) or value is None:
         return 0
     if isinstance(value, int):

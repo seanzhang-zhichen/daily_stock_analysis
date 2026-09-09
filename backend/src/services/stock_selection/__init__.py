@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Stock selection service package."""
+"""股票选股服务包。
+
+对外暴露选股候选、诊断与结果等数据模型，以及核心选股服务。
+"""
 
 from src.services.stock_selection.models import (
     StockSelectionCandidate,

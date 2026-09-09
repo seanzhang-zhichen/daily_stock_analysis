@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class DiscordSender:
-    """Send notifications through Discord webhook or bot channel APIs."""
+    """通过 Discord Webhook 或 Bot 频道 API 发送通知。"""
     
     def __init__(self, config: Config):
         """

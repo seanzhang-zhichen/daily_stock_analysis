@@ -19,7 +19,7 @@ from src.storage.base import Base
 
 
 class AlertRuleRecord(Base):
-    """Persisted alert rule managed through the Alert API."""
+    """通过 Alert API 管理的告警规则持久化记录。"""
 
     __tablename__ = 'alert_rules'
 
@@ -46,10 +46,9 @@ class AlertRuleRecord(Base):
 
 
 class AlertTriggerRecord(Base):
-    """Alert trigger history row.
+    """告警触发历史记录表。
 
-    P1 exposes read APIs and table shape; runtime writer integration lands in
-    later phases.
+    P1 暴露读 API 与表结构，运行时的写入集成在后续阶段落地。
     """
 
     __tablename__ = 'alert_triggers'
@@ -72,10 +71,9 @@ class AlertTriggerRecord(Base):
 
 
 class AlertNotificationRecord(Base):
-    """Notification attempt row for alert triggers.
+    """告警触发的发送流水表。
 
-    P1 exposes read APIs and table shape; runtime writer integration lands in
-    later phases.
+    P1 暴露读 API 与表结构，运行时的写入集成在后续阶段落地。
     """
 
     __tablename__ = 'alert_notifications'
@@ -97,7 +95,7 @@ class AlertNotificationRecord(Base):
 
 
 class AlertCooldownRecord(Base):
-    """Persisted cooldown state for database-managed alert rules."""
+    """数据库管理的告警规则冷却状态表。"""
 
     __tablename__ = 'alert_cooldowns'
 

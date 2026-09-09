@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-History Query Service Layer
-===================================
+"""历史分析记录查询服务层。
 
-Responsibilities:
-1. Encapsulate history record query logic
-2. Provide pagination and filtering functionality
-3. Generate detailed reports in Markdown format
+封装历史分析报告的查询、分页过滤、详情组装、Markdown 报告重建与新闻情报关联等逻辑，
+对外供 API 层（`backend/api/v1/endpoints/history.py` 等）与前端历史记录页面调用。
+
+主要职责：
+- 历史记录分页查询与单条详情组装（含狙击点位、市场复盘原文、价格历史等）
+- Markdown 报告重建：基于存储的 ``raw_result`` 还原 :class:`AnalysisResult` 并渲染成可读报告
+- 新闻情报查询与按时间窗口的兜底匹配
+- 触发诊断、运行时流程快照等辅助信息组装
 """
 from __future__ import annotations
 import json
@@ -29,6 +30,7 @@ from src.report_language import (
 )
 from src.storage import DatabaseManager
 from src.utils.data_processing import normalize_model_used, parse_json_field
+from src.services.run_diagnostics import build_run_diagnostic_summary
 
 if TYPE_CHECKING:
     from src.analyzer import AnalysisResult
@@ -37,30 +39,62 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownReportGenerationError(Exception):
-    """Exception raised when Markdown report generation fails due to internal errors."""
+    """当 Markdown 报告重建过程中出现内部错误时抛出。"""
 
     def __init__(self, message: str, record_id: str = None):
-        """Store the optional history record id that failed markdown rebuild."""
+        """记录触发本次失败的 ``record_id``（可选），便于上层定位问题报告。"""
         self.message = message
         self.record_id = record_id
         super().__init__(self.message)
 
 
 class HistoryService:
-    """
-    History Query Service
-    
-    Encapsulates query logic for historical analysis records.
+    """历史分析记录查询服务。
+
+    封装针对历史分析记录的查询逻辑，统一处理 record_id 解析（兼容整型主键与 query_id 字符串）、
+    详情数据组装、Markdown 报告重建与新闻情报关联等。
     """
     
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
-        """
-        Initialize the history query service.
-        
+        """初始化历史查询服务。
+
         Args:
-            db_manager: Database manager (optional, defaults to singleton instance)
+            db_manager: 数据库管理器（可选，默认使用单例实例）。
         """
         self.db = db_manager or DatabaseManager.get_instance()
+
+    def resolve_and_get_diagnostics(
+        self,
+        record_id: str,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """返回一份对用户友好的运行诊断摘要。
+
+        在 ``user_id`` 下做归属校验，避免越权访问他人报告。
+        """
+        record = self._resolve_record(record_id, user_id=user_id)
+        if not record:
+            return None
+        return build_run_diagnostic_summary(
+            context_snapshot=parse_json_field(getattr(record, "context_snapshot", None)),
+            raw_result=parse_json_field(getattr(record, "raw_result", None)),
+            report_saved=True,
+            query_id=getattr(record, "query_id", None),
+            stock_code=getattr(record, "code", None),
+        )
+
+    def resolve_and_get_run_flow(
+        self,
+        record_id: str,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """返回一条历史记录对应的 A 股运行时流程快照（已脱敏）。"""
+        record = self._resolve_record(record_id, user_id=user_id)
+        if not record:
+            return None
+        from src.services.run_flow import build_history_run_flow_snapshot
+
+        return build_history_run_flow_snapshot(record)
     
     def get_history_list(
         self,
@@ -71,18 +105,17 @@ class HistoryService:
         limit: int = 20,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Get history analysis list.
-        
+        """获取历史分析记录列表（分页）。
+
         Args:
-            stock_code: Stock code filter
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            page: Page number
-            limit: Items per page
-            
+            stock_code: 按股票代码过滤。
+            start_date: 起始日期，格式 ``YYYY-MM-DD``。
+            end_date: 截止日期，格式 ``YYYY-MM-DD``。
+            page: 页码（从 1 开始）。
+            limit: 每页条数。
+
         Returns:
-            Dictionary containing total count and items
+            包含 ``total`` 与 ``items`` 的字典；异常时降级返回空列表。
         """
         try:
             # Parse date parameters
@@ -138,17 +171,16 @@ class HistoryService:
             return {"total": 0, "items": []}
 
     def _resolve_record(self, record_id: str, user_id: Optional[int] = None):
-        """
-        Resolve a record_id parameter to an AnalysisHistory object.
+        """将 ``record_id`` 参数解析为 ``AnalysisHistory`` 对象。
 
-        Tries integer primary key first; falls back to query_id string lookup
-        when the value is not a valid integer.
+        先按整型主键查询；解析失败时回退到 ``query_id`` 字符串查询。
+        在 To C 模式下 ``user_id`` 会参与过滤，避免跨用户访问。
 
         Args:
-            record_id: integer PK (as string) or query_id string
+            record_id: 整型主键（以字符串形式传入）或 ``query_id`` 字符串。
 
         Returns:
-            AnalysisHistory object or None
+            ``AnalysisHistory`` 对象，未命中时返回 ``None``。
         """
         try:
             int_id = int(record_id)
@@ -169,15 +201,14 @@ class HistoryService:
         record_id: str,
         user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Resolve record_id (int PK or query_id string) and return history detail.
+        """解析 ``record_id``（整型主键或 ``query_id`` 字符串）并返回历史详情。
 
         Args:
-            record_id: integer PK (as string) or query_id string
-            user_id: To C 模式下注入限定归属用户; 关闭时传 ``None``
+            record_id: 整型主键（字符串形式）或 ``query_id`` 字符串。
+            user_id: To C 模式下用于限定归属用户；关闭时传 ``None``。
 
         Returns:
-            Complete analysis report dict, or None
+            完整的分析报告字典，未命中时返回 ``None``。
         """
         try:
             record = self._resolve_record(record_id, user_id=user_id)
@@ -194,16 +225,15 @@ class HistoryService:
         limit: int = 20,
         user_id: Optional[int] = None,
     ) -> List[Dict[str, str]]:
-        """
-        Resolve record_id (int PK or query_id string) and return associated news.
+        """解析 ``record_id`` 并返回关联的新闻情报列表。
 
         Args:
-            record_id: integer PK (as string) or query_id string
-            limit: max items to return
-            user_id: To C 模式下注入限定归属用户
+            record_id: 整型主键（字符串形式）或 ``query_id`` 字符串。
+            limit: 返回条数上限。
+            user_id: To C 模式下用于限定归属用户。
 
         Returns:
-            List of news intel dicts
+            新闻情报字典列表（包含 ``title`` / ``snippet`` / ``url``）。
         """
         try:
             record = self._resolve_record(record_id, user_id=user_id)
@@ -220,18 +250,16 @@ class HistoryService:
         record_id: int,
         user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get history report detail.
+        """通过主键 ID 获取历史报告详情。
 
-        Uses database primary key for precise query, avoiding returning incorrect records 
-        due to duplicate query_id in batch analysis.
+        使用数据库主键精确查询，避免批量分析时 ``query_id`` 重复导致的错拿记录。
 
         Args:
-            record_id: Analysis history record primary key ID
-            user_id: To C 模式下注入限定归属用户
+            record_id: 历史记录主键 ID。
+            user_id: To C 模式下用于限定归属用户。
 
         Returns:
-            Complete analysis report dictionary, or None if not exists
+            完整的分析报告字典，不存在时返回 ``None``。
         """
         try:
             record = self.db.get_analysis_history_by_id(record_id, user_id=user_id)
@@ -244,7 +272,7 @@ class HistoryService:
 
     @staticmethod
     def _normalize_display_sniper_value(value: Any) -> Optional[str]:
-        """Normalize sniper point values for history display."""
+        """规范化历史详情中狙击点位的展示值（剔除空值与占位符）。"""
         if value is None:
             return None
         text = str(value).strip()
@@ -253,7 +281,7 @@ class HistoryService:
         return text
 
     def _get_display_sniper_points(self, record, raw_result: Any) -> Dict[str, Optional[str]]:
-        """Prefer raw dashboard sniper strings for history display, then fall back to numeric DB columns."""
+        """优先使用 ``raw_result`` 中仪表盘的字符串狙击点位，回退到数值列。"""
         raw_points: Dict[str, Any] = {}
         if isinstance(raw_result, dict):
             for candidate in (raw_result.get("dashboard"), raw_result):
@@ -275,7 +303,7 @@ class HistoryService:
 
     @staticmethod
     def _extract_market_review_content(record, raw_result: Any) -> Optional[str]:
-        """Return persisted market review content from raw_result or news_content."""
+        """从 ``raw_result`` 或 ``news_content`` 中提取大盘复盘报告的正文。"""
         if isinstance(raw_result, dict):
             for field in ("raw_response", "market_review_report"):
                 content = raw_result.get(field)
@@ -288,9 +316,7 @@ class HistoryService:
         return None
 
     def _record_to_detail_dict(self, record) -> Dict[str, Any]:
-        """
-        Convert an AnalysisHistory ORM record to a detail response dict.
-        """
+        """将 ``AnalysisHistory`` ORM 记录转换为详情响应的字典。"""
         raw_result = parse_json_field(record.raw_result)
 
         model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
@@ -332,7 +358,7 @@ class HistoryService:
         }
 
     def _get_price_history(self, stock_code: Optional[str], days: int = 60) -> List[Dict[str, Any]]:
-        """Return recent stored OHLC rows for chart display in history detail."""
+        """返回近期存储的 OHLC 行，用于历史详情中的图表展示。"""
         if not stock_code or stock_code == "market_review":
             return []
 
@@ -356,32 +382,81 @@ class HistoryService:
         record_ids: List[int],
         user_id: Optional[int] = None,
     ) -> int:
-        """
-        Delete specified analysis history records.
+        """删除指定的历史分析记录。
 
         Args:
-            record_ids: List of history record primary key IDs
-            user_id: To C 模式下注入限定归属用户; 不允许跨用户删除
+            record_ids: 历史记录主键 ID 列表。
+            user_id: To C 模式下用于限定归属用户，不允许跨用户删除。
 
         Returns:
-            Number of records actually deleted
+            实际删除的记录条数。
 
         Raises:
-            Exception: Re-raises any storage-layer exception so the API caller
-                       receives a proper 500 error instead of a silent success.
+            Exception: 原样抛出存储层异常，确保 API 返回正确的 500 错误而非误报成功。
         """
         return self.db.delete_analysis_history_records(record_ids, user_id=user_id)
 
+    def get_history_trend_by_code(
+        self,
+        stock_code: str,
+        *,
+        user_id: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """返回某只股票按时间排列的 A 股分析结论（排除大盘复盘记录）。"""
+        code = str(stock_code or "").strip()
+        if not code:
+            return []
+        records, _ = self.db.get_analysis_history_paginated(
+            code=code,
+            offset=0,
+            limit=max(1, min(limit, 100)),
+            user_id=user_id,
+        )
+        return [
+            {
+                "id": record.id,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "sentiment_score": record.sentiment_score,
+                "operation_advice": record.operation_advice,
+                "trend_prediction": record.trend_prediction,
+                "analysis_summary": record.analysis_summary,
+                "stock_name": record.name,
+            }
+            for record in reversed(records)
+            if record.report_type != "market_review"
+        ]
+
+    def delete_history_by_code(self, stock_code: str, *, user_id: Optional[int] = None) -> int:
+        """删除某只股票下当前用户拥有的全部 A 股分析记录，返回删除条数。"""
+        code = str(stock_code or "").strip()
+        if not code:
+            return 0
+        deleted = 0
+        while True:
+            records, _ = self.db.get_analysis_history_paginated(
+                code=code,
+                offset=0,
+                limit=100,
+                user_id=user_id,
+            )
+            ids = [record.id for record in records if record.id is not None]
+            if not ids:
+                return deleted
+            removed = self.db.delete_analysis_history_records(ids, user_id=user_id)
+            if removed <= 0:
+                raise RuntimeError("history deletion made no progress")
+            deleted += removed
+
     def get_news_intel(self, query_id: str, limit: int = 20) -> List[Dict[str, str]]:
-        """
-        Get news intelligence associated with a specified query_id.
+        """获取与指定 ``query_id`` 关联的新闻情报。
 
         Args:
-            query_id: Unique analysis identifier
-            limit: Result limit
+            query_id: 唯一分析标识。
+            limit: 返回条数上限。
 
         Returns:
-            List of news intelligence (containing title, snippet, and url)
+            新闻情报列表，每条包含 ``title`` / ``snippet`` / ``url``。
         """
         try:
             records = self.db.get_news_intel_by_query_id(query_id=query_id, limit=limit)
@@ -407,17 +482,16 @@ class HistoryService:
             return []
 
     def get_news_intel_by_record_id(self, record_id: int, limit: int = 20) -> List[Dict[str, str]]:
-        """
-        Get associated news intelligence based on analysis history record ID.
+        """基于历史记录主键查询关联的新闻情报。
 
-        Parses record_id to query_id, then calls get_news_intel.
+        先将 ``record_id`` 映射到 ``query_id``，再调用 :meth:`get_news_intel`。
 
         Args:
-            record_id: Analysis history primary key ID
-            limit: Result limit
+            record_id: 历史记录主键 ID。
+            limit: 返回条数上限。
 
         Returns:
-            List of news intelligence (containing title, snippet, and url)
+            新闻情报列表。
         """
         try:
             # Look up the corresponding AnalysisHistory record by record_id
@@ -434,12 +508,11 @@ class HistoryService:
             return []
 
     def _fallback_news_by_analysis_context(self, query_id: str, limit: int) -> List[Any]:
-        """
-        Fallback by analysis context when direct query_id lookup returns no news.
+        """当 ``query_id`` 直接查询未命中新闻时的兜底匹配。
 
-        Typical scenarios:
-        - URL-level dedup keeps one canonical news row across repeated analyses.
-        - Legacy records may have different historical query_id strategies.
+        典型场景：
+        - URL 级去重导致同一新闻只保留一条主记录，反复分析时需要回溯上下文。
+        - 旧版本记录使用不同的 ``query_id`` 生成策略，按时间窗口与股票代码匹配更可靠。
         """
         records = self.db.get_analysis_history(query_id=query_id, limit=1)
         if not records:
@@ -487,14 +560,13 @@ class HistoryService:
         return filtered[:limit]
     
     def _get_sentiment_label(self, score: int) -> str:
-        """
-        Get sentiment label based on score.
+        """根据情绪分数返回对应的中文情绪标签。
 
         Args:
-            score: Sentiment score (0-100)
+            score: 情绪分数（0-100）。
 
         Returns:
-            Sentiment label
+            情绪标签字符串（极度乐观 / 乐观 / 中性 / 悲观 / 极度悲观）。
         """
         if score >= 80:
             return "极度乐观"
@@ -512,21 +584,19 @@ class HistoryService:
         record_id: str,
         user_id: Optional[int] = None,
     ) -> Optional[str]:
-        """
-        Generate a Markdown report for a single analysis history record.
+        """根据单条历史记录重建 Markdown 报告。
 
-        This method reconstructs an AnalysisResult from the stored raw_result
-        and generates a detailed Markdown report similar to the push notifications.
+        从存储的 ``raw_result`` 还原 :class:`AnalysisResult`，再渲染为与推送通知一致的 Markdown 详情报告。
 
         Args:
-            record_id: integer PK (as string) or query_id string
-            user_id: To C 模式下注入限定归属用户
+            record_id: 整型主键（字符串形式）或 ``query_id`` 字符串。
+            user_id: To C 模式下用于限定归属用户。
 
         Returns:
-            Markdown formatted report string, or None if record not found
+            渲染好的 Markdown 报告字符串，记录不存在返回 ``None``。
 
         Raises:
-            MarkdownReportGenerationError: If report generation fails due to internal errors
+            MarkdownReportGenerationError: 重建或渲染过程中出错时抛出。
         """
         record = self._resolve_record(record_id, user_id=user_id)
         if not record:
@@ -583,15 +653,14 @@ class HistoryService:
         raw_result: Dict[str, Any],
         record
     ) -> Optional[AnalysisResult]:
-        """
-        Rebuild an AnalysisResult object from stored raw_result dict.
+        """从存储的 ``raw_result`` 字典重建 :class:`AnalysisResult` 对象。
 
         Args:
-            raw_result: The parsed raw_result JSON dict
-            record: The AnalysisHistory ORM record
+            raw_result: 已解析的 ``raw_result`` JSON 字典。
+            record: 对应的 ``AnalysisHistory`` ORM 记录。
 
         Returns:
-            AnalysisResult object or None
+            ``AnalysisResult`` 对象或 ``None``。
         """
         try:
             from src.analyzer import AnalysisResult
@@ -648,18 +717,17 @@ class HistoryService:
         result: AnalysisResult,
         record
     ) -> str:
-        """
-        Generate a Markdown report for a single stock analysis.
+        """为单只股票生成 Markdown 详情报告。
 
-        This follows the same format as NotificationService.generate_dashboard_report()
-        using dashboard structured data for detailed report.
+        与 :meth:`NotificationService.generate_dashboard_report` 保持同一渲染模板，
+        优先消费 ``dashboard`` 结构化数据。
 
         Args:
-            result: The AnalysisResult object
-            record: The AnalysisHistory ORM record
+            result: 已重建的 :class:`AnalysisResult`。
+            record: 对应的 ``AnalysisHistory`` ORM 记录。
 
         Returns:
-            Markdown formatted report string
+            渲染好的 Markdown 报告字符串。
         """
         report_date = record.created_at.strftime("%Y-%m-%d") if record.created_at else datetime.now().strftime("%Y-%m-%d")
         report_time = record.created_at.strftime("%H:%M:%S") if record.created_at else datetime.now().strftime("%H:%M:%S")
@@ -920,14 +988,14 @@ class HistoryService:
 
     @staticmethod
     def _escape_md(text: Optional[str]) -> str:
-        """Escape markdown special characters."""
+        """转义 Markdown 特殊字符（目前处理 ``*``）。"""
         if not text:
             return ""
         return text.replace('*', r'\*')
 
     @staticmethod
     def _clean_sniper_value(value: Any) -> str:
-        """Clean sniper point value for display."""
+        """清洗狙击点位的展示值；空值与占位符统一显示为 ``N/A``。"""
         if value is None:
             return "N/A"
         text = str(value).strip()
@@ -936,7 +1004,7 @@ class HistoryService:
         return text
 
     def _get_signal_level(self, result: AnalysisResult) -> Tuple[str, str, str]:
-        """Get signal level based on sentiment score and decision type."""
+        """根据情绪分数与决策类型得到对应的信号等级标签与图标。"""
         return get_signal_level(
             result.operation_advice,
             result.sentiment_score,
@@ -945,15 +1013,14 @@ class HistoryService:
 
     @staticmethod
     def _safe_format_number(value: Any, fmt: str = ".2f") -> str:
-        """
-        Safely format a numeric value that may be a string.
+        """安全地格式化数值；接受可能是字符串的数字或占位符。
 
         Args:
-            value: The value to format (may be int, float, or string like "12.34" or "N/A")
-            fmt: Format string (default: ".2f")
+            value: 待格式化值，可以是 ``int`` / ``float`` / ``str``，或 ``"N/A"`` 等。
+            fmt: 数字格式串，默认 ``.2f``。
 
         Returns:
-            Formatted string or original string if not a valid number
+            格式化后的字符串；非数字值原样返回。
         """
         if value is None:
             return "N/A"
@@ -975,7 +1042,7 @@ class HistoryService:
         result: AnalysisResult,
         labels: Dict[str, str],
     ) -> None:
-        """Append market snapshot data to report lines."""
+        """向报告行缓冲中追加行情快照小节。"""
         snapshot = getattr(result, 'market_snapshot', None)
         if not snapshot:
             return
@@ -987,13 +1054,14 @@ class HistoryService:
             "|------|------|",
         ])
 
-        # Price info
+        # 当前价与涨跌幅：从多个可能的字段取第一个有效值
         current_price = snapshot.get('price') or snapshot.get('current_price') or result.current_price
         change_pct = snapshot.get('change_pct') or snapshot.get('pct_chg') or result.change_pct
         if current_price is not None:
             current_str = HistoryService._safe_format_number(current_price, ".2f")
             if change_pct is not None:
                 if isinstance(change_pct, str) and change_pct.strip().endswith("%"):
+                    # 已自带百分号，避免重复拼接
                     change_str = change_pct.strip()
                 else:
                     change_str = f"{HistoryService._safe_format_number(change_pct, '+.2f')}%"
@@ -1001,7 +1069,7 @@ class HistoryService:
                 change_str = "--"
             lines.append(f"| {labels['current_price_label']} | **{current_str}** ({change_str}) |")
 
-        # Other metrics
+        # 其他 OHLCV 指标：按统一格式补齐
         metrics = [
             (labels['open_label'], "open", ".2f"),
             (labels['high_label'], "high", ".2f"),

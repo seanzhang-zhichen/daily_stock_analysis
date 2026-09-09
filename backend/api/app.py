@@ -59,7 +59,7 @@ def _preload_stock_search_cache() -> None:
 
 
 def _frontend_index_response(static_dir: Path) -> FileResponse:
-    """Return the SPA index.html with headers that avoid stale shell caching."""
+    """返回 SPA 的 index.html，并附带避免外壳缓存过期的响应头。"""
     return FileResponse(
         static_dir / "index.html",
         headers=_FRONTEND_INDEX_NO_CACHE_HEADERS,
@@ -68,13 +68,11 @@ def _frontend_index_response(static_dir: Path) -> FileResponse:
 
 def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
     """
-    Verify that ``index.html`` only references assets that actually exist
-    under ``static_dir``. Returns the list of missing references; an empty
-    list means the bundle is consistent.
+    校验 ``index.html`` 中引用的资源是否都真实存在于 ``static_dir`` 下。
 
-    Logs an actionable error when a mismatch is detected so the root cause
-    is visible in ``logs/desktop.log`` instead of surfacing as a silent
-    blank page.
+    返回缺失的资源路径列表；空列表表示构建产物一致。
+    当检测到不一致时，会记录一条可定位根因的错误日志（在 ``logs/desktop.log``），
+    避免桌面端出现白屏时只能依赖浏览器开发者工具排查。
     """
     index_html = static_dir / "index.html"
     if not index_html.is_file():
@@ -146,6 +144,7 @@ from api.middlewares.auth import add_auth_middleware
 from api.middlewares.error_handler import add_error_handlers
 from api.v1.schemas.common import HealthResponse, RootResponse
 from src.services.system_config_service import SystemConfigService
+from src.services.runtime_scheduler import RuntimeSchedulerService
 
 
 def _init_sentry() -> None:
@@ -204,15 +203,22 @@ async def app_lifespan(app: FastAPI):
     shutdown 时清理 ``app.state``，避免测试或热重载场景复用到旧状态。
     """
     app.state.system_config_service = SystemConfigService()
+    app.state.runtime_scheduler = RuntimeSchedulerService()
     from src.data.stock_index_sync import ensure_stock_index_seeded
 
     logger.info("股票索引数据库初始化检查开始")
     ensure_stock_index_seeded()
     logger.info("股票索引数据库初始化检查完成")
+    # The scheduler can launch an isolated process immediately. Initialize the
+    # database schema first so it cannot race the main process's migrations.
+    app.state.runtime_scheduler.start()
     Thread(target=_preload_stock_search_cache, name="stock-search-cache-preload", daemon=True).start()
     try:
         yield
     finally:
+        if hasattr(app.state, "runtime_scheduler"):
+            app.state.runtime_scheduler.stop()
+            delattr(app.state, "runtime_scheduler")
         if hasattr(app.state, "system_config_service"):
             delattr(app.state, "system_config_service")
 
@@ -357,7 +363,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
         description="用于负载均衡器或监控系统检查服务状态"
     )
     async def health_check() -> HealthResponse:
-        """健康检查接口"""
+        """健康检查接口，供负载均衡与监控系统判断服务可用性。"""
         return HealthResponse(
             status="ok",
             timestamp=datetime.now().isoformat()
@@ -384,7 +390,7 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
             include_in_schema=False,
         )
         async def serve_asset(request: Request, asset_path: str):
-            """Serve built frontend assets with plain-text misses for browser clarity."""
+            """服务前端构建产物；资源缺失时返回纯文本 404 以便前端清晰排障。"""
             file_path = _resolve_asset_path(assets_dir, asset_path)
             if file_path is None:
                 return Response(

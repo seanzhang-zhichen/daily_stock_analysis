@@ -98,6 +98,18 @@ class NotificationDiagnosticsTestCase(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.configured_channels, ("wechat", "ntfy", "gotify", "astrbot"))
 
+    def test_feishu_app_bot_file_configuration_is_detected(self):
+        result = run_notification_diagnostics(
+            _config(
+                feishu_app_id="app-id",
+                feishu_app_secret="app-secret",
+                feishu_chat_id="oc_test_chat",
+                feishu_send_as_file=True,
+            )
+        )
+
+        self.assertIn("feishu", result.configured_channels)
+
     def test_ntfy_url_without_topic_reports_error(self):
         result = run_notification_diagnostics(_config(ntfy_url="https://ntfy.sh"))
 

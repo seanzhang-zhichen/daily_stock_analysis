@@ -106,14 +106,13 @@ class BotPlatform(ABC):
         response: 'BotResponse',
         message: 'BotMessage',
     ) -> bool:
-        """Send a follow-up message after a deferred webhook response.
+        """在延迟的 webhook 响应之后发送后续补充消息。
 
-        Override in platforms that return a deferred acknowledgement
-        (e.g. Discord type 5) so the final command result can be delivered
-        asynchronously.  The default implementation is a no-op.
+        对于返回延迟确认（例如 Discord type 5）的平台，重写本方法以异步
+        投递最终的命令结果。默认实现为空操作。
 
         Returns:
-            ``True`` if the follow-up was sent successfully.
+            补充消息是否发送成功。
         """
         return False
 

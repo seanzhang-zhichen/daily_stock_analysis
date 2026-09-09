@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Full-market daily quote synchronization service."""
+"""全市场日线行情同步服务。
+
+把股票池内全部标的的日线 OHLCV 同步进 stock_daily 表，
+当前仅支持 A 股（cn），供后续技术面/选股任务使用最新日线数据。
+"""
 
 from __future__ import annotations
 
@@ -16,13 +20,15 @@ from src.core.trading_calendar import get_effective_trading_date, is_market_open
 
 logger = logging.getLogger(__name__)
 
+# 首期仅支持 A 股；其它市场请求会被过滤并告警
 SUPPORTED_DAILY_QUOTE_SYNC_MARKETS = {"cn"}
+# 股票池兜底资源：由构建流程生成的全量股票索引
 _RESOURCE_PATH = Path(__file__).resolve().parents[1] / "data" / "resources" / "stocks.index.json"
 
 
 @dataclass(frozen=True)
 class DailyQuoteSyncStock:
-    """One stock selected for daily quote sync."""
+    """一只被选中参与日线同步的股票。"""
 
     code: str
     market: str = "cn"
@@ -30,7 +36,7 @@ class DailyQuoteSyncStock:
 
 @dataclass
 class DailyQuoteSyncStats:
-    """Summary of one daily quote sync run."""
+    """一次日线同步运行的统计结果。"""
 
     target_date: str
     markets: List[str]
@@ -43,16 +49,15 @@ class DailyQuoteSyncStats:
     skipped_non_trading_day: bool = False
 
     def to_dict(self) -> dict:
-        """Return a JSON-serializable representation."""
+        """返回可 JSON 序列化的统计表示。"""
         return asdict(self)
 
 
 class DailyQuoteSyncService:
-    """Synchronize full-market daily OHLCV into ``stock_daily``.
+    """把全市场日线 OHLCV 同步进 ``stock_daily`` 表。
 
-    The first implementation intentionally supports CN A-shares only. It uses
-    the generated stock index as the stock pool and writes through the existing
-    ``save_daily_data`` upsert path, so no extra schema is required.
+    首期实现有意只支持 A 股（cn）。股票池取自生成的股票索引，写入则走已有的
+    ``save_daily_data`` upsert 通道，因此不需要额外的表结构。
     """
 
     def __init__(
@@ -63,6 +68,17 @@ class DailyQuoteSyncService:
         fetcher_manager: Optional[Any] = None,
         stock_pool_loader: Optional[Callable[[Sequence[str]], List[DailyQuoteSyncStock]]] = None,
     ) -> None:
+        """初始化同步服务。
+
+        依赖项均可注入，便于测试和替换：默认从全局配置、``get_db``、
+        ``DataFetcherManager`` 取实际实现，调用方可整体替换为 mock。
+
+        Args:
+            config: 全局配置；为 None 时通过 ``get_config()`` 获取。
+            db: 数据库会话工厂；为 None 时通过 ``get_db()`` 获取。
+            fetcher_manager: 行情抓取管理器；为 None 时新建默认实例。
+            stock_pool_loader: 自定义股票池加载函数；为 None 时使用 ``load_stock_pool``。
+        """
         self.config = config or get_config()
         if db is None:
             from src.storage import get_db
@@ -78,7 +94,7 @@ class DailyQuoteSyncService:
 
     @staticmethod
     def _canonical_cn_code(raw_code: str) -> str:
-        """Normalize common A-share index code shapes to six digits."""
+        """把 A 股指数代码常见写法归一化为 6 位数字。"""
         code = str(raw_code or "").strip().upper()
         if "." in code:
             code = code.split(".", 1)[0]
@@ -90,7 +106,7 @@ class DailyQuoteSyncService:
 
     @staticmethod
     def _normalize_markets(markets: Optional[Iterable[str]]) -> List[str]:
-        """Normalize requested markets and keep supported values only."""
+        """归一化请求的市场列表并只保留受支持的值；全不支持时回退为 ["cn"]。"""
         raw_markets = list(markets or ["cn"])
         normalized: List[str] = []
         unsupported: List[str] = []
@@ -112,7 +128,7 @@ class DailyQuoteSyncService:
 
     @staticmethod
     def _stock_from_index_entry(entry: object, markets: set[str]) -> Optional[DailyQuoteSyncStock]:
-        """Convert one stock-index row into a sync stock, if eligible."""
+        """把一行股票索引条目转换为同步股票（仅在市场/类型/启用状态符合时）。"""
         if isinstance(entry, dict):
             canonical = entry.get("canonicalCode")
             display = entry.get("displayCode")
@@ -139,7 +155,7 @@ class DailyQuoteSyncService:
 
     @classmethod
     def _load_pool_from_resource(cls, markets: Sequence[str]) -> List[DailyQuoteSyncStock]:
-        """Load the generated stock-index JSON resource as a fallback pool."""
+        """加载构建生成的股票索引 JSON 资源作为兜底股票池。"""
         if not _RESOURCE_PATH.exists():
             logger.warning("股票索引资源不存在，无法枚举全量行情同步股票池: %s", _RESOURCE_PATH)
             return []
@@ -154,7 +170,7 @@ class DailyQuoteSyncService:
         entries: Iterable[object],
         markets: Sequence[str],
     ) -> List[DailyQuoteSyncStock]:
-        """Build a de-duplicated stock pool from stock-index-like entries."""
+        """从类股票索引的条目中构建去重的股票池（按 code 去重）。"""
         market_set = set(cls._normalize_markets(markets))
         stocks: List[DailyQuoteSyncStock] = []
         seen: set[str] = set()
@@ -167,7 +183,7 @@ class DailyQuoteSyncService:
         return stocks
 
     def load_stock_pool(self, markets: Sequence[str]) -> List[DailyQuoteSyncStock]:
-        """Load active stock pool from DB stock index, falling back to resource JSON."""
+        """从数据库 ``StockIndexEntry`` 读取在用股票池，缺失时降级到内置资源。"""
         try:
             from src.storage import StockIndexEntry
 
@@ -189,6 +205,7 @@ class DailyQuoteSyncService:
             if stocks:
                 return stocks
         except Exception as exc:
+            # 数据库不可用时降级到内置资源，保证同步任务仍能跑起来
             logger.debug("读取数据库股票索引失败，改用内置资源枚举股票池: %s", exc)
 
         return self._load_pool_from_resource(markets)
@@ -200,7 +217,7 @@ class DailyQuoteSyncService:
         target_date: date,
         lookback_days: int,
     ) -> tuple[str, str, int]:
-        """Sync one stock and return ``(status, code, saved_rows)``."""
+        """同步单只股票的日线，返回 ``(状态, code, saved_rows)``。"""
         if self.db.has_today_data(stock.code, target_date):
             return ("skipped_existing", stock.code, 0)
 
@@ -213,6 +230,7 @@ class DailyQuoteSyncService:
             return ("missing_target_date", stock.code, 0)
 
         saved_rows = int(self.db.save_daily_data(df, stock.code, source_name))
+        # 抓到了历史数据但不含目标交易日（如停牌/未收盘），仍记录已写入行数
         if self.db.has_today_data(stock.code, target_date):
             return ("fetched", stock.code, saved_rows)
         return ("missing_target_date", stock.code, saved_rows)
@@ -227,7 +245,24 @@ class DailyQuoteSyncService:
         limit: Optional[int] = None,
         force_run: bool = False,
     ) -> DailyQuoteSyncStats:
-        """Run full-market daily quote synchronization once."""
+        """执行一次全市场日线同步，按线程池并发抓取并聚合统计。
+
+        行为约定：
+        - 非交易日默认跳过（除非 ``force_run=True`` 或配置关闭交易日校验）
+        - 已存在当日数据则跳过（幂等）
+        - 单只失败仅计数并打 warning，不中断整批
+
+        Args:
+            markets: 目标市场列表；为 None 时读取配置 ``daily_quote_sync_markets``。
+            target_date: 目标同步日期；为 None 时取 A 股当日有效交易日。
+            max_workers: 并发抓取线程数；为 None 时取配置 ``daily_quote_sync_max_workers``。
+            lookback_days: 抓取回溯天数；为 None 时取配置 ``daily_quote_sync_lookback_days``。
+            limit: 调试用截断股票池数量；为 None 时取配置 ``daily_quote_sync_limit``。
+            force_run: 强制执行，跳过交易日校验。
+
+        Returns:
+            ``DailyQuoteSyncStats``：含总数、抓取/跳过/缺失/失败行数等指标。
+        """
         effective_markets = self._normalize_markets(
             markets or getattr(self.config, "daily_quote_sync_markets", ["cn"])
         )
@@ -295,6 +330,7 @@ class DailyQuoteSyncService:
                 try:
                     status, _code, saved_rows = future.result()
                 except Exception as exc:
+                    # 单只失败只计数，不中断整批同步
                     stats.failed += 1
                     logger.warning("每日行情同步失败 [%s]: %s", stock.code, exc)
                     continue

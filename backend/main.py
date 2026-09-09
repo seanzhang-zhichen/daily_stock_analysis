@@ -59,7 +59,17 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_portfolio_stock_codes(args: argparse.Namespace) -> Optional[List[str]]:
-    """Load an optional broker portfolio as the analysis stock universe."""
+    """根据 ``--portfolio`` 参数加载券商持仓股票列表，替换默认自选股列表。
+
+    Args:
+        args: 解析后的命令行参数。
+
+    Returns:
+        股票代码列表；未传参数时返回 ``None`` 表示不替换。
+
+    Raises:
+        ValueError: 当 ``--portfolio`` 取了不支持的枚举值。
+    """
     portfolio = str(getattr(args, "portfolio", "") or "").strip().lower()
     if not portfolio:
         return None
@@ -77,7 +87,7 @@ _RUNTIME_ENV_FILE_KEYS = set()
 
 
 def _get_active_env_path() -> Path:
-    """Return the env file path selected by ENV_FILE or the project default."""
+    """返回当前激活的 ``.env`` 路径：优先 ``ENV_FILE`` 环境变量，否则用项目根目录下的 ``.env``。"""
     env_file = os.getenv("ENV_FILE")
     if env_file:
         return Path(env_file)
@@ -85,7 +95,10 @@ def _get_active_env_path() -> Path:
 
 
 def _read_active_env_values() -> Optional[Dict[str, str]]:
-    """Read active env-file values, returning None only on parse/read failure."""
+    """读取当前 ``.env`` 中的键值集合。
+
+    仅在解析/读取发生异常时返回 ``None``，文件不存在时返回空字典。
+    """
     env_path = _get_active_env_path()
     if not env_path.exists():
         return {}
@@ -104,20 +117,20 @@ def _read_active_env_values() -> Optional[Dict[str, str]]:
 
 
 _ACTIVE_ENV_FILE_VALUES = _read_active_env_values() or {}
+# 记录首次初始化时进程环境中尚未出现的 key，用于后续判断「是 .env 引入的」键
 _RUNTIME_ENV_FILE_KEYS = {
     key for key in _ACTIVE_ENV_FILE_VALUES
     if key not in _INITIAL_PROCESS_ENV
 }
 
-# setup_env() already ran at import time above.
+# setup_env() 已在模块顶层执行，此处只是标记以支持幂等调用
 _env_bootstrapped = True
 
 
 def _bootstrap_environment() -> None:
-    """Load .env and apply optional local proxy settings.
+    """加载 ``.env`` 并应用可选的本地代理设置。
 
-    Guarded to be idempotent so it can safely be called from lazy-import
-    paths used by API / bot consumers.
+    设计为幂等：可被延迟导入路径（API / Bot 等消费者）安全重复调用。
     """
     global _env_bootstrapped
     if _env_bootstrapped:
@@ -138,15 +151,15 @@ def _bootstrap_environment() -> None:
 
 
 def _setup_bootstrap_logging(debug: bool = False) -> None:
-    """Initialize stderr-only logging before config is loaded.
+    """在读取 config 之前先把日志桥接到 stderr，便于早期失败也能落盘。
 
-    File handlers are deferred until ``config.log_dir`` is known (via the
-    subsequent ``setup_logging()`` call) so that healthy runs never create
-    log files in a hard-coded directory.
+    文件日志处理器会延迟到 ``config.log_dir`` 已知时再添加
+    （由后续 ``setup_logging()`` 完成），避免健康运行硬编码输出目录。
     """
     level = logging.DEBUG if debug else logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
+    # 防止重复添加 stderr handler 导致同一行日志输出多份
     if not any(
         isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is sys.stderr
         for h in root.handlers
@@ -160,7 +173,7 @@ def _setup_bootstrap_logging(debug: bool = False) -> None:
 
 
 def _setup_runtime_logging(log_dir: str, debug: bool = False) -> bool:
-    """Switch to configured logging, falling back to console on file I/O errors."""
+    """切换到配置好的文件日志，文件 IO 失败时降级为仅控制台输出。"""
     try:
         setup_logging(log_prefix="stock_analysis", debug=debug, log_dir=log_dir)
         return True
@@ -176,10 +189,10 @@ def _setup_runtime_logging(log_dir: str, debug: bool = False) -> bool:
 
 
 def _get_stock_analysis_pipeline():
-    """Lazily import StockAnalysisPipeline for external consumers.
+    """为外部消费者懒加载 ``StockAnalysisPipeline``。
 
-    Also ensures env/proxy bootstrap has run so that API / bot consumers
-    that never call ``main()`` still get ``USE_PROXY`` applied.
+    同时确保环境/代理引导已执行，使从不调用 ``main()`` 的 API / Bot
+    消费者也能应用 ``USE_PROXY``。
     """
     _bootstrap_environment()
     from src.core.pipeline import StockAnalysisPipeline as _Pipeline
@@ -188,23 +201,23 @@ def _get_stock_analysis_pipeline():
 
 
 class _LazyPipelineDescriptor:
-    """Descriptor that resolves StockAnalysisPipeline on first attribute access."""
+    """描述器：首次属性访问时延迟解析 ``StockAnalysisPipeline``，之后缓存结果。"""
 
     _resolved = None
 
     def __set_name__(self, owner, name):
-        """Remember the exported attribute name for descriptor protocol completeness."""
+        """记住所导出属性的名称，满足描述器协议完整性。"""
         self._name = name
 
     def __get__(self, obj, objtype=None):
-        """Resolve and cache StockAnalysisPipeline on first access."""
+        """首次访问时解析并缓存 ``StockAnalysisPipeline``，后续直接返回缓存。"""
         if self._resolved is None:
             self._resolved = _get_stock_analysis_pipeline()
         return self._resolved
 
 
 class _ModuleExports:
-    """Container for lazy module-level compatibility exports."""
+    """延迟导出模块级兼容性符号的容器。"""
 
     StockAnalysisPipeline = _LazyPipelineDescriptor()
 
@@ -213,20 +226,21 @@ _exports = _ModuleExports()
 
 
 def __getattr__(name: str):
-    """Provide lazy compatibility access for historical module attributes."""
+    """为历史模块属性提供延迟兼容访问（仅 ``StockAnalysisPipeline``）。"""
     if name == "StockAnalysisPipeline":
         return _exports.StockAnalysisPipeline
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _reload_env_file_values_preserving_overrides() -> None:
-    """Refresh `.env`-managed env vars without clobbering process env overrides."""
+    """刷新 ``.env`` 管理的环境变量，同时保留进程环境变量的覆盖。"""
     global _RUNTIME_ENV_FILE_KEYS
 
     latest_values = _read_active_env_values()
     if latest_values is None:
         return
 
+    # 仅把「启动后进程环境里没有」的 key 视作由 .env 拥有，避免覆盖外部注入
     managed_keys = {
         key for key in latest_values
         if key not in _INITIAL_PROCESS_ENV
@@ -447,16 +461,16 @@ def _compute_trading_day_filter(
     args: argparse.Namespace,
     stock_codes: List[str],
 ) -> Tuple[List[str], Optional[str], bool]:
-    """
-    Compute filtered stock list and effective market review region (Issue #373).
+    """计算交易日过滤后的股票列表，以及本次大盘复盘要使用的有效市场区域（Issue #373）。
 
     Returns:
-        (filtered_codes, effective_region, should_skip_all)
-        - effective_region None = use config default (check disabled)
-        - effective_region '' = all relevant markets closed, skip market review
-        - should_skip_all: skip entire run when no stocks and no market review to run
+        ``(filtered_codes, effective_region, should_skip_all)``
+        - ``effective_region`` 为 ``None`` 表示使用配置默认市场（未启用交易日检查）。
+        - ``effective_region`` 为 ``""`` 表示相关市场都休市，跳过大盘复盘。
+        - ``should_skip_all``：在没有可分析股票且大盘复盘也跳过时整轮跳过。
     """
     force_run = getattr(args, 'force_run', False)
+    # 强制执行或未启用交易日检查时直接放行，避免影响常规本地开发
     if force_run or not getattr(config, 'trading_day_check_enabled', True):
         return (stock_codes, None, False)
 
@@ -467,6 +481,7 @@ def _compute_trading_day_filter(
     )
 
     open_markets = get_open_markets_today()
+    # 仅保留当前正在开市的股票所属市场；未识别市场（None）默认放行
     filtered_codes = []
     for code in stock_codes:
         mkt = get_market_for_stock(code)
@@ -489,7 +504,11 @@ def _run_market_review_with_shared_lock(
     run_market_review_func: Callable[..., Optional[str]],
     **kwargs: Any,
 ) -> Optional[str]:
-    """Run market review while honoring the cross-entry shared execution lock."""
+    """在跨入口的大盘复盘共享执行锁下运行 ``run_market_review_func``。
+
+    同一时刻只允许一个调用真正执行大盘复盘，其他入口会直接放弃以避免
+    「WebUI + CLI 定时任务」并发触发导致的重复推送。
+    """
     from src.core.market_review_lock import (
         release_market_review_lock,
         try_acquire_market_review_lock,
@@ -503,11 +522,12 @@ def _run_market_review_with_shared_lock(
     try:
         return run_market_review_func(**kwargs)
     finally:
+        # 始终释放锁，防止其它调用永远拿不到锁
         release_market_review_lock(lock_token)
 
 
 def _parse_sync_target_date(raw_value: Optional[str]) -> Optional[date]:
-    """Parse optional --sync-date in YYYY-MM-DD format."""
+    """解析 ``--sync-date`` 参数，格式必须为 ``YYYY-MM-DD``。"""
     value = (raw_value or "").strip()
     if not value:
         return None
@@ -518,7 +538,7 @@ def _parse_sync_target_date(raw_value: Optional[str]) -> Optional[date]:
 
 
 def run_daily_quote_sync(config: Config, args: argparse.Namespace):
-    """Run full-market daily quote sync once and return stats."""
+    """全市场日线行情同步入口：执行一次并返回统计信息。"""
     from src.services.daily_quote_sync_service import DailyQuoteSyncService
 
     raw_markets = getattr(args, "market", None) or ",".join(
@@ -537,7 +557,7 @@ def run_daily_quote_sync(config: Config, args: argparse.Namespace):
 def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) -> None:
     """按用户分桶执行定时分析并发送个人推送（Phase 3）。
 
-    仅处理开启了「每日推送」且自选股列表非空的用户。
+    仅处理开启「每日推送」且自选股列表非空的用户。
     单用户失败通过日志记录后继续执行其他用户，不影响整体调度。
     """
     from src.core.pipeline import StockAnalysisPipeline
@@ -574,6 +594,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
         try:
             with db.session_scope() as session:
                 user = get_user_by_id(session, user_id)
+                # 不活跃账号一律跳过，避免对禁用/未通过审核的账号推送
                 if user is None or getattr(user, "status", "active") != "active":
                     continue
                 watchlist = list_stocks(session, user_id=user_id)
@@ -582,6 +603,7 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
                 user_email = user.email
 
             if not plan.is_pro:
+                # 非 Pro 用户没有每日自动分析权益，仅在日志中说明
                 logger.info("[per-user 调度] 用户 %d 当前非 Pro，跳过每日自动分析", user_id)
                 continue
 
@@ -659,13 +681,14 @@ def run_per_user_scheduled_analysis(config: Config, args: argparse.Namespace) ->
                 )
 
         except Exception:
+            # 单用户失败不应拖垮整轮调度，统一记录日志后继续下一个用户
             logger.exception("[per-user 调度] 用户 %d 分析失败，已跳过", user_id)
 
     logger.info("[per-user 调度] 全部用户处理完毕")
 
 
 def run_plan_lifecycle_task(config: Config, args: argparse.Namespace) -> None:
-    """每日调度入口: 到期前 7/3/1 天发送续费提醒, 过期当日自动降级到 free 档 (Phase 2 + Phase 4 收尾)。
+    """每日调度入口：到期前 7/3/1 天发送续费提醒，过期当日自动降级到 free 档（Phase 2 + Phase 4 收尾）。
 
     单用户失败通过日志记录后继续, 不影响其它用户。``--dry-run`` 时只扫描不写库。
     """
@@ -696,7 +719,7 @@ def run_plan_lifecycle_task(config: Config, args: argparse.Namespace) -> None:
 
 
 def run_account_lifecycle_task(config: Config, args: argparse.Namespace) -> None:
-    """每日调度入口: 处理账号注销冷静期到期与个人数据物理清除 (Phase 6 PIPL)。
+    """每日调度入口：处理账号注销冷静期到期与个人数据物理清除（Phase 6 PIPL）。
 
     - 软删冷静期已满（7 天）的账号 (status: active -> deleted)。
     - 物理清除软删超过保留期（30 天）的个人数据（保留订单/发票）。
@@ -733,18 +756,17 @@ def run_full_analysis(
     args: argparse.Namespace,
     stock_codes: Optional[List[str]] = None
 ):
-    """
-    执行完整的分析流程（个股 + 大盘复盘）
+    """执行完整的分析流程（个股 + 大盘复盘）。
 
     用于手动运行和兼容全局分析入口；每日定时任务只处理用户自选股。
     """
-    # Broker loading is a CLI contract boundary. Configuration and OpenD errors
-    # must reach main() so a one-shot invocation exits non-zero.
+    # Broker 加载属于 CLI 合约边界：配置错误和 OpenD 异常必须冒泡到 main()
+    # 以让一次性命令以非零状态退出，而不是被吞掉静默返回。
     portfolio_codes = _resolve_portfolio_stock_codes(args)
     portfolio_is_empty = portfolio_codes == []
 
-    # Import pipeline modules outside the broad try/except so that import-time
-    # failures propagate to the caller instead of being silently swallowed.
+    # 把 pipeline 导入放在宽泛 try/except 之外，使模块加载失败（如导入异常）
+    # 直接抛给调用方而不是被静默吞掉。
     from src.core.market_review import run_market_review
     from src.core.pipeline import StockAnalysisPipeline
 
@@ -752,11 +774,11 @@ def run_full_analysis(
         if portfolio_codes is not None:
             stock_codes = portfolio_codes
 
-        # Hot-reload STOCK_LIST when this global analysis entry has no explicit stocks.
+        # 当全局分析入口未显式给出股票列表时，热加载最新的 STOCK_LIST
         if stock_codes is None:
             config.refresh_stock_list()
 
-        # Issue #373: Trading day filter (per-stock, per-market)
+        # Issue #373: 交易日过滤（按股 / 按市场分别独立判断）
         effective_codes = stock_codes if stock_codes is not None else config.stock_list
         filtered_codes, effective_region, should_skip = _compute_trading_day_filter(
             config, args, effective_codes
@@ -812,6 +834,7 @@ def run_full_analysis(
             )
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
+        # 大盘复盘通常会瞬时调用多个 LLM，延迟能错开限流窗口
         analysis_delay = getattr(config, 'analysis_delay', 0)
         if (
             analysis_delay > 0
@@ -929,6 +952,12 @@ def run_full_analysis(
                     min_age_days=getattr(config, 'backtest_min_age_days', 14),
                     limit=200,
                 )
+                try:
+                    from src.services.skill_opinion_outcome_service import SkillOpinionOutcomeService
+                    skill_stats = SkillOpinionOutcomeService().evaluate_pending(limit=200)
+                    logger.info("策略意见结果评估完成: %s", skill_stats)
+                except Exception as exc:
+                    logger.warning("策略意见结果评估失败，不影响主任务: %s", exc)
                 logger.info(
                     f"自动回测完成: processed={stats.get('processed')} saved={stats.get('saved')} "
                     f"completed={stats.get('completed')} insufficient={stats.get('insufficient')} errors={stats.get('errors')}"
@@ -949,14 +978,13 @@ def start_api_server(
     config: Config,
     serve_frontend: bool = False,
 ) -> None:
-    """
-    在后台线程启动 FastAPI 服务
+    """在后台线程启动 FastAPI 服务。
 
     Args:
-        host: 监听地址
-        port: 监听端口
-        config: 配置对象
-        serve_frontend: 是否托管 WebUI 静态资源
+        host: 监听地址。
+        port: 监听端口。
+        config: 配置对象。
+        serve_frontend: 是否托管 WebUI 静态资源。
     """
     import threading
     import uvicorn
@@ -965,7 +993,7 @@ def start_api_server(
     app = create_app(serve_frontend=serve_frontend)
 
     def run_server():
-        """Run the FastAPI app in the background server thread."""
+        """在后台服务线程中运行 FastAPI 应用。"""
         level_name = (config.log_level or "INFO").lower()
         uvicorn.run(
             app,
@@ -975,13 +1003,17 @@ def start_api_server(
             log_config=None,
         )
 
+    # daemon=True 让主线程退出时强制结束 Web 服务，避免容器退出卡住
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
     logger.info(f"FastAPI 服务已启动: http://{host}:{port}")
 
 
 def _should_prepare_webui_frontend_assets(args, config: Config) -> bool:
-    """Return whether startup should verify or build WebUI frontend assets."""
+    """判断启动时是否需要准备 WebUI 前端静态资源。
+
+    同时覆盖显式 ``--webui/--webui-only`` 与旧版 ``WEBUI_ENABLED`` 环境变量路径。
+    """
     explicit_webui_requested = bool(
         getattr(args, "webui", False) or getattr(args, "webui_only", False)
     )
@@ -993,7 +1025,7 @@ def _should_prepare_webui_frontend_assets(args, config: Config) -> bool:
 
 
 def start_bot_stream_clients(config: Config) -> None:
-    """Start bot stream clients when enabled in config."""
+    """根据配置启动机器人 Stream 客户端（如钉钉 / 飞书 WebSocket 长连接）。"""
     # 启动钉钉 Stream 客户端
     if config.dingtalk_stream_enabled:
         try:
@@ -1026,7 +1058,7 @@ def start_bot_stream_clients(config: Config) -> None:
 
 
 def _warn_scheduled_stock_codes_ignored(stock_codes: Optional[List[str]]) -> None:
-    """Scheduled runs use per-user watchlists, not global stock snapshots."""
+    """定时运行只处理用户自选股，提醒用户传入的全局 ``--stocks`` 不会生效。"""
     if stock_codes is not None:
         logger.warning(
             "定时模式下检测到 --stocks 参数；每日定时分析仅处理开启每日推送的用户自选股，"
@@ -1035,20 +1067,18 @@ def _warn_scheduled_stock_codes_ignored(stock_codes: Optional[List[str]]) -> Non
 
 
 def _reload_runtime_config() -> Config:
-    """Reload config from the latest persisted `.env` values for scheduled runs."""
+    """定时任务专用：从最新持久化的 ``.env`` 重载配置。"""
     _reload_env_file_values_preserving_overrides()
     Config.reset_instance()
     return get_config()
 
 
 def _build_schedule_time_provider(default_schedule_time: str):
-    """Read the latest schedule time directly from the active config file.
+    """构造调度时间解析器，按以下优先级从最新配置中读取：
 
-    Fallback order:
-    1. Process-level env override (set before launch) → honour it.
-    2. Persisted config file value (written by WebUI) → use it.
-    3. Documented system default ``"18:00"`` → always fall back here so
-       that clearing SCHEDULE_TIME in WebUI correctly resets the schedule.
+    1. 进程级环境变量覆盖（启动前设置）—— 优先尊重它。
+    2. 持久化配置文件值（WebUI 写入）—— 使用它。
+    3. 系统默认值 ``"18:00"`` —— WebUI 清空时也能正确重置为默认。
     """
     from src.core.config_manager import ConfigManager
 
@@ -1056,7 +1086,7 @@ def _build_schedule_time_provider(default_schedule_time: str):
     manager = ConfigManager()
 
     def _provider() -> str:
-        """Resolve schedule time from process env, persisted config or default."""
+        """从进程环境、持久化配置或默认值中解析调度时间。"""
         if "SCHEDULE_TIME" in _INITIAL_PROCESS_ENV:
             return os.getenv("SCHEDULE_TIME", default_schedule_time)
 
@@ -1070,11 +1100,10 @@ def _build_schedule_time_provider(default_schedule_time: str):
 
 
 def main() -> int:
-    """
-    主入口函数
+    """主入口函数。
 
     Returns:
-        退出码（0 表示成功）
+        进程退出码（0 表示成功）。
     """
     # 解析命令行参数
     args = parse_arguments()
@@ -1083,6 +1112,7 @@ def main() -> int:
     try:
         _setup_bootstrap_logging(debug=args.debug)
     except Exception as exc:
+        # bootstrap 日志失败时退回 basicConfig，绝不让 CLI 直接异常退出
         logging.basicConfig(
             level=logging.DEBUG if getattr(args, "debug", False) else logging.INFO,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -1225,10 +1255,10 @@ def main() -> int:
             from src.core.market_review import run_market_review
             from src.core.market_review_runtime import build_market_review_runtime
 
-            # Issue #373: Trading day check for market-review-only mode.
-            # Do NOT use _compute_trading_day_filter here: that helper checks
-            # config.market_review_enabled, which would wrongly block an
-            # explicit --market-review invocation when the flag is disabled.
+            # Issue #373: 仅大盘复盘模式的交易日判断。
+            # 这里**不要**复用 _compute_trading_day_filter，因为它内部会判断
+            # config.market_review_enabled，会误把"用户显式传 --market-review
+            # 但配置里关闭了"的合法调用给拦截掉。
             effective_region = None
             if not getattr(args, 'force_run', False) and getattr(config, 'trading_day_check_enabled', True):
                 from src.core.trading_calendar import get_open_markets_today, compute_effective_region as _compute_region
@@ -1259,9 +1289,9 @@ def main() -> int:
             logger.info("模式: 定时任务")
             logger.info(f"每日执行时间: {config.schedule_time}")
 
-            # Determine whether to run immediately:
-            # Command line arg --no-run-immediately overrides config if present.
-            # Otherwise use config (defaults to True).
+            # 判断是否立即运行：
+            # 命令行参数 --no-run-immediately 若出现则覆盖配置；
+            # 否则使用配置（默认 True）。
             should_run_immediately = config.schedule_run_immediately
             if getattr(args, 'no_run_immediately', False):
                 should_run_immediately = False
@@ -1278,13 +1308,14 @@ def main() -> int:
             schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
 
             def scheduled_task():
-                """Run scheduled analysis and account lifecycle jobs with fresh config."""
+                """使用最新配置运行定时分析及账号生命周期相关任务。"""
                 runtime_config = _reload_runtime_config()
                 if getattr(runtime_config, 'daily_quote_sync_enabled', False):
                     try:
                         stats = run_daily_quote_sync(runtime_config, args)
                         logger.info("定时全量日线行情同步完成: %s", stats.to_dict())
                     except Exception as exc:
+                        # 行情同步失败不应中断随后的用户分析任务
                         logger.exception("定时全量日线行情同步失败，继续执行后续定时任务: %s", exc)
                 run_per_user_scheduled_analysis(runtime_config, args)
                 run_plan_lifecycle_task(runtime_config, args)
@@ -1298,7 +1329,7 @@ def main() -> int:
                 alert_worker = AlertWorker(config_provider=_reload_runtime_config)
 
                 def event_monitor_task():
-                    """Run one alert-worker polling pass and log triggered reminders."""
+                    """运行一轮告警 Worker 轮询，并记录触发的提醒数量。"""
                     stats = alert_worker.run_once()
                     triggered_count = stats.get("triggered", 0)
                     if triggered_count:
@@ -1354,6 +1385,7 @@ if __name__ == "__main__":
     try:
         from src.llm.observability import flush_llm_observability
 
+        # 进程退出前尽量把 LLM 可观测性数据落盘，避免丢失
         flush_llm_observability()
     except Exception as exc:  # noqa: BLE001
         logger.debug("LLM observability flush skipped: %s", exc)

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Market-region metadata for daily market review.
+"""为每日市场复盘提供市场区域元数据。
 
-Each profile describes the representative index, news-search queries, prompt
-hints, and available market-stat sections for one region. ``MarketAnalyzer``
-uses these profiles to switch CN/HK/US recap behavior without scattering
-region-specific constants through the analysis code.
+每个 profile 描述一个区域的代表性指数、新闻搜索关键词、prompt 提示语，
+以及可用的市场统计板块。``MarketAnalyzer`` 借助这些 profile 切换 CN/HK/US
+复盘行为，避免把区域相关常量散落在分析代码各处。
 """
 
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from typing import List
 
 @dataclass
 class MarketProfile:
-    """Region-specific inputs and feature switches for market review."""
+    """市场复盘所需的区域专属输入与功能开关。"""
 
     region: str  # "cn" | "us"
     # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX
@@ -87,7 +86,7 @@ KR_PROFILE = MarketProfile(
 
 
 def get_profile(region: str) -> MarketProfile:
-    """Return the configured MarketProfile, defaulting to CN for unknown values."""
+    """返回已配置的 MarketProfile，未知区域默认回退到 CN。"""
     if region == "us":
         return US_PROFILE
     if region == "hk":

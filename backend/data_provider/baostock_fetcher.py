@@ -138,7 +138,7 @@ class BaostockFetcher(BaseFetcher):
         """
         code = stock_code.strip()
 
-        # HK stocks are not supported by Baostock
+        # 港股不被 Baostock 支持
         if _is_hk_market(code):
             raise DataFetchError(f"BaostockFetcher 不支持港股 {code}，请使用 AkshareFetcher")
 
@@ -149,7 +149,7 @@ class BaostockFetcher(BaseFetcher):
         # 去除可能的后缀
         code = code.replace('.SH', '').replace('.SZ', '').replace('.sh', '').replace('.sz', '')
         
-        # ETF: Shanghai ETF (51xx, 52xx, 56xx, 58xx) -> sh; Shenzhen ETF (15xx, 16xx, 18xx) -> sz
+        # ETF：上交所 ETF（51xx、52xx、56xx、58xx）-> sh；深交所 ETF（15xx、16xx、18xx）-> sz
         if len(code) == 6:
             if code.startswith(('51', '52', '56', '58')):
                 return f"sh.{code}"

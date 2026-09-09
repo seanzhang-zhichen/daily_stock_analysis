@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
-# Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Data models."""
+# 派生自 AlphaSift (commit 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf)，
+# 遵循 Apache-2.0 协议并适配本仓库。
+"""数据模型。"""
 
 from typing import Any
 from dataclasses import dataclass, field
@@ -10,6 +10,12 @@ from datetime import datetime
 
 @dataclass
 class HardFilterConfig:
+    """硬性过滤条件配置（先于任何打分执行的排除规则）。
+
+    每个字段默认 None/False 表示"不启用该过滤"；布尔开关如
+    exclude_st、require_ma_bullish 按语义直接生效。
+    """
+
     exclude_st: bool = True
     price_min: float | None = None
     price_max: float | None = None
@@ -52,6 +58,12 @@ class HardFilterConfig:
 
 @dataclass
 class ScreeningConfig:
+    """一次选股（screening）运行所需的完整配置。
+
+    包含市场范围、硬性过滤、技术/因子权重、各 profile（评分/风控/组合/
+    评分卡/事件）、排序提示词与最大输出数。
+    """
+
     enabled: bool = False
     market_scope: list[str] = field(default_factory=lambda: ["cn"])
     hard_filters: HardFilterConfig = field(default_factory=HardFilterConfig)
@@ -68,7 +80,7 @@ class ScreeningConfig:
 
 @dataclass
 class StrategyStyle:
-    """Human/UI-facing strategy style metadata."""
+    """面向用户与 UI 展示的策略风格元数据。"""
 
     risk_profile: str = ""
     holding_period: str = ""
@@ -80,6 +92,8 @@ class StrategyStyle:
 
 @dataclass
 class Strategy:
+    """一条完整选股策略：名称/描述/标签 + 展示风格 + 筛选配置。"""
+
     name: str
     display_name: str
     description: str
@@ -93,7 +107,12 @@ class Strategy:
 
 @dataclass
 class StrategyInfo:
-    """Strategy metadata for list_strategies()."""
+    """策略摘要信息，供 ``list_strategies()`` 返回给调用方。
+
+    除基础元数据外，还带上"需要哪些数据"的声明（requires_daily_features、
+    required_snapshot_fields、required_daily_fields 等），便于前端或调度层
+    提前判断能否运行该策略。
+    """
     name: str
     display_name: str
     description: str
@@ -114,6 +133,15 @@ class StrategyInfo:
 
 @dataclass
 class Pick:
+    """一次选股中的一条候选记录，聚合行情、因子、LLM、风险与事后分析结果。
+
+    字段命名遵循 ``<来源>_<指标>`` 形式，便于直接映射到前端表格列：
+    - ``llm_*``：大模型复评结果（主题/催化/风险/信心等）
+    - ``post_analysis_*``：事后分析器输出（post-screening 插件）
+    - ``deep_analysis_*``：深度分析 agent 产出（信号/情绪/操作建议等）
+    - ``dsa_*``：日线分析上下文（行情摘要、新闻、研报结论等）
+    """
+
     rank: int
     code: str
     name: str
@@ -202,6 +230,12 @@ class Pick:
 
 @dataclass
 class ScreenResult:
+    """一次选股运行的完整结果：候选股、LLM 排序信息与降级/错误记录。
+
+    同时承载 deep_analysis / post_analysis / risk / portfolio / variant 等
+    阶段产物的汇总状态，供上层落盘与状态页展示。
+    """
+
     strategy: str
     market: str
     strategy_version: str = ""
@@ -239,6 +273,8 @@ class ScreenResult:
 
 @dataclass
 class PickEvaluation:
+    """单个候选的事后复盘评估：以入选价为基准的收益、回撤与形态/路径标签。"""
+
     code: str
     name: str
     rank: int
@@ -267,6 +303,8 @@ class PickEvaluation:
 
 @dataclass
 class EvaluationResult:
+    """一次选股结果的事后复盘汇总：整体收益、胜率与缺失标的。"""
+
     run_id: str
     strategy: str
     market: str

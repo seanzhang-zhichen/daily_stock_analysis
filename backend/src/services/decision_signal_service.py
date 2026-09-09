@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Decision-signal extraction, lifecycle and query service."""
+"""决策信号（decision signal）的提取、生命周期管理与查询服务。
+
+负责把分析结论沉淀为带用户归属与有效期的信号记录：
+新增生效信号、失效反向信号、到期批量过期与历史回填。
+"""
 
 from __future__ import annotations
 
@@ -15,15 +19,19 @@ from sqlalchemy.exc import IntegrityError
 from src.market_context import detect_market
 from src.storage import AnalysisHistory, DatabaseManager, DecisionSignalRecord
 from src.utils.data_processing import extract_market_structure_context
+from src.schemas.decision_scale import action_for_score, score_band_metadata
 
 logger = logging.getLogger(__name__)
 
+# 允许的 action 取值集合, 控制状态机的"动作轴"
 ALLOWED_ACTIONS = {"buy", "add", "hold", "reduce", "sell", "watch", "avoid", "alert"}
 ALLOWED_STATUSES = {"active", "expired", "invalidated", "closed", "archived"}
+# 终态集合, 表示信号已结束流转, 上层不应再据此触发动作
 TERMINAL_STATUSES = {"expired", "invalidated", "closed", "archived"}
 POSITIVE_ACTIONS = {"buy", "add"}
 NEGATIVE_ACTIONS = {"reduce", "sell", "avoid"}
 
+# action -> 中文标签(给前端/通知文案使用, 不能改)
 ACTION_LABELS = {
     "buy": "买入",
     "add": "加仓",
@@ -37,10 +45,11 @@ ACTION_LABELS = {
 
 
 class DecisionSignalNotFoundError(LookupError):
-    """Raised when a user-owned decision signal does not exist."""
+    """用户归属的决策信号不存在时抛出, 由 API 层捕获并返回 404。"""
 
 
 def _json_object(value: Any) -> Dict[str, Any]:
+    """把 JSON 字符串 / dict 统一为 dict, 容错地吃掉一切非法输入。"""
     if isinstance(value, dict):
         return value
     if not isinstance(value, str) or not value.strip():
@@ -53,6 +62,7 @@ def _json_object(value: Any) -> Dict[str, Any]:
 
 
 def _json_value(value: Any) -> Any:
+    """把 JSON 字段反序列化为原生 Python 对象; 非字符串保持原样。"""
     if value in (None, ""):
         return None
     if not isinstance(value, str):
@@ -64,17 +74,21 @@ def _json_value(value: Any) -> Any:
 
 
 def _dump_json(value: Any) -> Optional[str]:
+    """把可序列化对象写成 JSON 字符串, 空值统一存 NULL。"""
     if value in (None, "", [], {}):
         return None
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _text(value: Any, *, limit: Optional[int] = None) -> Optional[str]:
+    """把 list/dict/scalar 转成长文本, 必要时按 ``limit`` 截断。"""
     if value in (None, "", [], {}):
         return None
     if isinstance(value, (list, tuple, set)):
+        # 列表 / 元组 / 集合: 用 "；" 拼接, 过滤掉空白元素
         result = "；".join(str(item).strip() for item in value if str(item).strip())
     elif isinstance(value, dict):
+        # 字典: 渲染成 ``key: value`` 形式, 跳过空值
         result = "；".join(
             f"{key}: {item}" for key, item in value.items() if item not in (None, "", [], {})
         )
@@ -86,7 +100,9 @@ def _text(value: Any, *, limit: Optional[int] = None) -> Optional[str]:
 
 
 def _number(value: Any) -> Optional[float]:
+    """把数值字段归一化为正数浮点; 非数值或 0/负值返回 None。"""
     if value is None or isinstance(value, bool):
+        # bool 在 Python 里是 int 子类, 单独短路避免 True/False 被误识别
         return None
     try:
         parsed = float(value)
@@ -96,12 +112,15 @@ def _number(value: Any) -> Optional[float]:
 
 
 def _confidence(value: Any) -> Optional[float]:
+    """把 LLM 输出的 confidence(百分数 / 0-1 / 中文标签)归一化到 [0,1]。"""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         parsed = float(value)
+        # 超过 1 视为百分数(用户模型常见输出形式)
         if parsed > 1:
             parsed /= 100
         return max(0.0, min(parsed, 1.0))
     normalized = str(value or "").strip().lower()
+    # 中文 / 英文 / 大小写组合的稳健匹配
     if normalized in {"高", "high"}:
         return 0.85
     if normalized in {"中", "medium", "moderate"}:
@@ -112,6 +131,7 @@ def _confidence(value: Any) -> Optional[float]:
 
 
 def _action(operation_advice: Any, decision_type: Any, score: Any) -> str:
+    """把 LLM 给出的 ``操作建议 / decision_type / score`` 解析为标准 action。"""
     advice = str(operation_advice or "").strip().lower()
     exact = {
         "buy": "buy",
@@ -125,6 +145,7 @@ def _action(operation_advice: Any, decision_type: Any, score: Any) -> str:
     }
     if advice in exact:
         return exact[advice]
+    # 优先用中文关键词匹配, 因为 LLM 经常输出中文 operation_advice
     for needles, action in (
         (("加仓", "增持"), "add"),
         (("减仓", "降低仓位"), "reduce"),
@@ -137,6 +158,7 @@ def _action(operation_advice: Any, decision_type: Any, score: Any) -> str:
         if any(needle in advice for needle in needles):
             return action
 
+    # 退路: 靠 decision_type 和 score 反推, 保持至少有合理默认
     normalized_type = str(decision_type or "").strip().lower()
     if normalized_type == "buy":
         return "buy"
@@ -148,19 +170,18 @@ def _action(operation_advice: Any, decision_type: Any, score: Any) -> str:
         numeric_score = int(score)
     except (TypeError, ValueError):
         numeric_score = 50
-    if numeric_score >= 60:
-        return "buy"
-    if numeric_score < 40:
-        return "reduce"
-    return "watch"
+    # 60 分以上默认看多, 低于 40 默认看空; 中段归为观望(而不是直接告警)
+    return action_for_score(numeric_score) or "watch"
 
 
 def _horizon(payload: Dict[str, Any], dashboard: Dict[str, Any]) -> str:
+    """根据 payload / dashboard 推断信号有效期维度(intraday / 1d / 3d / swing / long)。"""
     explicit = str(payload.get("horizon") or "").strip().lower()
     if explicit in {"intraday", "1d", "3d", "5d", "10d", "swing", "long"}:
         return explicit
     core = _json_object(dashboard.get("core_conclusion"))
     sensitivity = str(core.get("time_sensitivity") or "").lower()
+    # 中文 + 英文 token 兼容, 用于推断"何时过期"
     if any(token in sensitivity for token in ("立即", "今日", "intraday", "today")):
         return "intraday"
     if any(token in sensitivity for token in ("本周", "week")):
@@ -169,6 +190,7 @@ def _horizon(payload: Dict[str, Any], dashboard: Dict[str, Any]) -> str:
 
 
 def _expires_at(created_at: datetime, horizon: str) -> datetime:
+    """根据 horizon 计算过期时刻; 默认 5 天兜底, 防止未识别 horizon 写入 NULL。"""
     days = {
         "intraday": 1,
         "1d": 2,
@@ -182,6 +204,7 @@ def _expires_at(created_at: datetime, horizon: str) -> datetime:
 
 
 def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
+    """把一条 AnalysisHistory 转成可写入 DecisionSignalRecord 的字段字典。"""
     payload = _json_object(record.raw_result)
     dashboard = _json_object(payload.get("dashboard"))
     core = _json_object(dashboard.get("core_conclusion"))
@@ -190,14 +213,16 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
     position_strategy = _json_object(battle_plan.get("position_strategy"))
     position_advice = _json_object(core.get("position_advice"))
     market_structure = payload.get("market_structure_context")
+    # 部分历史 payload 不带 market_structure_context, 退回到 context_snapshot 解析
     if not isinstance(market_structure, dict):
-        market_structure = extract_market_structure_context(record.context_snapshot)
+        market_structure = extract_market_structure_context(record.context_snapshot) or {}
     market_theme = _json_object(market_structure.get("market_theme_context"))
     stock_position = _json_object(market_structure.get("stock_market_position"))
     primary_theme = _json_object(stock_position.get("primary_theme"))
 
     score = payload.get("sentiment_score", record.sentiment_score)
-    action = _action(
+    canonical_action = str(payload.get("decision_action") or "").strip().lower()
+    action = canonical_action if canonical_action in ALLOWED_ACTIONS else _action(
         payload.get("operation_advice", record.operation_advice),
         payload.get("decision_type"),
         score,
@@ -205,6 +230,7 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
     horizon = _horizon(payload, dashboard)
     created_at = record.created_at or datetime.now()
     expires_at = _expires_at(created_at, horizon)
+    # 把理想买点 / 副买点汇总成区间, 用于 entry_low / entry_high
     points = [point for point in (record.ideal_buy, record.secondary_buy) if point and point > 0]
 
     reason = (
@@ -228,6 +254,9 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
         "stock_role": stock_position.get("stock_role"),
         "primary_theme": primary_theme.get("name"),
     }
+    band = score_band_metadata(score)
+    if band:
+        metadata["score_scale"] = band
 
     return {
         "user_id": record.user_id,
@@ -239,6 +268,7 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
         "trace_id": _text(record.query_id, limit=64),
         "trigger_source": "analysis_history",
         "action": action,
+        # 操作建议标签优先用源文本, 没有再落到 ACTION_LABELS 默认值
         "action_label": _text(record.operation_advice, limit=32) or ACTION_LABELS[action],
         "confidence": _confidence(payload.get("confidence") or payload.get("confidence_level")),
         "score": int(score) if isinstance(score, (int, float)) else None,
@@ -265,6 +295,7 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
         }),
         "data_quality_json": _dump_json({"data_sources": payload.get("data_sources")}),
         "metadata_json": _dump_json(metadata),
+        # 完整的交易计划(stop_loss + take_profit + 双买点)才算 complete, 否则 partial
         "plan_quality": "complete" if record.stop_loss and record.take_profit and points else "partial",
         "status": "active" if expires_at > datetime.now() else "expired",
         "expires_at": expires_at,
@@ -274,6 +305,7 @@ def _extract_record(record: AnalysisHistory) -> Dict[str, Any]:
 
 
 def _serialize(record: DecisionSignalRecord) -> Dict[str, Any]:
+    """把 DecisionSignalRecord 转成 API 返回字典(含 JSON 字段反序列化)。"""
     return {
         "id": record.id,
         "stock_code": record.stock_code,
@@ -309,7 +341,7 @@ def _serialize(record: DecisionSignalRecord) -> Dict[str, Any]:
 
 
 class DecisionSignalService:
-    """Provide user-isolated access to structured AI recommendations."""
+    """用户隔离的决策信号读写服务。"""
 
     def __init__(
         self,
@@ -317,28 +349,32 @@ class DecisionSignalService:
         *,
         portfolio_repo: Optional[Any] = None,
     ):
+        """允许外部注入 db(测试 / 复用), 缺省走单例 DatabaseManager。"""
         self.db = db or getattr(portfolio_repo, "db", None) or DatabaseManager.get_instance()
 
     @staticmethod
     def _owner_condition(user_id: Optional[int]):
+        """构造 ``user_id`` 隔离的 SQL 条件: None 表示全局信号。"""
         if user_id is None:
             return DecisionSignalRecord.user_id.is_(None)
         return DecisionSignalRecord.user_id == user_id
 
     @staticmethod
     def _history_owner_condition(user_id: Optional[int]):
+        """``AnalysisHistory`` 版本的 user_id 隔离条件, 与 signals 对齐。"""
         if user_id is None:
             return AnalysisHistory.user_id.is_(None)
         return AnalysisHistory.user_id == user_id
 
     def sync_analysis_history(self, *, user_id: Optional[int], limit: int = 500) -> int:
-        """Idempotently backfill recent stock-analysis history into decision signals."""
+        """把最近的分析历史幂等地回填为决策信号。"""
         with self.db.get_session() as session:
             histories = list(
                 session.execute(
                     select(AnalysisHistory)
                     .where(
                         self._history_owner_condition(user_id),
+                        # 市场总览不属于个股信号, 排除掉
                         or_(AnalysisHistory.report_type.is_(None), AnalysisHistory.report_type != "market_review"),
                         AnalysisHistory.code != "MARKET",
                     )
@@ -365,30 +401,37 @@ class DecisionSignalService:
                 self._create_from_payload(payload)
                 created += 1
             except IntegrityError:
+                # 并发回填时可能撞唯一索引, 跳过即可
                 continue
             except Exception as exc:  # noqa: BLE001
                 logger.warning("回填分析历史 AI 建议失败 record_id=%s: %s", history.id, exc)
         return created
 
-    def _create_from_payload(self, payload: Dict[str, Any]) -> DecisionSignalRecord:
+    def _create_from_payload(self, payload: Dict[str, Any]) -> int:
+        """写入一条决策信号, 同时在新信号生效时把反向活跃信号置为 invalidated。"""
+
         def _write(session):
+            """事务内写入信号记录；新信号为 active 时同步失效同标的的反向建议。"""
             record = DecisionSignalRecord(**payload)
             session.add(record)
             session.flush()
             if record.status == "active":
+                # 新信号生效时, 屏蔽同标的 / 同用户的反向建议, 避免建议打架
                 self._invalidate_opposing(session, record)
             session.refresh(record)
-            return record
+            return int(record.id)
 
         return self.db._run_write_transaction("create_decision_signal", _write)
 
     @staticmethod
     def _invalidate_opposing(session, current: DecisionSignalRecord) -> None:
+        """把同标的 / 同用户的反向活跃信号置为 ``invalidated``。"""
         if current.action in POSITIVE_ACTIONS:
             opposing = NEGATIVE_ACTIONS
         elif current.action in NEGATIVE_ACTIONS:
             opposing = POSITIVE_ACTIONS
         else:
+            # 中性 action(hold/watch/alert)暂不触发反向失效, 避免误伤
             return
         rows = session.execute(
             select(DecisionSignalRecord).where(
@@ -397,6 +440,7 @@ class DecisionSignalService:
                 DecisionSignalRecord.stock_code == current.stock_code,
                 DecisionSignalRecord.status == "active",
                 DecisionSignalRecord.action.in_(opposing),
+                # 仅失效"早于当前"的旧信号, 后到的反向信号由自己处理
                 DecisionSignalRecord.created_at <= current.created_at,
             )
         ).scalars().all()
@@ -406,7 +450,10 @@ class DecisionSignalService:
             row.updated_at = now
 
     def _expire_due(self, *, user_id: Optional[int]) -> None:
+        """把所有 ``expires_at <= now`` 的活跃信号批量置为 expired。"""
+
         def _write(session):
+            """事务内批量把已到期的活跃信号置为 expired 并返回处理条数。"""
             rows = session.execute(
                 select(DecisionSignalRecord).where(
                     self._owner_condition(user_id),
@@ -436,6 +483,8 @@ class DecisionSignalService:
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        """按条件分页查询决策信号, 自动同步分析历史并过期老信号。"""
+        # 列表查询前先同步 + 过期, 让调用方无需自行触发
         self.sync_analysis_history(user_id=user_id)
         self._expire_due(user_id=user_id)
 
@@ -483,15 +532,17 @@ class DecisionSignalService:
         limit: int = 1,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Compatibility query used by alert-trigger signal linking."""
+        """兼容告警触发时"按标的 + 市场 + 状态"取最新信号的查询。"""
         items = self.latest(stock_code, user_id=user_id)
         if market:
+            # 仅保留与请求市场匹配的记录, 让同一公司在不同市场的信号不互串
             items = [item for item in items if item.get("market") == market.lower()]
+        # 把单次返回数量钳制在 [1, 20], 防止调用方错传无穷大
         safe_limit = max(1, min(int(limit), 20))
         return {"items": items[:safe_limit], "total": len(items)}
 
     def create_signal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Create an idempotent alert-originated signal from worker payloads."""
+        """为告警 worker 提供幂等的"创建信号"入口, 已有同 trace_id 直接返回原记录。"""
         user_id = payload.get("user_id")
         trace_id = _text(payload.get("trace_id"), limit=64)
         source_type = str(payload.get("source_type") or "alert")[:24]
@@ -509,12 +560,15 @@ class DecisionSignalService:
 
         now = datetime.now()
         horizon = str(payload.get("horizon") or "3d")[:16]
+        # 没有 trace_id 时, 用整个 payload 的稳定序列化做种, 保证幂等
         source_seed = trace_id or json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         source_report_id = payload.get("source_report_id")
         if source_report_id is None:
+            # 取 sha1 的前 12 位十六进制并转负数, 让 source_report_id 与 DB 主键不冲突
             source_report_id = -int(hashlib.sha1(source_seed.encode("utf-8")).hexdigest()[:12], 16)
         action = str(payload.get("action") or "alert")
         if action not in ALLOWED_ACTIONS:
+            # 未知 action 兜底为 alert, 避免下游 API 因为脏数据 500
             action = "alert"
         fields = {
             "user_id": user_id,
@@ -532,16 +586,20 @@ class DecisionSignalService:
             "reason": _text(payload.get("reason")),
             "risk_summary": _text(payload.get("risk_summary")),
             "metadata_json": _dump_json(payload.get("metadata")),
+            # 告警来源的信号通常只有少量字段, 标 minimal 即可
             "plan_quality": "minimal",
             "status": "active",
             "expires_at": _expires_at(now, horizon),
             "created_at": now,
             "updated_at": now,
         }
-        record = self._create_from_payload(fields)
-        return {"item": _serialize(record), "created": True}
+        record_id = self._create_from_payload(fields)
+        # The transaction session may expire ORM attributes on commit; reload
+        # through the normal user-scoped query before serializing.
+        return {"item": self.get_signal(record_id, user_id=user_id), "created": True}
 
     def get_signal(self, signal_id: int, *, user_id: Optional[int]) -> Dict[str, Any]:
+        """按 ID 取单条决策信号, 校验所有者归属。"""
         with self.db.get_session() as session:
             record = session.execute(
                 select(DecisionSignalRecord).where(
@@ -554,6 +612,7 @@ class DecisionSignalService:
             return _serialize(record)
 
     def latest(self, stock_code: str, *, user_id: Optional[int]) -> list[Dict[str, Any]]:
+        """返回指定股票下, 当前用户最新的若干条活跃信号(顺序为新→旧)。"""
         self.sync_analysis_history(user_id=user_id)
         self._expire_due(user_id=user_id)
         with self.db.get_session() as session:
@@ -576,10 +635,13 @@ class DecisionSignalService:
         user_id: Optional[int],
         status: str,
     ) -> Dict[str, Any]:
+        """关闭 / 失效 / 归档 / 过期一条信号; 仅允许终态。"""
         if status not in TERMINAL_STATUSES:
+            # 非终态(例如 active -> active)由系统自动驱动, 人工接口拒绝
             raise ValueError("AI 建议只能关闭、失效、归档或标记过期")
 
         def _write(session):
+            """事务内把单条信号置为终态并返回序列化结果；不存在则抛错。"""
             record = session.execute(
                 select(DecisionSignalRecord).where(
                     DecisionSignalRecord.id == signal_id,

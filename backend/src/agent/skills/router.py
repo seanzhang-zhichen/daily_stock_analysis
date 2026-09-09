@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-SkillRouter — rule-based skill selection.
+SkillRouter —— 基于规则的技能选择器。
 
-Selects which trading skills to apply based on:
-1. User-explicit request (highest priority)
-2. Market regime detection from technical data in ``AgentContext``
-3. Centralised default fallback
+依据以下顺序选择要应用的交易技能：
+1. 用户显式指定（最高优先级）
+2. 基于 ``AgentContext`` 中技术数据的市场状态（regime）检测
+3. 集中配置的默认回退
 """
 
 from __future__ import annotations
@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 class SkillRouter:
-    """Select applicable skills for a given analysis context."""
+    """为给定分析上下文选择适用的技能。"""
 
     def select_skills(
         self,
         ctx: AgentContext,
         max_count: int = 3,
     ) -> List[str]:
-        """Select skill ids by explicit request, routing mode, regime or defaults."""
+        """按显式请求、路由模式、市场状态或默认值选择技能 id。"""
         requested_skills = ctx.meta.get("skills_requested") or ctx.meta.get("strategies_requested", [])
         if requested_skills:
             logger.info("[SkillRouter] user-requested skills: %s", requested_skills)
@@ -70,11 +70,11 @@ class SkillRouter:
         ctx: AgentContext,
         max_count: int = 3,
     ) -> List[str]:
-        """Compatibility wrapper for legacy strategy-based callers."""
+        """为旧的基于策略的调用方提供的兼容包装。"""
         return self.select_skills(ctx, max_count=max_count)
 
     def _detect_regime(self, ctx: AgentContext) -> Optional[str]:
-        """Infer a coarse market regime from the technical agent opinion."""
+        """从技术面 Agent 的意见推断粗略的市场状态。"""
         for op in ctx.opinions:
             if op.agent_name != "technical":
                 continue
@@ -102,7 +102,7 @@ class SkillRouter:
 
     @staticmethod
     def _get_routing_mode() -> str:
-        """Read skill routing mode from config, defaulting to auto on errors."""
+        """从配置读取技能路由模式，出错时默认 auto。"""
         try:
             from src.config import get_config
 
@@ -114,12 +114,12 @@ class SkillRouter:
 
     @staticmethod
     def _get_available_ids() -> set:
-        """Return ids for currently loadable skills."""
+        """返回当前可加载技能的 id 集合。"""
         return {skill.name for skill in SkillRouter._get_available_skills()}
 
     @staticmethod
     def _get_available_skills() -> list:
-        """Load skills from the factory singleton or a fresh skill manager."""
+        """从工厂单例或新建的技能管理器加载技能列表。"""
         try:
             from src.agent.factory import _SKILL_MANAGER_PROTOTYPE
 
@@ -136,7 +136,7 @@ class SkillRouter:
 
     @classmethod
     def _get_manual_skills(cls, max_count: int) -> List[str]:
-        """Return configured manual skills, falling back to defaults when invalid."""
+        """返回配置的手动技能，配置无效时回退到默认值。"""
         configured: List[str] = []
         try:
             from src.config import get_config

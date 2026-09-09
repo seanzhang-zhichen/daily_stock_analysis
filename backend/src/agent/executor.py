@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
-"""
-Agent Executor — ReAct loop with tool calling.
+"""Agent 执行器：ReAct（Reason + Act）循环 + 工具调用。
 
-Orchestrates the LLM + tools interaction loop:
-1. Build system prompt (persona + tools + skills)
-2. Send to LLM with tool declarations
-3. If tool_call → execute tool → feed result back
-4. If text → parse as final answer
-5. Loop until final answer or max_steps
+编排 LLM 与工具之间的多轮交互循环：
+1. 构建 system prompt（角色 + 工具声明 + 技能）
+2. 发送给 LLM 并等待响应
+3. 若响应中含 tool_call → 执行工具 → 把结果回喂
+4. 若响应为文本 → 解析为最终答案
+5. 循环直至拿到最终答案或达到 ``max_steps`` 上限
 
-The core execution loop is delegated to :mod:`src.agent.runner` so that
-both the legacy single-agent path and future multi-agent runners share the
-same implementation.
+核心循环实现已统一收敛到 :mod:`src.agent.runner`，便于旧版单 Agent 路径与
+后续多 Agent runner 共享同一套权威实现，避免逻辑分散。
 """
+
 
 import json
 import logging
@@ -34,7 +33,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentResult:
-    """Result from an agent execution run."""
+    """单次 Agent 执行运行的结果容器。
+
+    Attributes:
+        success: 是否成功拿到最终答案/仪表盘。
+        content: Agent 给出的最终文本答案。
+        dashboard: 解析后的决策仪表盘 JSON（仅 ``run`` 路径填充）。
+        tool_calls_log: 工具调用的执行轨迹。
+        total_steps: 实际循环步数。
+        total_tokens: 累计消耗的 token 数。
+        provider: 实际使用的 LLM 提供方。
+        # ``model`` 支持记录回退链：逗号分隔本次调用使用过的多个模型名。
+        model: 本次运行实际使用的模型（逗号分隔，支持回退链记录）。
+        error: 失败时的错误描述（成功时为 ``None``）。
+    """
     success: bool = False
     content: str = ""                          # final text answer from agent
     dashboard: Optional[Dict[str, Any]] = None  # parsed dashboard JSON
@@ -44,6 +56,7 @@ class AgentResult:
     provider: str = ""
     model: str = ""                            # comma-separated models used (supports fallback)
     error: Optional[str] = None
+    skill_opinions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ============================================================
@@ -401,7 +414,19 @@ CHAT_SYSTEM_PROMPT = """你是一位{market_role}投资分析 Agent，拥有数�
 
 
 def _build_language_section(report_language: str, *, chat_mode: bool = False) -> str:
-    """Build output-language guidance for the agent prompt."""
+    """为 Agent 提示词构造"输出语言"附加说明段落。
+
+    根据 :func:`normalize_report_language` 归一化结果，决定追加中文还是英文输出
+    指引；``chat_mode=True`` 用于自由对话场景，否则用于生成决策仪表盘的 report
+    路径——后者还约束了 ``decision_type`` 必须保持 ``buy|hold|sell`` 不变。
+
+    Args:
+        report_language: 原始配置语言值，会被归一化为 ``"zh"`` 或 ``"en"``。
+        chat_mode: 是否为聊天模式；为真时使用更宽松的输出语言说明。
+
+    Returns:
+        拼接到提示词末尾的多行字符串（含前后空行）。
+    """
     normalized = normalize_report_language(report_language)
     if chat_mode:
         if normalized == "en":
@@ -442,9 +467,9 @@ def _build_language_section(report_language: str, *, chat_mode: bool = False) ->
 # ============================================================
 
 class AgentExecutor:
-    """ReAct agent loop with tool calling.
+    """带工具调用的 ReAct Agent 循环执行器。
 
-    Usage::
+    使用示例::
 
         executor = AgentExecutor(tool_registry, llm_adapter)
         result = executor.run("Analyze stock 600519")
@@ -460,7 +485,17 @@ class AgentExecutor:
         max_steps: int = 10,
         timeout_seconds: Optional[float] = None,
     ):
-        """Store runtime dependencies and prompt configuration for legacy runs."""
+        """保存运行依赖与提示词相关配置（供旧版 ``run`` 路径使用）。
+
+        Args:
+            tool_registry: 工具注册中心。
+            llm_adapter: LLM 适配层。
+            skill_instructions: 拼接到 system prompt 的交易技能说明。
+            default_skill_policy: 默认技能策略附加段落。
+            use_legacy_default_prompt: 是否使用旧版默认提示词模板。
+            max_steps: 循环步数上限。
+            timeout_seconds: 单次运行的墙钟超时，``None`` 表示不限制。
+        """
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions
@@ -470,15 +505,16 @@ class AgentExecutor:
         self.timeout_seconds = timeout_seconds
 
     def run(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
-        """Execute the agent loop for a given task.
+        """执行 Agent 循环以完成一次结构化分析任务。
 
         Args:
-            task: The user task / analysis request.
-            context: Optional context dict (e.g., {"stock_code": "600519"}).
+            task: 用户的任务 / 分析请求文本。
+            context: 可选上下文字典（如 ``{"stock_code": "600519"}``）。
 
         Returns:
-            AgentResult with parsed dashboard or error.
+            :class:`AgentResult`，包含已解析的仪表盘或错误信息。
         """
+        # 按需拼接技能与默认策略段落；空内容不写入占位符，避免污染提示词。
         # Build system prompt with skills
         skills_section = ""
         if self.skill_instructions:
@@ -488,6 +524,7 @@ class AgentExecutor:
             default_skill_policy_section = f"\n{self.default_skill_policy}\n"
         report_language = normalize_report_language((context or {}).get("report_language", "zh"))
         stock_code = (context or {}).get("stock_code", "")
+        # 根据股票代码识别市场角色（A 股 / 港股 / 美股），用于适配不同市场的提示词语境。
         market_role = get_market_role(stock_code, report_language)
         market_guidelines = get_market_guidelines(stock_code, report_language)
         prompt_template = (
@@ -503,10 +540,10 @@ class AgentExecutor:
             language_section=_build_language_section(report_language),
         )
 
-        # Build tool declarations in OpenAI format (litellm handles all providers)
+        # 工具声明统一转成 OpenAI tool 格式，由 litellm 适配多种底层 provider。
         tool_decls = self.tool_registry.to_openai_tools()
 
-        # Initialize conversation
+        # 初始化对话：system + 第一条 user；后续循环步骤在 runner 中累加。
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": self._build_user_message(task, context)},
@@ -515,18 +552,20 @@ class AgentExecutor:
         return self._run_loop(messages, tool_decls, parse_dashboard=True)
 
     def chat(self, message: str, session_id: str, progress_callback: Optional[Callable] = None, context: Optional[Dict[str, Any]] = None) -> AgentResult:
-        """Execute the agent loop for a free-form chat message.
+        """执行 Agent 循环以回答用户的一轮自由对话消息。
 
         Args:
-            message: The user's chat message.
-            session_id: The conversation session ID.
-            progress_callback: Optional callback for streaming progress events.
-            context: Optional context dict from previous analysis for data reuse.
+            message: 用户当前的聊天内容。
+            session_id: 会话 ID（用于历史消息拼装）。
+            progress_callback: 可选的流式进度回调。
+            context: 来自先前分析的上下文（用于报告追问时的数据复用）。
 
         Returns:
-            AgentResult with the text response.
+            :class:`AgentResult`，包含文本回复。
         """
         from src.agent.conversation import conversation_manager
+        from src.agent.chat_context import build_chat_history
+        from src.config import get_config
 
         # Build system prompt with skills
         skills_section = ""
@@ -557,7 +596,7 @@ class AgentExecutor:
 
         # Get conversation history
         session = conversation_manager.get_or_create(session_id)
-        history = session.get_history()
+        history = build_chat_history(session_id, self.llm_adapter, get_config())
 
         # Initialize conversation
         messages: List[Dict[str, Any]] = [
@@ -565,7 +604,8 @@ class AgentExecutor:
         ]
         messages.extend(history)
 
-        # Inject previous analysis context if provided (data reuse from report follow-up)
+        # 注入历史分析上下文（报告追问场景）：把上一次的股票/价格/摘要拼成系统消息，
+        # 让 LLM 在原分析基础上继续回答，而无需再次全量拉取行情。
         if context:
             context_parts = []
             if context.get("stock_code"):
@@ -587,16 +627,17 @@ class AgentExecutor:
             if context_parts:
                 context_msg = "[系统提供的历史分析上下文，可供参考对比]\n" + "\n".join(context_parts)
                 messages.append({"role": "user", "content": context_msg})
+                # 紧跟一条 assistant 占位消息，模拟"已了解"的回合，让后续 user 提问衔接自然。
                 messages.append({"role": "assistant", "content": "好的，我已了解该股票的历史分析数据。请告诉我你想了解什么？"})
 
         messages.append({"role": "user", "content": message})
 
-        # Persist the user turn immediately so the session appears in history during processing
+        # 立即把本轮 user 消息写入会话，保证处理过程中刷新页面也能看到这条输入。
         conversation_manager.add_message(session_id, "user", message)
 
         result = self._run_loop(messages, tool_decls, parse_dashboard=False, progress_callback=progress_callback)
 
-        # Persist assistant reply (or error note) for context continuity
+        # 写入 assistant 回复：成功写正文、失败写错误标记，用于后续轮的上下文追溯。
         if result.success:
             conversation_manager.add_message(session_id, "assistant", result.content)
         else:
@@ -606,11 +647,10 @@ class AgentExecutor:
         return result
 
     def _run_loop(self, messages: List[Dict[str, Any]], tool_decls: List[Dict[str, Any]], parse_dashboard: bool, progress_callback: Optional[Callable] = None) -> AgentResult:
-        """Delegate to the shared runner and adapt the result.
+        """委托给共享的 runner 执行主循环，并把内部结果适配为 :class:`AgentResult`。
 
-        This preserves the exact same observable behaviour as the original
-        inline implementation while sharing the single authoritative loop
-        in :mod:`src.agent.runner`.
+        这里不重新实现 ReAct 循环，而是复用 :mod:`src.agent.runner` 中的权威实现，
+        从而保证旧版执行器与未来多 Agent runner 的行为完全一致。
         """
         loop_result = run_agent_loop(
             messages=messages,
@@ -623,6 +663,7 @@ class AgentExecutor:
 
         model_str = loop_result.model
 
+        # 仅在 "run" 路径需要尝试解析决策仪表盘 JSON；chat 路径不解析。
         if parse_dashboard and loop_result.success:
             dashboard = parse_dashboard_json(loop_result.content)
             return AgentResult(
@@ -650,7 +691,7 @@ class AgentExecutor:
         )
 
     def _build_user_message(self, task: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """Build the initial user message."""
+        """构造首次 user 消息：把 task 与可选 context 整合为单条人类可读输入。"""
         parts = [task]
         if context:
             report_language = normalize_report_language(context.get("report_language", "zh"))
@@ -663,7 +704,7 @@ class AgentExecutor:
             else:
                 parts.append("输出语言: 中文（所有 JSON 键名保持不变，所有面向用户的文本值使用中文）")
 
-            # Inject pre-fetched context data to avoid redundant fetches
+            # 注入已预取的上下文数据，避免 LLM 重复调用同一工具（同会话内数据复用）。
             if context.get("realtime_quote"):
                 parts.append(f"\n[系统已获取的实时行情]\n{json.dumps(context['realtime_quote'], ensure_ascii=False)}")
             if context.get("chip_distribution"):

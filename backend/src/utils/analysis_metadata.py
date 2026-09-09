@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Shared metadata constants for analysis requests.
-"""
+"""分析请求共用的元数据常量。"""
 
 from __future__ import annotations
 

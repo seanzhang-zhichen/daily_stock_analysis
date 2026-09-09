@@ -40,7 +40,7 @@ _DEFAULT_CONNECTION_COOLDOWN_SECONDS = 15
 
 
 def _static_info_ttl_seconds() -> int:
-    """TTL for static_info cache; 0 disables caching (always fetch)."""
+    """static_info 缓存的 TTL（秒）；设为 0 表示禁用缓存（每次都重新拉取）。"""
     raw = os.getenv("LONGBRIDGE_STATIC_INFO_TTL_SECONDS", "").strip()
     if raw == "":
         return _DEFAULT_STATIC_INFO_TTL
@@ -51,7 +51,7 @@ def _static_info_ttl_seconds() -> int:
 
 
 def _connection_cooldown_seconds() -> int:
-    """Cooldown after connection-close errors to avoid reconnect thrashing."""
+    """连接关闭错误后的冷却时间，避免频繁重连造成抖动。"""
     raw = os.getenv("LONGBRIDGE_CONNECTION_COOLDOWN_SECONDS", "").strip()
     if raw == "":
         return _DEFAULT_CONNECTION_COOLDOWN_SECONDS
@@ -76,18 +76,15 @@ _REGION_URL_MAP: Dict[str, Dict[str, str]] = {
 
 
 def _sanitize_longbridge_env() -> None:
-    """Remove empty-string LONGBRIDGE_*_URL env vars.
+    """清理空的 LONGBRIDGE_*_URL 环境变量。
 
-    GitHub Actions sets ``LONGBRIDGE_HTTP_URL: ${{ vars.X || secrets.X }}``
-    which resolves to an empty string ``""`` when neither var nor secret is
-    configured.  The Rust SDK's ``Config.from_apikey()`` auto-reads these
-    env vars, and an empty string is *not* the same as "unset" — it causes
-    the SDK to use a blank URL, which breaks the WebSocket handshake and
-    results in "context dropped" / "Client is closed" within milliseconds.
+    GitHub Actions 通过 ``LONGBRIDGE_HTTP_URL: ${{ vars.X || secrets.X }}`` 注入，
+    当变量与密钥都未配置时会解析为空字符串 ``""``。Rust SDK 的 ``Config.from_apikey()``
+    会自动读取这些环境变量，而空字符串与「未设置」并不等价——它会让 SDK 使用空白 URL，
+    导致 WebSocket 握手失败，并在毫秒级报出 "context dropped" / "Client is closed"。
 
-    Also mirrors ``LONGBRIDGE_REGION`` → ``LONGPORT_REGION`` because the
-    Rust SDK's internal ``is_cn()`` function only checks ``LONGPORT_REGION``
-    (not ``LONGBRIDGE_REGION``) when deciding which default endpoints to use.
+    同时把 ``LONGBRIDGE_REGION`` 同步到 ``LONGPORT_REGION``，因为 Rust SDK 内部的
+    ``is_cn()`` 在判断默认接入点时只检查 ``LONGPORT_REGION``（而非 ``LONGBRIDGE_REGION``）。
     """
     for key in (
         "LONGBRIDGE_HTTP_URL",
@@ -105,7 +102,8 @@ def _sanitize_longbridge_env() -> None:
             del os.environ[key]
             logger.debug("[Longbridge] 删除空环境变量 %s", key)
 
-    # App default: quiet (false). Matches README / docs/full-guide / .env.example; SDK alone may default verbose.
+    # 应用默认安静输出（false），与 README / docs/full-guide / .env.example 保持一致；
+    # SDK 单独运行时可能默认为详细输出。
     if "LONGBRIDGE_PRINT_QUOTE_PACKAGES" not in os.environ:
         os.environ["LONGBRIDGE_PRINT_QUOTE_PACKAGES"] = "false"
 
@@ -139,7 +137,7 @@ def _sanitize_longbridge_env() -> None:
 
 
 def _longbridge_config_kwargs() -> Dict[str, Any]:
-    """Optional kwargs for ``Config.from_apikey`` (Longbridge OpenAPI SDK)."""
+    """为 ``Config.from_apikey``（长桥 OpenAPI SDK）构造可选参数。"""
     try:
         import inspect
         from longbridge.openapi import Config, Language, PushCandlestickMode
@@ -154,7 +152,7 @@ def _longbridge_config_kwargs() -> Dict[str, Any]:
     kw: Dict[str, Any] = {}
 
     if "enable_print_quote_packages" in params:
-        # Unset / empty → False (quiet); SDK default would be verbose — we opt in explicitly.
+        # 未设置 / 空值 → False（安静输出）；SDK 默认会是详细输出——这里显式选择安静模式。
         raw = os.getenv("LONGBRIDGE_PRINT_QUOTE_PACKAGES")
         if raw is None or not str(raw).strip():
             kw["enable_print_quote_packages"] = False
@@ -213,13 +211,13 @@ def _longbridge_config_kwargs() -> Dict[str, Any]:
 
 
 def _is_us_code(stock_code: str) -> bool:
-    """Return True for US stock or index codes LongBridge can quote."""
+    """判断是否为长桥可报价的美股/美股指数代码。"""
     normalized = stock_code.strip().upper()
     return is_us_stock_code(normalized) or is_us_index_code(normalized)
 
 
 def _is_hk_code(stock_code: str) -> bool:
-    """Return True for common Hong Kong code forms such as HK00700 or 0700.HK."""
+    """判断是否为常见港股代码形式，如 HK00700 或 0700.HK。"""
     normalized = (stock_code or "").strip().upper()
     if normalized.startswith("HK"):
         digits = normalized[2:]
@@ -232,12 +230,12 @@ def _is_hk_code(stock_code: str) -> bool:
 
 
 def _to_longbridge_symbol(stock_code: str) -> Optional[str]:
-    """Convert internal stock code to Longbridge symbol format.
+    """将内部股票代码转换为长桥符号格式。
 
-    Examples:
+    示例：
         AAPL      -> AAPL.US
         HK00700   -> 0700.HK
-        00700     -> 0700.HK (5-digit pure number treated as HK)
+        00700     -> 0700.HK（5 位纯数字按港股处理）
     """
     code = stock_code.strip()
     upper = code.upper()
@@ -281,29 +279,29 @@ class LongbridgeFetcher(BaseFetcher):
     _CONNECTION_ERRORS = ("client is closed", "context closed", "connection closed")
 
     def __init__(self):
-        """Initialise lazy quote context, availability state and static-info cache."""
+        """初始化懒加载行情上下文、可用性状态与 static_info 缓存。"""
         self._ctx = None
         self._config = None
         self._ctx_lock = threading.Lock()
         self._available = None
         self._cooldown_until = 0.0
-        # {symbol: (StaticInfo, timestamp)}
+        # {symbol: (StaticInfo, 时间戳)}
         self._static_cache: Dict[str, Any] = {}
         self._static_cache_lock = threading.Lock()
 
     def _is_connection_error(self, exc: Exception) -> bool:
-        """Return True for LongBridge SDK connection-lifecycle errors."""
+        """判断是否为长桥 SDK 连接生命周期相关错误。"""
         msg = str(exc).lower()
         return any(s in msg for s in self._CONNECTION_ERRORS)
 
     def _invalidate_ctx(self):
-        """Reset cached context so the next call rebuilds the connection."""
+        """重置缓存的上下文，使下次调用重建连接。"""
         with self._ctx_lock:
             self._ctx = None
             self._config = None
 
     def _mark_connection_cooldown(self, exc: Exception) -> None:
-        """Reset context and suppress reconnect attempts during cooldown."""
+        """重置上下文并在冷却期内抑制重连尝试。"""
         cooldown_seconds = _connection_cooldown_seconds()
         self._invalidate_ctx()
         if cooldown_seconds <= 0:
@@ -316,7 +314,7 @@ class LongbridgeFetcher(BaseFetcher):
         )
 
     def is_available_for_request(self, capability: str = "") -> bool:
-        """Report request-time availability including temporary cooldown."""
+        """返回请求时可用性，包含临时冷却状态。"""
         if not self._is_available():
             return False
         if self._cooldown_until > time.time():
@@ -331,7 +329,7 @@ class LongbridgeFetcher(BaseFetcher):
         return True
 
     def _is_available(self) -> bool:
-        """Check if Longbridge credentials are configured."""
+        """检查是否已配置长桥凭证。"""
         if self._available is not None:
             return self._available
         try:
@@ -352,7 +350,7 @@ class LongbridgeFetcher(BaseFetcher):
         return has_creds
 
     def _get_ctx(self):
-        """Lazy-init the QuoteContext (thread-safe)."""
+        """懒初始化 QuoteContext（线程安全）。"""
         if self._ctx is not None:
             return self._ctx
         with self._ctx_lock:
@@ -363,10 +361,10 @@ class LongbridgeFetcher(BaseFetcher):
             try:
                 from longbridge.openapi import QuoteContext, Config
 
-                # ── 1. Clean up empty URL env vars & apply REGION mapping ──
+                # ── 1. 清理空的 URL 环境变量并应用 REGION 映射 ──
                 _sanitize_longbridge_env()
 
-                # ── 2. Ensure credentials are available in env ──
+                # ── 2. 确保凭证已在环境变量中可用 ──
                 try:
                     from src.config import get_config
                     app_config = get_config()
@@ -386,14 +384,13 @@ class LongbridgeFetcher(BaseFetcher):
                     if v and not os.environ.get(k):
                         os.environ[k] = v
 
-                # ── 3. Build Config ──
+                # ── 3. 构造 Config ──
                 extra_kw = _longbridge_config_kwargs()
                 lb_config = None
 
-                # Prefer from_apikey_env() — reads all LONGBRIDGE_* env vars
-                # (credentials + URLs + options) including .env files.
-                # Available in longbridge >= 4.x.  from_env() only exists on
-                # the unreleased master branch.
+                # 优先使用 from_apikey_env()——它会读取所有 LONGBRIDGE_* 环境变量
+                # （凭证 + URL + 选项），包括 .env 文件。该方法在 longbridge >= 4.x 可用，
+                # from_env() 仅存在于尚未发布的 master 分支。
                 for factory_name in ("from_apikey_env", "from_env"):
                     factory = getattr(Config, factory_name, None)
                     if factory is None:
@@ -416,7 +413,7 @@ class LongbridgeFetcher(BaseFetcher):
                     )
                     logger.info("[Longbridge] Config.from_apikey() 创建成功")
 
-                # Diagnostic logging
+                # 诊断日志
                 region = os.getenv("LONGBRIDGE_REGION") or os.getenv("LONGPORT_REGION") or "(auto)"
                 logger.info(
                     "[Longbridge] 配置: region=%s, http=%s, quote_ws=%s",
@@ -435,11 +432,11 @@ class LongbridgeFetcher(BaseFetcher):
                 return None
 
     # ------------------------------------------------------------------
-    # static_info with cache
+    # static_info 与缓存
     # ------------------------------------------------------------------
 
     def _get_static_info(self, symbol: str) -> Optional[Any]:
-        """Fetch static info (shares, EPS, BPS, name) with optional in-process TTL cache."""
+        """拉取 static_info（股本、EPS、BPS、名称），可选进程内 TTL 缓存。"""
         ttl = _static_info_ttl_seconds()
         now = time.time()
         if ttl > 0:
@@ -466,11 +463,11 @@ class LongbridgeFetcher(BaseFetcher):
         return None
 
     # ------------------------------------------------------------------
-    # get_stock_name via static_info
+    # 通过 static_info 获取股票名称
     # ------------------------------------------------------------------
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
-        """Return stock name from Longbridge static_info (name_cn or name_en)."""
+        """从长桥 static_info 返回股票名称（name_cn 或 name_en）。"""
         symbol = _to_longbridge_symbol(stock_code)
         if symbol is None:
             return None
@@ -481,11 +478,11 @@ class LongbridgeFetcher(BaseFetcher):
         return name.strip() or None
 
     # ------------------------------------------------------------------
-    # volume_ratio from history
+    # 基于历史数据计算量比
     # ------------------------------------------------------------------
 
     def _ts_sort_key(self, candle: Any) -> float:
-        """Monotonic sort key for a candle timestamp (UTC seconds or datetime)."""
+        """为 K 线时间戳生成单调排序键（UTC 秒或 datetime）。"""
         ts = getattr(candle, "timestamp", None)
         if ts is None:
             return 0.0
@@ -494,11 +491,10 @@ class LongbridgeFetcher(BaseFetcher):
         return float(int(ts))
 
     def _compute_volume_ratio(self, symbol: str, today_volume: int) -> Optional[float]:
-        """Compute volume_ratio = today_volume / avg(recent completed daily volumes).
+        """计算量比 = 当日成交量 / 近期已完成日成交量均值。
 
-        Uses the most recent daily bar as \"today/incomplete\" reference window: average
-        volume of the next 5 older daily bars. Avoids local `date.today()` matching, which
-        breaks for US symbols when the shell runs in CN timezone.
+        以最近一根日 K 线作为「当日/未结束」的参考窗口，取其之前 5 根日 K 线的成交量均值。
+        避免用本地 `date.today()` 做日期匹配——当进程运行在 CN 时区时，这种方式对美股代码会失效。
         """
         if not today_volume or today_volume <= 0:
             return None
@@ -539,11 +535,11 @@ class LongbridgeFetcher(BaseFetcher):
             return None
 
     # ------------------------------------------------------------------
-    # get_realtime_quote
+    # 获取实时行情
     # ------------------------------------------------------------------
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
-        """Fetch realtime quote from Longbridge, computing derived fields."""
+        """从长桥获取实时行情，并计算衍生字段。"""
         if not self.is_available_for_request("realtime_quote"):
             return None
 
@@ -587,7 +583,7 @@ class LongbridgeFetcher(BaseFetcher):
             if high is not None and low is not None:
                 amplitude = round((high - low) / prev_close * 100, 2)
 
-        # Fetch static info for derived fields
+        # 拉取 static_info 以计算衍生字段
         static = self._get_static_info(symbol)
 
         turnover_rate = None
@@ -605,7 +601,7 @@ class LongbridgeFetcher(BaseFetcher):
             eps_plain = safe_float(getattr(static, "eps", None))
             bps = safe_float(getattr(static, "bps", None))
 
-            # US names often report circulating_shares=0 while total_shares is set — use total for turnover.
+            # 美股代码常报告 circulating_shares=0 而 total_shares 有值——计算换手率时改用总股本。
             shares_for_turnover = circulating if circulating > 0 else total_shares
             if shares_for_turnover > 0 and volume > 0:
                 turnover_rate = round(volume / shares_for_turnover * 100, 4)
@@ -664,13 +660,13 @@ class LongbridgeFetcher(BaseFetcher):
         return quote
 
     # ------------------------------------------------------------------
-    # BaseFetcher abstract methods (historical daily data)
+    # BaseFetcher 抽象方法（历史日线数据）
     # ------------------------------------------------------------------
 
     def _fetch_raw_data(
         self, stock_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        """Fetch historical candlesticks from Longbridge."""
+        """从长桥获取历史 K 线数据。"""
         if not self.is_available_for_request("daily_data"):
             raise RuntimeError("Longbridge temporarily unavailable for daily_data")
 
@@ -726,7 +722,7 @@ class LongbridgeFetcher(BaseFetcher):
         return pd.DataFrame(rows)
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
-        """Normalize column names to standard format."""
+        """将列名标准化为标准格式。"""
         if df.empty:
             return pd.DataFrame(columns=STANDARD_COLUMNS)
 

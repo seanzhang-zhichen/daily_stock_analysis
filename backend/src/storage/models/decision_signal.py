@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Persisted AI decision signals derived from stock analysis reports."""
+"""从股票分析报告中抽取出的 AI 决策信号持久化模型。"""
 
 from datetime import datetime
 
@@ -9,7 +9,7 @@ from src.storage.base import Base
 
 
 class DecisionSignalRecord(Base):
-    """A structured, user-owned recommendation extracted from one analysis report."""
+    """从一份分析报告中抽取的结构化、用户维度的推荐记录。"""
 
     __tablename__ = "decision_signals"
 

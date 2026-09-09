@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Backend package bootstrap.
+"""后端包引导。
 
 这个包既会被 ``python backend/...`` 形式直接执行，也会被测试、
 Uvicorn、兼容 shim 以包导入方式加载。这里统一把 ``backend/``

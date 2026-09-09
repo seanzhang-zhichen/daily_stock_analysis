@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Runtime helpers for Market Light alert rules."""
+"""Market Light 大盘告警规则的运行时辅助。"""
 
 from __future__ import annotations
 
@@ -32,7 +32,17 @@ MARKET_LIGHT_DATA_SOURCE = "market_light"
 
 @dataclass
 class MarketLightAlert:
-    """Runtime alert for market-level Market Light rules."""
+    """大盘级 Market Light 告警的运行时规则对象。
+
+    Attributes:
+        target_scope: 告警作用域（如 market / portfolio）。
+        target: 市场区域码（cn/hk/us/...），构造时会被归一化。
+        alert_type: 告警类型，取值见 MARKET_ALERT_TYPES。
+        parameters: 已规范化的规则参数。
+        metadata: 透传给告警记录的附加信息（规则 ID、是否交易日等）。
+        description: 告警展示文案。
+        stock_code: 与 target 同值，用于复用统一的告警数据结构。
+    """
 
     target_scope: str
     target: str
@@ -43,11 +53,26 @@ class MarketLightAlert:
     stock_code: str = ""
 
     def __post_init__(self) -> None:
+        """初始化后归一化区域码，并让 stock_code 与 target 保持一致。"""
+        # 统一归一化区域码，并让 stock_code 与 target 保持一致以便复用通用告警结构
         self.target = normalize_market_alert_region(self.target)
         self.stock_code = self.target
 
 
 def normalize_market_alert_parameters(alert_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """校验并规范化大盘告警参数，只保留该类型真正需要的字段。
+
+    Args:
+        alert_type: 告警类型。
+        parameters: 用户提交的原始参数。
+
+    Returns:
+        ``market_light_status`` 返回 ``{"statuses": [...]}``；
+        ``market_light_score_drop`` 返回 ``{"min_drop": float}``。
+
+    Raises:
+        ValueError: 类型不支持、参数不是对象、状态值非法或 min_drop 非正数。
+    """
     if alert_type not in MARKET_ALERT_TYPES:
         raise ValueError(f"unsupported market alert_type: {alert_type}")
     if not isinstance(parameters, dict):
@@ -55,6 +80,7 @@ def normalize_market_alert_parameters(alert_type: str, parameters: Dict[str, Any
 
     if alert_type == "market_light_status":
         raw_statuses = parameters.get("statuses")
+        # 未指定状态时默认同时关注红灯与黄灯
         if raw_statuses is None:
             raw_statuses = ["red", "yellow"]
         if isinstance(raw_statuses, str):
@@ -80,6 +106,7 @@ def make_market_light_payload(
     data: Dict[str, Any],
     config: Optional[Any] = None,
 ) -> RuntimeAlertPayload:
+    """把大盘红绿灯告警参数组装成可评估的运行时规则载荷。"""
     region = normalize_market_alert_region(data["target"])
     if config is None:
         from src.config import get_config
@@ -120,6 +147,20 @@ def evaluate_market_light_alert(
     current_snapshot: Optional[Dict[str, Any]] = None,
     cache: Optional[Dict[Any, Any]] = None,
 ) -> Dict[str, Any]:
+    """对单条大盘告警规则求值，返回统一结构的告警结果字典。
+
+    Args:
+        rule: 待求值的运行时规则。
+        current_snapshot: 已有的当前快照；为空时通过 cache 或实时构建。
+        cache: 按区域复用快照的缓存，避免同批告警重复拉取。
+
+    Returns:
+        含 ``status`` / ``triggered`` / ``observed_value`` / ``threshold`` /
+        ``record_status`` / ``reason`` / ``diagnostics`` 等字段的结果字典。
+        数据不可用时不会抛异常，而是返回 ``triggered=False`` 并标注
+        ``record_status`` 为 ``skipped`` 或 ``degraded``。
+    """
+    # 非交易日直接跳过：大盘数据不更新，告警只会产生噪音
     if rule.metadata.get("trading_day_check_enabled") and not rule.metadata.get("market_is_open", True):
         return _market_result(
             rule,
@@ -175,10 +216,12 @@ def evaluate_market_light_alert(
 
 
 def parse_trade_date_to_datetime(trade_date: str) -> datetime:
+    """把快照的交易日字符串解析为 ``datetime``。"""
     return datetime.fromisoformat(str(trade_date))
 
 
 def _cached_current_snapshot(region: str, cache: Optional[Dict[Any, Any]]) -> Dict[str, Any]:
+    """按区域取当前快照；传入 cache 时按 ("market_light", region) 复用。"""
     if cache is None:
         return build_current_snapshot(region)
     cache_key = ("market_light", region)
@@ -192,6 +235,7 @@ def _evaluate_status(
     current: MarketLightSnapshot,
     data_timestamp: datetime,
 ) -> Dict[str, Any]:
+    """对 ``market_light_status`` 类规则求值：当前 status 命中白名单即触发。"""
     statuses = set(rule.parameters.get("statuses") or ["red", "yellow"])
     triggered = current.status in statuses
     diagnostics = _base_diagnostics(current)
@@ -217,6 +261,7 @@ def _evaluate_score_drop(
     current: MarketLightSnapshot,
     data_timestamp: datetime,
 ) -> Dict[str, Any]:
+    """评估"分数跳水"告警：对比上一交易日的红绿灯快照分差是否超过阈值。"""
     min_drop = float(rule.parameters["min_drop"])
     try:
         raw_previous = load_previous_snapshot(rule.target, before_trade_date=current.trade_date)
@@ -245,6 +290,7 @@ def _evaluate_score_drop(
             diagnostics=_base_diagnostics(current),
         )
 
+    # 上一份快照必须严格早于当前交易日，否则"下跌"无从谈起（数据重复或未更新）
     if previous.trade_date >= current.trade_date:
         return _market_result(
             rule,
@@ -318,6 +364,7 @@ def _market_result(
     data_timestamp: Optional[datetime] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """组装大盘告警的标准化评估结果（统一 rule_id/status/阈值与诊断字段）。"""
     effective_status = "triggered" if triggered else "not_triggered"
     if triggered and record_status is None:
         record_status = "triggered"
@@ -337,12 +384,14 @@ def _market_result(
 
 
 def _threshold(rule: MarketLightAlert) -> Optional[float]:
+    """取出该规则的数值阈值；状态类告警无阈值返回 None。"""
     if rule.alert_type == "market_light_score_drop":
         return float(rule.parameters.get("min_drop", 0) or 0)
     return None
 
 
 def _base_diagnostics(snapshot: MarketLightSnapshot) -> Dict[str, Any]:
+    """提取快照的基础诊断信息：区域、交易日、数据质量。"""
     return {
         "region": snapshot.region,
         "trade_date": snapshot.trade_date,
@@ -351,11 +400,13 @@ def _base_diagnostics(snapshot: MarketLightSnapshot) -> Dict[str, Any]:
 
 
 def _missing_dimensions(snapshot: MarketLightSnapshot) -> list[str]:
+    """返回快照里所有 ``available=False`` 的维度名（按字典序排序）。"""
     dimensions = snapshot.dimensions.model_dump()
     return sorted(name for name, item in dimensions.items() if not item.get("available"))
 
 
 def _positive_float(value: Any, field_name: str) -> float:
+    """把入参转成正数浮点数，转换失败或非正数时抛 ValueError。"""
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:

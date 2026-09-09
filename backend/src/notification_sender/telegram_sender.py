@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramSender:
-    """Send text and image notifications through the Telegram Bot API."""
+    """通过 Telegram Bot API 发送文本与图片通知。"""
     
     def __init__(self, config: Config):
         """
@@ -93,7 +93,7 @@ class TelegramSender:
         *,
         timeout_seconds: Optional[float] = None,
     ) -> bool:
-        """Send a single Telegram message with exponential backoff retry (Fixes #287)"""
+        """发送单条 Telegram 消息，遇到瞬态错误按指数退避重试（Fixes #287）。"""
         # Convert Markdown to Telegram-compatible format
         telegram_text = self._convert_to_telegram_markdown(text)
         
@@ -138,7 +138,7 @@ class TelegramSender:
                     
                     return False
             elif response.status_code == 429:
-                # Rate limited — respect Retry-After header
+                # 触发限流——遵循 Retry-After 响应头
                 retry_after = int(response.headers.get('Retry-After', 2 ** attempt))
                 if attempt < max_retries:
                     logger.warning(f"Telegram rate limited, retrying in {retry_after}s "
@@ -166,7 +166,7 @@ class TelegramSender:
 
     @staticmethod
     def _should_fallback_to_plain_text(error_desc: str = "", response_text: str = "") -> bool:
-        """Detect Telegram Markdown parsing failures that should retry as plain text."""
+        """检测 Telegram Markdown 解析失败并应当回退为纯文本重试的报错。"""
         haystack = f"{error_desc}\n{response_text}".lower()
         markers = (
             "can't parse entities",
@@ -186,7 +186,7 @@ class TelegramSender:
         *,
         timeout_seconds: Optional[float] = None,
     ) -> bool:
-        """Retry Telegram send without parse_mode when Markdown parsing fails."""
+        """当 Markdown 解析失败时，去掉 parse_mode 以纯文本方式重试 Telegram 发送。"""
         logger.info("Telegram Markdown 解析失败，尝试使用纯文本格式重新发送...")
         plain_payload = dict(payload)
         plain_payload.pop('parse_mode', None)
@@ -266,7 +266,7 @@ class TelegramSender:
         return all_success
 
     def _send_telegram_photo(self, image_bytes: bytes) -> bool:
-        """Send image via Telegram sendPhoto API (Issue #289)."""
+        """通过 Telegram sendPhoto 接口发送图片（Issue #289）。"""
         if not self._is_telegram_configured():
             return False
         bot_token = self._telegram_config['bot_token']
@@ -311,12 +311,12 @@ class TelegramSender:
         _link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
         _links = []
         def _save_link(m):
-            """Temporarily replace Markdown links while escaping nearby text."""
+            """在转义周边文本的同时，临时替换掉 Markdown 链接。"""
             _links.append(m.group(0))
             return f"{_link_placeholder}{len(_links) - 1}"
         result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _save_link, result)
 
-        # Step 2: escape remaining special chars
+        # 第二步：转义剩余的特殊字符
         for char in ['[', ']', '(', ')']:
             result = result.replace(char, f'\\{char}')
 

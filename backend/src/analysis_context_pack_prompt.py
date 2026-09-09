@@ -1,5 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Prompt rendering for Issue #1389 AnalysisContextPack runtime summaries."""
+"""AnalysisContextPack Prompt 渲染与运行期摘要（Issue #1389 用）。
+
+本模块负责把 ``AnalysisContextPack`` 渲染成只包含状态/告警/缺少数值等
+摘要信息的 LLM Prompt 片段，供下游 P3 决策模型使用。**只输出低敏摘要**，
+不会复述原始载荷、新闻正文或带密钥/令牌的字段。
+
+主要能力：
+- 报告语言归一化（含把韩文复用英文结构）
+- 按语言提供 block 标签、状态标签、质量等级标签
+- 渲染中文 / 英文版 Prompt 摘要段（含数据限制、置信度与安全规则）
+- 解析 pack 为字典（含 Pydantic model_dump 回退路径）
+- 通用清洗与脱敏工具（_safe_text/_list_strings/_first_non_empty 等）
+"""
 
 from __future__ import annotations
 
@@ -7,6 +19,7 @@ from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
 
 
+# 各数据块的展示标签（中文）。
 BLOCK_LABELS_ZH = {
     "quote": "行情",
     "daily_bars": "日线",
@@ -16,6 +29,7 @@ BLOCK_LABELS_ZH = {
     "news": "新闻",
 }
 
+# 各数据块的展示标签（英文）。
 BLOCK_LABELS_EN = {
     "quote": "quote",
     "daily_bars": "daily bars",
@@ -25,6 +39,7 @@ BLOCK_LABELS_EN = {
     "news": "news",
 }
 
+# 状态枚举到中文展示文本的映射。
 STATUS_LABELS_ZH = {
     "available": "可用",
     "missing": "缺失",
@@ -36,6 +51,7 @@ STATUS_LABELS_ZH = {
     "fetch_failed": "抓取失败",
 }
 
+# 状态枚举到英文展示文本的映射。
 STATUS_LABELS_EN = {
     "available": "available",
     "missing": "missing",
@@ -47,6 +63,7 @@ STATUS_LABELS_EN = {
     "fetch_failed": "fetch failed",
 }
 
+# 数据质量等级到中文展示文本的映射。
 QUALITY_LEVEL_LABELS_ZH = {
     "good": "良好",
     "usable": "可用",
@@ -54,6 +71,7 @@ QUALITY_LEVEL_LABELS_ZH = {
     "poor": "较差",
 }
 
+# 数据质量等级到英文展示文本的映射。
 QUALITY_LEVEL_LABELS_EN = {
     "good": "good",
     "usable": "usable",
@@ -61,6 +79,7 @@ QUALITY_LEVEL_LABELS_EN = {
     "poor": "poor",
 }
 
+# 「核心」数据块中被视为降级的状态集合，用于触发置信度/分析规则提示。
 CORE_DEGRADED_STATUSES = {
     "stale",
     "fallback",
@@ -70,6 +89,7 @@ CORE_DEGRADED_STATUSES = {
     "estimated",
 }
 
+# 已识别的市场阶段枚举，供运行期判断使用。
 KNOWN_MARKET_PHASES = frozenset(
     {
         "premarket",
@@ -82,9 +102,12 @@ KNOWN_MARKET_PHASES = frozenset(
     }
 )
 
+# 盘中阶段的细分（连续交易、午休、收盘集合竞价）。
 INTRADAY_MARKET_PHASES = frozenset({"intraday", "lunch_break", "closing_auction"})
+# 偏保守口径的阶段（非交易、未知），需要更克制地描述数据。
 CONSERVATIVE_MARKET_PHASES = frozenset({"non_trading", "unknown"})
 
+# 命中即视为敏感字段需脱敏的子串列表，统一维护避免遗漏。
 SENSITIVE_MARKERS = (
     "api_key",
     "access_token",
@@ -101,12 +124,13 @@ SENSITIVE_MARKERS = (
 
 
 def normalize_analysis_context_pack_language(report_language: str = "zh") -> str:
-    # Korean reuses the English structural context labels; the model is
-    # constrained to Korean output via the analysis output-language directive.
+    """将报告语言归一化为分析上下文包使用的语言键（zh / en）。"""
+    # 韩文复用英文结构标签；模型通过输出语言指令被约束为韩文。
     return "en" if str(report_language or "").lower() in {"en", "ko"} else "zh"
 
 
 def get_analysis_context_pack_block_labels(report_language: str = "zh") -> Dict[str, str]:
+    """按报告语言返回各数据块的展示标签（中文/英文）。"""
     return (
         BLOCK_LABELS_EN
         if normalize_analysis_context_pack_language(report_language) == "en"
@@ -115,6 +139,8 @@ def get_analysis_context_pack_block_labels(report_language: str = "zh") -> Dict[
 
 
 def iter_analysis_context_pack_block_keys(blocks: Mapping[str, Any]) -> List[str]:
+    """按预定义顺序返回 blocks 中出现过的键，未知键追加在尾部。"""
+    # 先按 BLOCK_LABELS_ZH 的固定顺序保证一致展示，再兜底补充未列出键。
     ordered_keys = [key for key in BLOCK_LABELS_ZH if key in blocks]
     ordered_keys.extend(key for key in blocks if key not in ordered_keys)
     return ordered_keys
@@ -125,11 +151,11 @@ def format_analysis_context_pack_prompt_section(
     *,
     report_language: str = "zh",
 ) -> str:
-    """Return a low-sensitivity prompt summary for an AnalysisContextPack.
+    """为 AnalysisContextPack 生成低敏的 Prompt 摘要段。
 
-    The renderer intentionally ignores item values. P3 consumes the pack as a
-    runtime prompt signal only; P4 exposes a separate low-sensitivity overview,
-    not this prompt string or the full pack.
+    渲染器刻意忽略 item 内部的具体数值。P3 只把 pack 作为运行期 Prompt
+    信号使用；P4 通过独立的低敏概览结构暴露，而不是用本段 prompt 字符串
+    或完整 pack 内容。
     """
     payload = _pack_to_dict(pack)
     if not payload:
@@ -145,6 +171,7 @@ def format_analysis_context_pack_prompt_section(
 
 
 def analysis_context_pack_to_dict(pack: Any) -> Dict[str, Any]:
+    """将 pack 转成 dict：Mapping 直接复制，Pydantic 模型通过 model_dump。"""
     if pack is None:
         return {}
     if isinstance(pack, Mapping):
@@ -154,17 +181,21 @@ def analysis_context_pack_to_dict(pack: Any) -> Dict[str, Any]:
         try:
             dumped = model_dump(mode="json")
         except TypeError:
+            # 旧版 Pydantic 不支持 mode 参数时退回默认调用。
             dumped = model_dump()
         except Exception:
+            # model_dump 自身抛错视为无法序列化，返回空 dict。
             return {}
         return dict(dumped) if isinstance(dumped, Mapping) else {}
     return {}
 
 
+# 保留旧名字作为内部别名（部分模块早期代码依赖此名）。
 _pack_to_dict = analysis_context_pack_to_dict
 
 
 def _format_zh(payload: Dict[str, Any]) -> str:
+    """将包内容按中文格式渲染为 Prompt 摘要文本。"""
     lines = ["", "## 分析上下文包摘要"]
     lines.extend(_subject_lines(payload, lang="zh"))
     block_lines = _block_lines(payload, lang="zh")
@@ -182,6 +213,7 @@ def _format_zh(payload: Dict[str, Any]) -> str:
 
 
 def _format_en(payload: Dict[str, Any]) -> str:
+    """将包内容按英文格式渲染为 Prompt 摘要文本。"""
     lines = ["", "## Analysis Context Pack Summary"]
     lines.extend(_subject_lines(payload, lang="en"))
     block_lines = _block_lines(payload, lang="en")
@@ -199,6 +231,7 @@ def _format_en(payload: Dict[str, Any]) -> str:
 
 
 def _subject_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
+    """生成标的代码/名称/市场/版本等主体行（按语言区分分隔符与标点）。"""
     subject = payload.get("subject") if isinstance(payload.get("subject"), Mapping) else {}
     code = _safe_text(subject.get("code"))
     name = _safe_text(subject.get("stock_name"))
@@ -234,6 +267,7 @@ def _subject_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
 
 
 def _block_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
+    """逐 block 生成状态行，按语言选择连接符（中分号 / 英分号）。"""
     blocks = payload.get("blocks")
     if not isinstance(blocks, Mapping):
         return []
@@ -250,6 +284,7 @@ def _block_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
         label = labels.get(key, _safe_text(key))
         parts = [f"{label}: {status}"]
 
+        # block 自身 source 缺失时回退到首个 item 的 source。
         source = _first_non_empty(
             block.get("source"),
             _first_item_field(block.get("items"), "source"),
@@ -272,6 +307,7 @@ def _block_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
 
 
 def _metadata_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
+    """生成元数据行，目前只覆盖新闻结果数；缺失时返回空列表。"""
     metadata = payload.get("metadata")
     if not isinstance(metadata, Mapping):
         return []
@@ -286,6 +322,7 @@ def _metadata_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
 
 
 def _data_limitation_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
+    """生成「数据限制」章节，包含评分、限制项、阶段规则与置信度/安全规则。"""
     lines = ["", "## Data Limitations" if lang == "en" else "## 数据限制"]
     data_quality = payload.get("data_quality")
     if not isinstance(data_quality, Mapping):
@@ -305,6 +342,7 @@ def _data_limitation_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
                 line += f"（{level_text}）"
         lines.append(line)
 
+    # limitations 形如 "quote: stale"，替换为本地化的「数据块: 状态」形式。
     limitations = _localized_limitations(
         _list_strings(data_quality.get("limitations")),
         lang=lang,
@@ -351,6 +389,7 @@ def _data_limitation_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
 
 
 def _localized_limitations(limitations: List[str], *, lang: str) -> List[str]:
+    """把 "block: status" 形式的限制项翻译为本地化的「数据块：状态」。"""
     labels = get_analysis_context_pack_block_labels(lang)
     status_labels = STATUS_LABELS_EN if lang == "en" else STATUS_LABELS_ZH
     result: List[str] = []
@@ -372,6 +411,7 @@ def _localized_limitations(limitations: List[str], *, lang: str) -> List[str]:
 
 
 def _has_core_degraded_block(payload: Dict[str, Any]) -> bool:
+    """判断核心数据块（行情/日线/技术）是否存在降级状态。"""
     blocks = payload.get("blocks")
     if not isinstance(blocks, Mapping):
         return False
@@ -386,10 +426,12 @@ def _has_core_degraded_block(payload: Dict[str, Any]) -> bool:
 
 
 def _phase_data_quality_constraint_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
+    """按市场阶段给出数据质量约束提示（盘中/盘前/非交易等不同口径）。"""
     if not _has_core_degraded_block(payload):
         return []
 
     phase = _phase_value(payload)
+    # 盘后阶段不补充规则：行情数据已稳定，按最终结论输出即可。
     if not phase or phase == "postmarket":
         return []
 
@@ -431,6 +473,7 @@ def _phase_data_quality_constraint_lines(payload: Dict[str, Any], *, lang: str) 
 
 
 def _phase_value(payload: Dict[str, Any]) -> str:
+    """读取并校验 pack 中的市场阶段字段，未知值统一返回空字符串。"""
     phase_payload = payload.get("phase")
     if not isinstance(phase_payload, Mapping):
         return ""
@@ -439,11 +482,14 @@ def _phase_value(payload: Dict[str, Any]) -> str:
 
 
 def _quality_level_label(level: str, *, lang: str) -> str:
+    """按语言返回数据质量等级标签，未知等级返回空串。"""
     labels = QUALITY_LEVEL_LABELS_EN if lang == "en" else QUALITY_LEVEL_LABELS_ZH
     return labels.get(level, "")
 
 
 def _safe_score(value: Any) -> Optional[int]:
+    """将 0-100 的整数评分安全转换为 int，非 int 或越界返回 None。"""
+    # bool 是 int 的子类但语义不同，需显式排除避免 True/False 被当作 1/0。
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     if 0 <= value <= 100:
@@ -452,6 +498,7 @@ def _safe_score(value: Any) -> Optional[int]:
 
 
 def _first_item_field(items: Any, field: str) -> Optional[str]:
+    """在 items 字典中查找首个指定字段非空的项并返回该字段值。"""
     if not isinstance(items, Mapping):
         return None
     for item in items.values():
@@ -460,10 +507,11 @@ def _first_item_field(items: Any, field: str) -> Optional[str]:
         value = _safe_text(item.get(field))
         if value:
             return value
-    return None
+        return None
 
 
 def _item_missing_reasons(items: Any) -> List[str]:
+    """收集各条目中非空且去重的缺失原因，最多 3 条。"""
     if not isinstance(items, Mapping):
         return []
     reasons: List[str] = []
@@ -477,6 +525,7 @@ def _item_missing_reasons(items: Any) -> List[str]:
 
 
 def _nested(value: Any, *keys: str) -> Any:
+    """按顺序在嵌套字典中逐层取值，路径上任何非 Mapping 直接返回 None。"""
     current = value
     for key in keys:
         if not isinstance(current, Mapping):
@@ -486,6 +535,7 @@ def _nested(value: Any, *keys: str) -> Any:
 
 
 def _list_strings(value: Any) -> List[str]:
+    """把输入清洗为去重且限长（默认 5）的字符串列表。"""
     if not isinstance(value, list):
         return []
     result: List[str] = []
@@ -497,6 +547,7 @@ def _list_strings(value: Any) -> List[str]:
 
 
 def _first_non_empty(*values: Any) -> Optional[str]:
+    """返回首个非空（经脱敏处理）字符串，全部为空则返回 None。"""
     for value in values:
         text = _safe_text(value)
         if text:
@@ -505,17 +556,20 @@ def _first_non_empty(*values: Any) -> Optional[str]:
 
 
 def _safe_text(value: Any) -> str:
+    """把任意值清洗为安全的展示文本；命中敏感标记时返回占位。"""
     if value is None:
         return ""
     text = str(value).strip()
     if not text:
         return ""
     lowered = text.lower()
+    # 包含 api_key/secret/token 等关键字的内容统一脱敏，避免泄露密钥。
     if any(marker in lowered for marker in SENSITIVE_MARKERS):
         return "[REDACTED]"
     return text
 
 
 def _join_text(values: Iterable[str], *, lang: str) -> str:
+    """按语言选择分隔符（英文逗号 / 中文顿号）拼接文本。"""
     separator = ", " if lang == "en" else "、"
     return separator.join(values)

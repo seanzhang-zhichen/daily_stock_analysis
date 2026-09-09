@@ -41,7 +41,7 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
-# Transient network errors (retryable)
+# 瞬时网络异常集合：SSL/连接/超时/分块编码错误，均视为可重试
 _SEARCH_TRANSIENT_EXCEPTIONS = (
     requests.exceptions.SSLError,
     requests.exceptions.ConnectionError,
@@ -57,7 +57,7 @@ _SEARCH_TRANSIENT_EXCEPTIONS = (
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 def _post_with_retry(url: str, *, headers: Dict[str, str], json: Dict[str, Any], timeout: int) -> requests.Response:
-    """POST with retry on transient SSL/network errors."""
+    """POST 请求，瞬时 SSL/网络错误时使用指数退避重试最多 3 次。"""
     return requests.post(url, headers=headers, json=json, timeout=timeout)
 
 
@@ -71,17 +71,24 @@ def _post_with_retry(url: str, *, headers: Dict[str, str], json: Dict[str, Any],
 def _get_with_retry(
     url: str, *, headers: Dict[str, str], params: Dict[str, Any], timeout: int
 ) -> requests.Response:
-    """GET with retry on transient SSL/network errors."""
+    """GET 请求，瞬时 SSL/网络错误时使用指数退避重试最多 3 次。"""
     return requests.get(url, headers=headers, params=params, timeout=timeout)
 
 
 def fetch_url_content(url: str, timeout: int = 5) -> str:
-    """
-    获取 URL 网页正文内容 (使用 newspaper3k)
+    """用 newspaper3k 抓取并提取 URL 的正文内容。
+
+    Args:
+        url: 目标文章 URL。
+        timeout: 请求超时秒数。
+
+    Returns:
+        正文纯文本（最多 1500 字符）；失败时返回空串。
     """
     try:
         # 配置 newspaper3k
         config = Config()
+        # 伪装成 Chrome UA，避免被部分站点直接屏蔽
         config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         config.request_timeout = timeout
         config.fetch_images = False  # 不下载图片
@@ -98,7 +105,8 @@ def fetch_url_content(url: str, timeout: int = 5) -> str:
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         text = '\n'.join(lines)
 
-        return text[:1500]  # 限制返回长度（比 bs4 稍微多一点，因为 newspaper 解析更干净）
+        # 限制返回长度（比 bs4 稍微多一点，因为 newspaper 解析更干净）
+        return text[:1500]
     except Exception as e:
         logger.debug(f"Fetch content failed for {url}: {e}")
 
@@ -107,111 +115,115 @@ def fetch_url_content(url: str, timeout: int = 5) -> str:
 
 @dataclass
 class SearchResult:
-    """搜索结果数据类"""
+    """单条搜索结果。"""
     title: str
     snippet: str  # 摘要
     url: str
     source: str  # 来源网站
     published_date: Optional[str] = None
-    
+
     def to_text(self) -> str:
-        """转换为文本格式"""
+        """把结果格式化为【来源】标题(日期)\\n摘要 的文本形式。"""
         date_str = f" ({self.published_date})" if self.published_date else ""
         return f"【{self.source}】{self.title}{date_str}\n{self.snippet}"
 
 
-@dataclass 
+@dataclass
 class SearchResponse:
-    """搜索响应"""
+    """单次搜索的完整响应（多条结果 + 元数据）。"""
     query: str
     results: List[SearchResult]
     provider: str  # 使用的搜索引擎
     success: bool = True
     error_message: Optional[str] = None
     search_time: float = 0.0  # 搜索耗时（秒）
-    
+
     def to_context(self, max_results: int = 5) -> str:
-        """将搜索结果转换为可用于 AI 分析的上下文"""
+        """把搜索结果格式化为可直接喂给 AI 分析的上下文文本。"""
         if not self.success or not self.results:
             return f"搜索 '{self.query}' 未找到相关结果。"
-        
+
         lines = [f"【{self.query} 搜索结果】（来源：{self.provider}）"]
         for i, result in enumerate(self.results[:max_results], 1):
             lines.append(f"\n{i}. {result.to_text()}")
-        
+
         return "\n".join(lines)
 
 
 class BaseSearchProvider(ABC):
-    """搜索引擎基类"""
-    
+    """所有搜索引擎 Provider 的抽象基类。
+
+    负责 API Key 轮询、错误计数、调用计时等通用逻辑；具体 Provider 仅实现
+    `_do_search`。
+    """
+
     def __init__(self, api_keys: List[str], name: str):
-        """
-        初始化搜索引擎
-        
+        """初始化搜索引擎基类。
+
         Args:
-            api_keys: API Key 列表（支持多个 key 负载均衡）
-            name: 搜索引擎名称
+            api_keys: API Key 列表（支持多 key 负载均衡）。
+            name: 搜索引擎显示名称。
         """
         self._api_keys = api_keys
         self._name = name
+        # key 轮询器：None 时表示没有可用 key
         self._key_cycle = cycle(api_keys) if api_keys else None
         self._key_usage: Dict[str, int] = {key: 0 for key in api_keys}
         self._key_errors: Dict[str, int] = {key: 0 for key in api_keys}
         self._state_lock = threading.RLock()
-    
+
     @property
     def name(self) -> str:
-        """Return provider display name for logs and fallback metadata."""
+        """对外暴露的搜索引擎显示名（用于日志和 fallback 元数据）。"""
         return self._name
-    
+
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的 API Key"""
+        """是否至少配置了一个 API Key。"""
         return bool(self._api_keys)
-    
+
     def _get_next_key(self) -> Optional[str]:
-        """
-        获取下一个可用的 API Key（负载均衡）
-        
-        策略：轮询 + 跳过错误过多的 key
+        """轮询获取下一个“错误次数未超阈值”的 API Key。
+
+        策略：轮询 + 跳过错误过多（>=3 次）的 key；所有 key 都不可用时重置计数并
+        返回第一个 key，确保业务能继续尝试。
         """
         with self._state_lock:
             if not self._key_cycle:
                 return None
-            
-            # 最多尝试所有 key
+
+            # 最多尝试所有 key 一轮
             for _ in range(len(self._api_keys)):
                 key = next(self._key_cycle)
                 # 跳过错误次数过多的 key（超过 3 次）
                 if self._key_errors.get(key, 0) < 3:
                     return key
-            
+
             # 所有 key 都有问题，重置错误计数并返回第一个
             logger.warning(f"[{self._name}] 所有 API Key 都有错误记录，重置错误计数")
             self._key_errors = {key: 0 for key in self._api_keys}
             return self._api_keys[0] if self._api_keys else None
-    
+
     def _record_success(self, key: str) -> None:
-        """记录成功使用"""
+        """记录一次成功使用，错误计数 -1（最多到 0）。"""
         with self._state_lock:
             self._key_usage[key] = self._key_usage.get(key, 0) + 1
             # 成功后减少错误计数
             if key in self._key_errors and self._key_errors[key] > 0:
                 self._key_errors[key] -= 1
-    
+
     def _record_error(self, key: str) -> None:
-        """记录错误"""
+        """记录一次错误：对应 key 错误计数 +1。"""
         with self._state_lock:
             self._key_errors[key] = self._key_errors.get(key, 0) + 1
             error_count = self._key_errors[key]
         logger.warning(f"[{self._name}] API Key {key[:8]}... 错误计数: {error_count}")
-    
+
     @abstractmethod
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        """执行搜索（子类实现）"""
+        """执行具体的搜索请求（由各 Provider 实现）。"""
         pass
-    
+
     def _execute_search(
         self,
         query: str,
@@ -221,7 +233,10 @@ class BaseSearchProvider(ABC):
         api_key: Optional[str] = None,
         **search_kwargs: Any,
     ) -> SearchResponse:
-        """Run the shared search flow with an optional preselected API key."""
+        """通用的搜索执行流程：选 key → 计时 → 调用 → 记录成功/失败。
+
+        支持调用方传入预选好的 `api_key`，否则按轮询策略挑选。
+        """
         api_key = api_key or self._get_next_key()
         if not api_key:
             return SearchResponse(
@@ -259,36 +274,34 @@ class BaseSearchProvider(ABC):
             )
 
     def search(self, query: str, max_results: int = 5, days: int = 7) -> SearchResponse:
-        """
-        执行搜索
-        
+        """执行搜索的统一入口（由子类按需 override 以注入额外参数）。
+
         Args:
-            query: 搜索关键词
-            max_results: 最大返回结果数
-            days: 搜索最近几天的时间范围（默认7天）
-            
+            query: 搜索关键词。
+            max_results: 最大返回条数。
+            days: 搜索时间窗口（默认 7 天）。
+
         Returns:
-            SearchResponse 对象
+            `SearchResponse` 对象。
         """
         return self._execute_search(query, max_results=max_results, days=days)
 
 
 class TavilySearchProvider(BaseSearchProvider):
-    """
-    Tavily 搜索引擎
-    
+    """Tavily 搜索引擎。
+
     特点：
-    - 专为 AI/LLM 优化的搜索 API
-    - 免费版每月 1000 次请求
-    - 返回结构化的搜索结果
-    
+    - 专为 AI/LLM 优化的搜索 API；
+    - 免费版每月 1000 次请求；
+    - 返回结构化的搜索结果。
+
     文档：https://docs.tavily.com/
     """
-    
+
     def __init__(self, api_keys: List[str]):
-        """Initialize Tavily provider with one or more API keys."""
+        """使用一个或多个 API Key 初始化 Tavily Provider。"""
         super().__init__(api_keys, "Tavily")
-    
+
     def _do_search(
         self,
         query: str,
@@ -297,7 +310,7 @@ class TavilySearchProvider(BaseSearchProvider):
         days: int = 7,
         topic: Optional[str] = None,
     ) -> SearchResponse:
-        """执行 Tavily 搜索"""
+        """执行 Tavily 搜索调用。"""
         try:
             from tavily import TavilyClient
         except ImportError:
@@ -308,10 +321,10 @@ class TavilySearchProvider(BaseSearchProvider):
                 success=False,
                 error_message="tavily-python 未安装，请运行: uv sync --locked"
             )
-        
+
         try:
             client = TavilyClient(api_key=api_key)
-            
+
             # 执行搜索（优化：使用advanced深度、限制最近几天）
             search_kwargs: Dict[str, Any] = {
                 "query": query,
@@ -327,11 +340,11 @@ class TavilySearchProvider(BaseSearchProvider):
             response = client.search(
                 **search_kwargs,
             )
-            
+
             # 记录原始响应到日志
             logger.info(f"[Tavily] 搜索完成，query='{query}', 返回 {len(response.get('results', []))} 条结果")
             logger.debug(f"[Tavily] 原始响应: {response}")
-            
+
             # 解析结果
             results = []
             for item in response.get('results', []):
@@ -342,20 +355,20 @@ class TavilySearchProvider(BaseSearchProvider):
                     source=self._extract_domain(item.get('url', '')),
                     published_date=item.get('published_date') or item.get('publishedDate'),
                 ))
-            
+
             return SearchResponse(
                 query=query,
                 results=results,
                 provider=self.name,
                 success=True,
             )
-            
+
         except Exception as e:
             error_msg = str(e)
             # 检查是否是配额问题
             if 'rate limit' in error_msg.lower() or 'quota' in error_msg.lower():
                 error_msg = f"API 配额已用尽: {error_msg}"
-            
+
             return SearchResponse(
                 query=query,
                 results=[],
@@ -371,7 +384,7 @@ class TavilySearchProvider(BaseSearchProvider):
         days: int = 7,
         topic: Optional[str] = None,
     ) -> SearchResponse:
-        """执行 Tavily 搜索，可按调用方选择是否启用新闻 topic。"""
+        """Tavily 搜索入口：允许调用方传入 news topic 走专用新闻通道。"""
         if topic is None:
             return super().search(query, max_results=max_results, days=days)
 
@@ -410,10 +423,10 @@ class TavilySearchProvider(BaseSearchProvider):
                 error_message=str(e),
                 search_time=elapsed
             )
-    
+
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
@@ -424,17 +437,17 @@ class TavilySearchProvider(BaseSearchProvider):
 
 
 class SerpAPISearchProvider(BaseSearchProvider):
-    """
-    SerpAPI 搜索引擎
-    
+    """SerpAPI 搜索引擎。
+
     特点：
-    - 支持 Google、Bing、百度等多种搜索引擎
-    - 免费版每月 100 次请求
-    - 返回真实的搜索结果
-    
+    - 支持 Google、Bing、百度等多种搜索引擎；
+    - 免费版每月 100 次请求；
+    - 返回真实的搜索结果（含知识图谱、精选回答、相关问题等结构化字段）。
+
     文档：https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis
     """
 
+    # 仅在极少量高排名且摘要明显不足的结果上补抓正文，避免耗时爆炸
     _ORGANIC_CONTENT_FETCH_LIMIT = 1
     _ORGANIC_CONTENT_FETCH_RANK_LIMIT = 2
     _ORGANIC_CONTENT_FETCH_TIMEOUT = 2
@@ -474,13 +487,13 @@ class SerpAPISearchProvider(BaseSearchProvider):
         "resource",
         "resource_file",
     }
-    
+
     def __init__(self, api_keys: List[str]):
-        """Initialize SerpAPI provider with rotating API keys."""
+        """使用一组 API Key 初始化 SerpAPI Provider。"""
         super().__init__(api_keys, "SerpAPI")
-    
+
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        """执行 SerpAPI 搜索"""
+        """执行 SerpAPI 搜索。"""
         try:
             from serpapi import GoogleSearch
         except ImportError:
@@ -491,7 +504,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 success=False,
                 error_message="google-search-results 未安装，请运行: uv sync --locked"
             )
-        
+
         try:
             # 确定时间范围参数 tbs
             tbs = "qdr:w"  # 默认一周
@@ -515,44 +528,44 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 "tbs": tbs,     # 时间范围限制
                 "num": max_results # 请求的结果数量，注意：Google API有时不严格遵守
             }
-            
+
             search = GoogleSearch(params)
             response = search.get_dict()
-            
+
             # 记录原始响应到日志
             logger.debug(f"[SerpAPI] 原始响应 keys: {response.keys()}")
-            
+
             # 解析结果
             results = []
-            
+
             # 1. 解析 Knowledge Graph (知识图谱)
             kg = response.get('knowledge_graph', {})
             if kg:
                 title = kg.get('title', '知识图谱')
                 desc = kg.get('description', '')
-                
+
                 # 提取额外属性
                 details = []
                 for key in ['type', 'founded', 'headquarters', 'employees', 'ceo']:
                     val = kg.get(key)
                     if val:
                         details.append(f"{key}: {val}")
-                        
+
                 snippet = f"{desc}\n" + " | ".join(details) if details else desc
-                
+
                 results.append(SearchResult(
                     title=f"[知识图谱] {title}",
                     snippet=snippet,
                     url=kg.get('source', {}).get('link', ''),
                     source="Google Knowledge Graph"
                 ))
-                
+
             # 2. 解析 Answer Box (精选回答/行情卡片)
             ab = response.get('answer_box', {})
             if ab:
                 ab_title = ab.get('title', '精选回答')
                 ab_snippet = ""
-                
+
                 # 财经类回答
                 if ab.get('type') == 'finance_results':
                     stock = ab.get('stock', '')
@@ -561,10 +574,10 @@ class SerpAPISearchProvider(BaseSearchProvider):
                     movement = ab.get('price_movement', {})
                     mv_val = movement.get('percentage', 0)
                     mv_dir = movement.get('movement', '')
-                    
+
                     ab_title = f"[行情卡片] {stock}"
                     ab_snippet = f"价格: {price} {currency}\n涨跌: {mv_dir} {mv_val}%"
-                    
+
                     # 提取表格数据
                     if 'table' in ab:
                         table_data = []
@@ -573,17 +586,17 @@ class SerpAPISearchProvider(BaseSearchProvider):
                                 table_data.append(f"{row['name']}: {row['value']}")
                         if table_data:
                             ab_snippet += "\n" + "; ".join(table_data)
-                            
+
                 # 普通文本回答
                 elif 'snippet' in ab:
                     ab_snippet = ab.get('snippet', '')
                     list_items = ab.get('list', [])
                     if list_items:
                         ab_snippet += "\n" + "\n".join([f"- {item}" for item in list_items])
-                
+
                 elif 'answer' in ab:
                     ab_snippet = ab.get('answer', '')
-                    
+
                 if ab_snippet:
                     results.append(SearchResult(
                         title=f"[精选回答] {ab_title}",
@@ -598,7 +611,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 question = rq.get('question', '')
                 snippet = rq.get('snippet', '')
                 link = rq.get('link', '')
-                
+
                 if question and snippet:
                      results.append(SearchResult(
                         title=f"[相关问题] {question}",
@@ -651,7 +664,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 provider=self.name,
                 success=True,
             )
-            
+
         except Exception as e:
             error_msg = str(e)
             return SearchResponse(
@@ -661,10 +674,10 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 success=False,
                 error_message=error_msg
             )
-    
+
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """从 URL 提取域名"""
+        """从 URL 提取主域作为来源标签。"""
         try:
             parsed = urlparse(url)
             return parsed.netloc.replace('www.', '') or '未知来源'
@@ -673,13 +686,13 @@ class SerpAPISearchProvider(BaseSearchProvider):
 
     @classmethod
     def _normalize_organic_text(cls, value: Any) -> str:
-        """标准化 SerpAPI organic 文本字段。"""
+        """把 SerpAPI organic 文本字段中的空白折叠成单空格。"""
         text = "" if value is None else str(value)
         return re.sub(r"\s+", " ", text).strip()
 
     @classmethod
     def _extract_rich_snippet_extensions(cls, item: Dict[str, Any]) -> List[str]:
-        """提取 rich_snippet 中已有的结构化摘要，优先复用 API 原始返回。"""
+        """提取 SerpAPI rich_snippet 中已有的结构化摘要，避免重复抓网页。"""
         rich_snippet = item.get("rich_snippet")
         if not isinstance(rich_snippet, dict):
             return []
@@ -719,7 +732,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
         label: Optional[str] = None,
         allow_unlabeled_scalar: bool = False,
     ) -> List[str]:
-        """把 rich_snippet.detected_extensions 展平为可读文本。"""
+        """递归展平 rich_snippet.detected_extensions 为 `label: text` 列表。"""
         if isinstance(value, dict):
             flattened: List[str] = []
             for key, nested_value in value.items():
@@ -762,7 +775,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
         *,
         rich_extensions: Optional[List[str]] = None,
     ) -> str:
-        """构建 organic result 摘要，尽量先消费 SerpAPI 已返回的信息。"""
+        """拼接 organic result 的 snippet：原文 + rich_snippet 扩展（去重）。"""
         snippet = cls._normalize_organic_text(item.get("snippet", ""))
         if rich_extensions is None:
             rich_extensions = cls._extract_rich_snippet_extensions(item)
@@ -776,7 +789,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
 
     @classmethod
     def _matches_skipped_content_fetch_suffix(cls, value: Any) -> bool:
-        """判断链接片段是否指向附件或其他非 HTML 资源。"""
+        """判断链接片段是否指向 PDF/图片/Office 等非 HTML 资源（应跳过抓取）。"""
         normalized_value = cls._normalize_organic_text(value).lower()
         if not normalized_value:
             return False
@@ -793,11 +806,12 @@ class SerpAPISearchProvider(BaseSearchProvider):
     def _matches_skipped_content_fetch_query_param(
         cls, key: Any, value: Any
     ) -> bool:
-        """仅对少数显式附件参数跳过正文抓取，避免误伤普通 HTML 页面。"""
+        """只对显式 attachment/download 类参数+对应后缀跳过正文抓取，避免误伤。"""
         normalized_key = cls._normalize_organic_text(key)
         if not normalized_key:
             return False
 
+        # 把驼峰 key 拆成 snake_case，再统一用非字母数字归一为下划线，便于查表
         snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized_key)
         canonical_key = re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
         if canonical_key not in cls._SKIPPED_CONTENT_FETCH_QUERY_KEYS:
@@ -815,7 +829,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
         fetched_count: int,
         has_structured_summary: bool,
     ) -> bool:
-        """仅对极少量高位且摘要明显不足的结果补抓正文。"""
+        """是否对当前 organic 结果补抓正文：仅限极少量高排名且 snippet 不足的项。"""
         if fetched_count >= cls._ORGANIC_CONTENT_FETCH_LIMIT:
             return False
 
@@ -849,7 +863,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
 
     @classmethod
     def _merge_organic_snippet_with_content(cls, snippet: str, content: str) -> str:
-        """用较短正文预览补强 snippet，避免拉长单次搜索耗时和返回体积。"""
+        """用截短的正文预览补强 snippet，避免拉长单次搜索耗时和返回体积。"""
         normalized = cls._normalize_organic_text(content)
         if not normalized:
             return snippet
@@ -865,24 +879,23 @@ class SerpAPISearchProvider(BaseSearchProvider):
 
 
 class BochaSearchProvider(BaseSearchProvider):
-    """
-    博查搜索引擎
-    
+    """博查搜索引擎。
+
     特点：
-    - 专为AI优化的中文搜索API
-    - 结果准确、摘要完整
-    - 支持时间范围过滤和AI摘要
-    - 兼容Bing Search API格式
-    
+    - 专为 AI 优化的中文搜索 API；
+    - 结果准确、摘要完整；
+    - 支持时间范围过滤和 AI 摘要；
+    - 兼容 Bing Search API 格式。
+
     文档：https://bocha-ai.feishu.cn/wiki/RXEOw02rFiwzGSkd9mUcqoeAnNK
     """
-    
+
     def __init__(self, api_keys: List[str]):
-        """Initialize Bocha provider with rotating API keys."""
+        """使用一组 API Key 初始化 Bocha Provider。"""
         super().__init__(api_keys, "Bocha")
-    
+
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        """执行博查搜索"""
+        """执行博查搜索。"""
         try:
             import requests
         except ImportError:
@@ -893,17 +906,17 @@ class BochaSearchProvider(BaseSearchProvider):
                 success=False,
                 error_message="requests 未安装，请运行: uv sync --locked"
             )
-        
+
         try:
             # API 端点
             url = "https://api.bocha.cn/v1/web-search"
-            
+
             # 请求头
             headers = {
                 'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json'
             }
-            
+
             # 确定时间范围
             freshness = "oneWeek"
             if days <= 1:
@@ -922,10 +935,10 @@ class BochaSearchProvider(BaseSearchProvider):
                 "summary": True,  # 启用AI摘要
                 "count": min(max_results, 50)  # 最大50条
             }
-            
+
             # 执行搜索（带瞬时 SSL/网络错误重试）
             response = _post_with_retry(url, headers=headers, json=payload, timeout=10)
-            
+
             # 检查HTTP状态码
             if response.status_code != 200:
                 # 尝试解析错误信息
@@ -937,7 +950,7 @@ class BochaSearchProvider(BaseSearchProvider):
                         error_message = response.text
                 except Exception:
                     error_message = response.text
-                
+
                 # 根据错误码处理
                 if response.status_code == 403:
                     error_msg = f"余额不足: {error_message}"
@@ -949,9 +962,9 @@ class BochaSearchProvider(BaseSearchProvider):
                     error_msg = f"请求频率达到限制: {error_message}"
                 else:
                     error_msg = f"HTTP {response.status_code}: {error_message}"
-                
+
                 logger.warning(f"[Bocha] 搜索失败: {error_msg}")
-                
+
                 return SearchResponse(
                     query=query,
                     results=[],
@@ -959,7 +972,7 @@ class BochaSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             # 解析响应
             try:
                 data = response.json()
@@ -973,7 +986,7 @@ class BochaSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             # 检查响应code
             if data.get('code') != 200:
                 error_msg = data.get('msg') or f"API返回错误码: {data.get('code')}"
@@ -984,24 +997,24 @@ class BochaSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             # 记录原始响应到日志
             logger.info(f"[Bocha] 搜索完成，query='{query}'")
             logger.debug(f"[Bocha] 原始响应: {data}")
-            
+
             # 解析搜索结果
             results = []
             web_pages = data.get('data', {}).get('webPages', {})
             value_list = web_pages.get('value', [])
-            
+
             for item in value_list[:max_results]:
                 # 优先使用summary（AI摘要），fallback到snippet
                 snippet = item.get('summary') or item.get('snippet', '')
-                
+
                 # 截取摘要长度
                 if snippet:
                     snippet = snippet[:500]
-                
+
                 results.append(SearchResult(
                     title=item.get('name', ''),
                     snippet=snippet,
@@ -1009,16 +1022,16 @@ class BochaSearchProvider(BaseSearchProvider):
                     source=item.get('siteName') or self._extract_domain(item.get('url', '')),
                     published_date=item.get('datePublished'),  # UTC+8格式，无需转换
                 ))
-            
+
             logger.info(f"[Bocha] 成功解析 {len(results)} 条结果")
-            
+
             return SearchResponse(
                 query=query,
                 results=results,
                 provider=self.name,
                 success=True,
             )
-            
+
         except requests.exceptions.Timeout:
             error_msg = "请求超时"
             logger.error(f"[Bocha] {error_msg}")
@@ -1049,10 +1062,10 @@ class BochaSearchProvider(BaseSearchProvider):
                 success=False,
                 error_message=error_msg
             )
-    
+
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
@@ -1063,23 +1076,22 @@ class BochaSearchProvider(BaseSearchProvider):
 
 
 class AnspireSearchProvider(BaseSearchProvider):
-    """
-    Anspire Search 搜索引擎
-    
+    """Anspire Search 搜索引擎。
+
     特点：
-    - 面向AI生态的下一代实时智能搜索引擎
-    - 结果精准、响应快速
-    - 适用于股票新闻和市场情报搜索
-    
-    文档: https://open.anspire.cn/document/docs/searchApi/
+    - 面向 AI 生态的下一代实时智能搜索引擎；
+    - 结果精准、响应快速；
+    - 适用于股票新闻和市场情报搜索。
+
+    文档：https://open.anspire.cn/document/docs/searchApi/
     """
-    
+
     def __init__(self, api_keys: List[str]):
-        """Initialize Anspire provider with rotating API keys."""
+        """使用一组 API Key 初始化 Anspire Provider。"""
         super().__init__(api_keys, "Anspire")
-    
+
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        """执行 Anspire 搜索"""
+        """执行 Anspire 搜索。"""
         try:
             import requests
         except ImportError:
@@ -1090,11 +1102,11 @@ class AnspireSearchProvider(BaseSearchProvider):
                 success=False,
                 error_message="requests 未安装，请运行：uv sync --locked"
             )
-        
+
         try:
             # API 端点
             url = "https://plugin.anspire.cn/api/ntsearch/search"
-            
+
             # 请求头
             headers = {
                 'Authorization': f'Bearer {api_key}'
@@ -1103,14 +1115,14 @@ class AnspireSearchProvider(BaseSearchProvider):
             # 请求参数
             payload = {
                 "query": query,
-                "top_k": min(max_results,50), 
+                "top_k": min(max_results,50),
                 "FromTime": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"),
                 "ToTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-            
+
             # 执行搜索
             response = _get_with_retry(url, headers=headers, params=payload, timeout=10)
-            
+
             # 检查 HTTP 状态码
             if response.status_code != 200:
                 # 尝试解析错误信息
@@ -1122,7 +1134,7 @@ class AnspireSearchProvider(BaseSearchProvider):
                         error_message = response.text
                 except Exception:
                     error_message = response.text
-                
+
                 # 根据错误码处理
                 if response.status_code == 403:
                     error_msg = f"余额不足或权限不足：{error_message}"
@@ -1132,9 +1144,9 @@ class AnspireSearchProvider(BaseSearchProvider):
                     error_msg = f"请求参数错误：{error_message}"
                 else:
                     error_msg = f"HTTP {response.status_code}: {error_message}"
-                
+
                 logger.warning(f"[Anspire] 搜索失败：{error_msg}")
-                
+
                 return SearchResponse(
                     query=query,
                     results=[],
@@ -1142,7 +1154,7 @@ class AnspireSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             # 解析响应
             try:
                 data = response.json()
@@ -1156,7 +1168,7 @@ class AnspireSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             if 'code' in data and data.get('code') != 200:
                 error_msg = data.get('msg') or f"API 返回错误码：{data.get('code')}"
                 logger.warning(f"[Anspire] 搜索失败：{error_msg}")
@@ -1167,7 +1179,7 @@ class AnspireSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             if 'results' not in data:
                 error_msg = "响应中缺少 results 字段"
                 logger.error(f"[Anspire] {error_msg}，原始响应：{data}")
@@ -1178,19 +1190,19 @@ class AnspireSearchProvider(BaseSearchProvider):
                     success=False,
                     error_message=error_msg
                 )
-            
+
             # 记录原始响应到日志
             logger.info(f"[Anspire] 搜索完成，query='{query}'")
             logger.debug(f"[Anspire] 原始响应：{data}")
-            
+
             results = []
             value_list = data.get('results', [])
-            
+
             for item in value_list[:max_results]:
                 snippet = item.get('content')
                 if snippet and isinstance(snippet, str) and len(snippet) > 500:
                     snippet = snippet[:500] + "..."
-                
+
                 results.append(SearchResult(
                     title=item.get('title', ''),
                     snippet=snippet,
@@ -1198,16 +1210,16 @@ class AnspireSearchProvider(BaseSearchProvider):
                     source=self._extract_domain(item.get('url', '')),
                     published_date=item.get('date', '')
                 ))
-            
+
             logger.info(f"[Anspire] 成功解析 {len(results)} 条结果")
-            
+
             return SearchResponse(
                 query=query,
                 results=results,
                 provider=self.name,
                 success=True,
             )
-            
+
         except requests.exceptions.Timeout:
             error_msg = "请求超时"
             logger.error(f"[Anspire] {error_msg}")
@@ -1238,10 +1250,10 @@ class AnspireSearchProvider(BaseSearchProvider):
                 success=False,
                 error_message=error_msg
             )
-    
+
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
@@ -1252,27 +1264,26 @@ class AnspireSearchProvider(BaseSearchProvider):
 
 
 class MiniMaxSearchProvider(BaseSearchProvider):
-    """
-    MiniMax Web Search (Coding Plan API)
+    """MiniMax Web Search（Coding Plan API）。
 
-    Features:
-    - Backed by MiniMax Coding Plan subscription
-    - Returns structured organic results with title/link/snippet/date
-    - No native time-range parameter; time filtering is done via query
-      augmentation and client-side date filtering
-    - Circuit-breaker protection: 3 consecutive failures -> 300s cooldown
+    特点：
+    - 后端依赖 MiniMax Coding Plan 订阅；
+    - 返回结构化的 organic 结果（title / link / snippet / date）；
+    - 无原生时间范围参数，时间过滤通过 query 加时间提示 + 客户端日期过滤完成；
+    - 自带熔断保护：连续 3 次失败进入 300 秒冷却。
 
-    API endpoint: POST https://api.minimaxi.com/v1/coding_plan/search
+    API 端点：POST https://api.minimaxi.com/v1/coding_plan/search
     """
 
     API_ENDPOINT = "https://api.minimaxi.com/v1/coding_plan/search"
 
     # Circuit-breaker settings
+    # 连续失败 3 次开启熔断；冷却 5 分钟后才允许探测一次
     _CB_FAILURE_THRESHOLD = 3
-    _CB_COOLDOWN_SECONDS = 300  # 5 minutes
+    _CB_COOLDOWN_SECONDS = 300
 
     def __init__(self, api_keys: List[str]):
-        """Initialize MiniMax provider and its circuit-breaker state."""
+        """初始化 MiniMax Provider 与熔断状态。"""
         super().__init__(api_keys, "MiniMax")
         # Circuit breaker state
         self._consecutive_failures = 0
@@ -1280,18 +1291,18 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @property
     def is_available(self) -> bool:
-        """Check availability considering circuit breaker state."""
+        """考虑熔断状态的可用性判断。冷却期内直接返回 False。"""
         with self._state_lock:
             if not self._api_keys:
                 return False
             if self._consecutive_failures >= self._CB_FAILURE_THRESHOLD:
                 if time.time() < self._circuit_open_until:
                     return False
-                # Cooldown expired -> half-open, allow one probe
+                # 冷却到期 → 进入半开放探测状态
             return True
 
     def _record_success(self, key: str) -> None:
-        """Record a successful MiniMax call and close the circuit breaker."""
+        """记录一次成功，关闭熔断。"""
         with self._state_lock:
             super()._record_success(key)
             # Reset circuit breaker on success
@@ -1299,7 +1310,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             self._circuit_open_until = 0.0
 
     def _record_error(self, key: str) -> None:
-        """Record a MiniMax failure and open the circuit after threshold breaches."""
+        """记录一次失败；超过阈值则触发熔断并进入冷却。"""
         warning_message = None
         with self._state_lock:
             super()._record_error(key)
@@ -1320,7 +1331,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _time_hint(days: int, is_chinese: bool = True) -> str:
-        """Build a time-hint string to append to the search query."""
+        """根据查询天数 + 语言生成“最近X天”之类的时间提示词，附加到 query 上。"""
         if is_chinese:
             if days <= 1:
                 return "今天"
@@ -1342,11 +1353,10 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _is_within_days(date_str: Optional[str], days: int) -> bool:
-        """Check whether *date_str* falls within the last *days* days.
+        """判断日期字符串是否落在最近 `days` 天内。
 
-        Accepts common formats: ``2025-06-01``, ``2025/06/01``,
-        ``Jun 1, 2025``, ISO-8601 with timezone, etc.
-        Returns True when date_str is None or unparseable (keep the result).
+        支持常见格式：``2025-06-01``、``2025/06/01``、``Jun 1, 2025``、ISO-8601 带时区等。
+        当日期无法解析时返回 True（保守保留），避免误删有效结果。
         """
         if not date_str:
             return True
@@ -1355,14 +1365,15 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             dt = dateutil_parser.parse(date_str, fuzzy=True)
             from datetime import timedelta, timezone
             now = datetime.now(timezone.utc) if dt.tzinfo else datetime.now()
-            return (now - dt) <= timedelta(days=days + 1)  # +1 buffer
+            # +1 天的容差，避免跨时区误判
+            return (now - dt) <= timedelta(days=days + 1)
         except Exception:
-            return True  # Keep result when date is unparseable
+            return True  # 日期不可解析 → 保守保留
 
     # ------------------------------------------------------------------
 
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        """Execute MiniMax web search."""
+        """执行 MiniMax Web Search。"""
         try:
             # Detect language hint from query (simple heuristic)
             has_cjk = any('\u4e00' <= ch <= '\u9fff' for ch in query)
@@ -1462,7 +1473,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _parse_http_error(response) -> str:
-        """Parse HTTP error response from MiniMax API."""
+        """解析 MiniMax HTTP 错误响应中的可读错误信息。"""
         try:
             ct = response.headers.get('content-type', '')
             if 'json' in ct:
@@ -1476,7 +1487,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """Extract domain from URL as source label."""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
@@ -1487,14 +1498,13 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
 
 class BraveSearchProvider(BaseSearchProvider):
-    """
-    Brave Search 搜索引擎
+    """Brave Search 搜索引擎。
 
     特点：
-    - 隐私优先的独立搜索引擎
-    - 索引超过300亿页面
-    - 免费层可用
-    - 支持时间范围过滤
+    - 隐私优先的独立搜索引擎；
+    - 索引超过 300 亿页面；
+    - 免费层可用；
+    - 支持时间范围过滤。
 
     文档：https://brave.com/search/api/
     """
@@ -1502,7 +1512,7 @@ class BraveSearchProvider(BaseSearchProvider):
     API_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
     def __init__(self, api_keys: List[str]):
-        """Initialize Brave Search provider with rotating API keys."""
+        """使用一组 API Key 初始化 Brave Search Provider。"""
         super().__init__(api_keys, "Brave")
 
     def _do_search(
@@ -1514,7 +1524,7 @@ class BraveSearchProvider(BaseSearchProvider):
         search_lang: Optional[str] = None,
         country: Optional[str] = None,
     ) -> SearchResponse:
-        """执行 Brave 搜索"""
+        """执行 Brave 搜索。"""
         try:
             # 请求头
             headers = {
@@ -1647,7 +1657,7 @@ class BraveSearchProvider(BaseSearchProvider):
             )
 
     def _parse_error(self, response) -> str:
-        """解析错误响应"""
+        """把 Brave API 错误响应解析为可读字符串。"""
         try:
             if response.headers.get('content-type', '').startswith('application/json'):
                 error_data = response.json()
@@ -1663,7 +1673,7 @@ class BraveSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
@@ -1680,7 +1690,7 @@ class BraveSearchProvider(BaseSearchProvider):
         search_lang: Optional[str] = None,
         country: Optional[str] = None,
     ) -> SearchResponse:
-        """执行 Brave 搜索，可按调用方传入区域与语言偏好。"""
+        """Brave 搜索入口：可按调用方传入区域/语言偏好。"""
         if search_lang is None and country is None:
             return super().search(query, max_results=max_results, days=days)
 
@@ -1694,12 +1704,10 @@ class BraveSearchProvider(BaseSearchProvider):
 
 
 class SearXNGSearchProvider(BaseSearchProvider):
-    """
-    SearXNG search engine (self-hosted, no quota).
+    """SearXNG 搜索引擎（自建实例优先，否则从 searx.space 自动发现公共实例）。
 
-    Self-hosted instances are used when explicitly configured.
-    Otherwise, the provider can lazily discover public instances from
-    searx.space and rotate across them with per-request failover.
+    SearXNG 是元搜索引擎，可对接 Google/Bing 等多个上游。无原生配额限制，
+    适合做兜底通道。公共实例质量参差，通过 uptime/响应延迟排序后轮询使用。
     """
 
     PUBLIC_INSTANCES_URL = "https://searx.space/data/instances.json"
@@ -1715,29 +1723,30 @@ class SearXNGSearchProvider(BaseSearchProvider):
     _public_instances_lock = threading.Lock()
 
     def __init__(self, base_urls: Optional[List[str]] = None, *, use_public_instances: bool = False):
-        """Initialize SearXNG with self-hosted bases or public-instance discovery."""
+        """初始化 SearXNG：传入自建实例列表，或允许自动发现公共实例。"""
         normalized_base_urls = [url.rstrip("/") for url in (base_urls or []) if url.strip()]
         super().__init__(normalized_base_urls, "SearXNG")
         self._base_urls = normalized_base_urls
+        # 仅当用户没配置自建实例且允许公共发现时才走公共池
         self._use_public_instances = bool(use_public_instances and not self._base_urls)
         self._cursor = 0
         self._cursor_lock = threading.Lock()
 
     @property
     def is_available(self) -> bool:
-        """Return whether any self-hosted or public SearXNG route is enabled."""
+        """是否存在可用的自建或公共 SearXNG 路由。"""
         return bool(self._base_urls) or self._use_public_instances
 
     @classmethod
     def reset_public_instance_cache(cls) -> None:
-        """Reset the shared searx.space cache (used by tests)."""
+        """重置共享的 searx.space 实例缓存（主要用于测试场景）。"""
         with cls._public_instances_lock:
             cls._public_instances_cache = None
             cls._public_instances_stale_retry_after = 0.0
 
     @staticmethod
     def _parse_http_error(response) -> str:
-        """Parse HTTP error details for easier diagnostics."""
+        """把 SearXNG 的 HTTP 错误响应解析为可读错误字符串。"""
         try:
             raw_content_type = response.headers.get("content-type", "")
             content_type = raw_content_type if isinstance(raw_content_type, str) else ""
@@ -1758,7 +1767,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _time_range(days: int) -> str:
-        """Map requested recency days to SearXNG time_range values."""
+        """把请求的天数映射到 SearXNG `time_range` 参数。"""
         if days <= 1:
             return "day"
         if days <= 7:
@@ -1769,7 +1778,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _search_latency_seconds(cls, instance_data: Dict[str, Any]) -> float:
-        """Extract search latency metric used to rank public instances."""
+        """从 searx.space 元数据中抽取搜索延迟指标，用于公共实例排序。"""
         timing = (instance_data.get("timing") or {}).get("search") or {}
         all_timing = timing.get("all")
         if isinstance(all_timing, dict):
@@ -1781,7 +1790,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _extract_public_instances(cls, payload: Any) -> List[str]:
-        """Extract healthy public SearXNG URLs from searx.space metadata."""
+        """从 searx.space 元数据里筛出健康的公共 SearXNG URL 并按 uptime/延迟排序。"""
         if not isinstance(payload, dict):
             return []
 
@@ -1811,16 +1820,18 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 )
             )
 
+        # 排序规则：uptime 高 → 延迟低 → 字典序靠前
         ranked.sort(key=lambda row: (-row[0], row[1], row[2]))
         return [url for _, _, url in ranked[: cls.PUBLIC_INSTANCES_POOL_LIMIT]]
 
     @classmethod
     def _get_public_instances(cls) -> List[str]:
-        """Fetch and cache public SearXNG instances with stale fallback/backoff."""
+        """拉取并缓存公共 SearXNG 实例列表，支持过期缓存兜底 + 刷新退避。"""
         now = time.time()
         with cls._public_instances_lock:
             stale_urls: List[str] = []
             if cls._public_instances_cache is None and cls._public_instances_stale_retry_after > now:
+                # 冷启动刷新退避中，直接返回空列表
                 logger.debug(
                     "[SearXNG] 公共实例冷启动刷新退避中，剩余 %.0fs",
                     cls._public_instances_stale_retry_after - now,
@@ -1832,6 +1843,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                     return list(cached_urls)
                 stale_urls = list(cached_urls)
                 if cls._public_instances_stale_retry_after > now:
+                    # 处于刷新退避期，继续返回过期缓存，避免雪崩
                     logger.debug(
                         "[SearXNG] 公共实例刷新退避中，继续使用过期缓存，剩余 %.0fs",
                         cls._public_instances_stale_retry_after - now,
@@ -1880,7 +1892,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return []
 
     def _rotate_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
-        """Return a cursor-rotated subset to spread SearXNG instance load."""
+        """基于游标轮询返回候选子集，用于分散 SearXNG 实例的压力。"""
         if not pool or max_attempts <= 0:
             return []
         with self._cursor_lock:
@@ -1899,7 +1911,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
         timeout: int,
         retry_enabled: bool,
     ) -> SearchResponse:
-        """Execute one SearXNG search against a specific instance."""
+        """针对单个 SearXNG 实例执行搜索。"""
         try:
             base = base_url.rstrip("/")
             search_url = base if base.endswith("/search") else base + "/search"
@@ -1921,6 +1933,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             if response.status_code != 200:
                 error_msg = self._parse_http_error(response)
                 if response.status_code == 403:
+                    # 403 通常意味着实例未启用 JSON 输出或被代理拒绝
                     error_msg = (
                         f"{error_msg}；SearXNG 实例可能未启用 JSON 输出（请检查 settings.yml），"
                         "或实例/代理拒绝了本次访问"
@@ -2016,7 +2029,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _extract_domain(url: str) -> str:
-        """Extract domain from URL as source label."""
+        """从 URL 提取主域作为来源标签。"""
         try:
             from urllib.parse import urlparse
 
@@ -2027,7 +2040,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return "未知来源"
 
     def search(self, query: str, max_results: int = 5, days: int = 7) -> SearchResponse:
-        """Execute SearXNG search with instance rotation and per-request failover."""
+        """执行 SearXNG 搜索：自建实例走重试通道，公共实例按游标轮询。"""
         start_time = time.time()
         if self._base_urls:
             candidates = self._rotate_candidates(
@@ -2099,17 +2112,16 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
 
 class SearchService:
-    """
-    搜索服务
-    
+    """统一搜索服务。
+
     功能：
-    1. 管理多个搜索引擎
-    2. 自动故障转移
-    3. 结果聚合和格式化
-    4. 数据源失败时的增强搜索（股价、走势等）
-    5. 港股/美股自动使用英文搜索关键词
+    1. 管理多个搜索引擎（Bocha / Tavily / Anspire / Brave / SerpAPI / MiniMax / SearXNG）；
+    2. 自动故障转移与并发去重（in-flight cache reservation）；
+    3. 结果聚合、中文优先重排、时效过滤；
+    4. 数据源失败时的“增强搜索”兜底（股价、走势等）；
+    5. 港股 / 美股自动使用英文搜索关键词与 Brave 地区偏好。
     """
-    
+
     # 增强搜索关键词模板（A股 中文）
     ENHANCED_SEARCH_KEYWORDS = [
         "{name} 股票 今日 股价",
@@ -2127,8 +2139,10 @@ class SearchService:
         "{name} technical analysis",
         "{name} {code} performance volume",
     ]
+    # 请求上游时适度过取，再做时间窗口过滤，避免稀疏结果
     NEWS_OVERSAMPLE_FACTOR = 2
     NEWS_OVERSAMPLE_MAX = 10
+    # 时效窗口允许少量“未来时间”容差，处理时区/夏令时
     FUTURE_TOLERANCE_DAYS = 1
     _CHINESE_TEXT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
     _US_STOCK_RE = re.compile(r"^[A-Za-z]{1,5}(\.[A-Za-z])?$")
@@ -2146,22 +2160,22 @@ class SearchService:
         news_max_age_days: int = 3,
         news_strategy_profile: str = "short",
     ):
-        """
-        初始化搜索服务
+        """初始化搜索服务。
 
         Args:
-            bocha_keys: 博查搜索 API Key 列表
-            tavily_keys: Tavily API Key 列表
-            anspire_keys: Anspire Search API Key 列表
-            brave_keys: Brave Search API Key 列表
-            serpapi_keys: SerpAPI Key 列表
-            minimax_keys: MiniMax API Key 列表
-            searxng_base_urls: SearXNG 实例地址列表（自建无配额兜底）
-            searxng_public_instances_enabled: 未配置自建实例时，是否自动使用公共 SearXNG 实例
-            news_max_age_days: 新闻最大时效（天）
-            news_strategy_profile: 新闻窗口策略档位（ultra_short/short/medium/long）
+            bocha_keys: 博查搜索 API Key 列表。
+            tavily_keys: Tavily API Key 列表。
+            anspire_keys: Anspire Search API Key 列表。
+            brave_keys: Brave Search API Key 列表。
+            serpapi_keys: SerpAPI Key 列表。
+            minimax_keys: MiniMax API Key 列表。
+            searxng_base_urls: SearXNG 自建实例地址列表。
+            searxng_public_instances_enabled: 未配置自建实例时，是否允许自动发现公共 SearXNG。
+            news_max_age_days: 新闻最大时效（天）。
+            news_strategy_profile: 新闻窗口策略档位（ultra_short / short / medium / long）。
         """
         self._providers: List[BaseSearchProvider] = []
+        # max_age 至少为 1，避免下游窗口被钳到 0
         self.news_max_age_days = max(1, news_max_age_days)
         raw_profile = (news_strategy_profile or "short").strip().lower()
         self.news_strategy_profile = normalize_news_strategy_profile(news_strategy_profile)
@@ -2217,17 +2231,18 @@ class SearchService:
             else:
                 logger.info("已启用 SearXNG 公共实例自动发现模式")
 
-        # 7. Anspire Search（实时智能搜索优化）
+        # 7. Anspire Search（实时智能搜索优化）插入到最前面
         if anspire_keys:
             self._providers.insert(0, AnspireSearchProvider(anspire_keys))
             logger.info(f"已配置 Anspire Search 搜索，共 {len(anspire_keys)} 个 API Key")
-            
+
         if not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
         self._cache_lock = threading.RLock()
+        # 用 Event 实现的 in-flight reservation，避免并发请求同一 query 时重复打上游
         self._cache_inflight: Dict[str, threading.Event] = {}
         # Default cache TTL in seconds (10 minutes)
         self._cache_ttl: int = 600
@@ -2238,10 +2253,10 @@ class SearchService:
             self.news_max_age_days,
             self.news_window_days,
         )
-    
+
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
-        """判断是否为港股或美股"""
+        """判断是否为港股或美股代码。"""
         code = stock_code.strip()
         # 美股：1-5个大写字母，可能包含点（如 BRK.B）
         if SearchService._US_STOCK_RE.match(code):
@@ -2256,7 +2271,7 @@ class SearchService:
 
     @classmethod
     def _contains_chinese_text(cls, value: Optional[str]) -> bool:
-        """Return True when the input contains CJK characters."""
+        """判断输入文本里是否包含 CJK 字符。"""
         return bool(value and cls._CHINESE_TEXT_RE.search(value))
 
     @classmethod
@@ -2272,12 +2287,14 @@ class SearchService:
         stock_name: str,
         focus_keywords: Optional[List[str]] = None,
     ) -> bool:
-        """A 股或中文名称/关键词场景下优先中文资讯。
+        """判断是否应优先输出中文新闻。
 
-        Only returns True when there is a positive Chinese signal:
-        Chinese characters in keywords/stock_name, or a 6-digit A-stock code.
-        Avoids false positives for non-foreign but English contexts like
-        ``stock_code="market", stock_name="US market"``.
+        仅在以下任一条件成立时返回 True：
+        - 关键词或股票名包含中文字符；
+        - 6 位数字 A 股代码（如 600519）。
+
+       Returns:
+            True 表示应该把中文结果排在前面。
         """
         if any(cls._contains_chinese_text(keyword) for keyword in (focus_keywords or [])):
             return True
@@ -2289,7 +2306,7 @@ class SearchService:
 
     @classmethod
     def _is_chinese_news_result(cls, item: SearchResult) -> bool:
-        """Heuristic check for Chinese-language news items."""
+        """启发式判断单条新闻是否为中文。"""
         return cls._contains_chinese_text(" ".join(filter(None, [item.title, item.snippet, item.source])))
 
     @classmethod
@@ -2299,7 +2316,7 @@ class SearchService:
         *,
         prefer_chinese: bool,
     ) -> Tuple[SearchResponse, int]:
-        """Reorder results by preferred language and return preferred-result count."""
+        """按语言优先级重排搜索结果，并返回中文结果条数。"""
         if not prefer_chinese or not response.success or not response.results:
             return response, 0
 
@@ -2332,7 +2349,7 @@ class SearchService:
         best_response: Optional[SearchResponse],
         best_preferred_count: int,
     ) -> bool:
-        """Prefer responses with more Chinese items, then more total items."""
+        """在“偏好语言结果数”和“总结果数”上同时择优。"""
         if best_response is None:
             return True
         if candidate_preferred_count != best_preferred_count:
@@ -2346,7 +2363,7 @@ class SearchService:
         *,
         prefer_chinese: bool,
     ) -> Dict[str, str]:
-        """Resolve Brave locale hints without forcing US bias onto non-US symbols."""
+        """为 Brave 解析搜索语言与地区偏好；非美股不强加 US 区域。"""
         if prefer_chinese:
             return {"search_lang": "zh-hans", "country": "CN"}
         if cls._is_us_stock(stock_code):
@@ -2359,9 +2376,10 @@ class SearchService:
 
     @staticmethod
     def is_index_or_etf(stock_code: str, stock_name: str) -> bool:
-        """
-        Judge if symbol is index-tracking ETF or market index.
-        For such symbols, analysis focuses on index movement only, not issuer company risks.
+        """判断给定代码是否为指数跟踪型 ETF / 市场指数。
+
+        对这些标的，风险分析只关注指数走势、跟踪误差、流动性，不涉及
+        基金公司层面的诉讼/声誉/高管变动等。
         """
         code = (stock_code or '').strip().split('.')[0]
         if not code:
@@ -2380,15 +2398,15 @@ class SearchService:
 
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的搜索引擎"""
+        """是否存在至少一个可用的搜索引擎。"""
         return any(p.is_available for p in self._providers)
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
-        """Build a cache key from query parameters."""
+        """根据查询参数构造缓存键。"""
         return f"{query}|{max_results}|{days}"
 
     def _get_cached_locked(self, key: str) -> Optional['SearchResponse']:
-        """Return an unexpired cache entry while the cache lock is held."""
+        """在持有缓存锁的前提下返回未过期的缓存项；过期则清理。"""
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -2400,7 +2418,7 @@ class SearchService:
         return response
 
     def _get_cached(self, key: str) -> Optional['SearchResponse']:
-        """Return cached SearchResponse if still valid, else None."""
+        """获取缓存项（线程安全）。"""
         with self._cache_lock:
             return self._get_cached_locked(key)
 
@@ -2408,7 +2426,7 @@ class SearchService:
         self,
         key: str,
     ) -> Tuple[Optional['SearchResponse'], bool, Optional[threading.Event]]:
-        """Return cached response or reserve responsibility for filling the key."""
+        """原子地：要么返回已存在的缓存；要么为本次请求抢占“填充权”。"""
         with self._cache_lock:
             cached = self._get_cached_locked(key)
             if cached is not None:
@@ -2416,13 +2434,15 @@ class SearchService:
 
             event = self._cache_inflight.get(key)
             if event is None:
+                # 自己是第一个到的 → 抢到填充权
                 event = threading.Event()
                 self._cache_inflight[key] = event
                 return None, True, event
+            # 已有别的请求在拉，自己等待
             return None, False, event
 
     def _release_cache_fill(self, key: str, event: threading.Event) -> None:
-        """Release one in-flight cache fill reservation and wake waiters."""
+        """释放一个 in-flight cache 预订，并唤醒所有等待者。"""
         with self._cache_lock:
             current = self._cache_inflight.get(key)
             if current is event:
@@ -2430,14 +2450,15 @@ class SearchService:
                 event.set()
 
     def _wait_for_cached(self, key: str, event: threading.Event) -> Optional['SearchResponse']:
-        """Wait briefly for another thread to fill a cache entry."""
+        """短时等待别的线程把缓存填好；超时后直接返回当前缓存。"""
+        # 等待时长限制在 [1, 30] 秒，避免长时阻塞
         event.wait(timeout=max(1.0, min(float(self._cache_ttl), 30.0)))
         return self._get_cached(key)
 
     def _put_cache(self, key: str, response: 'SearchResponse') -> None:
-        """Store a successful SearchResponse in cache."""
+        """把成功的搜索结果写入缓存，必要时按容量上限淘汰旧条目。"""
         with self._cache_lock:
-            # Hard cap: evict oldest entries when cache exceeds limit
+            # 硬上限：超出后优先淘汰过期项，仍超量则按时间顺序 FIFO 淘汰最旧的
             _MAX_CACHE_SIZE = 500
             if len(self._cache) >= _MAX_CACHE_SIZE:
                 now = time.time()
@@ -2454,7 +2475,7 @@ class SearchService:
             self._cache[key] = (time.time(), response)
 
     def _effective_news_window_days(self) -> int:
-        """Resolve effective news window from strategy profile and global max-age."""
+        """根据策略 profile 和全局最大时效计算实际生效窗口天数。"""
         return resolve_news_window_days(
             news_max_age_days=self.news_max_age_days,
             news_strategy_profile=self.news_strategy_profile,
@@ -2462,13 +2483,13 @@ class SearchService:
 
     @classmethod
     def _provider_request_size(cls, max_results: int) -> int:
-        """Apply light overfetch before time filtering to avoid sparse outputs."""
+        """向上游适度过取，避免时间过滤后稀疏。"""
         target = max(1, int(max_results))
         return max(target, min(target * cls.NEWS_OVERSAMPLE_FACTOR, cls.NEWS_OVERSAMPLE_MAX))
 
     @staticmethod
     def _parse_relative_news_date(text: str, now: datetime) -> Optional[date]:
-        """Parse common Chinese/English relative-time strings."""
+        """解析常见的中英文相对时间描述（如“3天前”、“2 hours ago”）。"""
         raw = (text or "").strip()
         if not raw:
             return None
@@ -2481,6 +2502,7 @@ class SearchService:
         if raw == "前天":
             return (now - timedelta(days=2)).date()
 
+        # 中文相对时间（带单位）
         zh = re.match(r"^\s*(\d+)\s*(分钟|小时|天|周|个月|月|年)\s*前\s*$", raw)
         if zh:
             amount = int(zh.group(1))
@@ -2498,6 +2520,7 @@ class SearchService:
             if unit == "年":
                 return (now - timedelta(days=amount * 365)).date()
 
+        # 英文相对时间（带 ago）
         en = re.match(
             r"^\s*(\d+)\s*(minute|minutes|min|mins|hour|hours|day|days|week|weeks|month|months|year|years)\s*ago\s*$",
             lower,
@@ -2522,7 +2545,7 @@ class SearchService:
 
     @classmethod
     def _normalize_news_publish_date(cls, value: Any) -> Optional[date]:
-        """Normalize provider date value into a date object."""
+        """把上游给出的发布日期（datetime / date / 字符串 / 时间戳）归一化为 date。"""
         if value is None:
             return None
         if isinstance(value, datetime):
@@ -2546,6 +2569,7 @@ class SearchService:
         # Unix timestamp fallback
         if text.isdigit() and len(text) in (10, 13):
             try:
+                # 13 位是毫秒；统一换算为秒
                 ts = int(text[:10]) if len(text) == 13 else int(text)
                 # Provider timestamps are typically UTC epoch seconds.
                 # Normalize to local date to keep window checks aligned with local "today".
@@ -2562,6 +2586,7 @@ class SearchService:
         except ValueError:
             pass
 
+        # 去掉英文序数后缀（1st / 2nd 等），便于 RFC822 解析
         normalized = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text, flags=re.IGNORECASE)
 
         try:
@@ -2573,6 +2598,7 @@ class SearchService:
         except (TypeError, ValueError):
             pass
 
+        # 中文日期格式：YYYY[年/-/.]M[月/-/.]D[日]
         zh_match = re.search(r"(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?", text)
         if zh_match:
             try:
@@ -2580,6 +2606,7 @@ class SearchService:
             except ValueError:
                 pass
 
+        # 常见日期格式兜底列表
         for fmt in (
             "%Y-%m-%d %H:%M:%S",
             "%Y-%m-%d %H:%M",
@@ -2615,11 +2642,12 @@ class SearchService:
         max_results: int,
         log_scope: str,
     ) -> SearchResponse:
-        """Hard-filter results by published_date recency and normalize date strings."""
+        """按发布日期硬过滤时效窗口外的结果，并规范化日期字符串。"""
         if not response.success or not response.results:
             return response
 
         today = datetime.now().date()
+        # 起始日期 = 今日 - (search_days - 1)，让“近 N 天”包含今天本身
         earliest = today - timedelta(days=max(0, int(search_days) - 1))
         latest = today + timedelta(days=self.FUTURE_TOLERANCE_DAYS)
 
@@ -2681,7 +2709,7 @@ class SearchService:
         *,
         max_results: int,
     ) -> SearchResponse:
-        """Normalize parseable dates without enforcing freshness filtering."""
+        """只对日期做归一化与截断，不做时效窗口过滤。"""
         if not response.success or not response.results:
             return response
 
@@ -2715,7 +2743,7 @@ class SearchService:
         *,
         max_results: int,
     ) -> SearchResponse:
-        """Trim response results without changing the rest of the metadata."""
+        """只裁剪结果条数，不动其他字段。"""
         if not response.success or not response.results:
             return response
 
@@ -2739,17 +2767,16 @@ class SearchService:
         max_results: int = 5,
         focus_keywords: Optional[List[str]] = None
     ) -> SearchResponse:
-        """
-        搜索股票相关新闻
-        
+        """搜索股票相关新闻，按多引擎 + 中文优先 + 时效过滤聚合。
+
         Args:
-            stock_code: 股票代码
-            stock_name: 股票名称
-            max_results: 最大返回结果数
-            focus_keywords: 重点关注的关键词列表
-            
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            max_results: 最终返回的最大条数。
+            focus_keywords: 覆盖默认关键词的搜索词列表（可选）。
+
         Returns:
-            SearchResponse 对象
+            `SearchResponse`；所有引擎都不可用时返回 `success=False`。
         """
         # 策略窗口优先：ultra_short/short/medium/long = 1/3/7/30 天，
         # 并统一受 NEWS_MAX_AGE_DAYS 上限约束。
@@ -2857,6 +2884,7 @@ class SearchService:
                         self._put_cache(cache_key, limited_response)
                         return limited_response
 
+                    # 中文偏好场景：先暂存为 fallback，再择优更新 best_preferred
                     if fallback_response is None:
                         fallback_response = limited_response
 
@@ -2877,6 +2905,7 @@ class SearchService:
                             best_preferred_count = visible_preferred_count
 
                         if visible_preferred_count >= max_results:
+                            # 中文结果已经足够多，直接返回
                             self._put_cache(cache_key, limited_response)
                             return limited_response
                     else:
@@ -2898,6 +2927,7 @@ class SearchService:
                         )
 
             if prefer_chinese:
+                # 优先返回 best_preferred（中文最多），否则退回到任何一次成功的 fallback
                 best_to_return = best_preferred_response or fallback_response
                 if best_to_return is not None:
                     self._put_cache(cache_key, best_to_return)
@@ -2911,7 +2941,7 @@ class SearchService:
                     success=True,
                     error_message=None,
                 )
-            
+
             # 所有引擎都失败
             return SearchResponse(
                 query=query,
@@ -2921,50 +2951,50 @@ class SearchService:
                 error_message="所有搜索引擎都不可用或搜索失败"
             )
         finally:
+            # 释放 in-flight 预订，唤醒所有等待者
             if cache_owner and cache_event is not None:
                 self._release_cache_fill(cache_key, cache_event)
-    
+
     def search_stock_events(
         self,
         stock_code: str,
         stock_name: str,
         event_types: Optional[List[str]] = None
     ) -> SearchResponse:
-        """
-        搜索股票特定事件（年报预告、减持等）
-        
-        专门针对交易决策相关的重要事件进行搜索
-        
+        """搜索股票特定事件（年报预告、减持、业绩快报等）。
+
+        针对交易决策相关的重要事件进行定向搜索。
+
         Args:
-            stock_code: 股票代码
-            stock_name: 股票名称
-            event_types: 事件类型列表
-            
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            event_types: 事件类型列表；为空时按 A 股 / 港美股给出默认。
+
         Returns:
-            SearchResponse 对象
+            `SearchResponse`；第一个成功引擎的结果。
         """
         if event_types is None:
             if self._is_foreign_stock(stock_code):
                 event_types = ["earnings report", "insider selling", "quarterly results"]
             else:
                 event_types = ["年报预告", "减持公告", "业绩快报"]
-        
+
         # 构建针对性查询
         event_query = " OR ".join(event_types)
         query = f"{stock_name} ({event_query})"
-        
+
         logger.info(f"搜索股票事件: {stock_name}({stock_code}) - {event_types}")
-        
+
         # 依次尝试各个搜索引擎
         for provider in self._providers:
             if not provider.is_available:
                 continue
-            
+
             response = provider.search(query, max_results=5)
-            
+
             if response.success:
                 return response
-        
+
         return SearchResponse(
             query=query,
             results=[],
@@ -2972,28 +3002,28 @@ class SearchService:
             success=False,
             error_message="事件搜索失败"
         )
-    
+
     def search_comprehensive_intel(
         self,
         stock_code: str,
         stock_name: str,
         max_searches: int = 3
     ) -> Dict[str, SearchResponse]:
-        """
-        多维度情报搜索（同时使用多个引擎、多个维度）
-        
+        """多维度情报搜索（轮询引擎、按维度出 query）。
+
         搜索维度：
         1. 最新消息 - 近期新闻动态
         2. 风险排查 - 减持、处罚、利空
         3. 业绩预期 - 年报预告、业绩快报
-        
+        4. 机构分析、公告、行业（额外补充维度）
+
         Args:
-            stock_code: 股票代码
-            stock_name: 股票名称
-            max_searches: 最大搜索次数
-            
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            max_searches: 最大搜索次数。
+
         Returns:
-            {维度名称: SearchResponse} 字典
+            `{维度名称: SearchResponse}` 字典；未命中的维度不会出现在结果中。
         """
         results = {}
         search_count = 0
@@ -3105,7 +3135,7 @@ class SearchService:
                     'strict_freshness': False,
                 },
             ]
-        
+
         search_days = self._effective_news_window_days()
         target_per_dimension = 3
         provider_max_results = self._provider_request_size(target_per_dimension)
@@ -3123,22 +3153,22 @@ class SearchService:
             target_per_dimension,
             provider_max_results,
         )
-        
+
         # 轮流使用不同的搜索引擎
         provider_index = 0
-        
+
         for dim in search_dimensions:
             if search_count >= max_searches:
                 break
-            
+
             # 选择搜索引擎（轮流使用）
             available_providers = [p for p in self._providers if p.is_available]
             if not available_providers:
                 break
-            
+
             provider = available_providers[provider_index % len(available_providers)]
             provider_index += 1
-            
+
             logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
 
             if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
@@ -3168,7 +3198,7 @@ class SearchService:
                 )
             results[dim['name']] = filtered_response
             search_count += 1
-            
+
             if response.success:
                 logger.info(
                     "[情报搜索] %s: 原始=%s条, 过滤后=%s条",
@@ -3178,25 +3208,24 @@ class SearchService:
                 )
             else:
                 logger.warning(f"[情报搜索] {dim['desc']}: 搜索失败 - {response.error_message}")
-            
+
             # 短暂延迟避免请求过快
             time.sleep(0.5)
-        
+
         return results
-    
+
     def format_intel_report(self, intel_results: Dict[str, SearchResponse], stock_name: str) -> str:
-        """
-        格式化情报搜索结果为报告
-        
+        """把多维度情报搜索结果格式化为可读的文本报告。
+
         Args:
-            intel_results: 多维度搜索结果
-            stock_name: 股票名称
-            
+            intel_results: 维度名到 `SearchResponse` 的映射。
+            stock_name: 股票名称（用于标题）。
+
         Returns:
-            格式化的情报报告文本
+            格式化后的报告文本。
         """
         lines = [f"【{stock_name} 情报搜索结果】"]
-        
+
         # 维度展示顺序
         display_order = ['latest_news', 'announcements', 'market_analysis', 'risk_check', 'earnings', 'industry']
 
@@ -3212,12 +3241,12 @@ class SearchService:
         for dim_name in display_order:
             if dim_name not in intel_results:
                 continue
-                
+
             resp = intel_results[dim_name]
-            
+
             # 获取维度描述
             dim_desc = dim_labels.get(dim_name, dim_name)
-            
+
             lines.append(f"\n{dim_desc} (来源: {resp.provider}):")
             if resp.success and resp.results:
                 # 增加显示条数
@@ -3229,38 +3258,37 @@ class SearchService:
                     lines.append(f"     {snippet}...")
             else:
                 lines.append("  未找到相关信息")
-        
+
         return "\n".join(lines)
-    
+
     def batch_search(
         self,
         stocks: List[Dict[str, str]],
         max_results_per_stock: int = 3,
         delay_between: float = 1.0
     ) -> Dict[str, SearchResponse]:
-        """
-        Batch search news for multiple stocks.
-        
+        """批量搜索多只股票的新闻。
+
         Args:
-            stocks: List of stocks
-            max_results_per_stock: Max results per stock
-            delay_between: Delay between searches (seconds)
-            
+            stocks: 股票列表，每项含 `code` / `name` 字段。
+            max_results_per_stock: 每只股票的最大结果数。
+            delay_between: 每只股票之间的延迟（秒）。
+
         Returns:
-            Dict of results
+            `{stock_code: SearchResponse}` 字典。
         """
         results = {}
-        
+
         for i, stock in enumerate(stocks):
             if i > 0:
                 time.sleep(delay_between)
-            
+
             code = stock.get('code', '')
             name = stock.get('name', '')
-            
+
             response = self.search_stock_news(code, name, max_results_per_stock)
             results[code] = response
-        
+
         return results
 
     def search_stock_price_fallback(
@@ -3270,25 +3298,24 @@ class SearchService:
         max_attempts: int = 3,
         max_results: int = 5
     ) -> SearchResponse:
-        """
-        Enhance search when data sources fail.
-        
-        When all data sources (efinance, akshare, tushare, baostock, etc.) fail to get
-        stock data, use search engines to find stock trends and price info as supplemental data for AI analysis.
-        
-        Strategy:
-        1. Search using multiple keyword templates
-        2. Try all available search engines for each keyword
-        3. Aggregate and deduplicate results
-        
+        """数据源全挂时使用的“股价/走势兜底”增强搜索。
+
+        当 efinance / akshare / tushare / baostock 等数据源都拿不到行情时，
+        用网络搜索结果作为 AI 分析的辅助输入。
+
+        策略：
+        1. 用多个关键词模板轮询；
+        2. 每个关键词在所有可用引擎中尝试，命中即停；
+        3. 跨引擎去重，汇总后截取前 max_results 条。
+
         Args:
-            stock_code: Stock Code
-            stock_name: Stock Name
-            max_attempts: Max search attempts (using different keywords)
-            max_results: Max results to return
-            
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            max_attempts: 使用的关键词模板数（最多 = 模板总数）。
+            max_results: 最终返回的最大条数。
+
         Returns:
-            SearchResponse object with aggregated results
+            汇总后的 `SearchResponse`。
         """
 
         if not self.is_available:
@@ -3299,60 +3326,60 @@ class SearchService:
                 success=False,
                 error_message="未配置搜索能力"
             )
-        
+
         logger.info(f"[增强搜索] 数据源失败，启动增强搜索: {stock_name}({stock_code})")
-        
+
         all_results = []
         seen_urls = set()
         successful_providers = []
-        
+
         # 使用多个关键词模板搜索
         is_foreign = self._is_foreign_stock(stock_code)
         keywords = self.ENHANCED_SEARCH_KEYWORDS_EN if is_foreign else self.ENHANCED_SEARCH_KEYWORDS
         for i, keyword_template in enumerate(keywords[:max_attempts]):
             query = keyword_template.format(name=stock_name, code=stock_code)
-            
+
             logger.info(f"[增强搜索] 第 {i+1}/{max_attempts} 次搜索: {query}")
-            
+
             # 依次尝试各个搜索引擎
             for provider in self._providers:
                 if not provider.is_available:
                     continue
-                
+
                 try:
                     response = provider.search(query, max_results=3)
-                    
+
                     if response.success and response.results:
                         # 去重并添加结果
                         for result in response.results:
                             if result.url not in seen_urls:
                                 seen_urls.add(result.url)
                                 all_results.append(result)
-                                
+
                         if provider.name not in successful_providers:
                             successful_providers.append(provider.name)
-                        
+
                         logger.info(f"[增强搜索] {provider.name} 返回 {len(response.results)} 条结果")
                         break  # 成功后跳到下一个关键词
                     else:
                         logger.debug(f"[增强搜索] {provider.name} 无结果或失败")
-                        
+
                 except Exception as e:
                     logger.warning(f"[增强搜索] {provider.name} 搜索异常: {e}")
                     continue
-            
+
             # 短暂延迟避免请求过快
             if i < max_attempts - 1:
                 time.sleep(0.5)
-        
+
         # 汇总结果
         if all_results:
             # 截取前 max_results 条
             final_results = all_results[:max_results]
             provider_str = ", ".join(successful_providers) if successful_providers else "None"
-            
+
             logger.info(f"[增强搜索] 完成，共获取 {len(final_results)} 条结果（来源: {provider_str}）")
-            
+
             return SearchResponse(
                 query=f"{stock_name}({stock_code}) 股价走势",
                 results=final_results,
@@ -3377,31 +3404,29 @@ class SearchService:
         include_price: bool = False,
         max_results: int = 5
     ) -> Dict[str, SearchResponse]:
-        """
-        综合搜索接口（支持新闻和股价信息）
-        
-        当 include_price=True 时，会同时搜索新闻和股价信息。
-        主要用于数据源完全失败时的兜底方案。
-        
+        """综合搜索入口：新闻 + 股价走势（可选）。
+
+        主要用于数据源全挂时的兜底方案。
+
         Args:
-            stock_code: 股票代码
-            stock_name: 股票名称
-            include_news: 是否搜索新闻
-            include_price: 是否搜索股价/走势信息
-            max_results: 每类搜索的最大结果数
-            
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            include_news: 是否搜索新闻。
+            include_price: 是否搜索股价/走势信息。
+            max_results: 每类搜索的最大结果数。
+
         Returns:
-            {'news': SearchResponse, 'price': SearchResponse} 字典
+            `{'news': SearchResponse, 'price': SearchResponse}` 字典（按需）。
         """
         results = {}
-        
+
         if include_news:
             results['news'] = self.search_stock_news(
-                stock_code, 
-                stock_name, 
+                stock_code,
+                stock_name,
                 max_results=max_results
             )
-        
+
         if include_price:
             results['price'] = self.search_stock_price_fallback(
                 stock_code,
@@ -3409,34 +3434,33 @@ class SearchService:
                 max_attempts=3,
                 max_results=max_results
             )
-        
+
         return results
 
     def format_price_search_context(self, response: SearchResponse) -> str:
-        """
-        将股价搜索结果格式化为 AI 分析上下文
-        
+        """把股价搜索结果格式化为可直接喂给 AI 的上下文文本。
+
         Args:
-            response: 搜索响应对象
-            
+            response: 股价搜索响应。
+
         Returns:
-            格式化的文本，可直接用于 AI 分析
+            格式化后的文本。
         """
         if not response.success or not response.results:
             return "【股价走势搜索】未找到相关信息，请以其他渠道数据为准。"
-        
+
         lines = [
             f"【股价走势搜索结果】（来源: {response.provider}）",
             "⚠️ 注意：以下信息来自网络搜索，仅供参考，可能存在延迟或不准确。",
             ""
         ]
-        
+
         for i, result in enumerate(response.results, 1):
             date_str = f" [{result.published_date}]" if result.published_date else ""
             lines.append(f"{i}. 【{result.source}】{result.title}{date_str}")
             lines.append(f"   {result.snippet[:200]}...")
             lines.append("")
-        
+
         return "\n".join(lines)
 
 
@@ -3446,15 +3470,15 @@ _search_service_lock = threading.Lock()
 
 
 def get_search_service() -> SearchService:
-    """获取搜索服务单例"""
+    """获取搜索服务的全局单例（线程安全的双重检查锁）。"""
     global _search_service
-    
+
     if _search_service is None:
         with _search_service_lock:
             if _search_service is None:
                 from src.config import get_config
                 config = get_config()
-                
+
                 _search_service = SearchService(
                     bocha_keys=config.bocha_api_keys,
                     tavily_keys=config.tavily_api_keys,
@@ -3467,12 +3491,12 @@ def get_search_service() -> SearchService:
                     news_max_age_days=config.news_max_age_days,
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                 )
-    
+
     return _search_service
 
 
 def reset_search_service() -> None:
-    """重置搜索服务（用于测试）"""
+    """重置搜索服务单例（主要用于测试场景）。"""
     global _search_service
     with _search_service_lock:
         _search_service = None

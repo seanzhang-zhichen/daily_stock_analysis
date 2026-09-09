@@ -40,9 +40,9 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 
-# ETF code prefixes by exchange
-# Shanghai: 51xxxx, 52xxxx, 56xxxx, 58xxxx
-# Shenzhen: 15xxxx, 16xxxx, 18xxxx
+# 各交易所 ETF 代码前缀
+# 上交所：51xxxx、52xxxx、56xxxx、58xxxx
+# 深交所：15xxxx、16xxxx、18xxxx
 _ETF_SH_PREFIXES = ('51', '52', '56', '58')
 _ETF_SZ_PREFIXES = ('15', '16', '18')
 _ETF_ALL_PREFIXES = _ETF_SH_PREFIXES + _ETF_SZ_PREFIXES
@@ -50,11 +50,11 @@ _ETF_ALL_PREFIXES = _ETF_SH_PREFIXES + _ETF_SZ_PREFIXES
 
 def _is_etf_code(stock_code: str) -> bool:
     """
-    Check if the code is an ETF fund code.
+    判断代码是否为 ETF 基金代码。
 
-    ETF code ranges:
-    - Shanghai ETF: 51xxxx, 52xxxx, 56xxxx, 58xxxx
-    - Shenzhen ETF: 15xxxx, 16xxxx, 18xxxx
+    ETF 代码区间：
+    - 上交所 ETF：51xxxx、52xxxx、56xxxx、58xxxx
+    - 深交所 ETF：15xxxx、16xxxx、18xxxx
     """
     code = stock_code.strip().split('.')[0]
     return code.startswith(_ETF_ALL_PREFIXES) and len(code) == 6
@@ -73,7 +73,7 @@ def _is_us_code(stock_code: str) -> bool:
 
 
 def _resolve_tushare_http_url() -> Optional[str]:
-    """Return a validated custom Tushare-compatible endpoint, if configured."""
+    """返回经过校验的自定义 Tushare 兼容端点（若已配置）。"""
     raw = os.getenv("TUSHARE_HTTP_URL")
     if raw is None or not raw.strip():
         return None
@@ -84,16 +84,16 @@ def _resolve_tushare_http_url() -> Optional[str]:
 
 
 class _TushareHttpClient:
-    """Lightweight Tushare Pro client that does not require the tushare SDK."""
+    """不依赖 tushare SDK 的轻量级 Tushare Pro 客户端。"""
 
     def __init__(self, token: str, timeout: int = 30, api_url: str = "http://api.tushare.pro") -> None:
-        """Store connection options for direct Tushare HTTP calls."""
+        """保存用于直接发起 Tushare HTTP 调用的连接选项。"""
         self._token = token
         self._timeout = timeout
         self._api_url = api_url
 
     def query(self, api_name: str, fields: str = "", **kwargs) -> pd.DataFrame:
-        """Call a Tushare API endpoint and normalize the response into a dataframe."""
+        """调用 Tushare API 端点，并将响应归一化为 DataFrame。"""
         req_params = {
             "api_name": api_name,
             "token": self._token,
@@ -114,12 +114,12 @@ class _TushareHttpClient:
         return pd.DataFrame(items, columns=columns)
 
     def __getattr__(self, api_name: str):
-        """Expose SDK-like endpoint methods by routing unknown attributes to ``query``."""
+        """将未知属性路由到 ``query``，从而暴露类似 SDK 的端点方法。"""
         if api_name.startswith("_"):
             raise AttributeError(api_name)
 
         def caller(**kwargs) -> pd.DataFrame:
-            """Forward dynamic SDK-style calls to the generic query method."""
+            """将动态的 SDK 风格调用转发给通用 query 方法。"""
             return self.query(api_name, **kwargs)
 
         return caller
@@ -188,10 +188,10 @@ class TushareFetcher(BaseFetcher):
 
     def _build_api_client(self, token: str) -> _TushareHttpClient:
         """
-        Build a lightweight Tushare Pro client over direct HTTP requests.
+        基于直接 HTTP 请求构建轻量级 Tushare Pro 客户端。
 
-        The project already normalizes all Pro calls through the same request
-        contract, so we do not need the official tushare SDK during runtime.
+        项目已通过统一的请求契约规范化所有 Pro 调用，因此运行时无需依赖官方
+        tushare SDK。
         """
         api_url = _resolve_tushare_http_url()
         if api_url:
@@ -329,7 +329,7 @@ class TushareFetcher(BaseFetcher):
 
     @staticmethod
     def _detect_exchange_hint(stock_code: str) -> Optional[str]:
-        """Return SH/SZ/BJ when the raw user input carries an explicit exchange hint."""
+        """当原始用户输入携带显式交易所提示时返回 SH/SZ/BJ。"""
         upper = (stock_code or "").strip().upper()
         if upper.startswith(("SH", "SS")) or upper.endswith((".SH", ".SS")):
             return "SH"
@@ -341,7 +341,7 @@ class TushareFetcher(BaseFetcher):
 
     @classmethod
     def _get_legacy_realtime_symbol(cls, stock_code: str) -> str:
-        """Build the legacy tushare symbol while preserving explicit SH/SZ hints."""
+        """在保留显式 SH/SZ 提示的前提下构造旧版 tushare 代码。"""
         code = normalize_stock_code(stock_code)
         exchange_hint = cls._detect_exchange_hint(stock_code)
 
@@ -375,7 +375,7 @@ class TushareFetcher(BaseFetcher):
         """
         raw_code = stock_code.strip()
         
-        # Already has suffix
+        # 已带后缀
         if '.' in raw_code:
             ts_code = raw_code.upper()
             if ts_code.endswith('.SS'):
@@ -399,19 +399,19 @@ class TushareFetcher(BaseFetcher):
         if exchange_hint == "BJ":
             return f"{code}.BJ"
 
-        # ETF: determine exchange by prefix
+        # ETF：按前缀判断交易所
         if code.startswith(_ETF_SH_PREFIXES) and len(code) == 6:
             return f"{code}.SH"
         if code.startswith(_ETF_SZ_PREFIXES) and len(code) == 6:
             return f"{code}.SZ"
         
-        # BSE (Beijing Stock Exchange): 8xxxxx, 4xxxxx, 920xxx
+        # 北交所：8xxxxx、4xxxxx、920xxx
         if is_bse_code(code):
             return f"{code}.BJ"
         
-        # Regular stocks
-        # Shanghai: 600xxx, 601xxx, 603xxx, 688xxx (STAR Market)
-        # Shenzhen: 000xxx, 002xxx, 300xxx (ChiNext)
+        # 普通股票
+        # 上交所：600xxx、601xxx、603xxx、688xxx（科创板）
+        # 深交所：000xxx、002xxx、300xxx（创业板）
         if code.startswith(('600', '601', '603', '688')):
             return f"{code}.SH"
         elif code.startswith(('000', '002', '300')):
@@ -466,11 +466,11 @@ class TushareFetcher(BaseFetcher):
         if self._api is None:
             raise DataFetchError("Tushare API 未初始化，请检查 Token 配置")
         
-        # US stocks not supported
+        # 不支持美股
         if _is_us_code(stock_code):
             raise DataFetchError(f"TushareFetcher 不支持美股 {stock_code}，请使用 AkshareFetcher 或 YfinanceFetcher")
         
-        # Rate-limit check
+        # 速率限制检查
         self._check_rate_limit()
         
         is_hk = _is_hk_market(stock_code)
@@ -483,7 +483,7 @@ class TushareFetcher(BaseFetcher):
             ts_code = self._convert_stock_code(stock_code)
             api_name = "fund_daily" if is_etf else "daily"
         
-        # Convert date format (Tushare requires YYYYMMDD)
+        # 转换日期格式（Tushare 要求 YYYYMMDD）
         ts_start = start_date.replace('-', '')
         ts_end = end_date.replace('-', '')
         
@@ -500,14 +500,14 @@ class TushareFetcher(BaseFetcher):
                     end_date=ts_end,
                 )
             elif is_etf:
-                # ETF uses fund_daily interface
+                # ETF 使用 fund_daily 接口
                 df = self._api.fund_daily(
                     ts_code=ts_code,
                     start_date=ts_start,
                     end_date=ts_end,
                 )
             else:
-                # Regular A-share stocks use daily interface
+                # 普通 A 股使用 daily 接口
                 df = self._api.daily(
                     ts_code=ts_code,
                     start_date=ts_start,
@@ -696,7 +696,7 @@ class TushareFetcher(BaseFetcher):
         if self._api is None:
             return None
 
-        # HK stocks not supported by Tushare
+        # Tushare 不支持港股实时行情
         if _is_hk_market(stock_code):
             logger.debug(f"TushareFetcher 跳过港股实时行情 {stock_code}")
             return None
@@ -1075,7 +1075,7 @@ class TushareFetcher(BaseFetcher):
         注意：每个接口的行业分类和板块定义不同，会导致结果两者不一致
         """
         def _get_rank_top_n(df: pd.DataFrame, change_col: str, industry_name: str, n: int) -> Tuple[list, list]:
-            """Return top and bottom sector rankings after coercing change values."""
+            """将涨跌幅列转为数值后，返回涨幅前 n 与跌幅前 n 的板块排行。"""
             df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
             df = df.dropna(subset=[change_col])
 
@@ -1209,10 +1209,14 @@ class TushareFetcher(BaseFetcher):
 
     def compute_cyq_metrics(self, df: pd.DataFrame, current_price: float) -> dict:
         """
-        基于 Tushare 的筹码分布明细表 (cyq_chips) 计算常用筹码指标  
-        :param df: 包含 'price' 和 'percent' 列的 DataFrame  
-        :param current_price: 股票当天的当前价/收盘价 (用于计算获利比例)  
-        :return: 包含各项筹码指标的字典  
+        基于 Tushare 的筹码分布明细表 (cyq_chips) 计算常用筹码指标。
+
+        Args:
+            df: 包含 'price' 和 'percent' 列的 DataFrame。
+            current_price: 股票当天的当前价/收盘价（用于计算获利比例）。
+
+        Returns:
+            包含各项筹码指标的字典。
         """
         import numpy as np
         # 1. 确保按价格从小到大排序 (Tushare 返回的数据往往是纯倒序的)
@@ -1236,7 +1240,7 @@ class TushareFetcher(BaseFetcher):
 
         # --- 辅助函数：求指定累积比例处的价格 ---
         def get_percentile_price(target_pct):
-            """Return the price at the first cumulative chip ratio meeting the target."""
+            """返回累计筹码占比首次达到目标值时的价格。"""
             # 寻找累积求和第一次大于等于目标百分比的行索引
             idx = df_sorted['cumsum'].searchsorted(target_pct)
             idx = min(idx, len(df_sorted) - 1) # 防止越界

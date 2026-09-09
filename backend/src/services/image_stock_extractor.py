@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class _LiteLLMPlaceholder:
-    """Provide a patchable placeholder before litellm is imported."""
+    """litellm 尚未导入前的可打补丁占位对象。"""
 
     completion = None
 
@@ -73,7 +73,7 @@ _IMAGE_SIGNATURES = {
 
 
 def _verify_image_magic_bytes(image_bytes: bytes, mime_type: str) -> None:
-    """Verify actual file content matches declared MIME type (rejects forged Content-Type)."""
+    """校验文件真实内容与声明的 MIME 一致（拒绝伪造的 Content-Type）。"""
     if len(image_bytes) < 12:
         raise ValueError("图片文件过小或损坏")
     if mime_type not in _IMAGE_SIGNATURES:
@@ -89,14 +89,18 @@ def _verify_image_magic_bytes(image_bytes: bytes, mime_type: str) -> None:
 
 
 def _normalize_code(raw: str) -> Optional[str]:
-    """Normalize and validate a single stock code. A-shares & HK: 5-6 digits; US: 1-5 letters."""
+    """归一化并校验单个股票代码；A股/港股为 5-6 位数字，美股为 1-5 个字母。
+
+    Returns:
+        归一化后的大写代码；无法识别时返回 None。
+    """
     s = raw.strip().upper()
     if not s:
         return None
-    # A-shares & HK: 5-6 digit codes (600519, 00700, 09988)
+    # A股与港股：5-6 位数字（600519、00700、09988）
     if s.isdigit() and len(s) in (5, 6):
         return s
-    # US stocks: 1-5 letters, optionally with . (e.g. BRK.B)
+    # 美股：1-5 个字母，可选单点后缀（如 BRK.B）
     if re.match(r"^[A-Z]{1,5}(\.[A-Z])?$", s):
         return s
     # 尝试去除 SH/SZ 后缀
@@ -147,9 +151,8 @@ def _parse_codes_from_text(text: str) -> List[str]:
 
 
 def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
-    """
-    Parse LLM response into items (code, name, confidence).
-    Tries new format first, fallback to legacy codes-only format.
+    """从 LLM 响应文本解析 (code, name?, confidence) 三元组列表。
+    优先尝试新格式（对象数组），失败时回退到仅 code 的旧格式。
     """
     cleaned = text.strip()
     for start in ("```json", "```"):
@@ -200,7 +203,7 @@ def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
         if result:
             return result
 
-    # Fallback: legacy format (codes only)
+    # 兜底：回退到只解析 code 的旧格式
     codes = _parse_codes_from_text(text)
     if not codes:
         logger.info("[ImageExtractor] 无法解析为结构化 items，且 legacy code 提取为空")
@@ -208,12 +211,12 @@ def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
 
 
 def _resolve_vision_model() -> str:
-    """Determine the litellm model to use for vision."""
+    """确定用于视觉识别的 litellm 模型名；完全无可用配置时返回空串。"""
     cfg = get_config()
-    # Prefer explicit vision model, then OPENAI_VISION_MODEL alias, then primary litellm model
+    # 优先级：显式 vision_model → OPENAI_VISION_MODEL 别名 → 主 litellm 模型
     model = (cfg.vision_model or cfg.openai_vision_model or cfg.litellm_model or "").strip()
     if not model:
-        # Fallback: infer from available keys
+        # 兜底：根据已配置的 API Key 反推可用的视觉模型
         if cfg.gemini_api_keys:
             model_name = cfg.gemini_model or "gemini-3.1-pro-preview"
             model = model_name if "/" in model_name else f"gemini/{model_name}"
@@ -227,7 +230,7 @@ def _resolve_vision_model() -> str:
 
 
 def _get_api_keys_for_model(model: str, cfg: Config) -> List[str]:
-    """Return available API keys for the given litellm model."""
+    """返回与该 litellm 模型匹配的可用 API Key 列表。"""
     if model.startswith("gemini/") or model.startswith("vertex_ai/"):
         return [k for k in cfg.gemini_api_keys if k and len(k) >= 8]
     if model.startswith("anthropic/"):
@@ -236,7 +239,7 @@ def _get_api_keys_for_model(model: str, cfg: Config) -> List[str]:
 
 
 def _get_litellm_deployments_for_model(model: str, cfg: Config) -> List[dict]:
-    """Return matching LiteLLM channel/YAML deployments for a model."""
+    """返回与给定模型匹配的 LiteLLM 渠道 / YAML 部署配置列表。"""
     deployments: List[dict] = []
     for entry in cfg.llm_model_list or []:
         if not isinstance(entry, dict):
@@ -257,7 +260,16 @@ def _get_litellm_deployments_for_model(model: str, cfg: Config) -> List[dict]:
 
 
 def _call_litellm_vision(image_b64: str, mime_type: str, api_key: Optional[str] = None) -> str:
-    """Extract stock codes from an image using litellm (all providers via OpenAI vision format)."""
+    """调用 litellm（OpenAI 视觉消息格式）从图片中提取股票代码，返回原始响应文本。
+
+    Args:
+        image_b64: Base64 编码的图片内容。
+        mime_type: 已校验过的真实 MIME 类型。
+        api_key: 指定使用的 API Key；为空时在可用 key 中随机选一个。
+
+    Raises:
+        ValueError: 未配置视觉模型 / 找不到可用 API Key / 响应内容为空。
+    """
     global litellm
     cfg = get_config()
     model = _resolve_vision_model()
@@ -265,6 +277,7 @@ def _call_litellm_vision(image_b64: str, mime_type: str, api_key: Optional[str] 
         raise ValueError("未配置 Vision API。请设置 LITELLM_MODEL 或相关 API Key。")
 
     deployments = _get_litellm_deployments_for_model(model, cfg)
+    # 指定了 api_key 时收敛到使用该 key 的 deployment，保证重试换 key 真正生效
     if deployments and api_key:
         keyed_deployments = [d for d in deployments if d.get("api_key") == api_key]
         if keyed_deployments:
@@ -348,6 +361,7 @@ def extract_stock_codes_from_image(
     last_error: Optional[Exception] = None
     for attempt in range(3):
         try:
+            # 每次尝试都随机换一个 key，规避单 key 限流
             key = random.choice(keys) if keys else None
             raw = _call_litellm_vision(image_b64, mime_type, api_key=key)
             logger.debug("[ImageExtractor] raw LLM response:\n%s", raw)
@@ -360,6 +374,7 @@ def extract_stock_codes_from_image(
         except Exception as e:
             last_error = e
             if attempt < 2:
+                # 指数退避：1s / 2s，给限流与瞬时网络抖动留出恢复时间
                 delay = 2 ** attempt
                 logger.warning(f"[ImageExtractor] 尝试 {attempt + 1}/3 失败，{delay}s 后重试: {e}")
                 time.sleep(delay)

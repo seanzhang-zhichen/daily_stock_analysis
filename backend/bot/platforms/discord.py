@@ -30,7 +30,7 @@ class DiscordPlatform(BotPlatform):
     """Discord 平台适配器"""
 
     def __init__(self):
-        """Load Discord interaction verification settings from configuration."""
+        """从配置加载 Discord 交互验证设置。"""
         from src.config import get_config
 
         config = get_config()
@@ -228,12 +228,11 @@ class DiscordPlatform(BotPlatform):
     DISCORD_MAX_CONTENT_LENGTH = 2000
 
     def send_followup(self, response: Any, message: BotMessage) -> bool:
-        """Edit the deferred interaction placeholder with the real result.
+        """用真实结果编辑延迟交互占位消息。
 
-        Uses ``PATCH /webhooks/{application_id}/{token}/messages/@original``
-        to update the original deferred message, then sends additional
-        follow-up messages via ``POST`` if the content exceeds Discord's
-        2 000-character limit.
+        通过 ``PATCH /webhooks/{application_id}/{token}/messages/@original``
+        更新最初的延迟消息；若内容超过 Discord 2000 字符上限，
+        再通过 ``POST`` 追加发送后续消息。
         """
         raw = message.raw_data
         application_id = raw.get("application_id", "")
@@ -265,7 +264,7 @@ class DiscordPlatform(BotPlatform):
         for idx, chunk in enumerate(chunks):
             try:
                 if idx == 0:
-                    # PATCH the original deferred message
+                    # PATCH 原 deferred 占位消息
                     resp = requests.patch(
                         f"{base_url}/messages/@original",
                         json={"content": chunk},
@@ -326,7 +325,7 @@ class DiscordPlatform(BotPlatform):
         return None
 
     def _build_command_content(self, interaction_data: Dict[str, Any]) -> str:
-        """Reconstruct slash-command text from Discord interaction payload data."""
+        """从 Discord 交互载荷中重建斜杠命令文本。"""
         command_name = str(interaction_data.get("name", "")).strip()
         if not command_name:
             return ""
@@ -336,7 +335,7 @@ class DiscordPlatform(BotPlatform):
         return " ".join(parts).strip()
 
     def _append_option_parts(self, parts: List[str], options: Any) -> None:
-        """Append nested Discord slash-command option values to command parts."""
+        """把嵌套的 Discord 斜杠命令选项值追加到命令片段列表。"""
         if not isinstance(options, list):
             return
 
@@ -368,7 +367,7 @@ class DiscordPlatform(BotPlatform):
                 parts.append(str(value))
 
     def _parse_timestamp(self, value: Any) -> datetime:
-        """Parse Discord ISO timestamps, falling back to current time on bad input."""
+        """解析 Discord ISO 时间戳，输入非法时回退为当前时间。"""
         if not value:
             return datetime.now()
 

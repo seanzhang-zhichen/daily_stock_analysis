@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Low-sensitive DecisionSignal summaries for notifications and risk views."""
+"""用于通知与风险视图的低敏感度 DecisionSignal 摘要。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ SUMMARY_FIELDS = (
 
 
 def summarize_decision_signal(item: Any) -> Optional[Dict[str, Any]]:
-    """Return a low-sensitive summary from a serialized DecisionSignal item."""
+    """从序列化后的 DecisionSignal 条目生成低敏感度摘要。"""
 
     if not isinstance(item, dict):
         return None
@@ -42,7 +42,7 @@ def summarize_decision_signal(item: Any) -> Optional[Dict[str, Any]]:
 
 
 def format_decision_signal_excerpt(summary: Any, report_language: str = "zh") -> str:
-    """Format a compact public DecisionSignal excerpt for notification text."""
+    """把摘要格式化为通知文案里紧凑的公开 DecisionSignal 摘录。"""
 
     if not isinstance(summary, dict) or not summary:
         return ""
@@ -91,12 +91,14 @@ def format_decision_signal_excerpt(summary: Any, report_language: str = "zh") ->
 
 
 def _public_scalar(value: Any, *, max_length: int) -> str:
+    """把标量值安全清理后按最大长度截断。"""
     if value in (None, ""):
         return ""
     return sanitize_decision_signal_text(value)[:max_length]
 
 
 def _public_text(value: Any, *, max_length: Optional[int]) -> str:
+    """把任意形态的公开文本（标量/列表/字典）安全清理后按长度截断。"""
     if value in (None, "", [], {}):
         return ""
     if isinstance(value, (list, tuple)):

@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, delete, desc, func, or_, select
 
-from src.storage.models.conversation import ConversationMessage
+from src.storage.models.conversation import ConversationMessage, ConversationSessionState, ConversationSummary
+import json
 
 
 class ConversationMixin:
@@ -21,9 +22,9 @@ class ConversationMixin:
         user_id: Optional[int] = None,
     ) -> None:
         """
-        保存 Agent 对话消息
+        保存 Agent 对话消息。
 
-        ``user_id`` 由 endpoint / 调用方按当前 AppUser 注入; Bot / CLI 路径可为空。
+        ``user_id`` 由 endpoint / 调用方按当前 ``AppUser`` 注入；Bot / CLI 路径可为空。
         """
         with self.session_scope() as session:
             msg = ConversationMessage(
@@ -34,21 +35,100 @@ class ConversationMixin:
             )
             session.add(msg)
 
+    def save_conversation_session_selected_skill_ids(self, session_id: str, skill_ids: List[str]) -> None:
+        """持久化指定聊天会话显式选中的 skill 列表。"""
+        with self.session_scope() as session:
+            row = session.get(ConversationSessionState, session_id)
+            payload = json.dumps(list(skill_ids), ensure_ascii=False)
+            if row is None:
+                session.add(ConversationSessionState(session_id=session_id, selected_skill_ids_json=payload))
+            else:
+                row.selected_skill_ids_json = payload
+
+    def get_conversation_session_selected_skill_ids(self, session_id: str) -> Optional[List[str]]:
+        """返回会话中持久化的 skill 列表；会话不存在或 JSON 损坏返回 ``None``。"""
+        with self.session_scope() as session:
+            row = session.get(ConversationSessionState, session_id)
+            if row is None:
+                return None
+            try:
+                value = json.loads(row.selected_skill_ids_json)
+            except (TypeError, ValueError):
+                return None
+            return value if isinstance(value, list) else None
+
     def get_conversation_history(self, session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """
-        获取 Agent 对话历史
-        """
+        """获取指定会话的 Agent 对话历史（按时间正序）。"""
         with self.session_scope() as session:
             stmt = select(ConversationMessage).filter(
                 ConversationMessage.session_id == session_id
             ).order_by(ConversationMessage.created_at.desc()).limit(limit)
             messages = session.execute(stmt).scalars().all()
 
-            # 倒序返回，保证时间顺序
+            # 倒序查询 + 末尾反转, 保证返回按时间正序排列
             return [{"role": msg.role, "content": msg.content} for msg in reversed(messages)]
 
+    def get_visible_conversation_messages(
+        self, session_id: str, limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """按时间正序返回 user / assistant 角色的对话消息。"""
+        with self.session_scope() as session:
+            stmt = select(ConversationMessage).where(
+                ConversationMessage.session_id == session_id,
+                ConversationMessage.role.in_(("user", "assistant")),
+            )
+            if limit is None:
+                stmt = stmt.order_by(ConversationMessage.id)
+            else:
+                stmt = stmt.order_by(ConversationMessage.id.desc()).limit(limit)
+            messages = session.execute(stmt).scalars().all()
+            if limit is not None:
+                messages.reverse()
+            return [
+                {"id": msg.id, "role": msg.role, "content": msg.content,
+                 "created_at": msg.created_at}
+                for msg in messages if msg.content
+            ]
+
+    def get_conversation_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """返回会话的滚动上下文摘要；不存在则返回 ``None``。"""
+        with self.session_scope() as session:
+            row = session.execute(
+                select(ConversationSummary).where(ConversationSummary.session_id == session_id)
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return {
+                "summary": row.summary,
+                "covered_message_id": row.covered_message_id,
+                "source_message_count": row.source_message_count,
+                "estimated_tokens": row.estimated_tokens,
+            }
+
+    def upsert_conversation_summary(
+        self, *, session_id: str, summary: str, covered_message_id: int,
+        source_message_count: int, estimated_tokens: int,
+    ) -> None:
+        """新建或覆盖指定会话的滚动上下文摘要。"""
+        with self.session_scope() as session:
+            row = session.execute(
+                select(ConversationSummary).where(ConversationSummary.session_id == session_id)
+            ).scalar_one_or_none()
+            if row is None:
+                session.add(ConversationSummary(
+                    session_id=session_id, summary=summary,
+                    covered_message_id=covered_message_id,
+                    source_message_count=source_message_count,
+                    estimated_tokens=estimated_tokens,
+                ))
+                return
+            row.summary = summary
+            row.covered_message_id = covered_message_id
+            row.source_message_count = source_message_count
+            row.estimated_tokens = estimated_tokens
+
     def conversation_session_exists(self, session_id: str) -> bool:
-        """Return True when at least one message exists for the given session."""
+        """当指定 ``session_id`` 下存在至少一条消息时返回 ``True``。"""
         with self.session_scope() as session:
             stmt = (
                 select(ConversationMessage.id)
@@ -65,22 +145,23 @@ class ConversationMixin:
         user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        获取聊天会话列表（从 conversation_messages 聚合）
+        获取聊天会话列表（从 ``conversation_messages`` 聚合）。
 
         Args:
-            limit: Maximum number of sessions to return.
-            session_prefix: If provided, only return sessions whose session_id
-                starts with this prefix.  Used for per-user isolation (e.g.
-                ``"telegram_12345"``).
-            extra_session_ids: Optional exact session ids to include in
-                addition to the scoped prefix.
+            limit: 返回会话的最大数量。
+            session_prefix: 若提供，仅返回 ``session_id`` 以此前缀开头的会话；
+                常用于按用户隔离（如 ``"telegram_12345"``）。
+            extra_session_ids: 在前缀过滤之外，额外精确包含的 ``session_id`` 列表。
+            user_id: To C 模式下按当前用户过滤；关闭时传 ``None``。
 
         Returns:
-            按最近活跃时间倒序的会话列表，每条包含 session_id, title, message_count, last_active
+            按最近活跃时间倒序的会话列表，每条包含 ``session_id`` / ``title`` /
+            ``message_count`` / ``last_active``。
         """
         with self.session_scope() as session:
             normalized_prefix = None
             if session_prefix:
+                # 末尾强制带 ":", 避免前缀串误匹配其他用户同名 ID
                 normalized_prefix = session_prefix if session_prefix.endswith(":") else f"{session_prefix}:"
             exact_ids = [sid for sid in (extra_session_ids or []) if sid]
 
@@ -97,6 +178,7 @@ class ConversationMixin:
             if user_id is not None:
                 conditions.append(ConversationMessage.user_id == user_id)
             elif normalized_prefix or exact_ids:
+                # 无 user_id 过滤时按前缀/精确 ID 限定作用域, 防止跨用户越权
                 prefix_conds = []
                 if normalized_prefix:
                     prefix_conds.append(ConversationMessage.session_id.startswith(normalized_prefix))
@@ -140,9 +222,7 @@ class ConversationMixin:
             return results
 
     def get_conversation_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """
-        获取单个会话的完整消息列表（用于前端恢复历史）
-        """
+        """获取单个会话的完整消息列表（按时间正序，用于前端恢复历史）。"""
         with self.session_scope() as session:
             stmt = (
                 select(ConversationMessage)
@@ -163,16 +243,22 @@ class ConversationMixin:
 
     def delete_conversation_session(self, session_id: str) -> int:
         """
-        删除指定会话的所有消息
+        删除指定会话的所有消息以及其摘要/状态行。
 
         Returns:
-            删除的消息数
+            删除的消息数。
         """
         with self.session_scope() as session:
             result = session.execute(
                 delete(ConversationMessage).where(
                     ConversationMessage.session_id == session_id
                 )
+            )
+            session.execute(
+                delete(ConversationSummary).where(ConversationSummary.session_id == session_id)
+            )
+            session.execute(
+                delete(ConversationSessionState).where(ConversationSessionState.session_id == session_id)
             )
             return result.rowcount
 

@@ -1,25 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-AgentOrchestrator — multi-agent pipeline coordinator.
+AgentOrchestrator —— 多 Agent 流水线协调器。
 
-Manages the lifecycle of specialised agents (Technical → Intel → Risk →
-Specialist → Decision) for a single stock analysis run.
+负责管理单只股票分析运行中各个专职 Agent（Technical → Intel → Risk →
+Specialist → Decision）的生命周期。
 
-Modes:
-- ``quick``   : Technical only → Decision (fastest, ~2 LLM calls)
-- ``standard``: Technical → Intel → Decision (default)
+运行模式：
+- ``quick``   : 仅 Technical → Decision（最快，约 2 次 LLM 调用）
+- ``standard``: Technical → Intel → Decision（默认）
 - ``full``    : Technical → Intel → Risk → Decision
-- ``specialist``: Technical → Intel → Risk → specialist evaluation → Decision
+- ``specialist``: Technical → Intel → Risk → 专家评估 → Decision
 
-The orchestrator:
-1. Seeds an :class:`AgentContext` with the user query and stock code
-2. Runs agents sequentially, passing the shared context
-3. Collects :class:`StageResult` from each agent
-4. Produces a unified :class:`OrchestratorResult` with the final dashboard
+协调器的职责：
+1. 用用户查询与股票代码初始化 :class:`AgentContext`
+2. 依次运行各 Agent，传递共享上下文
+3. 收集每个 Agent 的 :class:`StageResult`
+4. 汇总为统一的 :class:`OrchestratorResult` 并生成最终仪表盘
 
-Importantly, this class exposes the same ``run(task, context)`` and
-``chat(message, session_id, ...)`` interface as ``AgentExecutor`` so it
-can be a drop-in replacement via the factory.
+关键点：本类对外暴露与 ``AgentExecutor`` 相同的 ``run(task, context)`` 和
+``chat(message, session_id, ...)`` 接口，因此可以通过工厂直接替换使用。
 """
 
 from __future__ import annotations
@@ -41,6 +40,7 @@ from src.agent.protocols import (
     normalize_decision_signal,
 )
 from src.agent.runner import parse_dashboard_json
+from src.agent.skills.defaults import extract_skill_id, is_skill_agent_name
 from src.agent.tools.registry import ToolRegistry
 from src.config import AGENT_MAX_STEPS_DEFAULT
 from src.report_language import normalize_report_language
@@ -50,13 +50,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Valid orchestrator modes (ordered by cost/depth)
+# 合法的协调器运行模式（按成本/深度排序）
 VALID_MODES = ("quick", "standard", "full", "specialist")
 
 
 @dataclass
 class OrchestratorResult:
-    """Unified result from a multi-agent pipeline run."""
+    """多 Agent 流水线一次运行的统一结果。"""
 
     success: bool = False
     content: str = ""
@@ -68,14 +68,14 @@ class OrchestratorResult:
     model: str = ""
     error: Optional[str] = None
     stats: Optional[AgentRunStats] = None
+    skill_opinions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class AgentOrchestrator:
-    """Multi-agent pipeline coordinator.
+    """多 Agent 流水线协调器。
 
-    Drop-in replacement for ``AgentExecutor`` — exposes the same ``run()``
-    and ``chat()`` interface.  The factory switches between them via
-    ``AGENT_ARCH``.
+    是 ``AgentExecutor`` 的直接替代实现——暴露相同的 ``run()`` 与 ``chat()``
+    接口，工厂通过 ``AGENT_ARCH`` 在两者之间切换。
     """
 
     def __init__(
@@ -89,7 +89,7 @@ class AgentOrchestrator:
         skill_manager=None,
         config=None,
     ):
-        """Wire shared dependencies and build the selected multi-agent pipeline."""
+        """注入共享依赖并搭建所选的多 Agent 流水线。"""
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions
@@ -100,10 +100,10 @@ class AgentOrchestrator:
         self.config = config
 
     def _get_timeout_seconds(self) -> int:
-        """Return the pipeline timeout in seconds.
+        """返回流水线超时秒数。
 
-        ``0`` means disabled. The timeout is a cooperative budget for the
-        whole pipeline rather than a hard interruption of an in-flight stage.
+        ``0`` 表示禁用。该超时是整个流水线的协作式预算，而非对进行中阶段的
+        硬性中断。
         """
         raw_value = getattr(self.config, "agent_orchestrator_timeout_s", 0)
         try:
@@ -121,7 +121,7 @@ class AgentOrchestrator:
         ctx: Optional[AgentContext] = None,
         parse_dashboard: bool = True,
     ) -> OrchestratorResult:
-        """Build a standard timeout result payload."""
+        """构建标准的超时结果载荷。"""
         stats.total_duration_s = round(elapsed_s, 2)
         stats.models_used = list(dict.fromkeys(models_used))
         error = f"Pipeline timed out after {elapsed_s:.2f}s (limit: {timeout_s}s)"
@@ -166,7 +166,7 @@ class AgentOrchestrator:
         ctx: Optional[AgentContext] = None,
         parse_dashboard: bool = True,
     ) -> OrchestratorResult:
-        """Build a result for budget-insufficient stage skip (non-timeout semantics)."""
+        """为预算不足导致的阶段跳过构建结果（区别于超时语义）。"""
         stats.total_duration_s = round(elapsed_s, 2)
         stats.models_used = list(dict.fromkeys(models_used))
         dashboard = None
@@ -199,31 +199,28 @@ class AgentOrchestrator:
 
 
     def _prepare_agent(self, agent: Any) -> Any:
-        """Apply orchestrator-level runtime settings to a child agent.
+        """把协调器级别的运行时设置应用到子 Agent。
 
-        When the orchestrator-level ``max_steps`` equals the default
-        (``AGENT_MAX_STEPS_DEFAULT``),
-        each agent keeps its own per-agent limit — this prevents inflating
-        a decision agent (designed for 3 steps) to 10 steps.
+        当协调器级 ``max_steps`` 等于默认值（``AGENT_MAX_STEPS_DEFAULT``）时，
+        每个 Agent 保留各自的单 Agent 步数上限——这避免把原本设计为 3 步的
+        决策 Agent 放大到 10 步。
 
-        When the user **explicitly** raises the global limit above the
-        default, all agents adopt the global value so the user's intent to
-        allow more steps is respected.
+        当用户**显式**把全局上限提高到默认值之上时，所有 Agent 采用该全局值，
+        以尊重用户允许更多步数的意图。
 
-        When the user **lowers** the global limit below an agent's default,
-        the agent is capped at the global value.
+        当用户把全局上限**降低**到某 Agent 默认值之下时，该 Agent 被全局值封顶。
         """
         if hasattr(agent, "max_steps"):
             if self.max_steps > AGENT_MAX_STEPS_DEFAULT:
-                # User explicitly raised the limit — apply to all agents.
+                # 用户显式提高了上限——应用到所有 Agent。
                 agent.max_steps = self.max_steps
             else:
-                # Default or lowered — keep per-agent limit as ceiling.
+                # 默认或降低——保留单 Agent 上限作为封顶值。
                 agent.max_steps = min(agent.max_steps, self.max_steps)
         return agent
 
     def _callable_accepts_timeout_kwarg(self, func: Any) -> Optional[bool]:
-        """Return whether a callable accepts ``timeout_seconds`` when inspectable."""
+        """当可被检视时，判断可调用对象是否接受 ``timeout_seconds`` 参数。"""
         if not callable(func):
             return None
         try:
@@ -239,7 +236,7 @@ class AgentOrchestrator:
         )
 
     def _agent_run_accepts_timeout(self, run_callable: Any) -> bool:
-        """Best-effort compatibility check for legacy test doubles / custom agents."""
+        """对旧版测试替身/自定义 Agent 做尽力而为的兼容性检查。"""
         side_effect = getattr(run_callable, "side_effect", None)
         accepts_timeout = self._callable_accepts_timeout_kwarg(side_effect)
         if accepts_timeout is not None:
@@ -258,7 +255,7 @@ class AgentOrchestrator:
         progress_callback: Optional[Callable] = None,
         timeout_seconds: Optional[float] = None,
     ) -> StageResult:
-        """Run a stage agent while preserving compatibility with older call signatures."""
+        """运行阶段 Agent，同时兼容旧的调用签名。"""
         run_kwargs = {"progress_callback": progress_callback}
         if (
             timeout_seconds is not None
@@ -269,13 +266,13 @@ class AgentOrchestrator:
         return agent.run(ctx, **run_kwargs)
 
     # -----------------------------------------------------------------
-    # Public interface (mirrors AgentExecutor)
+    # 公共接口（镜像 AgentExecutor）
     # -----------------------------------------------------------------
 
     def run(self, task: str, context: Optional[Dict[str, Any]] = None) -> "AgentResult":
-        """Run the multi-agent pipeline for a dashboard analysis.
+        """运行多 Agent 流水线，生成仪表盘分析。
 
-        Returns an ``AgentResult`` (same type as ``AgentExecutor.run``).
+        返回 ``AgentResult``（与 ``AgentExecutor.run`` 类型一致）。
         """
         from src.agent.executor import AgentResult
 
@@ -293,6 +290,7 @@ class AgentOrchestrator:
             provider=orch_result.provider,
             model=orch_result.model,
             error=orch_result.error,
+            skill_opinions=orch_result.skill_opinions,
         )
 
     def chat(
@@ -302,11 +300,10 @@ class AgentOrchestrator:
         progress_callback: Optional[Callable] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> "AgentResult":
-        """Run the pipeline in chat mode (free-form answer, no dashboard parse).
+        """以聊天模式运行流水线（自由回答，不做仪表盘解析）。
 
-        Conversation history is managed externally by the caller (via
-        ``conversation_manager``); the orchestrator focuses on multi-agent
-        coordination.
+        对话历史由调用方（通过 ``conversation_manager``）在外部管理；
+        协调器只专注于多 Agent 协同。
         """
         from src.agent.executor import AgentResult
         from src.agent.conversation import conversation_manager
@@ -320,7 +317,7 @@ class AgentOrchestrator:
         if history:
             ctx.meta["conversation_history"] = history
 
-        # Persist user turn
+        # 持久化用户发言
         conversation_manager.add_message(session_id, "user", message)
 
         orch_result = self._execute_pipeline(
@@ -329,7 +326,7 @@ class AgentOrchestrator:
             progress_callback=progress_callback,
         )
 
-        # Persist assistant response
+        # 持久化助手回复
         if orch_result.success:
             conversation_manager.add_message(session_id, "assistant", orch_result.content)
         else:
@@ -351,7 +348,7 @@ class AgentOrchestrator:
         )
 
     # -----------------------------------------------------------------
-    # Pipeline execution
+    # 流水线执行
     # -----------------------------------------------------------------
 
     def _execute_pipeline(
@@ -360,7 +357,7 @@ class AgentOrchestrator:
         parse_dashboard: bool = True,
         progress_callback: Optional[Callable] = None,
     ) -> OrchestratorResult:
-        """Run the agent pipeline according to ``self.mode``."""
+        """根据 ``self.mode`` 运行 Agent 流水线。"""
         stats = AgentRunStats()
         all_tool_calls: List[Dict[str, Any]] = []
         models_used: List[str] = []
@@ -371,11 +368,9 @@ class AgentOrchestrator:
         specialist_agents_inserted = False
         index = 0
 
-        # Minimum seconds required for a stage to do useful work.  Starting
-        # a stage with less budget virtually guarantees a timeout that wastes
-        # an LLM billing cycle.  Only enforced after at least one stage has
-        # completed so that the first stage always gets a chance to run
-        # even when the total budget is small.
+        # 一个阶段做有效工作所需的最少秒数。若剩余预算低于该值仍启动阶段，
+        # 几乎必然超时，白白浪费一次 LLM 计费。该限制只在至少完成一个阶段后
+        # 才生效，从而保证第一阶段即使在总预算很小时也能获得运行机会。
         _MIN_STAGE_BUDGET_S = 15
 
         while index < len(agents):
@@ -442,6 +437,7 @@ class AgentOrchestrator:
                     parse_dashboard=parse_dashboard,
                 )
 
+            # specialist 模式下，在决策阶段之前惰性插入专家 Agent
             if (
                 self.mode == "specialist"
                 and agent.agent_name == "decision"
@@ -451,10 +447,12 @@ class AgentOrchestrator:
                 self._skill_agent_names = {a.agent_name for a in specialist_agents}
                 specialist_agents_inserted = True
                 if specialist_agents:
-                    agents[index:index] = specialist_agents
-                    continue
+                    self._run_specialist_batch(
+                        specialist_agents, ctx, stats, all_tool_calls, models_used,
+                        progress_callback, timeout_s=max(0.0, timeout_s - elapsed_s) if timeout_s else None,
+                    )
 
-            # Aggregate skill opinions before the decision agent
+            # 决策 Agent 运行前先聚合各技能意见
             if agent.agent_name == "decision" and getattr(self, "_skill_agent_names", None):
                 self._aggregate_skill_opinions(ctx)
 
@@ -518,10 +516,10 @@ class AgentOrchestrator:
             if result.success and agent.agent_name == "decision":
                 self._apply_risk_override(ctx)
 
-            # Abort pipeline on critical failure.
-            # Non-critical stages that degrade gracefully:
-            #   - intel / risk (standard support stages)
-            #   - skill agents (specialist evaluation, optional)
+            # 关键阶段失败时中止流水线。
+            # 可优雅降级的非关键阶段：
+            #   - intel / risk（标准支撑阶段）
+            #   - 技能 Agent（专家评估，可选）
             if result.status == StageStatus.FAILED:
                 non_critical = (
                     agent.agent_name in ("intel", "risk")
@@ -541,7 +539,7 @@ class AgentOrchestrator:
 
             index += 1
 
-        # Assemble final output
+        # 组装最终输出
         total_duration = round(time.time() - t0, 2)
         stats.total_duration_s = total_duration
         stats.models_used = list(dict.fromkeys(models_used))
@@ -575,14 +573,18 @@ class AgentOrchestrator:
             provider=provider,
             model=model_str,
             stats=stats,
+            skill_opinions=[
+                {"skill_id": extract_skill_id(op.agent_name) or op.agent_name, "signal": op.signal, "confidence": op.confidence, "observed_at": op.timestamp}
+                for op in ctx.opinions if is_skill_agent_name(op.agent_name)
+            ],
         )
 
     # -----------------------------------------------------------------
-    # Agent chain construction
+    # Agent 链构建
     # -----------------------------------------------------------------
 
     def _build_agent_chain(self, ctx: AgentContext) -> list:
-        """Instantiate the ordered agent list based on ``self.mode``."""
+        """根据 ``self.mode`` 实例化有序的 Agent 列表。"""
         from src.agent.agents.technical_agent import TechnicalAgent
         from src.agent.agents.intel_agent import IntelAgent
         from src.agent.agents.decision_agent import DecisionAgent
@@ -609,17 +611,15 @@ class AgentOrchestrator:
         elif self.mode == "full":
             return [technical, intel, risk, decision]
         elif self.mode == "specialist":
-            # Specialist agents are inserted lazily right before the decision
-            # stage so the router can see the finished technical opinion.
+            # 专家 Agent 在决策阶段前被惰性插入，好让路由器能读到已完成的技术意见。
             return [technical, intel, risk, decision]
         else:
             return [technical, intel, decision]
 
     def _build_specialist_agents(self, ctx: AgentContext) -> list:
-        """Build specialist sub-agents based on requested skills.
+        """根据请求的技能构建专家子 Agent。
 
-        Uses the skill router to select applicable skills, then creates
-        lightweight agent wrappers for each.
+        使用技能路由器选出适用技能，再为每个技能创建轻量 Agent 包装。
         """
         try:
             from src.agent.skills.router import SkillRouter
@@ -636,7 +636,7 @@ class AgentOrchestrator:
 
             from src.agent.skills.skill_agent import SkillAgent
             agents = []
-            for skill_id in selected[:3]:  # cap at 3 concurrent skills
+            for skill_id in selected[:3]:  # 最多 3 个并发技能
                 agent = self._prepare_agent(SkillAgent(
                     skill_id=skill_id,
                     **common_kwargs,
@@ -648,33 +648,68 @@ class AgentOrchestrator:
             return []
 
     def _build_skill_agents(self, ctx: AgentContext) -> list:
-        """Compatibility wrapper for legacy imports."""
+        """为旧版导入保留的兼容包装。"""
         return self._build_specialist_agents(ctx)
 
+    def _run_specialist_batch(self, agents, ctx, stats, all_tool_calls, models_used, progress_callback, *, timeout_s=None) -> None:
+        """Execute isolated skill workers concurrently and merge their opinions in selected order."""
+        from src.agent.skills.scheduler import run_concurrently
+        def runner(agent, isolated_ctx):
+            if progress_callback:
+                progress_callback({"type": "stage_start", "stage": agent.agent_name, "message": f"Starting {agent.agent_name} analysis..."})
+            return self._run_stage_agent(agent, isolated_ctx, progress_callback=progress_callback, timeout_seconds=timeout_s)
+        for run in run_concurrently(
+            agents,
+            ctx,
+            runner,
+            max_workers=getattr(self.config, "agent_skill_max_concurrency", 3),
+        ):
+            stats.record_stage(run.stage)
+            all_tool_calls.extend(run.stage.meta.get("tool_calls_log") or [])
+            models_used.extend(run.stage.meta.get("models_used", []))
+            for opinion in run.opinions:
+                ctx.add_opinion(opinion)
+            if progress_callback:
+                progress_callback({"type": "stage_done", "stage": run.stage.stage_name, "status": run.stage.status.value, "duration": run.stage.duration_s})
+
     def _build_strategy_agents(self, ctx: AgentContext) -> list:
-        """Compatibility wrapper for legacy tests/imports."""
+        """为旧版测试/导入保留的兼容包装。"""
         return self._build_specialist_agents(ctx)
 
     # -----------------------------------------------------------------
-    # Skill aggregation
+    # 技能聚合
     # -----------------------------------------------------------------
 
     def _aggregate_skill_opinions(self, ctx: AgentContext) -> None:
-        """Run SkillAggregator to produce a consensus opinion.
+        """运行 SkillAggregator 生成共识意见。
 
-        Merges individual skill-agent opinions into a single weighted
-        consensus and stores it in context so the decision agent can use it.
+        把各技能 Agent 的独立意见合并为单一加权共识，并存入上下文供决策 Agent 使用。
         """
         try:
             from src.agent.skills.aggregator import SkillAggregator
             aggregator = SkillAggregator()
             consensus = aggregator.aggregate(ctx)
             if consensus:
-                ctx.opinions.append(consensus)
+                from src.agent.skills.synthesis import synthesize
+                synthesis = synthesize(
+                    ctx.opinions,
+                    weighted_score=(consensus.raw_data or {}).get("weighted_score"),
+                    confidence=consensus.confidence,
+                )
+                consensus.raw_data = {
+                    **(consensus.raw_data or {}),
+                    "strategy_synthesis": synthesis,
+                    "final_action": synthesis["final_action"],
+                }
+                consensus.signal = synthesis["final_signal"]
+                consensus.confidence = synthesis["confidence"]
+                ctx.add_opinion(consensus)
                 ctx.set_data("skill_consensus", {
                     "signal": consensus.signal,
                     "confidence": consensus.confidence,
                     "reasoning": consensus.reasoning,
+                    "final_action": synthesis["final_action"],
+                    "synthesis": synthesis,
                 })
                 logger.info(
                     "[Orchestrator] skill consensus: signal=%s confidence=%.2f",
@@ -686,15 +721,15 @@ class AgentOrchestrator:
             logger.warning("[Orchestrator] skill aggregation failed: %s", exc)
 
     def _aggregate_strategy_opinions(self, ctx: AgentContext) -> None:
-        """Compatibility wrapper for legacy tests/imports."""
+        """为旧版测试/导入保留的兼容包装。"""
         self._aggregate_skill_opinions(ctx)
 
     # -----------------------------------------------------------------
-    # Helpers
+    # 辅助方法
     # -----------------------------------------------------------------
 
     def _build_context(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentContext:
-        """Seed an ``AgentContext`` from the user request."""
+        """根据用户请求初始化 ``AgentContext``。"""
         ctx = AgentContext(query=task)
 
         if context:
@@ -707,7 +742,7 @@ class AgentOrchestrator:
             ctx.meta["strategies_requested"] = requested_skills or []
             ctx.meta["report_language"] = normalize_report_language(context.get("report_language", "zh"))
 
-            # Pre-populate data fields that the caller already has
+            # 预填充调用方已经持有的数据字段
             for data_key in (
                 "realtime_quote",
                 "daily_history",
@@ -720,7 +755,7 @@ class AgentOrchestrator:
                 if context.get(data_key):
                     ctx.set_data(data_key, context[data_key])
 
-        # Try to extract stock code from the query text
+        # 尝试从查询文本中提取股票代码
         if not ctx.stock_code:
             ctx.stock_code = _extract_stock_code(task)
 
@@ -731,7 +766,7 @@ class AgentOrchestrator:
 
     @staticmethod
     def _fallback_summary(ctx: AgentContext) -> str:
-        """Build a plaintext summary when dashboard JSON is unavailable."""
+        """当仪表盘 JSON 不可用时构建纯文本摘要。"""
         lines = [f"# Analysis Summary: {ctx.stock_code} ({ctx.stock_name})", ""]
         for op in ctx.opinions:
             lines.append(f"## {op.agent_name}")
@@ -750,13 +785,13 @@ class AgentOrchestrator:
         *,
         parse_dashboard: bool,
     ) -> tuple[Optional[Dict[str, Any]], str]:
-        """Resolve the best available final output from context.
+        """从上下文中解析出可用的最佳最终输出。
 
-        For dashboard mode, prefer:
-        1. Parsed/normalized decision dashboard
-        2. Parsed raw dashboard text
-        3. Synthesised dashboard from completed opinions
-        4. Plaintext fallback summary
+        仪表盘模式按以下优先级选择：
+        1. 已解析/归一化的决策仪表盘
+        2. 解析原始仪表盘文本
+        3. 由已完成意见合成的仪表盘
+        4. 纯文本兜底摘要
         """
         final_dashboard = ctx.get_data("final_dashboard")
         final_raw = ctx.get_data("final_dashboard_raw")
@@ -789,7 +824,7 @@ class AgentOrchestrator:
         final_dashboard: Any,
         final_raw: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Return a normalized dashboard, or synthesize one from partial context."""
+        """返回归一化仪表盘，或从部分上下文合成一个。"""
         dashboard: Optional[Dict[str, Any]] = None
 
         if isinstance(final_dashboard, dict):
@@ -806,8 +841,8 @@ class AgentOrchestrator:
             return None
 
         ctx.set_data("final_dashboard", dashboard)
-        # Apply risk override (idempotent — safe to call even if already
-        # applied in _execute_pipeline after the decision stage).
+        # 应用风控覆盖（幂等——即使在 _execute_pipeline 决策阶段后已应用过，
+        # 再次调用也是安全的）。
         self._apply_risk_override(ctx)
         overridden = ctx.get_data("final_dashboard")
         if isinstance(overridden, dict):
@@ -819,7 +854,7 @@ class AgentOrchestrator:
         payload: Optional[Dict[str, Any]],
         ctx: AgentContext,
     ) -> Optional[Dict[str, Any]]:
-        """Normalize or synthesize the dashboard shape expected downstream."""
+        """归一化或合成下游期望的仪表盘结构。"""
         payload = dict(payload or {})
         meaningful_data_keys = (
             "realtime_quote",
@@ -1034,11 +1069,11 @@ class AgentOrchestrator:
         payload: Dict[str, Any],
         dashboard_block: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Collect key price levels from dashboard payloads and agent opinions."""
+        """从仪表盘载荷与各 Agent 意见中收集关键价位。"""
         levels: Dict[str, Any] = {}
 
         def absorb(source: Any) -> None:
-            """Merge normalized price levels from one possible source."""
+            """从一个可能的来源合并归一化价位。"""
             if not isinstance(source, dict):
                 return
             for key, value in source.items():
@@ -1059,7 +1094,7 @@ class AgentOrchestrator:
         ctx: AgentContext,
         key_levels: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Build a lightweight data_perspective block from cached market data."""
+        """从缓存的市场数据构建轻量 data_perspective 块。"""
         realtime = ctx.get_data("realtime_quote")
         chip = ctx.get_data("chip_distribution")
         trend = ctx.get_data("trend_result")
@@ -1078,7 +1113,7 @@ class AgentOrchestrator:
             }
 
         def _bias_label(bias):
-            """Map MA bias percentage into a compact Chinese display label."""
+            """把均线乖离率映射为紧凑的中文展示标签。"""
             if not isinstance(bias, (int, float)):
                 return ""
             if bias > 5:
@@ -1092,11 +1127,11 @@ class AgentOrchestrator:
             return "中性"
 
         def _r(val, n=2):
-            """Round numeric values for display."""
+            """对数值做展示用四舍五入。"""
             return round(val, n) if isinstance(val, (int, float)) else val
 
         def _pick(primary_dict, primary_key, fallback_dict, fallback_key, default="N/A"):
-            """Pick first non-None value, avoiding falsy-zero trap."""
+            """取第一个非 None 值，避免落入假值 0 的陷阱。"""
             v = primary_dict.get(primary_key)
             if v is not None:
                 return v
@@ -1139,11 +1174,11 @@ class AgentOrchestrator:
         ctx: AgentContext,
         intelligence: Dict[str, Any],
     ) -> List[str]:
-        """Collect risk alerts from dashboard payload, intel/risk opinions and context."""
+        """从仪表盘载荷、intel/risk 意见和上下文收集风险警报。"""
         alerts: List[str] = []
 
         def absorb(values: Any) -> None:
-            """Append unique alert descriptions from string/dict list values."""
+            """从字符串/字典列表值中追加去重后的警报描述。"""
             if not isinstance(values, list):
                 return
             for item in values:
@@ -1173,11 +1208,11 @@ class AgentOrchestrator:
         ctx: AgentContext,
         intelligence: Dict[str, Any],
     ) -> List[str]:
-        """Collect unique positive catalysts from dashboard and intel opinion payloads."""
+        """从仪表盘与 intel 意见载荷中收集去重后的积极催化剂。"""
         catalysts: List[str] = []
 
         def absorb(values: Any) -> None:
-            """Append unique catalyst text from a list payload."""
+            """从列表载荷中追加去重后的催化剂文本。"""
             if not isinstance(values, list):
                 return
             for item in values:
@@ -1193,14 +1228,14 @@ class AgentOrchestrator:
 
     @staticmethod
     def _latest_opinion(ctx: AgentContext, names: set[str]) -> Optional[Any]:
-        """Return the newest opinion whose agent_name is in names."""
+        """返回 agent_name 属于 names 的最新一条意见。"""
         for opinion in reversed(ctx.opinions):
             if opinion.agent_name in names:
                 return opinion
         return None
 
     def _select_base_opinion(self, ctx: AgentContext) -> Optional[Any]:
-        """Choose the best opinion to anchor fallback dashboard fields."""
+        """选择最佳意见作为兜底仪表盘字段的锚点。"""
         preferred_groups = (
             {"decision"},
             {"skill_consensus", "strategy_consensus"},
@@ -1222,7 +1257,7 @@ class AgentOrchestrator:
         *,
         note: str,
     ) -> Dict[str, Any]:
-        """Tag a fallback dashboard so callers can see it was partially degraded."""
+        """给兜底仪表盘打标记，让调用方能看出它是部分降级生成的。"""
         tagged = dict(dashboard)
         summary = _first_non_empty_text(tagged.get("analysis_summary"))
         prefix = "[降级结果] "
@@ -1248,9 +1283,9 @@ class AgentOrchestrator:
         return tagged
 
     def _apply_risk_override(self, ctx: AgentContext) -> None:
-        """Apply risk-agent veto/downgrade rules to the final dashboard.
+        """把风险 Agent 的否决/降级规则应用到最终仪表盘。
 
-        Idempotent: skips if already applied in this pipeline run.
+        幂等：本次流水线运行中已应用过则跳过。
         """
         if ctx.get_data("risk_override_applied"):
             return
@@ -1356,7 +1391,7 @@ class AgentOrchestrator:
         risk_flags: List[Dict[str, Any]],
         signal: str,
     ) -> str:
-        """Build a concise risk warning after a forced downgrade."""
+        """在强制降级后构建简洁的风险警告。"""
         warnings: List[str] = []
         if isinstance(existing_warning, str) and existing_warning.strip():
             warnings.append(existing_warning.strip())
@@ -1372,11 +1407,10 @@ class AgentOrchestrator:
         return merged[:500]
 
 
-# Common English words (2-5 uppercase letters) that should NOT be treated as
-# US stock tickers.  This set is checked by _extract_stock_code() and should
-# be kept at module level to avoid re-creating it on every call.
+# 不应被当作美股代码识别的常见英文词（2-5 个大写字母）。
+# 由 _extract_stock_code() 检查；保留在模块级以避免每次调用时重建。
 _COMMON_WORDS: set[str] = {
-    # Pronouns / articles / prepositions / conjunctions
+    # 代词 / 冠词 / 介词 / 连词
     "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL",
     "CAN", "HAD", "HER", "WAS", "ONE", "OUR", "OUT", "HAS",
     "HIS", "HOW", "ITS", "LET", "MAY", "NEW", "NOW", "OLD",
@@ -1388,7 +1422,7 @@ _COMMON_WORDS: set[str] = {
     "WERE", "YOUR", "ABOUT", "AFTER", "COULD", "EVERY",
     "OTHER", "THEIR", "THERE", "THESE", "THOSE", "WHICH",
     "WOULD", "BEING", "STILL", "WHERE",
-    # Finance/analysis jargon that looks like tickers
+    # 看起来像股票代码的金融/分析术语
     "BUY", "SELL", "HOLD", "LONG", "PUT", "CALL",
     "ETF", "IPO", "RSI", "EPS", "PEG", "ROE", "ROA",
     "USA", "USD", "CNY", "HKD", "EUR", "GBP",
@@ -1396,7 +1430,7 @@ _COMMON_WORDS: set[str] = {
     "HIGH", "LOW", "OPEN", "CLOSE", "STOP", "LOSS",
     "TREND", "BULL", "BEAR", "RISK", "CASH", "BOND",
     "MACD", "VWAP", "BOLL",
-    # Greetings / filler words that often appear in chat messages
+    # 聊天消息中常见的问候/填充词
     "HELLO", "PLEASE", "THANKS", "CHECK", "LOOK", "THINK",
     "MAYBE", "GUESS", "TELL", "SHOW", "WHAT", "WHATS",
     "WHY", "WHEN", "HOWDY", "HEY", "HI",
@@ -1408,17 +1442,20 @@ _LOWERCASE_TICKER_HINTS = re.compile(
 
 
 def _extract_stock_code(text: str) -> str:
-    """Best-effort stock code extraction from free text."""
-    # A-share 6-digit — use lookarounds instead of \b because Python's \b
-    # does not fire at Chinese-character / digit boundaries.
+    """从自由文本中尽力抽取股票代码。
+
+    依次尝试：A 股 6 位数字 → 港股 hk 开头 → 美股 2-5 个大写字母。
+    """
+    # A 股 6 位数字：使用 lookahead/lookbehind 而非 \b，
+    # 因为 Python 的 \b 不会在中文/数字边界触发。
     m = re.search(r'(?<!\d)((?:[03648]\d{5}|92\d{4}))(?!\d)', text)
     if m:
         return m.group(1)
-    # HK — same lookaround approach
+    # 港股代码采用相同的 lookaround 思路
     m = re.search(r'(?<![a-zA-Z])(hk\d{5})(?!\d)', text, re.IGNORECASE)
     if m:
         return m.group(1).upper()
-    # US ticker — require 2+ uppercase letters bounded by non-alpha chars.
+    # 美股代码：要求 2+ 个大写字母，且两侧是非字母字符。
     m = re.search(r'(?<![a-zA-Z])([A-Z]{2,5}(?:\.[A-Z]{1,2})?)(?![a-zA-Z])', text)
     if m:
         candidate = m.group(1)
@@ -1445,7 +1482,7 @@ def _extract_stock_code(text: str) -> str:
 
 
 def _downgrade_signal(signal: str, steps: int = 1) -> str:
-    """Downgrade a dashboard decision signal by one or more levels."""
+    """把看板决策信号下调一个或多个级别（buy→hold→sell）。"""
     order = ["buy", "hold", "sell"]
     try:
         index = order.index(signal)
@@ -1455,7 +1492,7 @@ def _downgrade_signal(signal: str, steps: int = 1) -> str:
 
 
 def _adjust_sentiment_score(score: int, signal: str) -> int:
-    """Clamp sentiment score into the target band for the overridden signal."""
+    """把情绪分夹逼到与覆盖后信号匹配的目标区间。"""
     bands = {
         "buy": (60, 79),
         "hold": (40, 59),
@@ -1466,7 +1503,7 @@ def _adjust_sentiment_score(score: int, signal: str) -> int:
 
 
 def _adjust_operation_advice(advice: str, signal: str) -> str:
-    """Normalize action wording to the overridden decision signal."""
+    """把操作建议措辞归一化为与覆盖后的决策信号一致。"""
     mapping = {
         "buy": "买入",
         "hold": "观望",
@@ -1480,7 +1517,7 @@ def _adjust_operation_advice(advice: str, signal: str) -> str:
 
 
 def _signal_to_operation(signal: str) -> str:
-    """Map canonical decision signal to a Chinese operation label."""
+    """把标准决策信号映射为中文操作标签。"""
     mapping = {
         "buy": "买入",
         "hold": "观望",
@@ -1490,7 +1527,7 @@ def _signal_to_operation(signal: str) -> str:
 
 
 def _signal_to_signal_type(signal: str) -> str:
-    """Map canonical decision signal to the dashboard signal badge text."""
+    """把标准决策信号映射为看板信号徽标文本。"""
     mapping = {
         "buy": "🟢买入信号",
         "hold": "⚪观望信号",
@@ -1500,7 +1537,7 @@ def _signal_to_signal_type(signal: str) -> str:
 
 
 def _default_position_advice(signal: str) -> Dict[str, str]:
-    """Return fallback position advice for empty dashboard payloads."""
+    """为空看板载荷返回默认持仓建议（区分空仓/持仓两种场景）。"""
     mapping = {
         "buy": {
             "no_position": "可结合支撑位分批试仓，避免一次性追高。",
@@ -1519,7 +1556,7 @@ def _default_position_advice(signal: str) -> Dict[str, str]:
 
 
 def _default_position_size(signal: str) -> str:
-    """Return fallback position-size text for the battle plan."""
+    """为作战计划返回默认仓位描述文本。"""
     mapping = {
         "buy": "轻仓试仓",
         "hold": "控制仓位",
@@ -1529,7 +1566,7 @@ def _default_position_size(signal: str) -> str:
 
 
 def _normalize_operation_advice_value(value: Any, signal: str) -> str:
-    """Use explicit operation advice when present, otherwise derive from signal."""
+    """有显式操作建议时直接采用，否则由信号推导。"""
     if isinstance(value, str) and value.strip():
         return value.strip()
     return _signal_to_operation(signal)
@@ -1545,7 +1582,7 @@ def _confidence_label(confidence: float) -> str:
 
 
 def _estimate_sentiment_score(signal: str, confidence: float) -> int:
-    """Estimate a 0-100 sentiment score from canonical signal and confidence."""
+    """由标准信号与置信度估算 0-100 的情绪分。"""
     confidence = max(0.0, min(1.0, float(confidence)))
     bands = {
         "buy": (65, 79),
@@ -1557,7 +1594,7 @@ def _estimate_sentiment_score(signal: str, confidence: float) -> int:
 
 
 def _coerce_level_value(value: Any) -> Any:
-    """Normalize numeric price levels while preserving meaningful non-numeric text."""
+    """归一化数值型价格点位，同时保留有意义的非数值文本。"""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -1572,7 +1609,7 @@ def _coerce_level_value(value: Any) -> Any:
 
 
 def _pick_first_level(*values: Any) -> Any:
-    """Return the first value that can be normalized as a level."""
+    """返回第一个可被归一化为价格点位的值。"""
     for value in values:
         normalized = _coerce_level_value(value)
         if normalized is not None:
@@ -1581,7 +1618,7 @@ def _pick_first_level(*values: Any) -> Any:
 
 
 def _level_values_equal(left: Any, right: Any) -> bool:
-    """Compare two level values after normalization."""
+    """归一化后比较两个价格点位是否相等。"""
     left_normalized = _coerce_level_value(left)
     right_normalized = _coerce_level_value(right)
     return (
@@ -1592,7 +1629,7 @@ def _level_values_equal(left: Any, right: Any) -> bool:
 
 
 def _first_non_empty_text(*values: Any) -> str:
-    """Return the first non-empty string from a set of fallback values."""
+    """从一组回退值中返回第一个非空字符串。"""
     for value in values:
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -1600,7 +1637,7 @@ def _first_non_empty_text(*values: Any) -> str:
 
 
 def _truncate_text(text: Any, limit: int) -> str:
-    """Trim text to a display limit and append an ellipsis when needed."""
+    """把文本裁剪到展示上限，超长时以省略号结尾。"""
     value = str(text or "").strip()
     if len(value) <= limit:
         return value
@@ -1608,7 +1645,7 @@ def _truncate_text(text: Any, limit: int) -> str:
 
 
 def _extract_latest_news_title(intelligence: Dict[str, Any]) -> str:
-    """Extract a concise latest-news title from intelligence payloads."""
+    """从 intelligence 载荷中提取一条简短的最新闻标题。"""
     key_news = intelligence.get("key_news")
     if isinstance(key_news, list):
         for item in key_news:

@@ -286,7 +286,7 @@ class FeishuStreamHandler:
         self._shutdown = False
 
     def _conversation_key(self, bot_message: BotMessage) -> str:
-        """Return the ordering key used for per-conversation FIFO processing."""
+        """返回用于"同一会话 FIFO 顺序处理"的会话键。"""
         if bot_message.chat_type == ChatType.PRIVATE:
             return bot_message.chat_id or bot_message.user_id or bot_message.message_id
 
@@ -295,7 +295,7 @@ class FeishuStreamHandler:
         return f"{chat_id}:{user_id}"
 
     def _enqueue_message(self, bot_message: BotMessage) -> None:
-        """Queue a message and start a worker when its conversation is idle."""
+        """将一条消息入队; 若其所属会话当前空闲, 启动一个工作协程处理。"""
         if self._shutdown:
             self._logger.debug("[Feishu Stream] Handler already stopped, dropping message")
             return
@@ -319,7 +319,7 @@ class FeishuStreamHandler:
                 self._logger.error("[Feishu Stream] 无法启动消息处理线程: %s", exc)
 
     def _drain_conversation(self, conversation_key: str) -> None:
-        """Drain one conversation queue in FIFO order."""
+        """按 FIFO 顺序排空单个会话的消息队列, 队列空后退出。"""
         while True:
             with self._queue_lock:
                 queue = self._pending_messages.get(conversation_key)
@@ -332,7 +332,7 @@ class FeishuStreamHandler:
             self._process_message(bot_message)
 
     def _process_message(self, bot_message: BotMessage) -> None:
-        """Execute command handling off the SDK callback thread."""
+        """在 SDK 回调线程之外执行命令处理, 避免阻塞 SDK 的事件循环。"""
         try:
             response = self._on_message(bot_message)
 
@@ -513,7 +513,7 @@ class FeishuStreamHandler:
         return ' '.join(text.split())
 
     def shutdown(self, wait: bool = False) -> None:
-        """Stop accepting new messages and tear down worker threads."""
+        """停止接收新消息并关闭工作线程池。"""
         self._shutdown = True
         with self._queue_lock:
             self._pending_messages.clear()
@@ -572,7 +572,7 @@ class FeishuStreamClient:
         """创建消息处理函数"""
 
         def handle_message(message: BotMessage) -> BotResponse:
-            """Dispatch one Feishu Stream message through the sync bot dispatcher."""
+            """通过同步 bot 分发器处理一条飞书 Stream 消息。"""
             from bot.dispatcher import get_dispatcher
             dispatcher = get_dispatcher()
             return dispatcher.dispatch(message)

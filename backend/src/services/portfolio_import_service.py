@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Portfolio CSV import service with extensible parser registry.
+"""自选股持仓的券商 CSV 导入服务，带可扩展的解析器注册表。
 
-Broker CSV files are normalized into ``PortfolioService.record_trade`` inputs.
-The parser registry is shared across service instances so custom parser specs
-registered by one API path are visible to subsequent imports in the process.
+把各家券商导出的成交流水 CSV 归一化为 ``PortfolioService.record_trade`` 的入参，
+并在落库前做成交编号（trade_uid）与内容哈希（dedup_hash）两级去重，保证重复导入幂等。
+
+解析器注册表为**进程级共享**（类属性）：任一 API 路径注册的自定义券商解析规则，
+对后续所有 ``PortfolioImportService`` 实例都可见。
+
+主要导出：
+- :class:`CsvParserSpec`：单家券商的列名映射规则
+- :class:`PortfolioImportService`：解析（dry run）与落库的主入口
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CsvParserSpec:
-    """CSV parser specification for one broker."""
+    """针对某家券商的 CSV 解析规则描述。"""
 
     broker: str
     aliases: Tuple[str, ...]
@@ -82,7 +88,7 @@ DEFAULT_PARSER_SPECS: Tuple[CsvParserSpec, ...] = (
 
 
 class PortfolioImportService:
-    """Parse broker CSV and commit normalized trade records with dedup."""
+    """解析券商 CSV 并去重提交规范化的成交记录。"""
     _shared_parser_registry: Dict[str, CsvParserSpec] = {}
     _shared_broker_alias_map: Dict[str, str] = {}
     _shared_registry_initialized: bool = False
@@ -93,7 +99,7 @@ class PortfolioImportService:
         portfolio_service: Optional[PortfolioService] = None,
         repo: Optional[PortfolioRepository] = None,
     ):
-        """Initialize parser registry and portfolio persistence dependencies."""
+        """初始化解析器注册表与组合持久化依赖（进程内共享注册表只初始化一次）。"""
         self.portfolio_service = portfolio_service or PortfolioService()
         self.repo = repo or PortfolioRepository()
         self._parser_registry = self.__class__._shared_parser_registry
@@ -103,12 +109,19 @@ class PortfolioImportService:
             self.__class__._shared_registry_initialized = True
 
     def _init_default_parsers(self) -> None:
-        """Register built-in broker parser specs once per process."""
+        """进程内注册一次内置券商解析规则。"""
         for spec in DEFAULT_PARSER_SPECS:
             self.register_parser(spec)
 
     def register_parser(self, spec: CsvParserSpec) -> None:
-        """Register or replace one broker parser spec."""
+        """注册或覆盖一家券商的解析规则。
+
+        Args:
+            spec: 待注册的解析规则；broker 会以小写形式作为主键。
+
+        Raises:
+            ValueError: broker 为空、别名与 broker 同名、或别名已被其它券商占用。
+        """
         broker = (spec.broker or "").strip().lower()
         if not broker:
             raise ValueError("broker is required")
@@ -116,11 +129,13 @@ class PortfolioImportService:
         for alias in new_aliases:
             if alias == broker:
                 raise ValueError(f"alias '{alias}' cannot be the same as broker id")
+            # 别名全局唯一：不允许两家券商争抢同一个别名
             existing_target = self._broker_alias_map.get(alias)
             if existing_target and existing_target != broker:
                 raise ValueError(
                     f"alias '{alias}' already registered by broker '{existing_target}'"
                 )
+        # 覆盖注册时清理该券商已废弃的旧别名，避免残留指向
         for alias, target in list(self._broker_alias_map.items()):
             if target == broker and alias not in new_aliases:
                 self._broker_alias_map.pop(alias, None)
@@ -134,7 +149,11 @@ class PortfolioImportService:
             self._broker_alias_map[alias] = broker
 
     def list_supported_brokers(self) -> List[Dict[str, Any]]:
-        """List canonical broker ids and aliases for frontend selector."""
+        """列出已注册券商的标准 id、别名与中文名，供前端下拉选择。
+
+        Returns:
+            每项含 ``broker`` / ``aliases`` / ``display_name``，按 broker 升序。
+        """
         items: List[Dict[str, Any]] = []
         for broker in sorted(self._parser_registry.keys()):
             aliases = sorted(alias for alias, target in self._broker_alias_map.items() if target == broker)
@@ -153,7 +172,7 @@ class PortfolioImportService:
         broker: str,
         content: bytes,
     ) -> Dict[str, Any]:
-        """Parse broker CSV bytes into normalized trade records without writing DB."""
+        """解析券商 CSV 字节为规范化成交记录（不写数据库）。"""
         broker_norm = self._normalize_broker(broker)
         parser_spec = self._parser_registry[broker_norm]
         df = self._read_csv(content)
@@ -195,7 +214,21 @@ class PortfolioImportService:
         records: List[Dict[str, Any]],
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        """Commit parsed trade records with trade-id and content-hash dedupe."""
+        """把解析后的交易记录去重落库（支持 dry run）。
+
+        去重分两层：先按券商成交编号 ``trade_uid`` 查库，再按内容哈希
+        ``dedup_hash`` 查库；dry run 时用内存集合模拟同样的判重逻辑。
+
+        Args:
+            account_id: 目标持仓账户 ID。
+            broker: 券商标识或别名。
+            records: ``parse_trade_csv()`` 产出的记录列表。
+            dry_run: 为 True 时只做去重试算，不写库。
+
+        Returns:
+            含 ``inserted_count`` / ``duplicate_count`` / ``failed_count`` /
+            ``errors``（最多 20 条）等统计的字典。
+        """
         broker_norm = self._normalize_broker(broker)
 
         inserted_count = 0
@@ -279,7 +312,11 @@ class PortfolioImportService:
         }
 
     def _normalize_broker(self, value: str) -> str:
-        """Resolve broker aliases to the canonical parser id."""
+        """把券商别名解析为标准解析器 id。
+
+        Raises:
+            ValueError: 解析后仍不在注册表中（错误信息会列出全部支持的 broker）。
+        """
         broker = (value or "").strip().lower()
         broker = self._broker_alias_map.get(broker, broker)
         if broker not in self._parser_registry:
@@ -289,7 +326,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _read_csv(content: bytes) -> pd.DataFrame:
-        """Read uploaded CSV bytes using common Chinese broker encodings."""
+        """读取上传的 CSV 字节，依次尝试常见中文券商编码（UTF-8/GBK/GB18030）。"""
         for encoding in ("utf-8-sig", "gbk", "gb18030"):
             try:
                 return pd.read_csv(
@@ -308,7 +345,12 @@ class PortfolioImportService:
         row: Any,
         parser_spec: CsvParserSpec,
     ) -> Optional[Dict[str, Any]]:
-        """Normalize one CSV row; return None for rows missing required fields."""
+        """把一行 CSV 归一化为标准交易字典。
+
+        Returns:
+            归一化后的记录；若交易日期/代码/买卖方向缺失，或数量与价格非正数，
+            返回 None（调用方计入 skipped_count）。
+        """
         broker_hints = parser_spec.column_hints
 
         trade_date_raw = self._pick(
@@ -393,17 +435,18 @@ class PortfolioImportService:
 
     @staticmethod
     def _pick(row: Any, *candidates: str) -> Any:
-        """Return the first non-empty cell among candidate column names."""
+        """在候选列名中返回第一个非空单元格值，全部缺失则返回 None。"""
         for name in candidates:
             if name in row.index:
                 value = row.get(name)
+                # 同时排除空串与 pandas 的 "nan" 字符串（dtype=str 下 NaN 会变成它）
                 if value is not None and str(value).strip() != "" and str(value).strip().lower() != "nan":
                     return value
         return None
 
     @staticmethod
     def _parse_float(value: Any) -> Optional[float]:
-        """Parse broker numeric text, accepting comma-separated values."""
+        """解析券商数字文本，允许千分位逗号。"""
         if value is None:
             return None
         text = str(value).strip().replace(",", "")
@@ -416,7 +459,7 @@ class PortfolioImportService:
 
     @staticmethod
     def _parse_date(value: Any) -> Optional[date]:
-        """Parse broker date/time text into a Python date."""
+        """解析券商日期/时间文本为 ``date``；无法解析时返回 None。"""
         if value is None:
             return None
         text = str(value).strip()
@@ -429,10 +472,11 @@ class PortfolioImportService:
 
     @staticmethod
     def _normalize_side(value: Any) -> Optional[str]:
-        """Map broker buy/sell labels into canonical ``buy``/``sell`` values."""
+        """把券商买卖标志映射为标准 ``buy`` / ``sell``；无法识别时返回 None。"""
         text = str(value or "").strip().lower()
         if not text:
             return None
+        # 先精确匹配，再退化为包含/前缀匹配，兼容"证券买入""普通买入 "等写法
         compact = text.replace(" ", "")
         buy_exact = {"buy", "b", "买", "买入", "证券买入", "普通买入"}
         sell_exact = {"sell", "s", "卖", "卖出", "证券卖出", "普通卖出"}
@@ -448,7 +492,12 @@ class PortfolioImportService:
 
     @staticmethod
     def _build_dedup_hash(record: Dict[str, Any]) -> str:
-        """Build a stable row hash for idempotent imports without broker trade ids."""
+        """为重复导入生成稳定的行级幂等哈希（兼容无券商成交编号的场景）。
+
+        哈希由交易关键字段拼接后做 SHA-256；相同账户、同一行号偏移下，
+        重导入同一笔成交就会命中。同一笔成交拆成两行时，因为源行号不同，
+        仍会得到不同哈希，因而不会被错误合并。
+        """
         payload = "|".join(
             [
                 str(record.get("trade_date") or ""),

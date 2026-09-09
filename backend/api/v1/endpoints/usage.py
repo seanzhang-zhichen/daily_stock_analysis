@@ -75,7 +75,7 @@ def get_usage_summary(
     period: str = Query("month", description="'today' | 'month' | 'all'"),
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> UsageSummaryResponse:
-    """Return aggregated LLM usage for today, current month, or all time."""
+    """返回今日、本月或全量时间范围的 LLM 用量聚合。"""
     if period not in _VALID_PERIODS:
         period = "month"
 
@@ -97,6 +97,7 @@ def get_usage_summary(
 
 
 def _enrich_call_record(row: dict[str, Any]) -> dict[str, Any]:
+    """把调用记录里的 called_at 统一序列化为 ISO 字符串，便于 JSON 输出。"""
     called_at = row.get("called_at")
     return {
         **row,
@@ -115,7 +116,7 @@ def get_usage_dashboard(
     limit: int = Query(50, ge=1, le=200, description="Recent call records to include"),
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> UsageDashboardResponse:
-    """Return the summary and newest call records used by the usage page."""
+    """返回用量页面所需的概要聚合以及最新调用记录列表。"""
     if period not in _VALID_PERIODS:
         period = "month"
     from_dt, to_dt = _date_range(period)
@@ -139,7 +140,7 @@ def get_usage_dashboard(
 
 
 class GrowthEventRequest(BaseModel):
-    """Frontend growth-event payload.
+    """前端上报的增长埋点事件请求体。
 
     ``sessionId`` 使用别名兼容前端 camelCase；未登录用户也可以上报匿名事件。
     """
@@ -166,7 +167,7 @@ async def record_growth_event(
     request: Request,
     db: Session = Depends(get_db),
 ) -> None:
-    """Record a whitelisted growth event and silently ignore invalid events."""
+    """记录白名单内的增长埋点事件，对非法事件静默忽略。"""
     # 静默忽略白名单外的事件，保持上报端简单，不让埋点错误打扰用户体验。
     if body.event not in _ALLOWED_EVENTS:
         return

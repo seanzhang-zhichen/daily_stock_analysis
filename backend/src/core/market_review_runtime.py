@@ -1,9 +1,8 @@
-"""Reusable market review runtime assembly helpers.
+"""可复用的市场复盘运行时装配辅助函数。
 
-Centralize analyzer/search/notification construction so API, CLI, scheduler,
-and Bot entrypoints share one initialization path for 大盘复盘. Keeping runtime
-assembly here avoids subtle differences in optional search/LLM behavior across
-entrypoints.
+把 analyzer/search/notification 的构造集中起来，让 API、CLI、scheduler 和 Bot
+入口共享同一套大盘复盘的初始化路径。把运行时装配放在这里，可避免不同入口在
+可选的搜索/LLM 行为上出现细微差异。
 """
 
 from __future__ import annotations
@@ -17,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def has_configured_llm_runtime(config: Config) -> bool:
-    """Return whether any supported LLM model configuration is available.
+    """判断是否存在任何可用的 LLM 模型配置。
 
-    The analyzer can be configured through LiteLLM, channel lists, or legacy
-    provider-specific API keys. This check intentionally stays broad so market
-    review can still run template-only when no model is configured.
+    分析器既可通过 LiteLLM 配置，也可通过渠道列表或遗留的 provider 专属 API key
+    进行配置。此检查刻意保持宽泛，以便在未配置任何模型时，市场复盘仍能以纯模板
+    方式运行。
     """
     if (getattr(config, "litellm_model", "") or "").strip():
         return True
@@ -52,11 +51,10 @@ def build_market_review_runtime(
     config: Config,
     source_message: Optional[Any] = None,
 ) -> Tuple[Any, Any, Any]:
-    """Build shared NotificationService, GeminiAnalyzer and SearchService instances.
+    """构建共享的 NotificationService、GeminiAnalyzer 与 SearchService 实例。
 
-    Search and LLM are optional dependencies. Search is only created when the
-    config reports search capability; analyzer creation is skipped when no LLM
-    runtime exists or when the analyzer initializes but is not available.
+    搜索与 LLM 都是可选依赖。仅当配置报告具备搜索能力时才创建搜索服务；当不存在
+    LLM 运行时，或分析器虽初始化但不可用时，跳过分析器的创建。
     """
     from src.analyzer import GeminiAnalyzer
     from src.notification import NotificationService

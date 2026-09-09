@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-Shared defaults for trading skills.
+"""交易技能（skill）的共享默认值。
 
-This module centralises:
-1. The default active skill set used by agent entrypoints
-2. The fallback skill subset used by the multi-agent router
-3. Common prompt fragments that previously drifted across multiple files
-4. Helper utilities for skill-specific agent naming
+本模块集中管理：
+1. agent 入口使用的默认激活技能集
+2. 多 agent 路由器使用的回退技能子集
+3. 此前在多个文件中漂移的公共 prompt 片段
+4. 面向特定技能的 agent 命名辅助工具
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 
+# 从当前文件向上回退 4 级目录定位内置技能所在 strategies 目录
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "strategies"
 
 SKILL_AGENT_PREFIX = "skill_"
@@ -71,11 +71,10 @@ following default risk controls as the shared baseline:
 
 
 def get_default_trading_skill_policy(*, explicit_skill_selection: bool) -> str:
-    """Return the legacy default trading baseline only for implicit/default runs.
+    """仅在隐式/默认运行时返回旧版默认交易基线。
 
-    When a caller explicitly chooses a skill (via request payload or config),
-    analysis should follow that selected skill alone instead of silently
-    layering the old bull-trend baseline on top.
+    当调用方显式选择技能（通过请求载荷或配置）时，分析应只遵循所选技能，
+    而不是在此之上再悄悄叠加旧的牛市趋势基线。
     """
     if explicit_skill_selection:
         return ""
@@ -83,7 +82,7 @@ def get_default_trading_skill_policy(*, explicit_skill_selection: bool) -> str:
 
 
 def get_default_technical_skill_policy(*, explicit_skill_selection: bool) -> str:
-    """Return the technical-agent baseline only for implicit/default runs."""
+    """仅在隐式/默认运行时返回技术分析 agent 的基线。"""
     if explicit_skill_selection:
         return ""
     return TECHNICAL_SKILL_RULES_EN
@@ -91,7 +90,7 @@ def get_default_technical_skill_policy(*, explicit_skill_selection: bool) -> str
 
 @lru_cache(maxsize=1)
 def _load_builtin_skill_catalog() -> tuple[object, ...]:
-    """Load built-in skills once for default-selection helpers."""
+    """为默认选择辅助函数加载一次内置技能目录。"""
     try:
         from src.agent.skills.base import load_skills_from_directory
 
@@ -101,7 +100,7 @@ def _load_builtin_skill_catalog() -> tuple[object, ...]:
 
 
 def _coerce_priority(value: object, default: int = 100) -> int:
-    """Coerce default priority metadata to an integer."""
+    """将默认优先级元数据强制转换为整数。"""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -109,7 +108,7 @@ def _coerce_priority(value: object, default: int = 100) -> int:
 
 
 def _normalize_available_ids(available_skill_ids: Optional[Iterable[str]]) -> List[str]:
-    """Normalize an optional allowlist of skill ids while preserving order."""
+    """规范化可选的技能 id 白名单，同时保持原有顺序。"""
     normalized: List[str] = []
     if available_skill_ids is None:
         return normalized
@@ -125,7 +124,7 @@ def _normalize_skill_inputs(
     skills: Optional[Iterable[object]],
     available_skill_ids: Optional[Iterable[str]] = None,
 ) -> tuple[List[object], List[str]]:
-    """Normalize mixed skill objects/string ids into a catalog and allowlist."""
+    """将混合的技能对象/字符串 id 归一化为目录与白名单。"""
     normalized_available = _normalize_available_ids(available_skill_ids)
 
     if skills is None:
@@ -144,7 +143,7 @@ def _normalize_skill_inputs(
 
 
 def _sort_skill_pool(skills: Iterable[object]) -> List[object]:
-    """Sort skills by priority, display name, then id for stable defaults."""
+    """按优先级、显示名、再按 id 排序技能，保证默认值稳定。"""
     return sorted(
         skills,
         key=lambda skill: (
@@ -161,7 +160,7 @@ def _iter_candidate_skills(
     available_skill_ids: Optional[Iterable[str]] = None,
     user_invocable_only: bool = True,
 ) -> tuple[List[object], List[str]]:
-    """Yield skills eligible for default selection under the current allowlist."""
+    """在当前白名单下筛选出可参与默认选择的技能。"""
     skill_pool, normalized_available = _normalize_skill_inputs(skills, available_skill_ids)
     available_lookup = set(normalized_available)
 
@@ -180,14 +179,14 @@ def _iter_candidate_skills(
 
 
 def _slice_skill_ids(skill_ids: List[str], max_count: Optional[int]) -> List[str]:
-    """Apply max_count when provided, otherwise return the full list."""
+    """提供 max_count 时截取列表，否则返回完整列表。"""
     if max_count is None:
         return skill_ids
     return skill_ids[:max_count]
 
 
 def _pick_primary_default_skill_id(candidates: List[object]) -> str:
-    """Pick the first explicit default-active skill, falling back to first candidate."""
+    """选取第一个显式默认激活的技能，否则回退到第一个候选技能。"""
     preferred = [
         str(getattr(skill, "name", "")).strip()
         for skill in candidates
@@ -208,7 +207,7 @@ def get_default_active_skill_ids(
     max_count: Optional[int] = None,
     available_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[str]:
-    """Return the default active skill ids for prompt injection."""
+    """返回用于注入 prompt 的默认激活技能 id 列表。"""
     candidates, normalized_available = _iter_candidate_skills(
         skills,
         available_skill_ids=available_skill_ids,
@@ -225,7 +224,7 @@ def get_default_router_skill_ids(
     max_count: Optional[int] = None,
     available_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[str]:
-    """Return default skill ids used when router has no stronger signal."""
+    """返回路由器没有更强信号时使用的默认技能 id 列表。"""
     candidates, normalized_available = _iter_candidate_skills(
         skills,
         available_skill_ids=available_skill_ids,
@@ -251,7 +250,7 @@ def get_regime_skill_ids(
     max_count: Optional[int] = None,
     available_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[str]:
-    """Return skills tagged for a detected market regime, with default fallback."""
+    """返回针对检测到的市场状态打标的技能，未命中时回退到默认值。"""
     candidates, normalized_available = _iter_candidate_skills(
         skills,
         available_skill_ids=available_skill_ids,
@@ -282,13 +281,13 @@ def get_primary_default_skill_id(
     skills: Optional[Iterable[object]] = None,
     available_skill_ids: Optional[Iterable[str]] = None,
 ) -> str:
-    """Return a single primary default skill id, or empty string if none exists."""
+    """返回单个主默认技能 id，不存在时返回空字符串。"""
     defaults = get_default_active_skill_ids(skills, max_count=1, available_skill_ids=available_skill_ids)
     return defaults[0] if defaults else ""
 
 
 def _build_regime_skill_ids(skills: Iterable[object]) -> Dict[str, List[str]]:
-    """Build a regime -> skill id map for module-level compatibility constants."""
+    """构建 regime -> 技能 id 映射，用于模块级兼容常量。"""
     regime_map: Dict[str, List[str]] = {}
     for skill in _sort_skill_pool(skills):
         skill_id = str(getattr(skill, "name", "")).strip()
@@ -309,12 +308,12 @@ REGIME_SKILL_IDS: Dict[str, List[str]] = _build_regime_skill_ids(_load_builtin_s
 
 
 def build_skill_agent_name(skill_id: str) -> str:
-    """Convert a skill id into the runtime SkillAgent name."""
+    """将技能 id 转换为运行时的 SkillAgent 名称。"""
     return f"{SKILL_AGENT_PREFIX}{skill_id}"
 
 
 def extract_skill_id(agent_name: Optional[str]) -> Optional[str]:
-    """Extract a skill id from skill/legacy strategy agent names."""
+    """从技能/旧版策略 agent 名称中提取技能 id。"""
     if not agent_name or not isinstance(agent_name, str):
         return None
     for prefix in (SKILL_AGENT_PREFIX, LEGACY_STRATEGY_AGENT_PREFIX):
@@ -324,10 +323,10 @@ def extract_skill_id(agent_name: Optional[str]) -> Optional[str]:
 
 
 def is_skill_agent_name(agent_name: Optional[str]) -> bool:
-    """Return True when the agent name represents a single skill agent."""
+    """当 agent 名称代表单个技能 agent 时返回 True。"""
     return extract_skill_id(agent_name) is not None
 
 
 def is_skill_consensus_name(agent_name: Optional[str]) -> bool:
-    """Return True for current or legacy skill consensus agent names."""
+    """当前或旧版技能共识 agent 名称返回 True。"""
     return agent_name in {SKILL_CONSENSUS_AGENT_NAME, LEGACY_STRATEGY_CONSENSUS_AGENT_NAME}

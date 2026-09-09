@@ -97,7 +97,7 @@ def get_available_models_for_user(
     platform_primary_model: Optional[str] = None,
     platform_models: Optional[List[str]] = None,
 ) -> List[str]:
-    """Return platform-configured models this user's plan may select."""
+    """返回当前用户套餐允许选择的平台配置模型列表。"""
 
     _, _, candidate_platform_models = _platform_model_candidates(
         config,

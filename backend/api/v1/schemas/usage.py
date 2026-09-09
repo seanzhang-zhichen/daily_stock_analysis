@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 
 class CallTypeBreakdown(BaseModel):
-    """Usage totals grouped by business call type."""
+    """按业务调用类型（call type）汇总的用量。"""
 
     call_type: str = Field(..., description="'analysis' | 'agent' | 'market_review'")
     calls: int
@@ -23,7 +23,7 @@ class CallTypeBreakdown(BaseModel):
 
 
 class ModelBreakdown(BaseModel):
-    """Usage totals grouped by LLM model name."""
+    """按 LLM 模型名称汇总的用量。"""
 
     model: str
     calls: int
@@ -34,6 +34,8 @@ class ModelBreakdown(BaseModel):
 
 
 class UsageCallRecord(BaseModel):
+    """单次 LLM 调用的原始记录，用于用量明细展示。"""
+
     id: int
     called_at: str = Field(..., description="ISO datetime string")
     call_type: str
@@ -45,7 +47,7 @@ class UsageCallRecord(BaseModel):
 
 
 class UsageSummaryResponse(BaseModel):
-    """Top-level usage summary for a requested reporting period."""
+    """指定报表周期内的顶层 LLM 用量概要响应。"""
 
     period: str = Field(..., description="'today' | 'month' | 'all'")
     from_date: str = Field(..., description="ISO date string")
@@ -59,4 +61,6 @@ class UsageSummaryResponse(BaseModel):
 
 
 class UsageDashboardResponse(UsageSummaryResponse):
+    """用量页面聚合响应：除概要外，还附带近期调用明细列表。"""
+
     recent_calls: List[UsageCallRecord]

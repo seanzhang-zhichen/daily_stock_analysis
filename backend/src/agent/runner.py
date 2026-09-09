@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-Shared runner — extracted LLM + tool execution loop.
+"""共享执行器 —— 抽取出的 LLM + 工具执行循环。
 
-Provides ``run_agent_loop``, the single authoritative implementation of the
-ReAct execute-loop that was previously inlined inside ``AgentExecutor._run_loop``.
-All current and future agents should delegate to this runner instead of
-re-implementing the loop themselves.
+提供 ``run_agent_loop``，这是此前内联在 ``AgentExecutor._run_loop`` 中的
+ReAct 执行循环的唯一权威实现。所有当前与未来的 agent 都应委托给该执行器，
+而不是各自重新实现循环。
 
-Design goals:
-- Keep the same observable behaviour as the original ``_run_loop``
-- Accept pluggable callbacks for progress, message history, and result handling
-- Remain stateless — all mutable state lives in the caller
+设计目标：
+- 保持与原始 ``_run_loop`` 相同的可观测行为
+- 支持可插拔的回调以处理进度、消息历史与结果
+- 保持无状态 —— 所有可变状态都放在调用方
 """
 
 from __future__ import annotations
@@ -19,18 +17,20 @@ import json
 import logging
 import re
 import time
+import threading
 import contextvars
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.llm_adapter import LLMToolAdapter
+from src.agent.tools.execution import TOOL_CANCEL_EVENT
 from src.agent.tools.registry import ToolRegistry
 from src.storage import persist_llm_usage as _persist_usage
 
 logger = logging.getLogger(__name__)
 
-# Tool name → friendly label for progress messages
+# 工具名 → 进度消息所用的友好标签
 _THINKING_TOOL_LABELS: Dict[str, str] = {
     "get_realtime_quote": "行情获取",
     "get_daily_history": "K线数据获取",
@@ -52,12 +52,12 @@ _THINKING_TOOL_LABELS: Dict[str, str] = {
 
 
 # ============================================================
-# RunLoopResult — the output of one run_agent_loop invocation
+# RunLoopResult —— 一次 run_agent_loop 调用的输出
 # ============================================================
 
 @dataclass
 class RunLoopResult:
-    """Output produced by :func:`run_agent_loop`."""
+    """:func:`run_agent_loop` 产生的输出。"""
 
     success: bool = False
     content: str = ""
@@ -67,21 +67,21 @@ class RunLoopResult:
     provider: str = ""
     models_used: List[str] = field(default_factory=list)
     error: Optional[str] = None
-    # Raw messages list at the end of the loop (callers may want to persist)
+    # 循环结束时的原始消息列表（调用方可能想持久化）
     messages: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def model(self) -> str:
-        """Comma-separated de-duplicated model names used during the run."""
+        """本次运行中使用的去重后的模型名，以逗号分隔。"""
         return ", ".join(dict.fromkeys(m for m in self.models_used if m))
 
 
 # ============================================================
-# Helpers
+# 辅助函数
 # ============================================================
 
 def serialize_tool_result(result: Any) -> str:
-    """Serialize a tool result to a JSON string consumable by an LLM."""
+    """将工具结果序列化为 LLM 可消费的 JSON 字符串。"""
     if result is None:
         return json.dumps({"result": None})
     if isinstance(result, str):
@@ -101,7 +101,7 @@ def serialize_tool_result(result: Any) -> str:
 
 
 def _normalize_tool_stock_code(value: Any) -> Any:
-    """Canonicalize stock code arguments so equivalent HK variants share one cache key."""
+    """规范化股票代码参数，使等价的港股变体共享同一个缓存键。"""
     if not isinstance(value, str):
         return value
 
@@ -131,7 +131,7 @@ def _normalize_tool_stock_code(value: Any) -> Any:
 
 
 def _build_tool_cache_key(tool_name: str, arguments: Dict[str, Any]) -> Optional[str]:
-    """Build a stable cache key for tool calls with normalized stock-code arguments."""
+    """为带有规范化股票代码参数的工具调用构造稳定的缓存键。"""
     if not isinstance(arguments, dict):
         return None
 
@@ -150,7 +150,7 @@ def _build_tool_cache_key(tool_name: str, arguments: Dict[str, Any]) -> Optional
 
 
 def _is_non_retriable_tool_result(result: Any) -> bool:
-    """Return True when a tool result explicitly tells the agent not to retry."""
+    """当工具结果显式告知 agent 不要重试时返回 True。"""
     return (
         isinstance(result, dict)
         and bool(result.get("error"))
@@ -159,20 +159,20 @@ def _is_non_retriable_tool_result(result: Any) -> bool:
 
 
 def parse_dashboard_json(content: str) -> Optional[Dict[str, Any]]:
-    """Extract and parse a Decision Dashboard JSON from agent text.
+    """从 agent 文本中提取并解析 Decision Dashboard JSON。
 
-    Tries multiple strategies:
-    1. Markdown code blocks (```json ... ```)
-    2. Raw JSON parse
-    3. ``json_repair`` library
-    4. Brace-delimited substring
+    依次尝试多种策略：
+    1. Markdown 代码块（```json ... ```）
+    2. 直接 JSON 解析
+    3. ``json_repair`` 库
+    4. 花括号包裹的子串
     """
     if not content:
         return None
 
     from json_repair import repair_json
 
-    # Strategy 1: markdown code blocks
+    # 策略 1：Markdown 代码块
     json_blocks = re.findall(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
     if json_blocks:
         for block in json_blocks:
@@ -183,17 +183,17 @@ def parse_dashboard_json(content: str) -> Optional[Dict[str, Any]]:
             if parsed is not None:
                 return parsed
 
-    # Strategy 2: raw parse
+    # 策略 2：直接解析
     parsed = _try_parse_json(content)
     if parsed is not None:
         return parsed
 
-    # Strategy 3: json_repair on full content
+    # 策略 3：对全文使用 json_repair
     parsed = _try_repair_json(content, repair_json)
     if parsed is not None:
         return parsed
 
-    # Strategy 4: brace-delimited
+    # 策略 4：花括号包裹的子串
     brace_start = content.find("{")
     brace_end = content.rfind("}")
     if brace_start >= 0 and brace_end > brace_start:
@@ -210,16 +210,15 @@ def parse_dashboard_json(content: str) -> Optional[Dict[str, Any]]:
 
 
 def try_parse_json(text: str) -> Optional[Dict[str, Any]]:
-    """Best-effort JSON dict extraction from LLM text.
+    """从 LLM 文本中尽力提取 JSON 字典。
 
-    Handles:
-    1. Direct JSON parse
-    2. Markdown code fences (```json ... ```)
-    3. Brace-delimited substring
-    4. ``json_repair`` fallback for slightly malformed JSON
+    可处理：
+    1. 直接 JSON 解析
+    2. Markdown 代码围栏（```json ... ```）
+    3. 花括号包裹的子串
+    4. 对轻微损坏 JSON 使用 ``json_repair`` 兜底
 
-    This is the shared utility that all agent ``post_process`` methods
-    should use instead of duplicating the same logic.
+    这是所有 agent 的 ``post_process`` 方法应复用的共享工具，避免重复实现同一逻辑。
     """
     if not text:
         return None
@@ -277,12 +276,12 @@ def try_parse_json(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-# Keep private alias used internally by parse_dashboard_json
+# 保留私有别名，供 parse_dashboard_json 内部使用
 _try_parse_json = try_parse_json
 
 
 def _try_repair_json(text: str, repair_fn: Callable) -> Optional[Dict[str, Any]]:
-    """Repair malformed JSON text and return a dict when repair succeeds."""
+    """修复损坏的 JSON 文本，修复成功后返回字典。"""
     try:
         repaired = repair_fn(text)
         obj = json.loads(repaired)
@@ -295,7 +294,7 @@ def _remaining_timeout_seconds(
     start_time: float,
     max_wall_clock_seconds: Optional[float],
 ) -> Optional[float]:
-    """Return remaining wall-clock budget in seconds, or None when disabled."""
+    """返回剩余墙钟时间预算（秒），未启用时返回 None。"""
     if max_wall_clock_seconds is None or max_wall_clock_seconds <= 0:
         return None
     return max(0.0, float(max_wall_clock_seconds) - (time.time() - start_time))
@@ -312,7 +311,7 @@ def _build_timeout_result(
     models_used: List[str],
     messages: List[Dict[str, Any]],
 ) -> RunLoopResult:
-    """Build a standard failed result when the loop exhausts wall-clock budget."""
+    """当循环耗尽墙钟预算时构造标准的失败结果。"""
     elapsed = time.time() - start_time
     return RunLoopResult(
         success=False,
@@ -339,7 +338,7 @@ def _build_budget_guard_result(
     remaining_timeout_s: float,
     min_step_budget_s: float,
 ) -> RunLoopResult:
-    """Build a failed result when remaining time is too low for another LLM call."""
+    """当剩余时间不足以再发起一次 LLM 调用时构造失败结果。"""
     elapsed = time.time() - start_time
     return RunLoopResult(
         success=False,
@@ -358,10 +357,10 @@ def _build_budget_guard_result(
 
 
 # ============================================================
-# Core loop
+# 核心循环
 # ============================================================
 
-def run_agent_loop(
+def _run_agent_loop_impl(
     *,
     messages: List[Dict[str, Any]],
     tool_registry: ToolRegistry,
@@ -371,27 +370,27 @@ def run_agent_loop(
     thinking_labels: Optional[Dict[str, str]] = None,
     max_wall_clock_seconds: Optional[float] = None,
     tool_call_timeout_seconds: Optional[float] = None,
+    emit_stage_events: bool = True,
 ) -> RunLoopResult:
-    """Execute the ReAct LLM ↔ tool loop.
+    """执行 ReAct 的 LLM ↔ 工具循环。
 
-    This is the *single shared implementation* of the agent execution loop.
-    Both the legacy ``AgentExecutor`` and any future multi-agent runner
-    should delegate here.
+    这是 agent 执行循环的*唯一共享实现*。无论是旧版 ``AgentExecutor``
+    还是未来任何多 agent 执行器，都应委托到这里。
 
     Args:
-        messages: The initial message list (system + user + optional history).
-                  **Mutated in-place** — tool results are appended.
-        tool_registry: Registry of callable tools.
-        llm_adapter: LLM backend (handles multi-provider fallback).
-        max_steps: Maximum number of LLM round-trips.
-        progress_callback: Optional callback receiving progress dicts.
-        thinking_labels: Override map of tool_name → friendly label.
-        max_wall_clock_seconds: Optional overall timeout budget for the loop.
-        tool_call_timeout_seconds: Optional timeout for one parallel tool batch.
+        messages: 初始消息列表（system + user + 可选历史）。
+                  **会原地修改** —— 工具结果会被追加进去。
+        tool_registry: 可调用工具的注册表。
+        llm_adapter: LLM 后端（处理多提供商回退）。
+        max_steps: LLM 往返的最大次数。
+        progress_callback: 可选的接收进度字典的回调。
+        thinking_labels: tool_name → 友好标签的覆盖映射。
+        max_wall_clock_seconds: 循环整体的可选超时预算。
+        tool_call_timeout_seconds: 单批并行工具调用的可选超时。
 
     Returns:
-        A :class:`RunLoopResult` with the final content, stats, and the
-        (mutated) messages list.
+        :class:`RunLoopResult`，包含最终内容、统计信息以及（被修改过的）
+        messages 列表。
     """
     labels = thinking_labels or _THINKING_TOOL_LABELS
     tool_decls = tool_registry.to_openai_tools()
@@ -403,11 +402,9 @@ def run_agent_loop(
     provider_used = ""
     models_used: List[str] = []
 
-    # Minimum seconds needed for a meaningful LLM round-trip.  If the
-    # remaining budget is positive but below this threshold, the step will
-    # almost certainly timeout mid-call, wasting a billed request.  Only
-    # enforced from step 2 onwards so the first step always gets a chance
-    # even when the total budget is small.
+    # 一次有意义的 LLM 往返所需的最少秒数。若剩余预算为正但低于该阈值，
+    # 该步几乎肯定会在调用中途超时，白白浪费一次计费请求。仅从第 2 步起
+    # 强制执行，使第一步即使在总预算很小时也总能获得一次机会。
     _MIN_STEP_BUDGET_S = 8.0
 
     for step in range(max_steps):
@@ -464,7 +461,7 @@ def run_agent_loop(
                 thinking_msg = f"「{label}」已完成，继续深入分析..."
             progress_callback({"type": "thinking", "step": step + 1, "message": thinking_msg})
 
-        # --- LLM call ---
+        # --- LLM 调用 ---
         response = llm_adapter.call_with_tools(
             messages,
             tool_decls,
@@ -501,7 +498,7 @@ def run_agent_loop(
                 [tc.name for tc in response.tool_calls],
             )
 
-            # Append assistant message (with tool_calls) to history
+            # 将 assistant 消息（含 tool_calls）追加到历史
             assistant_msg: Dict[str, Any] = {
                 "role": "assistant",
                 "content": response.content,
@@ -519,13 +516,7 @@ def run_agent_loop(
                 assistant_msg["reasoning_content"] = response.reasoning_content
             messages.append(assistant_msg)
 
-            # Execute tools (parallel when > 1)
-            effective_tool_timeout = tool_call_timeout_seconds
-            if remaining_timeout is not None:
-                effective_tool_timeout = min(
-                    remaining_timeout,
-                    tool_call_timeout_seconds if tool_call_timeout_seconds and tool_call_timeout_seconds > 0 else remaining_timeout,
-                )
+            # 执行工具（多于 1 个时并行）
             tool_results = _execute_tools(
                 response.tool_calls,
                 tool_registry,
@@ -533,10 +524,11 @@ def run_agent_loop(
                 progress_callback,
                 tool_calls_log,
                 non_retriable_tool_results,
-                tool_wait_timeout_seconds=effective_tool_timeout,
+                tool_call_timeout_seconds=tool_call_timeout_seconds,
+                tool_wait_timeout_seconds=remaining_timeout,
             )
 
-            # Append tool results preserving original call order
+            # 追加工具结果，保持原始调用顺序
             tc_order = {tc.id: i for i, tc in enumerate(response.tool_calls)}
             tool_results.sort(key=lambda x: tc_order.get(x["tc"].id, 0))
             for tr in tool_results:
@@ -564,7 +556,7 @@ def run_agent_loop(
                 )
 
         else:
-            # ---- final answer branch ----
+            # ---- 最终答案分支 ----
             logger.info(
                 "Agent completed in %d steps (%.1fs, %d tokens)",
                 step + 1,
@@ -589,7 +581,7 @@ def run_agent_loop(
                 messages=messages,
             )
 
-    # Max steps exceeded
+    # 超出最大步数
     logger.warning("Agent hit max steps (%d)", max_steps)
     return RunLoopResult(
         success=False,
@@ -604,9 +596,95 @@ def run_agent_loop(
     )
 
 
+def run_agent_loop(
+    *,
+    messages: List[Dict[str, Any]],
+    tool_registry: ToolRegistry,
+    llm_adapter: LLMToolAdapter,
+    max_steps: int = 10,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    thinking_labels: Optional[Dict[str, str]] = None,
+    max_wall_clock_seconds: Optional[float] = None,
+    tool_call_timeout_seconds: Optional[float] = None,
+    emit_stage_events: bool = True,
+) -> RunLoopResult:
+    """运行循环，并为 SSE 消费方暴露一致的生命周期。"""
+    callback = progress_callback
+    started_at = time.monotonic()
+    if emit_stage_events and callback:
+        callback({"type": "stage_start", "stage": "agent_loop", "message": "Agent analysis started"})
+    result = _run_agent_loop_impl(
+        messages=messages,
+        tool_registry=tool_registry,
+        llm_adapter=llm_adapter,
+        max_steps=max_steps,
+        progress_callback=callback,
+        thinking_labels=thinking_labels,
+        max_wall_clock_seconds=max_wall_clock_seconds,
+        tool_call_timeout_seconds=tool_call_timeout_seconds,
+        emit_stage_events=emit_stage_events,
+    )
+    if emit_stage_events and callback:
+        callback({
+            "type": "stage_done",
+            "stage": "agent_loop",
+            "status": "completed" if result.success else "failed",
+            "duration": round(time.monotonic() - started_at, 2),
+        })
+    return result
+
+
 # ============================================================
-# Internal tool execution
+# 内部工具执行
 # ============================================================
+
+def _positive_timeout(value: Optional[float]) -> Optional[float]:
+    """将禁用、无效及非正数的超时值归一化为 None。"""
+    try:
+        timeout = float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return timeout if timeout > 0 else None
+
+
+def _resolve_tool_timeout(
+    tool_call: Any,
+    tool_registry: ToolRegistry,
+    explicit_timeout: Optional[float],
+    wall_clock_budget: Optional[float],
+) -> Optional[float]:
+    """按显式 > 工具 > 类别的优先级解析超时，并受总预算封顶。"""
+    explicit = _positive_timeout(explicit_timeout)
+    definition = tool_registry.get(tool_call.name)
+    declared = _positive_timeout(getattr(definition, "timeout_seconds", None))
+    category = _positive_timeout(
+        tool_registry.category_default_timeout(definition.category)
+        if definition is not None else None
+    )
+    selected = explicit or declared or category
+    budget = _positive_timeout(wall_clock_budget)
+    if selected is None:
+        return budget
+    return min(selected, budget) if budget is not None else selected
+
+
+def _tool_timeout_payload(
+    tool_name: str,
+    timeout_seconds: float,
+    non_retriable_tool_results: Optional[Dict[str, str]],
+    arguments: Dict[str, Any],
+) -> str:
+    """构造工具执行超时的载荷，并按需写入不可重试缓存。"""
+    payload = json.dumps({
+        "error": f"Tool execution timed out after {timeout_seconds:.2f}s",
+        "timeout": True,
+        "retriable": False,
+    })
+    if non_retriable_tool_results is not None:
+        cache_key = _build_tool_cache_key(tool_name, arguments)
+        if cache_key:
+            non_retriable_tool_results[cache_key] = payload
+    return payload
 
 def _execute_tools(
     tool_calls,
@@ -615,15 +693,17 @@ def _execute_tools(
     progress_callback: Optional[Callable],
     tool_calls_log: List[Dict[str, Any]],
     non_retriable_tool_results: Optional[Dict[str, str]] = None,
+    tool_call_timeout_seconds: Optional[float] = None,
     tool_wait_timeout_seconds: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
-    """Execute one or more tool calls, returning ordered result dicts.
+    """执行一次或多次工具调用，返回有序的结果字典。
 
-    Single tools run inline; multiple tools run in parallel threads.
+    显式超时优先于工具声明，其次才是类别默认值。
+    循环剩余预算始终是不可突破的外层上限。
     """
 
     def _exec_single(tc_item):
-        """Execute one tool call and return result text plus execution metadata."""
+        """执行单次工具调用并返回结果文本及执行元数据。"""
         t0 = time.time()
         cache_key = _build_tool_cache_key(tc_item.name, tc_item.arguments)
 
@@ -651,108 +731,81 @@ def _execute_tools(
 
     results: List[Dict[str, Any]] = []
 
-    if len(tool_calls) == 1:
-        tc = tool_calls[0]
+    plan = [
+        (tc, _resolve_tool_timeout(tc, tool_registry, tool_call_timeout_seconds, tool_wait_timeout_seconds))
+        for tc in tool_calls
+    ]
+    for tc, _timeout in plan:
         if progress_callback:
             progress_callback({"type": "tool_start", "step": step, "tool": tc.name})
-        timeout_triggered = False
-        if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0:
-            pool = ThreadPoolExecutor(max_workers=1)
-            ctx = contextvars.copy_context()
-            try:
-                future = pool.submit(ctx.run, _exec_single, tc)
-                try:
-                    _, result_str, success, dur, cached = future.result(timeout=tool_wait_timeout_seconds)
-                except FuturesTimeoutError:
-                    timeout_triggered = True
-                    future.cancel()
-                    timeout_label = f"{tool_wait_timeout_seconds:.2f}s"
-                    logger.warning("Tool '%s' timed out after %s at step %d", tc.name, timeout_label, step)
-                    result_str = json.dumps({
-                        "error": f"Tool execution timed out after {timeout_label}",
-                        "timeout": True,
-                    })
-                    success = False
-                    dur = round(tool_wait_timeout_seconds, 2)
-                    cached = False
-            finally:
-                pool.shutdown(wait=not timeout_triggered, cancel_futures=timeout_triggered)
-        else:
-            _, result_str, success, dur, cached = _exec_single(tc)
-        if progress_callback:
-            progress_callback({"type": "tool_done", "step": step, "tool": tc.name, "success": success, "duration": dur})
-        log_entry = {
-            "step": step, "tool": tc.name, "arguments": tc.arguments,
-            "success": success, "duration": dur, "result_length": len(result_str),
-            "cached": cached,
-        }
-        if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0 and not success:
-            try:
-                if json.loads(result_str).get("timeout") is True:
-                    log_entry["timeout"] = True
-            except (TypeError, ValueError, json.JSONDecodeError):
-                pass
-        tool_calls_log.append(log_entry)
-        results.append({"tc": tc, "result_str": result_str})
-    else:
-        for tc in tool_calls:
-            if progress_callback:
-                progress_callback({"type": "tool_start", "step": step, "tool": tc.name})
 
-        pool = ThreadPoolExecutor(max_workers=min(len(tool_calls), 5))
-        timeout_triggered = False
-        try:
-            futures = {pool.submit(contextvars.copy_context().run, _exec_single, tc): tc for tc in tool_calls}
-            pending = set(futures)
-            for future in as_completed(
-                futures,
-                timeout=tool_wait_timeout_seconds if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0 else None,
-            ):
+    def _record(tc_item, outcome=None, timeout=None):
+        """记录一次工具调用结果：超时/成功分别构造日志条目与返回载荷。"""
+        if outcome is None:
+            result_str = _tool_timeout_payload(tc_item.name, timeout or 0.0, non_retriable_tool_results, tc_item.arguments)
+            success, dur, cached = False, round(timeout or 0.0, 2), False
+        else:
+            _, result_str, success, dur, cached = outcome
+        if progress_callback:
+            progress_callback({"type": "tool_done", "step": step, "tool": tc_item.name, "success": success, "duration": dur})
+        entry = {"step": step, "tool": tc_item.name, "arguments": tc_item.arguments,
+                 "success": success, "duration": dur, "result_length": len(result_str), "cached": cached}
+        if outcome is None:
+            entry["timeout"] = True
+        tool_calls_log.append(entry)
+        results.append({"tc": tc_item, "result_str": result_str})
+
+    if len(plan) == 1 and plan[0][1] is None:
+        _record(plan[0][0], _exec_single(plan[0][0]))
+        return results
+
+    pool = ThreadPoolExecutor(max_workers=min(len(plan), 5))
+    timeout_triggered = False
+    try:
+        futures = {}
+        deadline_of = {}
+        cancel_of = {}
+        for tc, timeout in plan:
+            holder = [None]
+            cancel_event = threading.Event()
+            def _run(tc_item=tc, timeout_value=timeout, holder_ref=holder, event=cancel_event):
+                """在线程池中执行单个工具调用，挂载取消事件并登记超时截止时间。"""
+                # 将取消事件挂到 contextvar，让工具内部能感知取消请求
+                token = TOOL_CANCEL_EVENT.set(event)
+                if timeout_value is not None:
+                    holder_ref[0] = time.monotonic() + timeout_value
+                try:
+                    return _exec_single(tc_item)
+                finally:
+                    TOOL_CANCEL_EVENT.reset(token)
+            future = pool.submit(contextvars.copy_context().run, _run)
+            futures[future] = (tc, timeout)
+            deadline_of[future] = holder
+            cancel_of[future] = cancel_event
+        batch_deadline = time.monotonic() + tool_wait_timeout_seconds if _positive_timeout(tool_wait_timeout_seconds) else None
+        pending = set(futures)
+        while pending:
+            # 取所有未完成任务与整批截止时间中最早的一个作为本次等待上限
+            deadlines = [deadline_of[f][0] for f in pending if deadline_of[f][0] is not None]
+            if batch_deadline is not None:
+                deadlines.append(batch_deadline)
+            wait_timeout = max(0.0, min(deadlines) - time.monotonic()) if deadlines else 0.01
+            done, _ = wait(pending, timeout=wait_timeout, return_when=FIRST_COMPLETED)
+            for future in done:
                 pending.discard(future)
-                tc_item, result_str, success, dur, cached = future.result()
-                if progress_callback:
-                    progress_callback({"type": "tool_done", "step": step, "tool": tc_item.name, "success": success, "duration": dur})
-                tool_calls_log.append({
-                    "step": step, "tool": tc_item.name, "arguments": tc_item.arguments,
-                    "success": success, "duration": dur, "result_length": len(result_str),
-                    "cached": cached,
-                })
-                results.append({"tc": tc_item, "result_str": result_str})
-        except FuturesTimeoutError:
-            timeout_triggered = True
-            timeout_label = (
-                f"{tool_wait_timeout_seconds:.2f}s"
-                if tool_wait_timeout_seconds is not None
-                else "the configured limit"
-            )
-            logger.warning("Tool batch timed out after %s at step %d", timeout_label, step)
-            for future, tc_item in futures.items():
-                if future in pending:
+                _record(futures[future][0], future.result())
+            now = time.monotonic()
+            # 超时的 future 直接取消并记录超时结果，避免阻塞后续步骤
+            for future in list(pending):
+                deadline = deadline_of[future][0]
+                if (deadline is not None and now >= deadline) or (batch_deadline is not None and now >= batch_deadline):
+                    pending.discard(future)
                     future.cancel()
-                    result_str = json.dumps({
-                        "error": f"Tool execution timed out after {timeout_label}",
-                        "timeout": True,
-                    })
-                    if progress_callback:
-                        progress_callback({
-                            "type": "tool_done",
-                            "step": step,
-                            "tool": tc_item.name,
-                            "success": False,
-                            "duration": round(tool_wait_timeout_seconds or 0.0, 2),
-                        })
-                    tool_calls_log.append({
-                        "step": step,
-                        "tool": tc_item.name,
-                        "arguments": tc_item.arguments,
-                        "success": False,
-                        "duration": round(tool_wait_timeout_seconds or 0.0, 2),
-                        "result_length": len(result_str),
-                        "cached": False,
-                        "timeout": True,
-                    })
-                    results.append({"tc": tc_item, "result_str": result_str})
-        finally:
-            pool.shutdown(wait=not timeout_triggered, cancel_futures=timeout_triggered)
+                    cancel_of[future].set()
+                    timeout_triggered = True
+                    _record(futures[future][0], timeout=futures[future][1] or tool_wait_timeout_seconds)
+    finally:
+        # 超时触发时不等待剩余任务，尽快关闭线程池
+        pool.shutdown(wait=not timeout_triggered, cancel_futures=True)
 
     return results

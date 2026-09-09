@@ -26,6 +26,7 @@ from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
     DiscordSender,
+    DingtalkSender,
     EmailSender,
     FeishuSender,
     GotifySender,
@@ -113,6 +114,30 @@ class TestDiscordSender(unittest.TestCase):
         self.assertEqual(call_kw["headers"]["Authorization"], "Bot TOKEN")
 
 
+class TestDingtalkSender(unittest.TestCase):
+    """DingTalk uses the shared Markdown-safe, byte-limited splitter."""
+
+    def test_send_returns_false_when_not_configured(self):
+        self.assertFalse(DingtalkSender(_config()).send_to_dingtalk("A 股报告"))
+
+    @mock.patch("src.notification_sender.dingtalk_sender.time.sleep")
+    @mock.patch("src.notification_sender.dingtalk_sender.requests.post")
+    def test_long_markdown_is_sanitized_and_chunked(self, mock_post, mock_sleep):
+        mock_post.return_value = _response(200, {"errcode": 0})
+        sender = DingtalkSender(_config(dingtalk_webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test"))
+        content = "[dsa-trace]: # (private)\n\n```text\n" + ("贵州茅台 600519\n" * 1800) + "```"
+
+        self.assertTrue(sender.send_to_dingtalk(content, title="A股日报", timeout_seconds=7))
+        self.assertGreater(mock_post.call_count, 1)
+        for call in mock_post.call_args_list:
+            payload = call.kwargs["json"]
+            text = payload["markdown"]["text"]
+            self.assertNotIn("dsa-trace", text)
+            self.assertLessEqual(len(text.encode("utf-8")), 19500)
+            self.assertEqual(call.kwargs["timeout"], 7)
+        self.assertEqual(mock_sleep.call_count, mock_post.call_count - 1)
+
+
 class TestWechatSender(unittest.TestCase):
     """Unit tests for WechatSender."""
 
@@ -162,6 +187,24 @@ class TestFeishuSender(unittest.TestCase):
         sender = FeishuSender(cfg)
         result = sender.send_to_feishu("hello")
         self.assertFalse(result)
+
+    def test_file_delivery_requires_complete_app_bot_configuration(self):
+        incomplete = FeishuSender(_config(
+            feishu_app_id="app-id",
+            feishu_app_secret="app-secret",
+            feishu_send_as_file=True,
+        ))
+        complete = FeishuSender(_config(
+            feishu_app_id="app-id",
+            feishu_app_secret="app-secret",
+            feishu_chat_id="oc_test_chat",
+            feishu_domain="lark",
+            feishu_send_as_file=True,
+        ))
+
+        self.assertFalse(incomplete.can_send_as_file())
+        self.assertTrue(complete.can_send_as_file())
+        self.assertEqual(complete._feishu_domain, "lark")
 
     @mock.patch("src.notification_sender.feishu_sender.requests.post")
     def test_send_success_returns_true(self, mock_post):

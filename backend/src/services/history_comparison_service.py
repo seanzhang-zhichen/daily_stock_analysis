@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-Report Engine - History Comparison Service
+报告引擎 - 历史对比服务
 ===================================
 
-Fetches recent analysis signal changes per stock for report rendering.
-Excludes current record via exclude_query_id.
+为报告渲染拉取每只股票近期的分析信号变化，并通过 exclude_query_id
+排除当前这条记录本身。
 """
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _record_to_signal(record: Any) -> Optional[Dict[str, Any]]:
-    """Convert AnalysisHistory record to signal dict. Skip on parse error."""
+    """把 AnalysisHistory 记录转换为信号字典；解析出错时跳过。"""
     try:
         return {
             "created_at": record.created_at.isoformat() if record.created_at else None,
@@ -37,15 +37,15 @@ def get_signal_changes(
     exclude_query_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Get recent signal changes for a single stock.
+    获取单只股票近期的信号变化。
 
     Args:
-        code: Stock code
-        limit: Max records to return
-        exclude_query_id: Exclude record with this query_id (e.g. current run)
+        code: 股票代码
+        limit: 最多返回的记录数
+        exclude_query_id: 排除该 query_id 对应的记录（例如当前这次运行）
 
     Returns:
-        List of signal dicts (created_at, sentiment_score, operation_advice, trend_prediction)
+        信号字典列表（created_at、sentiment_score、operation_advice、trend_prediction）
     """
     db = DatabaseManager.get_instance()
     records = db.get_analysis_history(
@@ -68,15 +68,15 @@ def get_signal_changes_batch(
     exclude_query_ids: Optional[Dict[str, str]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Get recent signal changes for multiple stocks.
+    获取多只股票近期的信号变化。
 
     Args:
-        codes: Stock codes
-        limit: Max records per stock
-        exclude_query_ids: Map code -> query_id to exclude per stock
+        codes: 股票代码列表
+        limit: 每只股票最多返回的记录数
+        exclude_query_ids: 代码 -> query_id 的映射，用于逐只股票排除对应记录
 
     Returns:
-        Dict mapping code -> list of signal dicts
+        代码 -> 信号字典列表 的映射
     """
     exclude_query_ids = exclude_query_ids or {}
     db = DatabaseManager.get_instance()

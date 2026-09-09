@@ -40,7 +40,7 @@ class InterceptHandler(logging.Handler):
     """将标准库 logging 记录转发给 Loguru。"""
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Forward one standard logging record into Loguru with source metadata."""
+        """把一条标准库日志记录连同源码元数据转发给 Loguru。"""
         try:
             level = loguru_logger.level(record.levelname).name
         except ValueError:
@@ -59,7 +59,7 @@ def _make_loguru_format(project_root: Path) -> Callable[[dict], str]:
     """创建输出项目相对路径的 Loguru formatter。"""
 
     def _format(record: dict) -> str:
-        """Populate Loguru extra fields used by the shared format string."""
+        """填充 Loguru 共享格式串所需的 extra 字段（相对路径 + 源码行号）。"""
         source_path = record["extra"].get("source_path", record["file"].path)
         source_line = record["extra"].get("source_line", record["line"])
         path = Path(source_path)
@@ -75,7 +75,7 @@ def _make_loguru_format(project_root: Path) -> Callable[[dict], str]:
 
 
 def _logging_level_to_loguru(level: int) -> Union[int, str]:
-    """Convert stdlib logging levels into values accepted by Loguru sinks."""
+    """把标准库日志级别转换为 Loguru sink 可接受的值。"""
     if level <= logging.NOTSET:
         return "DEBUG"
     level_name = logging.getLevelName(level)
@@ -101,7 +101,7 @@ LITELLM_LOGGERS = [
 
 
 def _resolve_litellm_log_level(raw_level: Optional[str] = None) -> Tuple[int, Optional[str]]:
-    """Resolve LiteLLM logger level from env, returning invalid raw value if any."""
+    """从环境变量解析 LiteLLM 日志级别；若存在非法原始值则一并返回。"""
     if raw_level is None:
         raw_level = os.getenv('LITELLM_LOG_LEVEL', '')
 

@@ -174,11 +174,12 @@ def _notify_refund_result(refund: AppRefund, user: Optional[AppUser], *, approve
         msg = EmailMessageDTO(to=user.email, subject=subject, body_text=body)
         get_email_backend().send(msg)
     except Exception:
+        # 邮件发送失败不影响审核结果，仅记录异常便于后续排障
         logger.exception("退款通知邮件发送失败 refund_no=%s", refund.refund_no)
 
 
 def _serialize_admin_user(user: AppUser) -> dict:
-    """Serialize user rows for admin tables without exposing password/session data."""
+    """把用户行序列化为后台表格形态，避免泄漏密码/会话等敏感字段。"""
     return {
         "id": int(user.id),
         "email": user.email,
@@ -196,7 +197,7 @@ def _serialize_admin_user(user: AppUser) -> dict:
 
 
 def _normalize_plan_code(plan_code: str) -> str:
-    """Normalize and validate plan code input for admin plan management."""
+    """规范化并校验套餐代码，避免 URL 中传入非法字符。"""
     code = (plan_code or "").strip().lower()
     if not code or len(code) > 32:
         raise HTTPException(status_code=422, detail="套餐代码不合法")
@@ -210,7 +211,7 @@ def _normalize_plan_code(plan_code: str) -> str:
 
 @router.get("/me", summary="(admin) 当前 admin 信息 + 心跳")
 async def admin_me(current_admin: AppUser = Depends(get_admin_user)):
-    """Return current admin identity for console heartbeat checks."""
+    """返回当前 admin 的身份信息，供后台控制台做心跳与权限校验。"""
     return {"admin": _serialize_admin_user(current_admin)}
 
 
@@ -226,7 +227,7 @@ async def admin_list_users(
     is_admin: Optional[bool] = Query(default=None, alias="isAdmin"),
     limit: int = Query(default=100, ge=1, le=500),
 ):
-    """List users with optional email, plan and admin-status filters."""
+    """按邮箱/套餐/角色筛选用户列表。"""
     q = db.query(AppUser)
     if email_like:
         q = q.filter(AppUser.email.ilike(f"%{email_like.strip()}%"))
@@ -245,7 +246,7 @@ async def admin_adjust_user_credits(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    """Adjust a user's credit balance and write an audit entry."""
+    """调整指定用户的积分余额，并写入审计记录。"""
     user = db.query(AppUser).filter(AppUser.id == int(user_id)).first()
     if user is None:
         raise HTTPException(status_code=404, detail="目标用户不存在")
@@ -254,6 +255,7 @@ async def admin_adjust_user_credits(
         raise HTTPException(status_code=422, detail="调整积分不能为 0")
     try:
         if delta > 0:
+            # 正向调整走 add_credits，负向走 consume_credits 以复用既有账本逻辑
             add_credits(
                 db,
                 user=user,
@@ -277,6 +279,7 @@ async def admin_adjust_user_credits(
         db.commit()
         db.refresh(user)
     except ValueError as exc:
+        # 余额不足等业务校验错误回滚后转 400，由前端展示
         db.rollback()
         raise HTTPException(status_code=400, detail="用户积分余额不足，无法扣减") from exc
     except Exception as exc:  # noqa: BLE001
@@ -305,7 +308,7 @@ async def admin_list_orders(
     provider: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """List orders for admin review using optional status/user/provider filters."""
+    """按状态/用户/支付通道筛选订单列表。"""
     orders = _svc.list_orders_admin(
         db,
         status=status,
@@ -322,7 +325,7 @@ async def admin_get_order(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
-    """Return one order by order number or 404 when absent."""
+    """根据订单号获取单条订单，不存在时返回 404。"""
     order = _svc.get_order(db, order_no)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -339,7 +342,7 @@ async def admin_list_refunds(
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """List refund requests for admin processing."""
+    """按状态筛选退款申请列表，便于运营跟进。"""
     refunds = _svc.list_refunds_admin(db, status=status, limit=limit)
     return {"refunds": [serialize_refund(r) for r in refunds], "count": len(refunds)}
 
@@ -351,7 +354,7 @@ async def admin_approve_refund(
     current_admin: AppUser = Depends(get_admin_user),
     body: ApproveRefundRequest = Body(default=ApproveRefundRequest()),
 ):
-    """Approve a refund, audit the action and notify the user best-effort."""
+    """审核通过退款：落库 + 审计 + 尽力通知用户。"""
     refund = _svc.get_refund(db, refund_no)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款单不存在")
@@ -382,7 +385,7 @@ async def admin_reject_refund(
     current_admin: AppUser = Depends(get_admin_user),
     body: RejectRefundRequest = Body(default=RejectRefundRequest()),
 ):
-    """Reject a refund, audit the action and notify the user best-effort."""
+    """审核拒绝退款：落库 + 审计 + 尽力通知用户。"""
     refund = _svc.get_refund(db, refund_no)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款单不存在")
@@ -411,7 +414,7 @@ async def admin_list_invoices(
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """List invoice applications for admin processing."""
+    """按状态筛选发票申请列表。"""
     invoices = _svc.list_invoices_admin(db, status=status, limit=limit)
     return {"invoices": [serialize_invoice(i) for i in invoices], "count": len(invoices)}
 
@@ -423,7 +426,7 @@ async def admin_issue_invoice(
     current_admin: AppUser = Depends(get_admin_user),
     body: IssueInvoiceRequest = Body(default=IssueInvoiceRequest()),
 ):
-    """Mark an invoice application as issued and record the audit trail."""
+    """将发票申请标记为已开具并记录访问链接与审计。"""
     invoice = _svc.get_invoice(db, invoice_no)
     if invoice is None:
         raise HTTPException(status_code=404, detail="发票申请不存在")
@@ -448,7 +451,7 @@ async def admin_reject_invoice(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    """Reject an invoice application and record the audit trail."""
+    """拒绝一张发票申请并记录审计。"""
     invoice = _svc.get_invoice(db, invoice_no)
     if invoice is None:
         raise HTTPException(status_code=404, detail="发票申请不存在")
@@ -473,7 +476,7 @@ async def admin_grant_plan(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    """Grant or extend a plan for a user identified by email or id."""
+    """为指定用户开通或延长套餐，作为活动/KOL/客服补单的兜底入口。"""
     user: Optional[AppUser] = None
     user_email = (body.user_email or "").strip().lower()
     if user_email:
@@ -529,7 +532,7 @@ async def admin_list_plans(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
-    """Return all plan catalog rows including inactive admin-managed plans."""
+    """返回所有套餐目录行（含已停用的），便于后台管理。"""
     plans = list_plan_catalog(
         db,
         include_inactive=True,
@@ -545,7 +548,7 @@ async def admin_upsert_plan(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    """Create or update one plan row while preserving free-plan safeguards."""
+    """创建或更新一个套餐，同时保留对 free 套餐的特殊保护。"""
     code = _normalize_plan_code(plan_code)
     row = db.query(AppPlan).filter(AppPlan.code == code).first()
     if row is None:
@@ -559,6 +562,7 @@ async def admin_upsert_plan(
     row.daily_analysis_limit = int(body.daily_analysis_limit)
     row.daily_agent_limit = int(body.daily_agent_limit)
     row.max_stocks = int(body.max_stocks)
+    # free 套餐不开放 webhook，价格强制 0，避免后台误改破坏默认体验
     row.can_webhook = False if code == "free" else bool(body.can_webhook)
     row.price_cents = 0 if code == "free" else int(body.price_cents)
     row.currency = (body.currency or "CNY").strip().upper()[:8] or "CNY"
@@ -599,7 +603,7 @@ async def admin_list_platform_settings(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
-    """Return serialized platform-level To-C operation settings."""
+    """返回序列化后的 To C 运营平台配置项。"""
     settings = serialize_platform_settings(db)
     return {"settings": settings, "count": len(settings)}
 
@@ -610,7 +614,7 @@ async def admin_update_platform_settings(
     db: Session = Depends(get_db),
     current_admin: AppUser = Depends(get_admin_user),
 ):
-    """Bulk upsert platform settings and audit changed keys."""
+    """批量 upsert 平台配置，并审计发生变更的 key 列表。"""
     if not body.settings:
         raise HTTPException(status_code=422, detail="settings 不能为空")
     payload = [{"key": item.key, "value": item.value} for item in body.settings]
@@ -644,7 +648,7 @@ async def admin_audit_logs(
     admin_id: Optional[int] = Query(default=None, alias="adminId"),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """List audit log rows with optional action/user/admin filters."""
+    """按 action / 用户 / admin 过滤审计日志，倒序返回最近记录。"""
     q = db.query(AppAuditLog)
     if action:
         q = q.filter(AppAuditLog.action == action)
@@ -664,8 +668,9 @@ async def admin_stats(
     db: Session = Depends(get_db),
     _: AppUser = Depends(get_admin_user),
 ):
-    """简单聚合, 不接 BI; 用于运营后台首屏概览。"""
+    """简单聚合指标，用于后台首页概览；不接入 BI。"""
     total_users = db.query(func.count(AppUser.id)).scalar() or 0
+    # 付费用户：套餐非 free 且未过期（无到期视为永久）
     paid_users = (
         db.query(func.count(AppUser.id))
         .filter(AppUser.plan_code != "free")

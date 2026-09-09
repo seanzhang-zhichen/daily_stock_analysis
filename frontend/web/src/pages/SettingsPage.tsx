@@ -20,6 +20,7 @@ import {
 import { WEB_BUILD_INFO } from '../utils/constants';
 import { getCategoryDescriptionZh } from '../utils/systemConfigI18n';
 import type { SystemConfigCategory } from '../types/systemConfig';
+import { GenerationBackendStatus } from '../components/settings/GenerationBackendStatus';
 
 type DesktopWindow = Window & {
   dsaDesktop?: {
@@ -522,6 +523,7 @@ const SettingsPage: React.FC = () => {
           issues={issueByKey[item.key] || []}
         />
       ))}
+      {activeCategory === 'ai_model' ? <GenerationBackendStatus /> : null}
     </SettingsSectionCard>
   ) : (
     <EmptyState

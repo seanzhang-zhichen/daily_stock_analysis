@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Versioned market-structure context shared by reports, Agent and API."""
+"""带版本号的市场结构（market-structure）上下文，供报告、Agent 与 API 共享。"""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ StockRole = Literal["leader", "follower", "edge", "unknown"]
 
 
 class MarketStructureSource(BaseModel):
+    """单个数据源快照信息：仅作为诊断元数据，不参与运行时 provider 路由。"""
+
     provider: str = Field(..., description="数据源标识，仅作快照元数据，不参与运行时 provider/model 路由")
     dataset: str = Field(..., description="数据集标识，仅用于历史可追溯快照")
     status: str = Field("ok", description="来源可用性快照")
@@ -26,6 +28,8 @@ class MarketStructureSource(BaseModel):
 
 
 class MarketStructureDataQuality(BaseModel):
+    """整体数据质量快照：缺失字段、来源、错误信息聚合。"""
+
     status: MarketStructureStatus = Field("unknown", description="数据质量快照状态（展示语义）")
     missing_fields: List[str] = Field(default_factory=list)
     sources: List[MarketStructureSource] = Field(default_factory=list)
@@ -33,6 +37,8 @@ class MarketStructureDataQuality(BaseModel):
 
 
 class RankedThemeItem(BaseModel):
+    """主题榜单中的单个条目：含涨幅/排名/来源等基础维度。"""
+
     name: str
     change_pct: Optional[float] = None
     rank: Optional[int] = None
@@ -42,12 +48,16 @@ class RankedThemeItem(BaseModel):
 
 
 class MarketThemeItem(RankedThemeItem):
+    """市场主题条目：在榜单基础信息上叠加所处阶段（phase）与强度评分。"""
+
     phase: ThemePhase = "unknown"
     strength_score: Optional[int] = None
     reason: Optional[str] = None
 
 
 class ThemeBreadth(BaseModel):
+    """主题广度统计：活跃主题数、领涨行业/概念数、滞后主题数。"""
+
     active_count: int = 0
     leading_industry_count: int = 0
     leading_concept_count: int = 0
@@ -55,6 +65,11 @@ class ThemeBreadth(BaseModel):
 
 
 class MarketThemeContext(BaseModel):
+    """市场主题上下文。
+
+    汇总大盘层级的活跃主题、领涨/滞后板块及数据质量信息，供报告与 Agent 共享。
+    """
+
     schema_version: str = MARKET_THEME_SCHEMA_VERSION
     status: MarketStructureStatus = "unknown"
     market: str = "cn"
@@ -70,6 +85,8 @@ class MarketThemeContext(BaseModel):
 
 
 class StockBoardPosition(BaseModel):
+    """个股关联的板块位置：板块名称、类型、代码、排名、涨幅及来源。"""
+
     name: str
     type: Optional[str] = None
     code: Optional[str] = None
@@ -79,6 +96,8 @@ class StockBoardPosition(BaseModel):
 
 
 class PrimaryTheme(BaseModel):
+    """个股所属的主要主题：主题名、来源、阶段、排名、涨幅。"""
+
     name: str
     source: ThemeRankSource = "unknown"
     phase: ThemePhase = "unknown"
@@ -87,11 +106,15 @@ class PrimaryTheme(BaseModel):
 
 
 class MarketStructureRiskTag(BaseModel):
+    """市场结构层面的风险标签：标的代码与人类可读提示。"""
+
     code: str
     message: str
 
 
 class StockMarketPosition(BaseModel):
+    """个股在市场结构中的位置：所属主题、关联板块、角色/阶段、风险标签。"""
+
     schema_version: str = STOCK_MARKET_POSITION_SCHEMA_VERSION
     status: MarketStructureStatus = "unknown"
     stock_code: str
@@ -106,6 +129,8 @@ class StockMarketPosition(BaseModel):
 
 
 class MarketStructureContext(BaseModel):
+    """市场结构总上下文：聚合大盘主题与个股市场位置两个子视图。"""
+
     schema_version: str = MARKET_STRUCTURE_SCHEMA_VERSION
     status: MarketStructureStatus = "unknown"
     market: str = "cn"
@@ -115,5 +140,6 @@ class MarketStructureContext(BaseModel):
 
 
 def dump_market_structure_model(model: BaseModel) -> Dict[str, Any]:
-    """Return a low-sensitive dict using stable snake_case keys."""
+    """返回使用稳定 snake_case 键、剔除 None 字段的字典，便于跨层传输与持久化。"""
+    # exclude_none=True 减少空字段噪声，保证下游消费稳定
     return model.model_dump(exclude_none=True)

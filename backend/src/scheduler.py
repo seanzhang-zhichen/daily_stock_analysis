@@ -32,7 +32,7 @@ class GracefulShutdown:
     """
 
     def __init__(self):
-        """Register process signal handlers and initialize shutdown state."""
+        """注册进程信号处理器并初始化优雅退出状态。"""
         self.shutdown_requested = False
         self._lock = threading.Lock()
 
@@ -108,14 +108,14 @@ class Scheduler:
 
     @staticmethod
     def _is_valid_schedule_time(schedule_time: str) -> bool:
-        """Validate time string in HH:MM 24-hour format."""
+        """校验 HH:MM 24 小时制格式的时间字符串。"""
         candidate = (schedule_time or "").strip()
         if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", candidate):
             return False
         return True
 
     def _cancel_daily_job(self) -> None:
-        """Remove the currently registered daily job if one exists."""
+        """移除当前已注册的每日任务（如果存在）。"""
         if self._daily_job is None:
             return
 
@@ -129,7 +129,7 @@ class Scheduler:
         self._daily_job = None
 
     def _configure_daily_task(self, schedule_time: str) -> bool:
-        """(Re)register the daily job at the requested time."""
+        """（重新）在指定时间注册每日任务；时间非法时沿用当前配置并返回 False。"""
         candidate = (schedule_time or "").strip()
         if not self._is_valid_schedule_time(candidate):
             logger.warning(
@@ -155,7 +155,7 @@ class Scheduler:
         return True
 
     def _refresh_daily_schedule_if_needed(self) -> None:
-        """Reload daily schedule time from the latest runtime config if needed."""
+        """如有必要，从最新运行时配置中重新加载每日调度时间。"""
         if self._task_callback is None or self._schedule_time_provider is None:
             return
 
@@ -195,10 +195,10 @@ class Scheduler:
         run_immediately: bool = False,
         name: Optional[str] = None,
     ) -> None:
-        """Register a periodic background task executed inside the scheduler loop.
+        """注册一个在调度器主循环中周期性执行的后台任务。
 
-        Note: The scheduler loop polls every 30 seconds, so *interval_seconds*
-        below 30 will be clamped to 30 to avoid promising unreachable precision.
+        注意：调度循环每 30 秒轮询一次，因此 *interval_seconds* 小于 30
+        会被钳制为 30，以避免承诺无法达到的精度。
         """
         clamped_interval = max(30, int(interval_seconds))
         if int(interval_seconds) < 30:
@@ -228,13 +228,13 @@ class Scheduler:
             self._start_background_task(entry)
 
     def _start_background_task(self, entry: Dict[str, Any]) -> bool:
-        """Start one background task in a dedicated daemon thread."""
+        """在独立的守护线程中启动一个后台任务。"""
         worker = entry.get("thread")
         if worker is not None and worker.is_alive():
             return False
 
         def _runner() -> None:
-            """Execute a scheduled task and always clear its running thread marker."""
+            """执行调度任务，并始终清理该任务的运行线程标记。"""
             try:
                 logger.info("后台任务开始执行: %s", entry["name"])
                 entry["task"]()
@@ -256,7 +256,7 @@ class Scheduler:
         return True
 
     def _run_background_tasks(self) -> None:
-        """Execute any background tasks whose interval has elapsed."""
+        """执行所有已经到达执行间隔的后台任务。"""
         if not self._background_tasks:
             return
 
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     )
 
     def test_task():
-        """Simple smoke task used when running this module directly."""
+        """直接运行本模块时使用的简单冒烟任务。"""
         print(f"任务执行中... {datetime.now()}")
         time.sleep(2)
         print("任务完成!")

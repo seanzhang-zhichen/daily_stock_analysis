@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-Report Engine Schemas
+报告引擎 Schemas
 ===================================
 
-Pydantic schemas for LLM report output validation.
+用于校验 LLM 报告输出的 Pydantic schema。
 """
 
 from src.schemas.report_schema import AnalysisReportSchema

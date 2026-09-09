@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""
-IntelAgent — news & intelligence gathering specialist.
+"""情报 Agent：负责抓取并结构化最新新闻 / 公告 / 资金流证据。
 
-Responsible for:
-- Searching latest stock news and announcements
-- Running comprehensive intelligence search
-- Detecting risk events (reduce holdings, earnings warnings, regulatory)
-- Summarising sentiment and catalysts
+工作职责：
+
+- 搜索目标股票的最新新闻与公司公告；
+- 运行综合情报搜索（含市场分析、风险扫描、业绩展望）；
+- 检测风险事件（减持、业绩预亏、监管处罚、解禁、PE 异常等）；
+- 解读 A 股主力资金净流入 / 净流出；
+- 输出结构化 JSON 情绪意见，供下游 Agent（如 RiskAgent）复用。
+
+注意：LLM prompt 字符串字面量不可修改——它是直接喂给模型的合同。
 """
 
 from __future__ import annotations
@@ -22,10 +25,19 @@ logger = logging.getLogger(__name__)
 
 
 class IntelAgent(BaseAgent):
-    """Collect latest intelligence and convert it into a sentiment opinion."""
+    """情报 / 情绪 Agent：把外部事件转化为可被决策 Agent 消费的结构化信号。
 
+    关键行为：
+    - 调用工具获取新闻与资金流；
+    - 在 ``ctx.data["intel_opinion"]`` 缓存结构化结果，供下游复用；
+    - 将 ``risk_alerts`` 注入 ``ctx.risk_flags``，让风险 Agent 看见。
+    """
+
+    # Agent 在注册表中的英文唯一标识
     agent_name = "intel"
+    # 限制最多 4 次工具调用，避免在搜索阶段耗尽 token / 时间
     max_steps = 4
+    # 允许调用的工具白名单：新闻 / 综合情报 / 个股信息 / 资金流
     tool_names = [
         "search_stock_news",
         "search_comprehensive_intel",
@@ -34,7 +46,11 @@ class IntelAgent(BaseAgent):
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """Build the intelligence-gathering prompt and output JSON contract."""
+        """构造情报收集 system prompt 与 JSON 输出约定。
+
+        Returns:
+            str: 多行字符串，定义工作流、风险优先级、资金流解读、JSON schema。
+        """
         return """\
 You are an **Intelligence & Sentiment Agent** specialising in A-shares, \
 HK, and US equities.
@@ -82,10 +98,19 @@ Return **only** a JSON object:
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """Ask the LLM to fetch news, announcements and capital-flow evidence."""
+        """构造 user message：要求 LLM 取新闻 + 资金流证据并输出 JSON。
+
+        Args:
+            ctx: 当前调用上下文，至少需要 ``stock_code``；有 ``stock_name`` 时一并附上。
+
+        Returns:
+            str: 多行 Markdown 字符串，包含分步指引。
+        """
+        # 第一行明确"分析对象"，股票名仅在已知时附加
         parts = [f"Gather intelligence and assess sentiment for stock **{ctx.stock_code}**"]
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
+        # 步骤提示：先取综合情报，再补资金流，最后输出 JSON 意见
         parts.append(
             "Steps:\n"
             "1. Call search_comprehensive_intel to get latest news, company announcements "
@@ -97,17 +122,25 @@ Return **only** a JSON object:
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """Parse intel JSON, cache it in context and propagate risk alerts."""
+        """解析 LLM 返回的 JSON 情绪意见，注入上下文风险标志。
+
+        Args:
+            ctx: 当前调用上下文，会写入 ``ctx.data["intel_opinion"]`` 与风险标志。
+            raw_text: LLM 原始返回字符串。
+
+        Returns:
+            Optional[AgentOpinion]: 标准化意见；JSON 解析失败时返回 ``None``。
+        """
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[IntelAgent] failed to parse opinion JSON")
             return None
 
-        # Cache parsed intel so downstream agents (especially RiskAgent) can
-        # reuse it instead of re-searching the same evidence.
+        # 缓存解析后的情报，供下游 Agent（尤其是 RiskAgent）复用，
+        # 避免对同一批证据重复搜索。
         ctx.set_data("intel_opinion", parsed)
 
-        # Propagate risk alerts to context
+        # 把风险警报传递到上下文：每个非空字符串都作为一条风险标记
         for alert in parsed.get("risk_alerts", []):
             if isinstance(alert, str) and alert:
                 ctx.add_risk_flag(category="intel", description=alert)

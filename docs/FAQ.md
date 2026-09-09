@@ -1,353 +1,43 @@
-# ❓ 常见问题解答 (FAQ)
+# 常见问题
 
-本文档整理了用户在使用过程中遇到的常见问题及解决方案。
+## 修改 `.env` 后为什么没有生效？
 
----
+确认编辑的是仓库根目录 `.env`，然后重启对应进程或容器。Docker Compose、systemd 和其他进程管理器传入的环境变量会覆盖文件中的同名项。定时器的启动期配置通常也需要重启后才会重建。
 
-## 📊 数据相关
+## 没有配置付费数据源还能使用吗？
 
-### Q1: 美股代码（如 AMD, AAPL）分析时价格显示不正确？
+可以。系统会尝试公开数据源和后备源，但实时性、字段完整性、稳定性与请求额度不能保证。需要特定市场或字段时，在 `.env.example` 查找相应数据源配置，并检查提供商权限与限流。
 
-**现象**：输入美股代码后，显示的价格明显不对（如 AMD 显示 7.33 元），或被误识别为 A 股。
+## LLM 报错、超时或没有可用模型怎么办？
 
-**原因**：早期版本代码匹配逻辑优先尝试国内 A 股规则，导致代码冲突。
+先仅保留一个已知可用的模型配置，检查 API Key、模型名、Base URL 和协议。确认单次分析可运行后，再增加 `LLM_CHANNELS` 与回退模型。不要同时猜测多个提供商的配置；日志和 Web 设置页的连接测试可定位失败环节。
 
-**解决方案**：
-1. 已在 v2.3.0 修复，系统现在支持美股代码自动识别
-2. 如仍有问题，可在 `.env` 中设置：
-   ```bash
-   YFINANCE_PRIORITY=0
-   ```
-   这将优先使用 Yahoo Finance 数据源获取美股数据
+## 为什么报告缺少某些行情、新闻或基本面字段？
 
-> 📌 相关 Issue: [#153](https://github.com/ZhuLinsen/daily_stock_analysis/issues/153)
+不同市场和数据源的字段并不一致，网络、限流和停牌也可能使某些步骤降级。检查报告中的数据状态与后端日志；必要时配置覆盖该市场的专用数据源。缺失字段不应被自行解释为零值或确定性结论。
 
----
+## 为什么没有收到通知？
 
-### Q2: 报告中"量比"字段显示为空或 N/A？
-
-**现象**：分析报告中量比数据缺失，影响 AI 对缩放量的判断。
-
-**原因**：默认的某些实时行情源（如新浪接口）不提供量比字段。
-
-**解决方案**：
-1. 已在 v2.3.0 修复，腾讯接口现已支持量比解析
-2. 推荐配置实时行情源优先级：
-   ```bash
-   REALTIME_SOURCE_PRIORITY=tencent,akshare_sina,efinance,akshare_em
-   ```
-3. 系统已内置 5 日均量计算作为兜底逻辑
-
-> 📌 相关 Issue: [#155](https://github.com/ZhuLinsen/daily_stock_analysis/issues/155)
-
----
-
-### Q3: Tushare 获取数据失败，提示 Token 不对？
-
-**现象**：日志显示 `Tushare 获取数据失败: 您的token不对，请确认`
-
-**解决方案**：
-1. **无 Tushare 账号**：无需配置 `TUSHARE_TOKEN`，系统会自动使用免费数据源（AkShare、Efinance）
-2. **有 Tushare 账号**：确认 Token 是否正确，可在 [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) 个人中心查看
-3. 本项目所有核心功能均可在无 Tushare 的情况下正常运行
-
----
-
-### Q4: 数据获取被限流或返回为空？
-
-**现象**：日志显示 `熔断器触发` 或数据返回 `None`，或出现 `RemoteDisconnected`、`push2his.eastmoney.com` 连接被关闭等
-
-**原因**：免费数据源（东方财富、新浪等）有反爬机制，短时间大量请求会被限流。
-
-**解决方案**：
-1. 系统已内置多数据源自动切换和熔断保护
-2. 减少自选股数量，或增加请求间隔
-3. 避免频繁手动触发分析
-4. 若东财接口频繁失败，可设置 `ENABLE_EASTMONEY_PATCH=true` 启用东财补丁（注入 NID 令牌与随机 User-Agent，降低被限流概率）
-5. 将 `MAX_WORKERS=1` 改为串行获取，减少对东财的并发压力
-
----
-
-## ⚙️ 配置相关
-
-### Q5: 修改 .env 文件后配置没有生效？
-
-**解决方案**：
-1. 确保 `.env` 文件位于项目根目录
-2. **Docker 部署 / WebUI 系统设置**：
-   - WebUI 保存后的 `STOCK_LIST`、`SCHEDULE_ENABLED`、`SCHEDULE_TIME`、`SCHEDULE_RUN_IMMEDIATELY`、`RUN_IMMEDIATELY` 会写回容器内的 `.env`
-   - WebUI 保存后会触发当前进程的配置重载；运行中的读取路径会同步使用最新写回的 `.env`。每日定时分析的股票范围来自各用户 Web 自选股，不使用全局 `STOCK_LIST`
-   - 如果容器启动命令里显式传入了这些同名环境变量（如 `docker run -e ...` 或 Compose `environment:`），后续重启时仍以显式进程环境变量为准；要让 WebUI 保存值接管，请同步更新或移除这些显式 override
-   - 其中 `SCHEDULE_*` 与 `RUN_IMMEDIATELY` 属于**启动期调度配置**，保存后不会立即触发一次分析，也不会热重建当前进程里的 scheduler
-   - 如需让调度开关立刻接管当前容器，请重启容器，并确保以 schedule 模式启动
-3. **Docker 手工改 `.env` 后**：修改后仍建议重启容器
-   ```bash
-   docker compose down && docker compose up -d
-   ```
-4. **Docker/进程管理器**：确认部署配置没有用旧环境变量覆盖 `.env`，修改后重建容器或重启进程
-5. 检查是否有多个 `.env` 文件（如 `.env.local`）导致覆盖
-
----
-
-### Q6: 如何配置代理访问 Gemini/OpenAI API？
-
-**解决方案**：
-
-在 `.env` 中配置：
-```bash
-USE_PROXY=true
-PROXY_HOST=127.0.0.1
-PROXY_PORT=10809
-```
-
-> ⚠️ 注意：服务器部署时需确认容器或服务进程能访问代理地址；容器内的 `127.0.0.1` 指向容器自身。
-
----
-
-### LLM 配置常见问题
-
-> 完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)。
-
-**Q: 配置了 GEMINI_API_KEY 和 LLM_CHANNELS，为什么只用渠道？**
-
-系统按优先级只取一种：高级模型路由 YAML（`LITELLM_CONFIG`）> `LLM_CHANNELS` > 显式 `LITELLM_MODEL` + provider API Key。但 YAML 仅在文件可正常解析且产出了有效 `model_list` 时才生效；如果 YAML 路径无效或内容为空，系统会回退到 `LLM_CHANNELS` 或显式主模型配置。一旦某一层级实际生效，更低优先级的配置不参与解析。
-
-**Q: check_env 输出“未配置可用 AI 模型”怎么办？**
-
-默认先选一种服务商并填写对应 API Key；如果需要固定主模型，再补 `LITELLM_MODEL=provider/model`；如果要多模型切换，再配置 `LLM_CHANNELS` 或高级模型路由 YAML。运行 `uv run --locked python scripts/check_env.py --config` 校验配置，`uv run --locked python scripts/check_env.py --llm` 实际调用 API 测试。
-
-**Q: 如何同时使用多个模型（如 AIHubmix + DeepSeek + Gemini）？**
-
-使用渠道模式：设置 `LLM_CHANNELS=aihubmix,deepseek,gemini`，并配置各渠道的 `LLM_{NAME}_BASE_URL`、`LLM_{NAME}_API_KEY`、`LLM_{NAME}_MODELS`。也可在 Web 设置页 → AI 模型 → AI 模型接入 中可视化配置。
-
-**Q: 问股/Agent 提示未配置可用 LLM，但我只配置了 `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` API Key，怎么办？**
-
-先确认是否显式设置了 `LITELLM_MODEL=provider/model` 或 `AGENT_LITELLM_MODEL=provider/model`。仅填写 provider API Key 不再自动推断主模型；如果启用了 `LITELLM_CONFIG` 或 `LLM_CHANNELS`，上层配置会作为实际模型来源。完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)。
-
----
-
-## 📱 推送相关
-
-### Q7: 机器人推送失败，提示消息过长？
-
-**现象**：分析成功但未收到推送，日志显示 400 错误或 `Message too long`
-
-**原因**：不同平台消息长度限制不同：
-- 企业微信：4KB
-- 飞书：20KB
-- 钉钉：20KB
-
-**解决方案**：
-1. **自动分块**：最新版本已实现长消息自动切割
-2. **单股推送模式**：设置 `SINGLE_STOCK_NOTIFY=true`，每分析完一只股票立即推送
-3. **精简报告**：设置 `REPORT_TYPE=simple` 使用精简格式
-
----
-
-### Q8: Telegram 推送收不到消息？
-
-**解决方案**：
-1. 确认 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 都已配置
-2. 获取 Chat ID 方法：
-   - 给 Bot 发送任意消息
-   - 访问 `https://api.telegram.org/bot<TOKEN>/getUpdates`
-   - 在返回的 JSON 中找到 `chat.id`
-3. 确保 Bot 已被添加到目标群组（如果是群聊）
-4. 本地运行时需要能访问 Telegram API（可能需要代理）
-
----
-
-### Q9: 企业微信 Markdown 格式显示不正常？
-
-**解决方案**：
-1. 企业微信对 Markdown 支持有限，可尝试设置：
-   ```bash
-   WECHAT_MSG_TYPE=text
-   ```
-2. 这将发送纯文本格式的消息
-
----
-
-## 🤖 AI 模型相关
-
-### Q10: Gemini API 返回 429 错误（请求过多）？
-
-**现象**：日志显示 `Resource has been exhausted` 或 `429 Too Many Requests`
-
-**解决方案**：
-1. Gemini 免费版有速率限制（约 15 RPM）
-2. 减少同时分析的股票数量
-3. 增加请求延迟：
-   ```bash
-   GEMINI_REQUEST_DELAY=5
-   ANALYSIS_DELAY=10
-   ```
-4. 或切换到 OpenAI 兼容 API 作为备选
-
----
-
-### Q11: 如何使用 DeepSeek 等国产模型？
-
-**配置方法**：
+先执行：
 
 ```bash
-# 不需要配置 GEMINI_API_KEY
-OPENAI_API_KEY=sk-xxxxxxxx
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
-# deepseek-chat / deepseek-reasoner 仍兼容，但官方已标记为 2026/07/24 后废弃
+uv run --locked python backend/main.py --check-notify
 ```
 
-支持的模型服务：
-- DeepSeek: `https://api.deepseek.com`
-- 通义千问: `https://dashscope.aliyuncs.com/compatible-mode/v1`
-- Moonshot: `https://api.moonshot.cn/v1`
+该命令只检查配置，不发送通知。随后检查渠道密钥、通知路由、静默时段、严重程度阈值、去重/冷却设置，以及外部平台的回调日志。Web 设置页的单渠道测试会发送真实测试消息。
 
----
+## Web 页面无法打开或 API 返回 404/502？
 
-### Q11b: 如何使用 Ollama 本地模型？
+确认 `--serve-only` 或 Compose 的 `server` 服务正在运行，检查端口映射与反向代理。开发模式下还需要 Vite 进程；生产模式则需要已构建的 Web 静态资源。通过 `/api/health` 和 `/docs` 区分后端不可用与前端资源问题。
 
-**配置方法**：使用 `OLLAMA_API_BASE` + `LITELLM_MODEL`，或渠道模式（`LLM_CHANNELS=ollama` + `LLM_OLLAMA_BASE_URL` + `LLM_OLLAMA_MODELS`）。
+## Docker 容器为什么看不到宿主机服务？
 
-**避坑**：不要使用 `OPENAI_BASE_URL` 配置 Ollama，否则系统会错误拼接 URL（如 404、`api/generate/api/show`）。详见 [LLM 配置指南](LLM_CONFIG_GUIDE.md) 示例 4 与渠道示例。
+容器内的 `127.0.0.1` 指向容器本身，不是宿主机。将代理、Futu OpenD 或本地模型服务配置为容器可访问的主机地址，并按操作系统和网络模式设置端口映射。
 
----
+## 升级前需要备份什么？
 
-### Q11c: 运行时报 `OllamaException / APIConnectionError`（All LLM models failed）怎么办？
+至少备份 `.env`、`data/`、`reports/` 和必要日志。数据库 migration 可能改变 schema；先执行 migration 并验证，再升级服务。详细步骤见[运行与部署](operations.md)。
 
-**症状**：日志出现 `litellm.APIConnectionError: OllamaException` 或 `Analysis failed: All LLM models failed (tried 1 model(s))`。
+## 如何报告问题？
 
-逐项排查以下 5 个检查点：
-
-1. **Ollama 服务是否已启动**
-   ```bash
-   # 查看进程
-   pgrep -a ollama
-   # 若无输出则先启动
-   ollama serve
-   ```
-   确认服务正在监听：`curl http://localhost:11434`，应返回 `Ollama is running`。
-
-2. **`OLLAMA_API_BASE` 是否配置正确**
-   - ✅ 正确：`OLLAMA_API_BASE=http://localhost:11434`
-   - ❌ 错误：把 Ollama 地址填到 `OPENAI_BASE_URL`，会导致 URL 路径拼错（如 `…/api/generate/api/show`）。
-
-3. **模型名称是否加了 `ollama/` 前缀**
-   - ✅ 正确：`LITELLM_MODEL=ollama/qwen3:8b`
-   - ❌ 错误：`LITELLM_MODEL=qwen3:8b`（缺少前缀，litellm 无法路由到 Ollama）
-
-4. **模型是否已下载到本地**
-   ```bash
-   ollama list          # 查看已有模型
-   ollama pull qwen3:8b # 如无则先拉取
-   ```
-
-5. **远程部署 / Docker 时的网络与防火墙**
-   - 若 Ollama 和程序不在同一主机，需将 `OLLAMA_API_BASE` 改为实际 IP，如 `http://192.168.1.100:11434`。
-   - 确认防火墙已放行 11434 端口，且 Ollama 启动时绑定了正确地址（`OLLAMA_HOST=0.0.0.0:11434`）。
-
-> 完整配置示例见 [LLM 配置指南 → 示例 4（Ollama）](LLM_CONFIG_GUIDE.md#example-4-ollama)。
-
----
-
-## 🐳 Docker 相关
-
-### Q12: Docker 容器启动后立即退出？
-
-**解决方案**：
-1. 查看容器日志：
-   ```bash
-   docker logs <container_id>
-   ```
-2. 常见原因：
-   - 环境变量未正确配置
-   - `.env` 文件格式错误（如有多余空格）
-   - 依赖包版本冲突
-
----
-
-### Q13: Docker 中 API 服务无法访问？
-
-**解决方案**：
-1. 确保启动命令包含 `--host 0.0.0.0`（不能是 127.0.0.1）
-2. 检查端口映射是否正确：
-   ```yaml
-   ports:
-     - "8000:8000"
-   ```
-
----
-
-### Q13.1: Docker 中网络/DNS 解析失败（如 api.tushare.pro、searchapi.eastmoney.com 无法解析）？
-
-**现象**：日志显示 `Temporary failure in name resolution` 或 `NameResolutionError`，股票数据 API 和大模型 API 均无法访问。
-
-**原因**：自定义 bridge 网络下，容器使用 Docker 内置 DNS，在旁路由、特定网络环境时可能解析失败。
-
-**解决方案**（按优先级尝试）：
-
-1. **显式配置 DNS**：在 `docker/docker-compose.yml` 的 `x-common` 下添加：
-   ```yaml
-   dns:
-     - 223.5.5.5
-     - 119.29.29.29
-     - 8.8.8.8
-   ```
-   然后执行 `docker compose down` 和 `docker compose up -d --force-recreate` 重新创建容器。
-
-2. **改用 host 网络模式**：若上述仍无效，可在 `server` 服务下添加 `network_mode: host`，并移除 `ports` 映射。使用 host 模式时，`ports` 无效，**端口由 `command` 中的 `--port` 指定**。若宿主机默认端口已占用，可修改为其他端口（如 `.env` 中设置 `API_PORT=8080`），访问对应 `http://localhost:8080`。
-
-> 📌 相关 Issue: [#372](https://github.com/ZhuLinsen/daily_stock_analysis/issues/372)
-
----
-
-### Q13.2: Docker 安装时，软件版本号写在哪个文件里？
-
-**结论**：对 Docker 用户来说，**最权威的版本不是某个 Python 源文件常量，而是你实际使用的镜像 tag**。
-
-**为什么**：
-1. Docker 镜像版本由部署时选用的镜像 tag 决定，例如 `v3.12.0`；自建镜像应使用明确的自定义 tag 或 Git commit 标识。
-2. 这意味着 Docker 镜像版本不应依赖 `main.py`、`server.py` 或其他后端源码里的常量。
-3. `frontend/web/package.json` 里的 `version` 当前是占位值 `0.0.0`，WebUI “版本信息”卡片更适合用来确认静态资源是否已重建，不应当作 Docker 发布版本。
-4. 桌面端版本是单独维护的，写在 `frontend/desktop/package.json` 的 `version` 字段；它只代表 Electron 桌面端，不代表 Docker 镜像版本。
-
-**怎么查当前 Docker 版本**：
-1. **先看部署命令或 Compose 文件里的镜像 tag**：例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`，其中 `v3.12.0` 就是当前部署版本。
-2. **如果你拉的是 `latest`**：请回看当时的 `docker pull`、Compose 文件或服务器部署脚本，确认实际拉取时间和镜像摘要。
-3. **如果只是想确认前端是否更新到新构建**：可以打开 WebUI 的“系统设置”页查看 `构建标识` / `构建时间`；这能帮助确认静态资源是否刷新，但不等同于 Docker 镜像发布版本。
-
-**建议**：如果你想避免重复更新，部署时尽量固定使用明确的版本 tag（如 `v3.12.0`），不要长期依赖 `latest`。
-
----
-
-## 🔧 其他问题
-
-### Q14: 如何只运行大盘复盘，不分析个股？
-
-**方法**：
-```bash
-# 本地运行
-uv run --locked python backend/main.py --market-review
-
-```
-
----
-
-### Q15: 分析结果中买入/观望/卖出数量统计不对？
-
-**原因**：早期版本使用正则匹配统计，可能与实际建议不一致。
-
-**解决方案**：已在最新版本中修复，AI 模型现在会直接输出 `decision_type` 字段用于准确统计。
-
----
-
-## 💬 还有问题？
-
-如果以上内容没有解决你的问题，欢迎：
-1. 查看 [完整配置指南](full-guide.md)
-2. 搜索或提交 [GitHub Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
-3. 查看 [更新日志](CHANGELOG.md) 了解最新修复
-
----
-
-*最后更新：2026-04-20*
+提供运行方式、脱敏后的日志、系统版本、相关配置字段名和可复现步骤。不要在 Issue 中提交 API Key、Webhook、Cookie、账户信息或完整生产报告。

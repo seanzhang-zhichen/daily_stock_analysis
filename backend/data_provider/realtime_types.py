@@ -337,7 +337,7 @@ class CircuitBreaker:
                     state['half_open_calls'] = 0
                     state['last_failure_time'] = current_time
                     logger.info(f"[熔断器] {source} 冷却完成，进入半开状态")
-                    # Fall through to HALF_OPEN check below
+                    # 继续执行下方 HALF_OPEN 分支的检查
                 else:
                     remaining = self.cooldown_seconds - time_since_failure
                     logger.debug(f"[熔断器] {source} 处于熔断状态，剩余冷却时间: {remaining:.0f}s")

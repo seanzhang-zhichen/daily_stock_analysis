@@ -47,7 +47,7 @@ ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
 
 
 def _check_search_rate_limit(key: str) -> bool:
-    """Return whether one client can issue another stock-search request."""
+    """判断指定客户端是否还能再发起一次股票搜索请求。"""
     now = time.time()
     with _search_rate_lock:
         # 顺手清理过期窗口，避免长期运行进程中内存随客户端 IP 无界增长。
@@ -56,6 +56,7 @@ def _check_search_rate_limit(key: str) -> bool:
                 _search_rate_state.pop(state_key, None)
         count, started_at = _search_rate_state.get(key, (0, now))
         if now - started_at > _SEARCH_RATE_WINDOW_SEC:
+            # 窗口已过期，重置为本次首次请求
             _search_rate_state[key] = (1, now)
             return True
         if count >= _SEARCH_RATE_MAX_REQUESTS:
@@ -74,7 +75,11 @@ def search_stock_index(
     q: str = Query("", min_length=1, max_length=64, description="股票代码、中文名、拼音或别名"),
     limit: int = Query(20, ge=1, le=50, description="返回数量"),
 ) -> dict:
-    """Search the local stock index for autocomplete suggestions."""
+    """Search the local stock index for autocomplete suggestions.
+
+    在本地股票索引中按代码、中文名、拼音或别名进行模糊匹配，
+    用于前端 autocomplete 下拉。
+    """
     client_host = request.client.host if request.client else "unknown"
     if not _check_search_rate_limit(client_host):
         raise HTTPException(
@@ -106,13 +111,14 @@ def extract_from_image(
     file: Optional[UploadFile] = File(None, description="图片文件（表单字段名 file）"),
     include_raw: bool = Query(False, description="是否在结果中包含原始 LLM 响应"),
 ) -> ExtractFromImageResponse:
-    """Extract stock candidates from an uploaded image using the Vision pipeline."""
+    """通过 Vision 流水线从上传图片中提取候选股票代码。"""
     if not file or not file.filename:
         raise HTTPException(
             status_code=400,
             detail={"error": "bad_request", "message": "未提供文件，请使用表单字段 file 上传图片"},
         )
 
+    # 兼容形如 "image/jpeg; charset=utf-8" 的 Content-Type，只取媒体类型部分
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in ALLOWED_MIME:
         raise HTTPException(
@@ -153,6 +159,7 @@ def extract_from_image(
             raw_text=raw_text if include_raw else None,
         )
     except ValueError as e:
+        # 服务层用 ValueError 表达输入不合法或解析失败，映射为 400
         raise HTTPException(status_code=400, detail={"error": "extract_failed", "message": str(e)})
     except Exception as e:
         logger.error(f"图片提取失败: {e}", exc_info=True)
@@ -174,7 +181,7 @@ def extract_from_image(
     description="上传 CSV/Excel 文件或粘贴文本，自动解析股票代码。文件上限 2MB，文本上限 100KB。",
 )
 async def parse_import(request: Request) -> ExtractFromImageResponse:
-    """Parse stock candidates from uploaded files or pasted text.
+    """从上传文件或粘贴文本中解析候选股票代码。
 
     支持 ``multipart/form-data`` 的 ``file`` 字段，以及
     ``application/json`` 的 ``{"text": "..."}``。两类输入分别走服务层解析，
@@ -183,6 +190,7 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
     content_type = (request.headers.get("content-type") or "").lower()
 
     if "application/json" in content_type:
+        # 剪贴板纯文本路径：直接读取 body.text 后交给服务层解析
         try:
             body = await request.json()
         except Exception as e:
@@ -208,6 +216,7 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
             )
             raise HTTPException(status_code=400, detail={"error": "parse_failed", "message": str(e)})
     elif "multipart" in content_type:
+        # 文件上传路径：先做大小校验，再分块读取防止一次性载入超大文件
         form = await request.form()
         file = form.get("file")
         if not file or not hasattr(file, "read"):
@@ -290,13 +299,13 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
     description="获取指定股票的最新行情数据"
 )
 def get_stock_quote(stock_code: str) -> StockQuote:
-    """Return the latest normalized quote for one stock code."""
+    """返回指定股票代码的最新标准化实时行情。"""
     try:
         service = StockService()
-        
+
         # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
         result = service.get_realtime_quote(stock_code)
-        
+
         if result is None:
             raise HTTPException(
                 status_code=404,
@@ -305,7 +314,7 @@ def get_stock_quote(stock_code: str) -> StockQuote:
                     "message": f"未找到股票 {stock_code} 的行情数据"
                 }
             )
-        
+
         return StockQuote(
             stock_code=result.get("stock_code", stock_code),
             stock_name=result.get("stock_name"),
@@ -320,7 +329,7 @@ def get_stock_quote(stock_code: str) -> StockQuote:
             amount=result.get("amount"),
             update_time=result.get("update_time")
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -350,17 +359,17 @@ def get_stock_history(
     period: str = Query("daily", description="K 线周期", pattern="^(daily|weekly|monthly)$"),
     days: int = Query(30, ge=1, le=365, description="获取天数")
 ) -> StockHistoryResponse:
-    """Return historical K-line data for one stock code and period."""
+    """返回指定股票代码与周期的历史 K 线数据。"""
     try:
         service = StockService()
-        
+
         # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
         result = service.get_history_data(
             stock_code=stock_code,
             period=period,
             days=days
         )
-        
+
         # 服务层返回 dict 列表，这里收敛为公开 Pydantic 响应模型。
         data = [
             KLineData(
@@ -375,14 +384,14 @@ def get_stock_history(
             )
             for item in result.get("data", [])
         ]
-        
+
         return StockHistoryResponse(
             stock_code=stock_code,
             stock_name=result.get("stock_name"),
             period=period,
             data=data
         )
-    
+
     except ValueError as e:
         # 服务层用 ValueError 表达不支持的周期，映射为请求参数错误。
         raise HTTPException(

@@ -28,11 +28,16 @@ class AnalysisHistoryMixin:
         context_snapshot: Optional[dict] = None,
         save_snapshot: bool = True,
         user_id: Optional[int] = None,
+        return_id: bool = False,
     ) -> int:
         """
-        保存分析结果历史记录
+        把一次分析结果保存到 ``AnalysisHistory``。
 
-        ``user_id`` 由 endpoint / 调用方按当前 AppUser 注入。
+        ``user_id`` 由 endpoint / 调用方按当前 ``AppUser`` 注入；
+        Bot / CLI 路径保持 ``None`` 不做租户过滤。
+
+        Returns:
+            写入成功返回 1；结果为空或写入失败返回 0。
         """
         if result is None:
             return 0
@@ -45,9 +50,8 @@ class AnalysisHistoryMixin:
 
         try:
             def _write(session: Session) -> int:
-                """写入回调：由 _run_write_transaction 负责提交和 SQLite 重试。"""
-                session.add(
-                    AnalysisHistory(
+                """写入回调：由 ``_run_write_transaction`` 负责提交和 SQLite 重试。"""
+                record = AnalysisHistory(
                         user_id=user_id,
                         query_id=query_id,
                         code=result.code,
@@ -66,8 +70,9 @@ class AnalysisHistoryMixin:
                         take_profit=sniper_points.get("take_profit"),
                         created_at=datetime.now(),
                     )
-                )
-                return 1
+                session.add(record)
+                session.flush()
+                return int(record.id) if return_id else 1
             return self._run_write_transaction(
                 f"save_analysis_history[{result.code}]",
                 _write,
@@ -86,13 +91,14 @@ class AnalysisHistoryMixin:
         user_id: Optional[int] = None,
     ) -> List[AnalysisHistory]:
         """
-        Query analysis history records.
+        查询分析历史记录（按创建时间倒序）。
 
-        Notes:
-        - If query_id is provided, perform exact lookup and ignore days window.
-        - If query_id is not provided, apply days-based time filtering.
-        - exclude_query_id: exclude records with this query_id (for history comparison).
-        - user_id: 当 To C 模式开启时传入, 仅返回该用户的记录; 关闭时传 ``None`` 不做过滤。
+        备注：
+        - 若提供 ``query_id``，按精确键查找并忽略 ``days`` 时间窗；
+        - 若未提供 ``query_id``，按 ``days`` 做时间窗过滤；
+        - ``exclude_query_id`` 用于历史对比场景下排除当前查询；
+        - ``user_id``：To C 模式开启时传入, 仅返回该用户的记录；
+          关闭时传 ``None`` 不做过滤。
         """
         cutoff_date = datetime.now() - timedelta(days=days)
 
@@ -107,7 +113,7 @@ class AnalysisHistoryMixin:
             if code:
                 conditions.append(AnalysisHistory.code == code)
 
-            # exclude_query_id only applies when not doing exact lookup (query_id is None)
+            # exclude_query_id 只在未精确查找时生效, 避免把当前记录过滤掉
             if exclude_query_id and not query_id:
                 conditions.append(AnalysisHistory.query_id != exclude_query_id)
 
@@ -133,17 +139,18 @@ class AnalysisHistoryMixin:
         user_id: Optional[int] = None,
     ) -> Tuple[List[AnalysisHistory], int]:
         """
-        分页查询分析历史记录（带总数）
-        
+        分页查询分析历史记录（带总数）。
+
         Args:
-            code: 股票代码筛选
-            start_date: 开始日期（含）
-            end_date: 结束日期（含）
-            offset: 偏移量（跳过前 N 条）
-            limit: 每页数量
-            
+            code: 股票代码筛选。
+            start_date: 开始日期（含）。
+            end_date: 结束日期（含）。
+            offset: 偏移量（跳过前 N 条）。
+            limit: 每页数量。
+            user_id: To C 模式下按归属用户过滤；关闭时传 ``None``。
+
         Returns:
-            Tuple[List[AnalysisHistory], int]: (记录列表, 总数)
+            ``Tuple[List[AnalysisHistory], int]``：(记录列表, 总数)。
         """
         with self.get_session() as session:
             conditions = []
@@ -184,16 +191,17 @@ class AnalysisHistoryMixin:
         user_id: Optional[int] = None,
     ) -> Optional[AnalysisHistory]:
         """
-        根据数据库主键 ID 查询单条分析历史记录
-        
-        由于 query_id 可能重复（批量分析时多条记录共享同一 query_id），
+        根据数据库主键 ID 查询单条分析历史记录。
+
+        由于 ``query_id`` 可能重复（批量分析时多条记录共享同一 ``query_id``），
         使用主键 ID 确保精确查询唯一记录。
-        
+
         Args:
-            record_id: 分析历史记录的主键 ID
-            
+            record_id: 分析历史记录的主键 ID。
+            user_id: To C 模式下按归属用户过滤；关闭时传 ``None``。
+
         Returns:
-            AnalysisHistory 对象，不存在返回 None
+            ``AnalysisHistory`` 对象，不存在返回 ``None``。
         """
         with self.get_session() as session:
             conditions = [AnalysisHistory.id == record_id]
@@ -215,10 +223,11 @@ class AnalysisHistoryMixin:
         同时清理依赖这些历史记录的回测结果，避免外键约束失败。
 
         Args:
-            record_ids: 要删除的历史记录主键 ID 列表
+            record_ids: 要删除的历史记录主键 ID 列表。
+            user_id: To C 模式下仅删除归属当前用户的记录，避免跨租户误删。
 
         Returns:
-            实际删除的历史记录数量
+            实际删除的历史记录数量。
         """
         ids = sorted({int(record_id) for record_id in record_ids if record_id is not None})
         if not ids:
@@ -246,15 +255,15 @@ class AnalysisHistoryMixin:
 
     def get_latest_analysis_by_query_id(self, query_id: str) -> Optional[AnalysisHistory]:
         """
-        根据 query_id 查询最新一条分析历史记录
+        根据 ``query_id`` 查询最新一条分析历史记录。
 
-        query_id 在批量分析时可能重复，故返回最近创建的一条。
+        ``query_id`` 在批量分析时可能重复，故返回最近创建的一条。
 
         Args:
-            query_id: 分析记录关联的 query_id
+            query_id: 分析记录关联的 ``query_id``。
 
         Returns:
-            AnalysisHistory 对象，不存在返回 None
+            ``AnalysisHistory`` 对象，不存在返回 ``None``。
         """
         with self.get_session() as session:
             result = session.execute(

@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""In-process notification noise-control helpers.
+"""进程内通知降噪控制工具。
 
-The state in this module is intentionally process-local. It provides a small
-runtime guard for duplicate/cooldown/quiet-hour suppression without adding
-persistent storage, file locks, or cross-worker coordination.
+本模块状态刻意只保存在单进程内，作为去重 / 冷却 / 静默时段抑制的轻量运行期护栏，
+不依赖持久化存储、文件锁或多 worker 同步机制。
+
+适用场景：
+- 静态通知渠道（如 webhook、邮件、Server 酱等）需要避免重复打扰；
+- 配置最低严重级别、静默时段、冷却与去重 TTL；
+- 提供评测-保留-记录三段式的并发安全接口，便于上层异步调用。
 """
 
 from __future__ import annotations
@@ -47,7 +51,13 @@ _INFLIGHT_RESERVATION_SECONDS = 300
 
 @dataclass(frozen=True)
 class NotificationNoiseDecision:
-    """Decision returned by the notification noise-control gate."""
+    """通知降噪控制闸门的判定结果。
+
+    由 :func:`evaluate_notification_noise` 生成，记录是否放行、具体拦截原因
+    以及与本次决策相关的去重/冷却键、TTL 与 in-flight 预订标记。
+    调用方在发送成功后应配合 :func:`record_notification_noise` /
+    :func:`release_notification_noise` 完成状态生命周期。
+    """
 
     should_send: bool
     reason_code: str = "allowed"
@@ -64,6 +74,7 @@ class NotificationNoiseDecision:
     reservation_token: Optional[str] = None
 
 
+# 进程内的去重 / 冷却 / in-flight 预订表，全部由 _state_lock 保护。
 _dedup_expires_at: Dict[str, float] = {}
 _cooldown_expires_at: Dict[str, float] = {}
 _dedup_inflight_until: Dict[str, Tuple[float, str]] = {}
@@ -72,7 +83,7 @@ _state_lock = threading.Lock()
 
 
 def reset_notification_noise_state() -> None:
-    """Clear process-local notification noise state. Intended for tests."""
+    """清空进程内的通知降噪状态，仅供测试使用。"""
     with _state_lock:
         _dedup_expires_at.clear()
         _cooldown_expires_at.clear()
@@ -81,12 +92,12 @@ def reset_notification_noise_state() -> None:
 
 
 def is_supported_notification_severity(value: object) -> bool:
-    """Return whether *value* is a supported severity string."""
+    """判断给定值是否为受支持的严重级别字符串。"""
     return str(value or "").strip().lower() in NOTIFICATION_SEVERITY_RANK
 
 
 def normalize_notification_severity(route_type: Optional[str], severity: Optional[str] = None) -> str:
-    """Normalize explicit severity, or derive a default from route type."""
+    """显式严重级为空时按通道类型选择默认；显式值合法时直接返回。"""
     explicit = str(severity or "").strip().lower()
     if explicit in NOTIFICATION_SEVERITY_RANK:
         return explicit
@@ -96,7 +107,7 @@ def normalize_notification_severity(route_type: Optional[str], severity: Optiona
 
 
 def parse_notification_quiet_hours(value: Optional[str]) -> Optional[Tuple[int, int]]:
-    """Parse ``HH:MM-HH:MM`` into start/end minute-of-day values."""
+    """将 ``HH:MM-HH:MM`` 解析为一天内的起始/结束分钟数。"""
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -110,7 +121,7 @@ def parse_notification_quiet_hours(value: Optional[str]) -> Optional[Tuple[int, 
 
 
 def validate_notification_timezone(value: Optional[str]) -> None:
-    """Validate an optional IANA timezone name."""
+    """校验可选的 IANA 时区名是否合法。"""
     raw = str(value or "").strip()
     if not raw:
         return
@@ -123,19 +134,21 @@ def validate_notification_timezone(value: Optional[str]) -> None:
 
 
 def is_time_in_quiet_hours(now: datetime, quiet_hours: Tuple[int, int]) -> bool:
-    """Return whether *now* falls inside a quiet-hours interval."""
+    """判断给定时间是否落在静默时段内（支持跨午夜的时段）。"""
     start_minute, end_minute = quiet_hours
     minute_of_day = now.hour * 60 + now.minute
 
     if start_minute == end_minute:
+        # 起始等于结束视为未配置，不进入静默。
         return False
     if start_minute < end_minute:
         return start_minute <= minute_of_day < end_minute
+    # 跨午夜场景：起始之后到当天结束 + 当天 0 点到结束之前。
     return minute_of_day >= start_minute or minute_of_day < end_minute
 
 
 def _resolve_now(timezone_name: Optional[str], now: Optional[datetime]) -> datetime:
-    """Resolve the evaluation time in configured notification timezone."""
+    """解析用于评估的「当前时间」，统一到配置的时区。"""
     raw_timezone = str(timezone_name or "").strip()
     if raw_timezone:
         if ZoneInfo is None:
@@ -147,6 +160,7 @@ def _resolve_now(timezone_name: Optional[str], now: Optional[datetime]) -> datet
             return now.replace(tzinfo=tz)
         return now.astimezone(tz)
 
+    # 未配置时区时回退到本地时区，保证返回值仍带 tzinfo 便于后续比较。
     if now is None:
         return datetime.now().astimezone()
     if now.tzinfo is not None:
@@ -155,12 +169,12 @@ def _resolve_now(timezone_name: Optional[str], now: Optional[datetime]) -> datet
 
 
 def _timestamp(now: datetime) -> float:
-    """Convert a timezone-aware or naive datetime into a comparable timestamp."""
+    """将带时区或不带时区的 datetime 转换为可比较的时间戳。"""
     return now.timestamp()
 
 
 def _cleanup_expired(now_ts: float) -> None:
-    """Remove expired dedup, cooldown and in-flight reservation records."""
+    """清理已过期的去重、冷却与 in-flight 预订记录，避免内存泄漏。"""
     expired_dedup = [key for key, expires_at in _dedup_expires_at.items() if expires_at <= now_ts]
     for key in expired_dedup:
         _dedup_expires_at.pop(key, None)
@@ -187,12 +201,12 @@ def _cleanup_expired(now_ts: float) -> None:
 
 
 def _stable_content_hash(content: str) -> str:
-    """Return a deterministic hash used as the default dedup key."""
+    """返回确定性哈希，用作默认的去重键。"""
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
 def _state_key(prefix: str, route_type: str, severity: str, key: str) -> str:
-    """Build a namespaced notification-noise state key."""
+    """构造带命名空间的降噪状态键，避免不同通道/级别之间互相串扰。"""
     return f"{prefix}:{route_type}:{severity}:{key}"
 
 
@@ -204,7 +218,8 @@ def _build_keys(
     dedup_key: Optional[str],
     cooldown_key: Optional[str],
 ) -> Tuple[str, str]:
-    """Build dedup and cooldown keys from explicit keys or content defaults."""
+    """基于显式键或内容默认值，构建去重与冷却的状态键。"""
+    # 未提供 dedup_key 时退化到内容哈希，保证同一内容短窗口内不会重复发。
     dedup_part = str(dedup_key).strip() if dedup_key else _stable_content_hash(content)
     cooldown_part = str(cooldown_key).strip() if cooldown_key else "default"
     return (
@@ -223,10 +238,10 @@ def evaluate_notification_noise(
     cooldown_key: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> NotificationNoiseDecision:
-    """Evaluate whether static notification channels should be sent.
+    """评估静态通知渠道是否应当发送。
 
-    This function is fail-open: invalid runtime state or unexpected exceptions
-    produce an allow decision and a warning log rather than blocking notification.
+    本函数采用 fail-open 策略：遇到运行时异常或配置错误时返回允许放行，
+    并附带 warning 日志，而不是阻塞通知发送，避免降噪逻辑本身拖累主链路。
     """
     try:
         return _evaluate_notification_noise(
@@ -259,7 +274,7 @@ def _evaluate_notification_noise(
     cooldown_key: Optional[str],
     now: Optional[datetime],
 ) -> NotificationNoiseDecision:
-    """Evaluate quiet-hours, severity, dedup, cooldown and reservation rules."""
+    """依次评估静默时段、最低严重级、去重、冷却与预订规则。"""
     route = str(route_type or "default").strip().lower() or "default"
     resolved_severity = normalize_notification_severity(route, severity)
     dedup_ttl = max(0, int(getattr(config, "notification_dedup_ttl_seconds", 0) or 0))
@@ -278,6 +293,7 @@ def _evaluate_notification_noise(
         "evaluated_at": effective_now,
     }
 
+    # 最低严重级别过滤：低于阈值直接拦截，配置非法时跳过过滤。
     if min_severity_raw:
         if min_severity_raw not in NOTIFICATION_SEVERITY_RANK:
             logger.warning("NOTIFICATION_MIN_SEVERITY=%s 无效，将忽略最低级别过滤", min_severity_raw)
@@ -308,6 +324,7 @@ def _evaluate_notification_noise(
         dedup_key=dedup_key,
         cooldown_key=cooldown_key,
     )
+    # 在同一把锁内完成「清理过期 → 命中检测 → 预订」三步，保证并发安全。
     with _state_lock:
         _cleanup_expired(now_ts)
         if dedup_ttl > 0 and _dedup_expires_at.get(dedup_state_key, 0) > now_ts:
@@ -319,6 +336,7 @@ def _evaluate_notification_noise(
                 cooldown_key=cooldown_state_key,
                 **decision_base,
             )
+        # in-flight 预订避免同一通知尚未完成发送就被并发路径再次触发。
         dedup_inflight = _dedup_inflight_until.get(dedup_state_key)
         if dedup_ttl > 0 and dedup_inflight and dedup_inflight[0] > now_ts:
             return NotificationNoiseDecision(
@@ -349,6 +367,7 @@ def _evaluate_notification_noise(
                 **decision_base,
             )
 
+        # 放行前先把本次预订写入 in-flight 表，由 token 区分归属。
         reservation_until = now_ts + _INFLIGHT_RESERVATION_SECONDS
         dedup_reserved = dedup_ttl > 0
         cooldown_reserved = cooldown > 0
@@ -370,7 +389,8 @@ def _evaluate_notification_noise(
 
 
 def _release_reserved_locked(decision: NotificationNoiseDecision) -> None:
-    """Release in-flight reservations while the notification state lock is held."""
+    """在持有 _state_lock 的前提下释放本次决策的 in-flight 预订。"""
+    # 仅当预订键的 token 与本次决策一致时才释放，防止误删其他并发请求的预订。
     if decision.dedup_reserved and decision.dedup_key:
         dedup_inflight = _dedup_inflight_until.get(decision.dedup_key)
         if dedup_inflight and dedup_inflight[1] == decision.reservation_token:
@@ -382,7 +402,7 @@ def _release_reserved_locked(decision: NotificationNoiseDecision) -> None:
 
 
 def release_notification_noise(decision: NotificationNoiseDecision) -> None:
-    """Release in-flight reservation without recording dedup/cooldown state."""
+    """释放 in-flight 预订，不写入去重/冷却状态（发送失败时调用）。"""
     if not decision.should_send:
         return
 
@@ -394,18 +414,20 @@ def release_notification_noise(decision: NotificationNoiseDecision) -> None:
 
 
 def record_notification_noise(decision: NotificationNoiseDecision, now: Optional[datetime] = None) -> None:
-    """Record dedup/cooldown state after a static notification send succeeds."""
+    """在静态通知发送成功后记录去重/冷却状态。"""
     if not decision.should_send or decision.evaluated_at is None:
         return
 
     try:
         record_at = now
+        # 未指定时间戳时复用决策时刻的时区，避免与决策基线出现时区错位。
         if record_at is None:
             record_at = datetime.now(decision.evaluated_at.tzinfo)
         now_ts = _timestamp(record_at)
         with _state_lock:
             _cleanup_expired(now_ts)
             _release_reserved_locked(decision)
+            # 仅在 TTL > 0 时写入正式抑制表，避免 0 配置污染内存。
             if decision.dedup_ttl_seconds > 0 and decision.dedup_key:
                 _dedup_expires_at[decision.dedup_key] = now_ts + decision.dedup_ttl_seconds
             if decision.cooldown_seconds > 0 and decision.cooldown_key:

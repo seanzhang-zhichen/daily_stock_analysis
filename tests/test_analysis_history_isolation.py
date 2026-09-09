@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sqlalchemy import create_engine
 
 from src.repositories.analysis_repo import AnalysisRepository
+from src.services.history_service import HistoryService
 from src.storage import AnalysisHistory, Base, DatabaseManager
 
 
@@ -187,6 +188,58 @@ class TestAnalysisHistoryIsolation(unittest.TestCase):
         # get_by_id 也应做 user 过滤
         self.assertIsNone(self.db_manager.get_analysis_history_by_id(id_b, user_id=1))
         self.assertIsNotNone(self.db_manager.get_analysis_history_by_id(id_b, user_id=2))
+
+    def test_history_trend_is_chronological_and_user_scoped(self):
+        """同股趋势只展示当前用户的个股记录，并按时间由早到晚返回。"""
+        self.repo.save(_make_result("600519"), query_id="u1-old", report_type="single", user_id=1)
+        self.repo.save(_make_result("600519"), query_id="u1-market", report_type="market_review", user_id=1)
+        self.repo.save(_make_result("600519"), query_id="u1-new", report_type="single", user_id=1)
+        self.repo.save(_make_result("600519"), query_id="u2-only", report_type="single", user_id=2)
+
+        with self._SessionLocal() as session:
+            rows = session.query(AnalysisHistory).order_by(AnalysisHistory.id).all()
+            for index, row in enumerate(rows):
+                row.created_at = datetime(2026, 1, 1, 9, index)
+            session.commit()
+
+        from src.storage import DatabaseManager as RealDM
+
+        self.db_manager.get_analysis_history_paginated = RealDM.get_analysis_history_paginated.__get__(
+            self.db_manager
+        )
+        trend = HistoryService(self.db_manager).get_history_trend_by_code("600519", user_id=1)
+
+        self.assertEqual([item["id"] for item in trend], [rows[0].id, rows[2].id])
+        self.assertEqual([item["created_at"] for item in trend], [
+            "2026-01-01T09:00:00",
+            "2026-01-01T09:02:00",
+        ])
+
+    def test_delete_history_by_code_remains_user_scoped(self):
+        """按代码清空不能删除另一位用户的同股分析记录。"""
+        self.repo.save(_make_result("600519"), query_id="u1-a", report_type="single", user_id=1)
+        self.repo.save(_make_result("600519"), query_id="u1-b", report_type="single", user_id=1)
+        self.repo.save(_make_result("600519"), query_id="u2-a", report_type="single", user_id=2)
+        self.repo.save(_make_result("000001"), query_id="u1-other", report_type="single", user_id=1)
+
+        from src.storage import DatabaseManager as RealDM
+
+        self.db_manager.get_analysis_history_paginated = RealDM.get_analysis_history_paginated.__get__(
+            self.db_manager
+        )
+        self.db_manager.delete_analysis_history_records = RealDM.delete_analysis_history_records.__get__(
+            self.db_manager
+        )
+
+        deleted = HistoryService(self.db_manager).delete_history_by_code("600519", user_id=1)
+        self.assertEqual(deleted, 2)
+
+        with self._SessionLocal() as session:
+            remaining = {
+                (row.code, row.user_id)
+                for row in session.query(AnalysisHistory).all()
+            }
+        self.assertEqual(remaining, {("600519", 2), ("000001", 1)})
 
 
 if __name__ == "__main__":

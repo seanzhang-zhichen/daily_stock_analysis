@@ -96,6 +96,38 @@ export interface SectorRankings {
   bottom?: SectorRankingItem[];
 }
 
+export interface MarketReviewIndex {
+  code: string;
+  name: string;
+  current?: number;
+  changePct?: number;
+  high?: number;
+  low?: number;
+}
+
+export interface MarketReviewPayload {
+  version?: number;
+  kind?: 'market_review' | string;
+  region?: string;
+  language?: ReportLanguage | string;
+  title?: string;
+  date?: string;
+  breadth?: {
+    upCount?: number;
+    downCount?: number;
+    flatCount?: number;
+    limitUpCount?: number;
+    limitDownCount?: number;
+    totalAmount?: number;
+    turnoverUnit?: string;
+  };
+  indices?: MarketReviewIndex[];
+  sectors?: SectorRankings;
+  concepts?: SectorRankings;
+  sections?: Array<{ key?: string; title: string; markdown: string }>;
+  markdownReport?: string;
+}
+
 export interface MarketStructureContext {
   schemaVersion?: string;
   status?: 'ok' | 'partial' | 'unknown' | 'not_supported' | string;
@@ -148,7 +180,7 @@ export interface ReportDetails {
   emptyNewsDisclosure?: string;
   newsContent?: string;
   rawResult?: Record<string, unknown>;
-  contextSnapshot?: Record<string, unknown>;
+  contextSnapshot?: Record<string, unknown> & { marketReviewPayload?: MarketReviewPayload };
   financialReport?: Record<string, unknown>;
   dividendMetrics?: Record<string, unknown>;
   stockProfile?: StockProfile;
@@ -301,6 +333,29 @@ export interface HistoryPagination {
   page: number;
   limit: number;
 }
+
+export interface HistoryTrendPoint {
+  id: number;
+  createdAt?: string;
+  sentimentScore?: number;
+  operationAdvice?: string;
+  trendPrediction?: string;
+  analysisSummary?: string;
+}
+
+export interface HistoryTrendResponse {
+  stockCode: string;
+  stockName?: string;
+  items: HistoryTrendPoint[];
+}
+
+export type RunFlowStatus = 'pending' | 'running' | 'success' | 'failed' | 'degraded' | 'fallback' | 'skipped' | 'unknown';
+
+export interface RunFlowLane { id: string; label: string; order: number; }
+export interface RunFlowNode { id: string; lane: string; kind: string; label: string; status: RunFlowStatus; provider?: string; durationMs?: number; message?: string; metadata: Record<string, unknown>; }
+export interface RunFlowEdge { id: string; source: string; target: string; kind: 'data' | 'control' | 'fallback'; status: RunFlowStatus; label?: string; }
+export interface RunFlowEvent { id: string; type: string; severity: 'info' | 'success' | 'warning' | 'danger'; nodeId?: string; title: string; message?: string; }
+export interface RunFlowSnapshot { taskId: string; traceId?: string; stockCode: string; stockName?: string; status: RunFlowStatus; lanes: RunFlowLane[]; nodes: RunFlowNode[]; edges: RunFlowEdge[]; events: RunFlowEvent[]; }
 
 // ============ Error Types ============
 

@@ -58,10 +58,6 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             analysis_endpoint_module,
             "_try_acquire_market_review_lock",
             return_value=lock_token,
-        ), patch.object(
-            analysis_endpoint_module,
-            "_compute_market_review_override_region",
-            return_value=None,
         ), patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
             response = trigger_market_review(
                 request=request,
@@ -89,10 +85,6 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         with patch.object(
             analysis_endpoint_module,
             "_try_acquire_market_review_lock",
-            return_value=None,
-        ), patch.object(
-            analysis_endpoint_module,
-            "_compute_market_review_override_region",
             return_value=None,
         ), patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
             with self.assertRaises(Exception) as ctx:
@@ -123,11 +115,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
 
             task_queue = MagicMock()
             try:
-                with patch.object(
-                    analysis_endpoint_module,
-                    "_compute_market_review_override_region",
-                    return_value=None,
-                ), patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
+                with patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
                     with self.assertRaises(Exception) as ctx:
                         trigger_market_review(
                             request=SimpleNamespace(send_notification=True),
@@ -139,7 +127,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertEqual(getattr(ctx.exception, "status_code", None), 409)
         task_queue.submit_background_task.assert_not_called()
 
-    def test_trigger_market_review_skips_when_configured_markets_closed(self) -> None:
+    def test_trigger_market_review_submits_when_a_share_market_is_closed(self) -> None:
         if trigger_market_review is None or analysis_endpoint_module is None:
             self.skipTest("analysis endpoint helpers unavailable in this environment")
 
@@ -147,11 +135,9 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         request = SimpleNamespace(send_notification=True)
         config = SimpleNamespace(trading_day_check_enabled=True, market_review_region="cn")
 
-        with patch.object(
-            analysis_endpoint_module,
-            "_compute_market_review_override_region",
-            return_value="",
-        ), patch.object(analysis_endpoint_module, "_try_acquire_market_review_lock") as acquire, \
+        lock_token = object()
+        task_queue.submit_background_task.return_value = SimpleNamespace(task_id="market-task-closed-day")
+        with patch.object(analysis_endpoint_module, "_try_acquire_market_review_lock", return_value=lock_token) as acquire, \
              patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
             response = trigger_market_review(
                 request=request,
@@ -159,9 +145,10 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             )
 
         self.assertEqual(response.status, "accepted")
-        self.assertIn("非交易日", response.message)
-        acquire.assert_not_called()
-        task_queue.submit_background_task.assert_not_called()
+        self.assertEqual(response.task_id, "market-task-closed-day")
+        self.assertIn("已提交", response.message)
+        acquire.assert_called_once_with(config)
+        task_queue.submit_background_task.assert_called_once()
 
     def test_run_market_review_background_uses_configured_pipeline(self) -> None:
         if analysis_endpoint_module is None:
@@ -1056,18 +1043,17 @@ class AnalysisApiContractTestCase(unittest.TestCase):
 
         self.assertNotIn("required", request_body)
 
-        with patch.object(
-            analysis_endpoint_module,
-            "_compute_market_review_override_region",
-            return_value="",
-        ):
+        task_queue = MagicMock()
+        task_queue.submit_background_task.return_value = SimpleNamespace(task_id="market-task-default-body")
+        with patch.object(analysis_endpoint_module, "_try_acquire_market_review_lock", return_value=object()), \
+             patch("api.v1.endpoints.analysis.get_task_queue", return_value=task_queue):
             response = trigger_market_review(
                 request=None,
                 config=config,
             )
 
         self.assertTrue(response.send_notification)
-        self.assertIn("非交易日", response.message)
+        self.assertEqual(response.task_id, "market-task-default-body")
 
     def test_trigger_analysis_rejects_blank_only_stock_inputs(self) -> None:
         if trigger_analysis is None:

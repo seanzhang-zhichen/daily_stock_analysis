@@ -33,14 +33,17 @@ class NewsMixin:
         query_context: Optional[Dict[str, str]] = None
     ) -> int:
         """
-        保存新闻情报到数据库
+        把一次搜索响应的多条新闻结果落库，并按 URL/标题源做去重。
 
         去重策略：
-        - 优先按 URL 去重（唯一约束）
-        - URL 缺失时按 title + source + published_date 进行软去重
+        - 优先按 URL 去重（唯一约束）；
+        - URL 缺失时按 ``title + source + published_date`` 哈希做软去重。
 
         关联策略：
-        - query_context 记录用户查询信息（平台、用户、会话、原始指令等）
+        - ``query_context`` 记录用户查询上下文（平台、用户、会话、原始指令等）。
+
+        Returns:
+            实际新增的记录数；响应为空时返回 0。
         """
         if not response or not response.results:
             return 0
@@ -63,6 +66,7 @@ class NewsMixin:
                 if not title and not url:
                     continue
 
+                # 优先 URL 去重；URL 缺失时回退到 hash 兜底键
                 url_key = url or self._build_fallback_url_key(
                     code=code,
                     title=title,
@@ -111,6 +115,7 @@ class NewsMixin:
                     continue
 
                 try:
+                    # 用 SAVEPOINT 隔离单条插入, 唯一冲突只回滚这一条
                     with session.begin_nested():
                         record = NewsIntel(
                             code=code,
@@ -162,7 +167,9 @@ class NewsMixin:
         coverage: Optional[Any] = None,
     ) -> int:
         """
-        保存基本面快照（P0 write-only）。失败不抛异常，返回写入条数 0/1。
+        保存基本面快照（P0 write-only）。
+
+        失败时不抛异常，由外层 fail-open 逻辑吞掉，避免影响主链路分析。
         """
         if not query_id or not code or payload is None:
             return 0
@@ -199,9 +206,9 @@ class NewsMixin:
         code: str,
     ) -> Optional[Dict[str, Any]]:
         """
-        获取指定 query_id + code 的最新基本面快照 payload。
+        获取指定 ``(query_id, code)`` 的最新基本面快照 payload。
 
-        读取失败或不存在时返回 None（fail-open）。
+        读取失败或不存在时返回 ``None``（fail-open）。
         """
         if not query_id or not code:
             return None
@@ -237,9 +244,7 @@ class NewsMixin:
                 return None
 
     def get_recent_news(self, code: str, days: int = 7, limit: int = 20) -> List[NewsIntel]:
-        """
-        获取指定股票最近 N 天的新闻情报
-        """
+        """获取指定股票最近 ``days`` 天内的新闻情报（按抓取时间倒序）。"""
         cutoff_date = datetime.now() - timedelta(days=days)
 
         with self.get_session() as session:
@@ -259,14 +264,14 @@ class NewsMixin:
 
     def get_news_intel_by_query_id(self, query_id: str, limit: int = 20) -> List[NewsIntel]:
         """
-        根据 query_id 获取新闻情报列表
+        根据 ``query_id`` 获取新闻情报列表（按发布时间或抓取时间倒序）。
 
         Args:
-            query_id: 分析记录唯一标识
-            limit: 返回数量限制
+            query_id: 分析记录唯一标识。
+            limit: 返回数量限制。
 
         Returns:
-            NewsIntel 列表（按发布时间或抓取时间倒序）
+            NewsIntel 列表。
         """
         with self.get_session() as session:
             results = session.execute(

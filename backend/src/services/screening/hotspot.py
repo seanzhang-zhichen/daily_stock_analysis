@@ -1,8 +1,20 @@
 # -*- coding: utf-8 -*-
-# Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
-# Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Topic-first hotspot discovery and detail helpers."""
+# 派生自 AlphaSift 版本 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf。
+# 基于 Apache-2.0 许可，并针对 daily_stock_analysis 做了修改。
+"""以"主题（topic）"为中心的热点发现与详情辅助。
 
+负责把 akshare 等数据源返回的"板块/概念"行情归一化为主题（hotspot）摘要，
+计算热度分、判定生命周期阶段，并为每个主题构建成分股列表、时间线与"发酵路径"。
+所有结果都携带降级元数据（provider_used / fallback_used / source_errors / stale），
+上游可据此判断数据质量与缓存新鲜度。
+
+主要能力：
+- 主题摘要的获取与排序（discover_hotspots）
+- 单主题详情（含成分股角色、时间线、发酵路径）
+- 主题模糊匹配与 canonical_topic 解析（resolve_hotspot_topic）
+- 历史 JSONL 与 last-good 缓存的读写
+- 生命周期阶段分类（classify_hotspot_stage）与评分（score_hotspot_stock）
+"""
 from __future__ import annotations
 
 import json
@@ -25,6 +37,7 @@ from src.services.screening.industry import (
 from src.services.screening.source_guard import call_with_timeout, parse_source_timeout_seconds
 
 
+# 热点生命周期阶段的有序枚举，由粗到细用于展示与分类
 HOTSPOT_STAGES = (
     "初次异动",
     "确认扩散",
@@ -33,11 +46,13 @@ HOTSPOT_STAGES = (
     "降温退潮",
 )
 
+# 热点数据源调用的默认超时秒数，可由环境变量覆盖
 _HOTSPOT_CALL_TIMEOUT_SECONDS = 8.0
 
 
 @dataclass
 class HotspotSummary:
+    """热点摘要：承载一个主题的行情、热度分、生命周期阶段与降级元数据。"""
     topic: str
     name: str = ""
     source: str = ""
@@ -67,6 +82,7 @@ class HotspotSummary:
 
 @dataclass
 class HotspotStock:
+    """热点成分股：承载单只股票的行情指标、活跃度、角色与来源置信度。"""
     code: str
     name: str = ""
     change_pct: float | None = None
@@ -86,6 +102,7 @@ class HotspotStock:
 
 @dataclass
 class HotspotTopicResolution:
+    """主题解析结果：记录用户输入经模糊匹配后解析出的 canonical 主题与候选列表。"""
     query: str
     canonical_topic: str = ""
     candidates: list[dict[str, Any]] = field(default_factory=list)
@@ -96,6 +113,7 @@ class HotspotTopicResolution:
 
 @dataclass
 class TimelineEvent:
+    """时间线事件：表示热点发酵过程中的一条新闻/公告/异动记录。"""
     date: str
     source: str
     title: str
@@ -109,6 +127,7 @@ class TimelineEvent:
 
 @dataclass
 class HotspotRouteItem:
+    """发酵路径条目：展示用的一日/一条紧凑摘要，不替代原始时间线数据。"""
     date: str
     title: str
     description: str = ""
@@ -122,6 +141,7 @@ class HotspotRouteItem:
 
 @dataclass
 class HotspotDetail:
+    """热点详情视图：聚合摘要、成分股、时间线与发酵路径。"""
     summary: HotspotSummary
     stocks: list[HotspotStock] = field(default_factory=list)
     timeline: list[TimelineEvent] = field(default_factory=list)
@@ -129,7 +149,7 @@ class HotspotDetail:
 
 
 class HotspotResults(list[HotspotSummary]):
-    """List-compatible hotspot result with degradation metadata."""
+    """list 兼容的热点结果容器，附带降级相关的元数据。"""
 
     def __init__(
         self,
@@ -141,6 +161,7 @@ class HotspotResults(list[HotspotSummary]):
         stale: bool = False,
         stale_age_hours: float | None = None,
     ) -> None:
+        """初始化结果列表与元数据（provider_used / 兜底 / 错误 / 陈旧度）。"""
         super().__init__(items or [])
         self.provider_used = provider_used
         self.fallback_used = fallback_used
@@ -150,7 +171,7 @@ class HotspotResults(list[HotspotSummary]):
 
 
 def compute_hotspot_heat_score(change_pct: float | None, rank: float | None) -> float:
-    """Compute board heat using the industry cache semantics."""
+    """基于行业缓存的语义计算板块热度（Hotspot Heat Score）。"""
     return _board_heat_score(change_pct=change_pct, rank=rank)
 
 
@@ -163,7 +184,7 @@ def classify_hotspot_stage(
     latest_score: float | None = None,
     observations: int | None = None,
 ) -> str:
-    """Classify a hotspot into a coarse lifecycle stage."""
+    """把热点归类到一个粗粒度的生命周期阶段（初次异动 / 确认扩散 / 加速主升 / 分歧放量 / 降温退潮）。"""
     state_text = _safe_text(state).lower()
     trend = _safe_float(trend_score) or 0.0
     cooling = _safe_float(cooling_score) or 0.0
@@ -195,7 +216,7 @@ def resolve_hotspot_topic(
     max_boards: int = 500,
     source_errors: list[str] | None = None,
 ) -> HotspotTopicResolution:
-    """Resolve a user topic to deterministic canonical hotspot candidates."""
+    """把用户输入的主题解析为确定的 canonical 候选与置信度。"""
     topic_text = _safe_text(topic)
     candidates: list[dict[str, Any]] = []
     if hotspots:
@@ -206,7 +227,7 @@ def resolve_hotspot_topic(
             candidates.extend(_topic_candidates_from_hotspots(load_hotspots_json(fallback_cache_path), source="cache"))
         except FileNotFoundError:
             pass
-        except Exception as exc:  # noqa: BLE001 - resolver should degrade to provider/query candidates.
+        except Exception as exc:  # noqa: BLE001 - 主题解析失败时应降级到 provider/查询候选，而非中断。
             if source_errors is not None:
                 source_errors.append(f"last_good_cache: {exc}")
 
@@ -227,7 +248,7 @@ def resolve_hotspot_topic(
 
 
 def score_hotspot_stock(row: dict[str, Any] | pd.Series) -> float:
-    """Score a constituent stock for hotspot leadership strength."""
+    """对热点内某只成分股计算领导力强度得分（0-100）。"""
     change = _safe_float(_row_value(row, ["change_pct", "涨跌幅", "涨幅"])) or 0.0
     amount = _safe_float(_row_value(row, ["amount", "成交额", "成交金额"])) or 0.0
     turnover = _safe_float(_row_value(row, ["turnover_rate", "换手率"])) or 0.0
@@ -260,7 +281,7 @@ def score_hotspot_stock(row: dict[str, Any] | pd.Series) -> float:
 
 
 def assign_stock_roles(scored_rows: list[dict[str, Any] | HotspotStock]) -> list[HotspotStock]:
-    """Sort scored constituents and assign hotspot roles."""
+    """对已评分的成分股排序并分配热点内的角色（核心龙头 / 助攻 / 补涨 / 后排 / 掉队）。"""
     stocks = [_coerce_hotspot_stock(item) for item in scored_rows]
     stocks = sorted(
         stocks,
@@ -302,7 +323,7 @@ def discover_hotspots(
     fallback_cache_path: str | Path | None = None,
     top: int = 20,
 ) -> HotspotResults:
-    """Discover ranked concept/industry hotspots from a provider."""
+    """从数据源拉取并按热度排序，返回前 N 个概念 / 行业热点摘要。"""
     source_errors: list[str] = []
     provider_chain = _resolve_provider_chain(provider, source_errors)
     provider_used = ""
@@ -423,7 +444,7 @@ def get_hotspot_detail(
     history_path: str | Path | None = None,
     fallback_cache_path: str | Path | None = None,
 ) -> HotspotDetail:
-    """Return one hotspot detail view with constituent stock roles and timeline."""
+    """获取单个热点的详情视图（包含成分股角色、时间线与发酵路径）。"""
     topic_text = _safe_text(topic)
     source_errors: list[str] = []
     provider_chain = _resolve_provider_chain(provider, source_errors)
@@ -593,7 +614,7 @@ def get_hotspot_detail(
             if summary.canonical_topic and summary.canonical_topic != topic_text:
                 timeline.extend(load_hotspot_timeline(timeline_path, topic=topic_text))
                 timeline = _dedupe_timeline(timeline)
-        except Exception as exc:  # noqa: BLE001 - timeline is evidence, not a hard dependency.
+        except Exception as exc:  # noqa: BLE001 - 时间线只是辅助证据，不应成为硬依赖。
             summary.source_errors = _dedupe_errors([*summary.source_errors, f"timeline: {exc}"])
             _add_missing_fields(summary, ["timeline"])
             _finalize_summary_quality(summary, stock_count=len(stocks))
@@ -610,7 +631,7 @@ def build_hotspot_route(
     max_items: int = 5,
     max_description_chars: int = 180,
 ) -> list[HotspotRouteItem]:
-    """Build compact, display-ready route events without dropping raw timeline data."""
+    """生成展示用的紧凑发酵路径；不丢弃原始 timeline 数据。"""
     events = timeline or []
     if events:
         return _build_route_from_timeline(
@@ -622,7 +643,7 @@ def build_hotspot_route(
 
 
 def load_hotspot_history(path_like: str | Path) -> list[dict[str, Any]]:
-    """Load hotspot history JSONL records, skipping malformed lines."""
+    """读取热点历史 JSONL 文件，自动跳过格式异常的行。"""
     path = Path(path_like)
     if not path.is_file():
         raise FileNotFoundError(f"Hotspot history file not found: {path}")
@@ -657,7 +678,7 @@ def append_hotspot_history(
     *,
     generated_at: str,
 ) -> Path:
-    """Append hotspot summaries to a trend-compatible JSONL history file."""
+    """把热点摘要以 JSONL 形式追加到历史文件，供趋势计算读取。"""
     path = Path(path_like)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -684,7 +705,7 @@ def append_hotspot_history(
 
 
 def load_hotspot_timeline(path_like: str | Path, topic: str | None = None) -> list[TimelineEvent]:
-    """Load timeline JSONL records, sorted by date, skipping malformed rows."""
+    """读取按日期排序的时间线 JSONL 文件，跳过格式异常的行。"""
     path = Path(path_like)
     if not path.is_file():
         raise FileNotFoundError(f"Hotspot timeline file not found: {path}")
@@ -722,7 +743,7 @@ def load_hotspot_timeline(path_like: str | Path, topic: str | None = None) -> li
 
 
 def load_hotspots_json(path_like: str | Path) -> list[HotspotSummary]:
-    """Load a last-good hotspot cache, skipping malformed rows."""
+    """读取 last-good 热点缓存文件，跳过无法解析的行。"""
     path = Path(path_like)
     if not path.is_file():
         raise FileNotFoundError(f"Hotspot cache file not found: {path}")
@@ -757,6 +778,7 @@ def load_hotspots_json(path_like: str | Path) -> list[HotspotSummary]:
 
 
 def save_hotspots_json(path_like: str | Path, hotspots: list[HotspotSummary]) -> Path:
+    """把热点列表以原子写方式保存为 JSON 文件（包含 schema_version 元数据）。"""
     path = Path(path_like)
     path.parent.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -785,6 +807,7 @@ def save_hotspots_json(path_like: str | Path, hotspots: list[HotspotSummary]) ->
 
 
 def hotspot_detail_to_dict(detail: HotspotDetail) -> dict[str, Any]:
+    """把热点详情（HotspotDetail）序列化为可 JSON 化的纯字典。"""
     return {
         "summary": asdict(detail.summary),
         "stocks": [asdict(item) for item in detail.stocks],
@@ -794,6 +817,7 @@ def hotspot_detail_to_dict(detail: HotspotDetail) -> dict[str, Any]:
 
 
 def _resolve_provider(provider: str | object) -> object | None:
+    """从 provider 字符串或对象中解析出第一个可用的数据源对象。"""
     source_errors: list[str] = []
     for _, provider_obj in _resolve_provider_chain(provider, source_errors):
         if provider_obj is not None:
@@ -805,6 +829,7 @@ def _resolve_provider_chain(
     provider: str | object,
     source_errors: list[str],
 ) -> list[tuple[str, object | None]]:
+    """把 provider 参数解析为「(标签, 对象)」链，供上层按序降级调用。"""
     if not isinstance(provider, str):
         return [(_provider_label(provider), provider)]
 
@@ -820,7 +845,7 @@ def _resolve_provider_chain(
         if name == "akshare":
             try:
                 import akshare as ak
-            except Exception as exc:  # noqa: BLE001 - provider import is optional.
+            except Exception as exc:  # noqa: BLE001 - 数据源依赖为可选，导入失败不阻断。
                 source_errors.append(f"akshare: {exc}")
                 continue
             resolved.append(("akshare", ak))
@@ -836,6 +861,7 @@ def _load_board_summaries(
     source_errors: list[str] | None = None,
     provider_label: str = "",
 ) -> list[dict[str, Any]]:
+    """加载概念/行业板块摘要并去重、排序，返回归一化后的板块行列表。"""
     rows: list[dict[str, Any]] = []
     specs = [
         ("concept", "stock_board_concept_name_em"),
@@ -864,6 +890,7 @@ def _load_board_summaries(
 
 
 def _normalize_board_rows(frame: pd.DataFrame, *, source: str) -> list[dict[str, Any]]:
+    """把板块行情 DataFrame 归一化为统一的 topic/rank/change_pct/heat_score 字典行。"""
     if frame is None or frame.empty:
         return []
     rows: list[dict[str, Any]] = []
@@ -901,6 +928,7 @@ def _find_board_summary(
     source_errors: list[str] | None = None,
     provider_label: str = "",
 ) -> dict[str, Any] | None:
+    """在数据源板块列表中查找指定主题的摘要行。"""
     for row in _load_board_summaries(
         provider,
         max_boards=500,
@@ -913,6 +941,7 @@ def _find_board_summary(
 
 
 def _find_board_summary_in_rows(rows: list[dict[str, Any]], topic: str) -> dict[str, Any] | None:
+    """在已加载的板块行列表中按归一化主题名查找摘要行。"""
     topic_key = _normalize_topic_key(topic)
     for row in rows:
         if _normalize_topic_key(row.get("topic")) == topic_key:
@@ -928,6 +957,7 @@ def _load_scored_constituents(
     source_errors: list[str] | None = None,
     provider_label: str = "",
 ) -> list[HotspotStock]:
+    """加载指定主题的成分股并计算得分与角色，返回 HotspotStock 列表。"""
     method_names = []
     if source == "industry":
         method_names.append("stock_board_industry_cons_em")
@@ -959,6 +989,7 @@ def _load_scored_constituents(
 
 
 def _normalize_stock_rows(frame: pd.DataFrame) -> list[HotspotStock]:
+    """把成分股 DataFrame 归一化为 HotspotStock 并计算热度得分。"""
     if frame is None or frame.empty:
         return []
     stocks: list[HotspotStock] = []
@@ -991,6 +1022,7 @@ def _normalize_stock_rows(frame: pd.DataFrame) -> list[HotspotStock]:
 
 
 def _coerce_hotspot_stock(item: dict[str, Any] | HotspotStock) -> HotspotStock:
+    """把 dict 或 HotspotStock 统一转换为 HotspotStock，缺失得分时重算。"""
     if isinstance(item, HotspotStock):
         stock = item
     else:
@@ -1017,6 +1049,7 @@ def _coerce_hotspot_stock(item: dict[str, Any] | HotspotStock) -> HotspotStock:
 
 
 def _coerce_hotspot_summary(item: object) -> HotspotSummary | None:
+    """把 dict 或 HotspotSummary 统一转换为 HotspotSummary，过滤无效热度分。"""
     if isinstance(item, HotspotSummary):
         return item
     if not isinstance(item, dict):
@@ -1090,6 +1123,7 @@ def _topic_candidates_from_hotspots(
     *,
     source: str,
 ) -> list[dict[str, Any]]:
+    """从热点摘要列表中构建主题解析候选（含别名）。"""
     candidates: list[dict[str, Any]] = []
     for item in hotspots:
         summary = _coerce_hotspot_summary(item)
@@ -1118,6 +1152,7 @@ def _topic_candidates_from_board_rows(
     *,
     provider_label: str,
 ) -> list[dict[str, Any]]:
+    """从板块行列表中构建主题解析候选。"""
     candidates: list[dict[str, Any]] = []
     for row in rows:
         topic = _safe_text(row.get("topic"))
@@ -1139,6 +1174,7 @@ def _resolve_topic_from_candidates(
     topic: str,
     candidates: list[dict[str, Any]],
 ) -> HotspotTopicResolution:
+    """在候选中做模糊匹配并排序，解析出 canonical 主题与置信度。"""
     query = _safe_text(topic)
     ranked: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -1194,6 +1230,7 @@ def _resolve_topic_from_candidates(
 
 
 def _topic_match_score(query: str, aliases: list[str]) -> tuple[float, str]:
+    """计算查询词与候选别名的匹配置信度与匹配类型。"""
     query_key = _normalize_topic_key(query)
     if not query_key:
         return 0.0, "empty"
@@ -1221,6 +1258,7 @@ def _topic_match_score(query: str, aliases: list[str]) -> tuple[float, str]:
 
 
 def _normalize_topic_key(value: object) -> str:
+    """把主题文本归一化为用于匹配的键（去概念/板块等后缀、保留中英文数字）。"""
     text = _safe_text(value).lower()
     text = text.replace("人工智能", "ai")
     for token in ("概念", "板块", "行业", "产业", "主题", "指数"):
@@ -1233,13 +1271,14 @@ def _load_hotspot_cache_for_fallback(
     *,
     source_errors: list[str],
 ) -> list[HotspotSummary]:
+    """读取 last-good 热点缓存，失败时记录错误并返回空列表。"""
     if not fallback_cache_path:
         return []
     try:
         return load_hotspots_json(fallback_cache_path)
     except FileNotFoundError:
         return []
-    except Exception as exc:  # noqa: BLE001 - fallback cache must not wipe live detail data.
+    except Exception as exc:  # noqa: BLE001 - 兜底缓存出错不应清空实时详情数据。
         source_errors.append(f"last_good_cache: {exc}")
         return []
 
@@ -1249,6 +1288,7 @@ def _fallback_summary_for_resolution(
     hotspots: list[HotspotSummary],
     resolution: HotspotTopicResolution,
 ) -> HotspotSummary | None:
+    """在缓存热点中查找与解析结果匹配的兜底摘要。"""
     topic_key = _normalize_topic_key(topic)
     canonical_key = _normalize_topic_key(resolution.canonical_topic)
     for hotspot in hotspots:
@@ -1264,11 +1304,13 @@ def _fallback_summary_for_resolution(
 
 
 def _copy_hotspot_summary(summary: HotspotSummary) -> HotspotSummary:
+    """深拷贝一份热点摘要，避免修改缓存中的原始对象。"""
     copied = _coerce_hotspot_summary(asdict(summary))
     return copied if copied is not None else summary
 
 
 def _copy_hotspot_stock(stock: HotspotStock) -> HotspotStock:
+    """深拷贝一只热点成分股。"""
     return _coerce_hotspot_stock(asdict(stock))
 
 
@@ -1277,6 +1319,7 @@ def _leader_fallback_stocks(
     *,
     stale_age_hours: float | None,
 ) -> list[HotspotStock]:
+    """从兜底摘要的龙头股/龙头名单构造带降级标记的成分股列表。"""
     if summary is None:
         return []
     stocks: list[HotspotStock] = []
@@ -1309,6 +1352,7 @@ def _leader_fallback_stocks(
 
 
 def _set_summary_leaders(summary: HotspotSummary, stocks: list[HotspotStock]) -> None:
+    """把成分股中的核心龙头写入摘要的 leader_stocks 与 leaders 字段。"""
     core = [stock for stock in stocks if stock.role == "核心龙头"]
     selected = core[:10]
     if len(selected) < 10:
@@ -1323,10 +1367,12 @@ def _set_summary_leaders(summary: HotspotSummary, stocks: list[HotspotStock]) ->
 
 
 def _add_missing_fields(summary: HotspotSummary, fields: list[str]) -> None:
+    """把缺失字段合并到摘要的 missing_fields 列表并去重。"""
     summary.missing_fields = _dedupe_texts([*summary.missing_fields, *fields])
 
 
 def _finalize_summary_quality(summary: HotspotSummary, *, stock_count: int | None = None) -> None:
+    """根据缺失字段与陈旧度收敛出摘要的最终质量状态。"""
     if not summary.canonical_topic:
         _add_missing_fields(summary, ["canonical_topic"])
     if not summary.source:
@@ -1346,6 +1392,7 @@ def _finalize_summary_quality(summary: HotspotSummary, *, stock_count: int | Non
 
 
 def _quality_counts(hotspots: list[HotspotSummary]) -> dict[str, int]:
+    """统计各质量状态的摘要数量，用于缓存元数据。"""
     counts: dict[str, int] = {}
     for hotspot in hotspots:
         status = _safe_text(getattr(hotspot, "quality_status", "")) or "partial"
@@ -1354,6 +1401,7 @@ def _quality_counts(hotspots: list[HotspotSummary]) -> dict[str, int]:
 
 
 def _stale_confidence(base: float, stale_age_hours: float | None) -> float:
+    """按缓存陈旧时长折算来源置信度（超过 24 小时逐步衰减）。"""
     if stale_age_hours is None:
         return round(base, 4)
     if stale_age_hours <= 24:
@@ -1362,6 +1410,7 @@ def _stale_confidence(base: float, stale_age_hours: float | None) -> float:
 
 
 def _dedupe_timeline(events: list[TimelineEvent]) -> list[TimelineEvent]:
+    """按 (date, source, title) 去重时间线事件并排序。"""
     deduped: dict[tuple[str, str, str], TimelineEvent] = {}
     for event in events:
         deduped[(event.date, event.source, event.title)] = event
@@ -1374,6 +1423,7 @@ def _build_route_from_timeline(
     max_items: int,
     max_description_chars: int,
 ) -> list[HotspotRouteItem]:
+    """把时间线事件按天聚合为紧凑的发酵路径条目。"""
     grouped: dict[str, list[TimelineEvent]] = {}
     for event in events:
         date = _event_day(event.date or event.published_at)
@@ -1417,6 +1467,7 @@ def _build_summary_route_item(
     *,
     max_description_chars: int,
 ) -> HotspotRouteItem:
+    """在无时间线数据时，用摘要信息构建一条当前发酵路径条目。"""
     leaders = summary.leaders or [stock.name for stock in stocks[:10] if stock.name]
     parts = [
         f"{summary.topic or summary.name}热度 {summary.heat_score:.1f}",
@@ -1436,6 +1487,7 @@ def _build_summary_route_item(
 
 
 def _route_title(event: TimelineEvent) -> str:
+    """根据事件类型生成路径条目标题（公告类取原文，其余用「消息催化」）。"""
     event_type = _safe_text(event.event_type).lower()
     if event_type in {"announcement", "notice", "order", "policy", "fund_flow"}:
         return event.title[:60]
@@ -1443,6 +1495,7 @@ def _route_title(event: TimelineEvent) -> str:
 
 
 def _event_day(value: str) -> str:
+    """从日期时间字符串中截取日期部分（YYYY-MM-DD）。"""
     text = _safe_text(value)
     if len(text) >= 10:
         return text[:10]
@@ -1450,6 +1503,7 @@ def _event_day(value: str) -> str:
 
 
 def _compact_text(value: str, max_chars: int) -> str:
+    """压缩空白并在超长时截断为 max_chars，尾部加省略号。"""
     text = " ".join(_safe_text(value).split())
     limit = max(int(max_chars), 20)
     if len(text) <= limit:
@@ -1458,6 +1512,7 @@ def _compact_text(value: str, max_chars: int) -> str:
 
 
 def _dedupe_texts(values: list[object]) -> list[str]:
+    """去重并清理文本列表，返回有序的纯文本列表。"""
     items: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -1474,13 +1529,14 @@ def _load_fallback_hotspots(
     source_errors: list[str],
     top: int,
 ) -> HotspotResults | None:
+    """读取 last-good 缓存作为兜底热点结果，带陈旧度元数据。"""
     if not fallback_cache_path:
         return None
     try:
         hotspots = load_hotspots_json(fallback_cache_path)
     except FileNotFoundError:
         return None
-    except Exception as exc:  # noqa: BLE001 - malformed fallback cache should not crash live flow.
+    except Exception as exc:  # noqa: BLE001 - 兜底缓存损坏不应让实时流程崩溃。
         source_errors.append(f"last_good_cache: {exc}")
         return None
     if not hotspots:
@@ -1502,6 +1558,7 @@ def _find_fallback_hotspot(
     *,
     source_errors: list[str],
 ) -> HotspotSummary | None:
+    """在兜底缓存中按主题解析查找对应摘要。"""
     if not fallback_cache_path or not topic:
         return None
     hotspots = _load_hotspot_cache_for_fallback(fallback_cache_path, source_errors=source_errors)
@@ -1521,6 +1578,7 @@ def _with_result_metadata(
     stale: bool,
     stale_age_hours: float | None,
 ) -> HotspotResults:
+    """为一批摘要统一附加降级元数据并收敛质量状态，打包为 HotspotResults。"""
     errors = _dedupe_errors(source_errors)
     for hotspot in hotspots:
         _apply_summary_metadata(
@@ -1551,6 +1609,7 @@ def _apply_summary_metadata(
     stale: bool,
     stale_age_hours: float | None,
 ) -> None:
+    """把 provider/兜底/错误/陈旧度元数据写入单个摘要。"""
     summary.provider_used = provider_used
     summary.fallback_used = bool(summary.fallback_used or fallback_used)
     summary.source_errors = _dedupe_errors(source_errors)
@@ -1559,6 +1618,7 @@ def _apply_summary_metadata(
 
 
 def _cache_stale_age_hours(path_like: str | Path | None) -> float | None:
+    """计算缓存文件自最后修改以来的时长（小时）。"""
     if not path_like:
         return None
     path = Path(path_like)
@@ -1575,6 +1635,7 @@ def _record_provider_error(
     method_name: str,
     exc: Exception,
 ) -> None:
+    """把数据源调用异常格式化为一条错误记录并追加。"""
     if source_errors is None:
         return
     label = provider_label or "provider"
@@ -1582,12 +1643,14 @@ def _record_provider_error(
 
 
 def _provider_label(provider: object) -> str:
+    """返回数据源对象的标签（dict 视为 mapping，其余取类名）。"""
     if isinstance(provider, dict):
         return "mapping"
     return provider.__class__.__name__
 
 
 def _dedupe_errors(source_errors: list[str]) -> list[str]:
+    """去重并清理 source_errors 列表。"""
     errors: list[str] = []
     seen: set[str] = set()
     for value in source_errors:
@@ -1599,6 +1662,7 @@ def _dedupe_errors(source_errors: list[str]) -> list[str]:
 
 
 def _load_history_trends(history_path: str | Path | None) -> dict[str, dict[str, Any]]:
+    """读取板块热度趋势历史，供热度分与阶段判定使用。"""
     if not history_path:
         return {}
     path = Path(history_path)
@@ -1608,6 +1672,7 @@ def _load_history_trends(history_path: str | Path | None) -> dict[str, dict[str,
 
 
 def _hotspot_sort_key(item: HotspotSummary) -> tuple[float, float, float, float, float]:
+    """构建热点排序键：热度叠加趋势/持续性，并惩罚降温分。"""
     trend = item.trend_score or 0.0
     persistence = item.persistence_score or 0.0
     cooling = item.cooling_score or 0.0
@@ -1618,6 +1683,7 @@ def _hotspot_sort_key(item: HotspotSummary) -> tuple[float, float, float, float,
 
 
 def _hotspot_call_timeout_seconds() -> float | None:
+    """解析热点数据源调用的超时秒数（支持环境变量覆盖）。"""
     return parse_source_timeout_seconds(
         "SCREENING_HOTSPOT_CALL_TIMEOUT_SEC",
         default=_HOTSPOT_CALL_TIMEOUT_SECONDS,
@@ -1625,6 +1691,7 @@ def _hotspot_call_timeout_seconds() -> float | None:
 
 
 def _board_row_rank_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    """构建板块行的排序键（热度、涨跌幅、排名）。"""
     heat = _safe_float(item.get("heat_score"))
     change = _safe_float(item.get("change_pct"))
     rank = _safe_float(item.get("rank"))
@@ -1642,6 +1709,7 @@ def _call_provider_frame(
     provider_label: str = "",
     **kwargs: Any,
 ) -> pd.DataFrame | None:
+    """调用数据源方法并返回 DataFrame，带超时与 TypeError 兼容降级。"""
     method = getattr(provider, method_name, None)
     if method is None:
         return None
@@ -1666,16 +1734,17 @@ def _call_provider_frame(
                     timeout_sec=_hotspot_call_timeout_seconds(),
                     label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
                 )
-        except Exception as exc:  # noqa: BLE001 - provider runtime instability is degraded.
+        except Exception as exc:  # noqa: BLE001 - 数据源运行不稳定时降级处理。
             _record_provider_error(source_errors, provider_label, method_name, exc)
             return None
-    except Exception as exc:  # noqa: BLE001 - provider runtime instability is degraded.
+    except Exception as exc:  # noqa: BLE001 - 数据源运行不稳定时降级处理。
         _record_provider_error(source_errors, provider_label, method_name, exc)
         return None
     return frame if isinstance(frame, pd.DataFrame) else None
 
 
 def _mapping_provider_frame(provider: object, key: str) -> pd.DataFrame | None:
+    """从 dict 型数据源（mapping）按 key 取 DataFrame 或列表。"""
     if not isinstance(provider, dict):
         return None
     frame = provider.get(key)
@@ -1687,6 +1756,7 @@ def _mapping_provider_frame(provider: object, key: str) -> pd.DataFrame | None:
 
 
 def _mapping_constituents_frame(provider: object, topic: str, *, source: str) -> pd.DataFrame | None:
+    """从 dict 型数据源取指定主题的成分股 DataFrame。"""
     if not isinstance(provider, dict):
         return None
     for key in (f"{source}_constituents", "constituents"):
@@ -1701,6 +1771,7 @@ def _mapping_constituents_frame(provider: object, topic: str, *, source: str) ->
 
 
 def _timeline_matches_topic(item: dict[str, Any], topic: str) -> bool:
+    """判断时间线记录是否属于指定主题。"""
     values: list[str] = []
     for key in ("topic", "hotspot", "board"):
         text = _safe_text(item.get(key))
@@ -1717,6 +1788,7 @@ def _timeline_matches_topic(item: dict[str, Any], topic: str) -> bool:
 
 
 def _normalize_related_codes(value: object) -> list[str]:
+    """把关联代码列表/字符串归一化为去重后的标准代码列表。"""
     if isinstance(value, list):
         raw_items = value
     else:
@@ -1732,6 +1804,7 @@ def _normalize_related_codes(value: object) -> list[str]:
 
 
 def _row_value(row: dict[str, Any] | pd.Series, columns: list[str]) -> Any:
+    """按列名顺序从行中取第一个存在的字段值。"""
     for column in columns:
         if column in row:
             return row.get(column)
@@ -1739,6 +1812,7 @@ def _row_value(row: dict[str, Any] | pd.Series, columns: list[str]) -> Any:
 
 
 def _safe_bool(value: object) -> bool:
+    """把常见布尔/文本值归一化为 bool。"""
     if isinstance(value, bool):
         return value
     text = _safe_text(value).lower()
@@ -1746,4 +1820,5 @@ def _safe_bool(value: object) -> bool:
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
+    """把数值裁剪到 [lower, upper] 区间。"""
     return max(lower, min(upper, value))

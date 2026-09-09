@@ -9,7 +9,7 @@ Shared stock code -> name mapping, used by analyzer, data_provider, and name_to_
 
 from __future__ import annotations
 
-# Stock code -> name mapping (common stocks)
+# 股票代码 -> 名称映射（常见股票）
 STOCK_NAME_MAP = {
     # === A-shares ===
     "600519": "贵州茅台",
@@ -69,7 +69,7 @@ STOCK_NAME_MAP = {
     "688111": "金山办公",
     "688256": "寒武纪",
     "688981": "中芯国际",
-    # === US stocks ===
+    # === 美股 ===
     "AAPL": "苹果",
     "TSLA": "特斯拉",
     "MSFT": "微软",
@@ -108,7 +108,7 @@ STOCK_NAME_MAP = {
 
 
 def is_meaningful_stock_name(name: str | None, stock_code: str) -> bool:
-    """Return whether a stock name is useful for display or caching."""
+    """返回股票名称是否对展示或缓存有意义。"""
     if not name:
         return False
 

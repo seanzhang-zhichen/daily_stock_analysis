@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Credit balance and referral rewards for To C users."""
+"""面向 To C 用户的积分（credit）余额与邀请奖励服务。
+
+负责积分的发放/扣减/退款以及邀请关系的建立与奖励结算，所有流水统一写入
+``AppCreditLedger`` 并以幂等键（idempotency_key）防重。本模块供注册、订阅、
+积分包购买等用例调用，不直接处理 HTTP，错误以 ``ValueError`` 向上抛出。
+
+主要能力：
+- 积分配置（开关/奖励/成本）从平台设置表读取
+- 注册奖励、邀请注册奖励、订阅奖励、邀请首单奖励、积分包入账
+- 扣费检查（``enforce_credits``）与业务失败后的退回
+"""
 
 from __future__ import annotations
 

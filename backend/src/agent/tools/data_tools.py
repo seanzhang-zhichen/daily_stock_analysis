@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
-"""
-Data tools — wraps DataFetcherManager methods as agent-callable tools.
+"""数据类工具 —— 将 DataFetcherManager 的方法封装为智能体可调用的工具。
 
-Tools:
-- get_realtime_quote: real-time stock quote
-- get_daily_history: historical OHLCV data
-- get_chip_distribution: chip distribution analysis
-- get_analysis_context: historical analysis context from DB
+对外供 `src.agent.factory` 在构建 ToolRegistry 时统一注册，
+由智能体循环在需要行情、历史 K 线、筹码分布等数据时调用。
+
+主要工具：
+- get_realtime_quote: 实时行情
+- get_daily_history: 历史 OHLCV 数据
+- get_chip_distribution: 筹码分布分析
+- get_analysis_context: 数据库中的历史分析上下文
+- get_stock_info: 基本面信息
+- get_portfolio_snapshot: 持仓快照
+- get_capital_flow: 主力资金流向
 """
 
 import logging
@@ -25,11 +30,10 @@ _DAILY_HISTORY_MAX_DAYS = 365
 
 
 def _get_fetcher_manager():
-    """Return a module-level singleton DataFetcherManager.
+    """返回模块级单例 DataFetcherManager。
 
-    Re-creating the manager on every tool call causes Tushare re-init overhead
-    (~2 s each) and prevents circuit-breaker cooldown from taking effect across
-    consecutive tool calls within the same agent run.
+    每次工具调用都重建 manager 会带来 Tushare 重新初始化的开销（约 2 秒/次），
+    且会导致熔断器的冷却时间无法在同一次智能体运行的连续工具调用之间生效。
     """
     from data_provider import DataFetcherManager
     global _fetcher_manager_singleton
@@ -41,20 +45,24 @@ def _get_fetcher_manager():
 
 
 def reset_fetcher_manager() -> None:
-    """Clear the cached DataFetcherManager so runtime config reloads take effect."""
+    """清空缓存的 DataFetcherManager，使运行时配置重载能够生效。"""
     global _fetcher_manager_singleton
     with _fetcher_manager_lock:
         _fetcher_manager_singleton = None
 
 
 def _get_db():
-    """Lazy import for DatabaseManager."""
+    """延迟导入 DatabaseManager，避免模块加载期的循环依赖。"""
     from src.storage import get_db
     return get_db()
 
 
 def _normalize_history_days(days: Any) -> Tuple[int, Dict[str, Any]]:
-    """Normalize LLM-provided history window and return response metadata."""
+    """规范化 LLM 传入的历史天数窗口，并返回响应元数据。
+
+    将 LLM 给出的 days 参数约束在合法区间内；非法值回退到默认值，
+    并通过 warning 元数据告知调用方实际生效的天数。
+    """
     requested_days = days
     warning = None
     try:
@@ -88,7 +96,7 @@ def _normalize_history_days(days: Any) -> Tuple[int, Dict[str, Any]]:
 
 
 def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
-    """Return cache lookup candidates plus canonical write code."""
+    """返回缓存查找的候选代码列表，以及用于回写的规范代码。"""
     from data_provider.base import canonical_stock_code, normalize_stock_code
 
     raw_code = str(stock_code or "").strip()
@@ -101,14 +109,14 @@ def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
 
 
 def _append_history_metadata(response: dict, metadata: Dict[str, Any]) -> dict:
-    """Attach normalization warnings/metadata to a history tool response."""
+    """把天数规范化产生的警告/元数据附加到历史数据工具响应上。"""
     if metadata:
         response.update(metadata)
     return response
 
 
 def _compact_fundamental_context(fundamental_context: dict) -> dict:
-    """Reduce token footprint for tool responses while keeping key semantics."""
+    """压缩基本面上下文的 token 占用，同时保留关键语义字段。"""
     if not isinstance(fundamental_context, dict):
         return {}
     blocks = (
@@ -138,7 +146,7 @@ def _compact_fundamental_context(fundamental_context: dict) -> dict:
 
 
 def _compact_portfolio_snapshot(snapshot: dict, include_positions: bool = False, top_n: int = 5) -> dict:
-    """Shrink portfolio snapshot payload for default tool responses."""
+    """压缩持仓快照数据，用于默认工具响应的瘦身输出。"""
     if not isinstance(snapshot, dict):
         return {}
     compact_accounts = []
@@ -186,7 +194,7 @@ def _compact_portfolio_snapshot(snapshot: dict, include_positions: bool = False,
 
 
 def _compact_portfolio_risk(risk: dict, top_n: int = 10) -> dict:
-    """Shrink portfolio risk payload for tool responses."""
+    """压缩持仓风险数据，用于工具响应的瘦身输出。"""
     if not isinstance(risk, dict):
         return {}
     concentration = risk.get("concentration", {}) or {}
@@ -230,11 +238,11 @@ def _compact_portfolio_risk(risk: dict, top_n: int = 10) -> dict:
 
 
 # ============================================================
-# get_realtime_quote
+# get_realtime_quote —— 实时行情
 # ============================================================
 
 def _handle_get_realtime_quote(stock_code: str) -> dict:
-    """Get real-time stock quote."""
+    """获取股票实时行情。"""
     manager = _get_fetcher_manager()
     quote = manager.get_realtime_quote(stock_code)
     if quote is None:
@@ -285,11 +293,11 @@ get_realtime_quote_tool = ToolDefinition(
 
 
 # ============================================================
-# get_daily_history
+# get_daily_history —— 历史日线数据
 # ============================================================
 
 def _handle_get_daily_history(stock_code: str, days: int = 60) -> dict:
-    """Get daily OHLCV history data."""
+    """获取日线 OHLCV 历史数据。"""
     effective_days, metadata = _normalize_history_days(days)
 
     from src.services.history_loader import load_history_df
@@ -301,6 +309,7 @@ def _handle_get_daily_history(stock_code: str, days: int = 60) -> dict:
             metadata,
         )
 
+    # 非缓存命中的数据需回写数据库，供后续请求命中缓存、避免重复抓取
     if source != "db_cache":
         _, normalized_code = _history_code_candidates(stock_code)
         try:
@@ -318,9 +327,9 @@ def _handle_get_daily_history(stock_code: str, days: int = 60) -> dict:
                 exc,
             )
 
-    # Convert DataFrame to list of dicts (last N records)
+    # 将 DataFrame 转为字典列表（取最后 N 条记录）
     records = df.tail(min(effective_days, len(df))).to_dict(orient="records")
-    # Ensure date is string
+    # 确保日期字段转为字符串，便于 JSON 序列化
     for r in records:
         if "date" in r:
             r["date"] = str(r["date"])
@@ -366,11 +375,11 @@ get_daily_history_tool = ToolDefinition(
 
 
 # ============================================================
-# get_chip_distribution
+# get_chip_distribution —— 筹码分布
 # ============================================================
 
 def _handle_get_chip_distribution(stock_code: str) -> dict:
-    """Get chip distribution data."""
+    """获取筹码分布数据。"""
     manager = _get_fetcher_manager()
     chip = manager.get_chip_distribution(stock_code)
 
@@ -410,18 +419,18 @@ get_chip_distribution_tool = ToolDefinition(
 
 
 # ============================================================
-# get_analysis_context
+# get_analysis_context —— 历史分析上下文
 # ============================================================
 
 def _handle_get_analysis_context(stock_code: str) -> dict:
-    """Get stored analysis context from database."""
+    """从数据库读取已存储的分析上下文。"""
     db = _get_db()
     context = db.get_analysis_context(stock_code)
 
     if context is None:
         return {"error": f"No analysis context in DB for {stock_code}"}
 
-    # Return safely serializable version (remove raw_data to save tokens)
+    # 返回可安全序列化的版本（剔除 raw_data 以节省 token）
     safe_context = {}
     for k, v in context.items():
         if k == "raw_data":
@@ -451,11 +460,11 @@ get_analysis_context_tool = ToolDefinition(
 
 
 # ============================================================
-# get_stock_info
+# get_stock_info —— 基本面信息
 # ============================================================
 
 def _handle_get_stock_info(stock_code: str) -> dict:
-    """Get stock fundamental information through unified fundamental context."""
+    """通过统一的基本面上下文获取股票基本面信息。"""
     manager = _get_fetcher_manager()
     try:
         fundamental_context = manager.get_fundamental_context(stock_code)
@@ -469,6 +478,7 @@ def _handle_get_stock_info(stock_code: str) -> dict:
     belong_boards = manager.get_belong_boards(stock_code)
 
     stock_name = stock_code.upper()
+    # 获取股票名称失败时静默降级，用代码本身作为名称，不影响整体结果
     try:
         stock_name = manager.get_stock_name(stock_code) or stock_name
     except Exception:
@@ -483,8 +493,8 @@ def _handle_get_stock_info(stock_code: str) -> dict:
         "circ_mv": valuation.get("circ_mv"),
         "fundamental_context": compact_context,
         "belong_boards": belong_boards,
-        # Compatibility alias for existing callers; prefer belong_boards.
-        # Planned for future deprecation in a major version.
+        # 为兼容现有调用方保留的别名，新代码请优先使用 belong_boards。
+        # 计划在未来的大版本中移除。
         "boards": belong_boards,
         "sector_rankings": sector_rankings,
     }
@@ -508,7 +518,7 @@ get_stock_info_tool = ToolDefinition(
 
 
 # ============================================================
-# get_portfolio_snapshot
+# get_portfolio_snapshot —— 持仓快照
 # ============================================================
 
 def _handle_get_portfolio_snapshot(
@@ -518,7 +528,7 @@ def _handle_get_portfolio_snapshot(
     include_risk: bool = True,
     as_of: Optional[str] = None,
 ) -> dict:
-    """Get compact portfolio snapshot for account-aware suggestions."""
+    """获取精简版持仓快照，用于账户维度的个性化建议。"""
     method = (cost_method or "fifo").strip().lower()
     if method not in {"fifo", "avg"}:
         return {"error": "cost_method must be fifo or avg"}
@@ -615,7 +625,7 @@ get_portfolio_snapshot_tool = ToolDefinition(
 
 
 # ============================================================
-# Export all data tools
+# 汇总导出所有数据类工具
 # ============================================================
 
 ALL_DATA_TOOLS = [
@@ -629,11 +639,11 @@ ALL_DATA_TOOLS = [
 
 
 # ============================================================
-# get_capital_flow
+# get_capital_flow —— 主力资金流向
 # ============================================================
 
 def _handle_get_capital_flow(stock_code: str) -> dict:
-    """Get main-force capital flow data for a stock."""
+    """获取股票的主力资金流向数据。"""
     manager = _get_fetcher_manager()
     try:
         ctx = manager.get_capital_flow_context(stock_code)

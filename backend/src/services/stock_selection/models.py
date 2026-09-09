@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Shared models for stock selection strategies."""
+"""选股策略共用的数据模型（dataclass）。
+
+这些 dataclass 既是策略层返回结果的载体，也是 API 层序列化的最小单元。
+统一不可变（``frozen=True``），避免策略内部状态被下游悄悄改写。
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 @dataclass(frozen=True)
 class StockSelectionStock:
-    """One stock in a selection universe."""
+    """选股宇宙中的单只股票实体。"""
 
     code: str
     name: Optional[str] = None
@@ -19,7 +23,7 @@ class StockSelectionStock:
 
 @dataclass(frozen=True)
 class StockSelectionCandidate:
-    """One stock that matched a selection strategy."""
+    """命中某条策略的一只候选股票及其评估指标。"""
 
     code: str
     name: Optional[str]
@@ -37,13 +41,13 @@ class StockSelectionCandidate:
     source: str
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return an API-friendly dict."""
+        """返回适合 API/JSON 序列化的字典。"""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class StockSelectionDiagnostics:
-    """Counters describing a selection run."""
+    """一次选股运行的统计计数器，便于诊断覆盖率与失败原因分布。"""
 
     total: int = 0
     processed: int = 0
@@ -54,13 +58,13 @@ class StockSelectionDiagnostics:
     skipped_unsupported_market: int = 0
 
     def to_dict(self) -> Dict[str, int]:
-        """Return an API-friendly dict."""
+        """返回 API 友好字典。"""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class StockSelectionResult:
-    """Result returned by the stock selection service."""
+    """选股服务向调用方返回的整体结果包：策略、参数、命中项、统计与时间戳。"""
 
     strategy: str
     params: Dict[str, Any]
@@ -70,7 +74,7 @@ class StockSelectionResult:
     target_date: Optional[date] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return an API-friendly dict."""
+        """返回 API 友好字典，自动把 ``target_date`` 转为 ISO 字符串。"""
         return {
             "strategy": self.strategy,
             "params": dict(self.params),

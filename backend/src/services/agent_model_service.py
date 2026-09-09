@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Helpers for exposing configured Agent model deployments.
+"""用于暴露已配置的 Agent 模型部署信息的辅助函数。
 
-The settings/API layer uses this module to display Agent-capable LiteLLM
-deployments without leaking credentials. It reports provider/source metadata
-only; secrets remain in ``Config``.
+settings/API 层借助本模块展示支持 Agent 的 LiteLLM 部署，同时避免泄露凭据。
+这里只报告 provider/source 元数据，密钥仍保留在 ``Config`` 中。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from src.config import get_effective_agent_models_to_try, get_effective_agent_pr
 
 
 def _get_models_source(config) -> str:
-    """Return the effective source label for model-list metadata."""
+    """返回模型列表元数据所使用的有效来源标签。"""
     source = getattr(config, "llm_models_source", "")
     if source in {"litellm_config", "llm_channels"}:
         return source
@@ -22,7 +21,7 @@ def _get_models_source(config) -> str:
 
 
 def _get_model_provider(model_name: str) -> str:
-    """Infer provider from a LiteLLM-style ``provider/model`` name."""
+    """从 LiteLLM 风格的 ``provider/model`` 名称推断 provider。"""
     if not model_name:
         return "unknown"
     if "/" in model_name:
@@ -31,7 +30,7 @@ def _get_model_provider(model_name: str) -> str:
 
 
 def _build_deployments(config) -> List[Dict[str, Any]]:
-    """Build raw deployment records from configured LiteLLM model entries."""
+    """根据已配置的 LiteLLM 模型条目构建原始部署记录。"""
     source = _get_models_source(config)
     primary_model = get_effective_agent_primary_model(config)
     fallback_models = set(get_effective_agent_models_to_try(config)[1:])
@@ -62,10 +61,10 @@ def _build_deployments(config) -> List[Dict[str, Any]]:
 
 
 def list_agent_model_deployments(config) -> List[Dict[str, Any]]:
-    """Return configured Agent model deployments without exposing secrets.
+    """返回已配置的 Agent 模型部署信息，但不暴露任何密钥。
 
-    Primary and fallback models are sorted first so the UI can highlight the
-    models the Agent will actually try before secondary deployment metadata.
+    主模型与回退模型排在前面，这样 UI 可以优先高亮 Agent 真正会尝试的模型，
+    再展示次要的部署元数据。
     """
     deployments = _build_deployments(config)
     return sorted(

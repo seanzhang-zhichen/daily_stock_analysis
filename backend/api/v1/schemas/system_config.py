@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 LLMCapabilityCheck = Literal["json", "tools", "vision", "stream"]
+# 支持测试连通性的通知渠道枚举：覆盖国内外主流渠道与自定义 webhook
 NotificationTestChannel = Literal[
     "wechat",
     "feishu",
@@ -31,21 +32,21 @@ NotificationTestChannel = Literal[
 
 
 class SystemConfigOption(BaseModel):
-    """Select option metadata for frontend rendering."""
+    """下拉选项元数据：用于前端下拉控件渲染。"""
 
     label: str
     value: str
 
 
 class SystemConfigDocLink(BaseModel):
-    """Documentation link metadata for field help panels."""
+    """字段帮助面板中的文档链接元数据。"""
 
     label: str
     href: str
 
 
 class SystemConfigFieldSchema(BaseModel):
-    """Metadata schema for a single config field."""
+    """单个配置字段的元数据契约。"""
 
     key: str = Field(..., description="Configuration key name")
     title: Optional[str] = Field(None, description="Display title")
@@ -67,7 +68,7 @@ class SystemConfigFieldSchema(BaseModel):
 
 
 class SystemConfigCategorySchema(BaseModel):
-    """Category grouping metadata."""
+    """配置字段按类别分组后的容器。"""
 
     category: str
     title: str
@@ -77,14 +78,14 @@ class SystemConfigCategorySchema(BaseModel):
 
 
 class SystemConfigSchemaResponse(BaseModel):
-    """Metadata response for dynamic frontend rendering."""
+    """返回给前端用于动态渲染表单的整体 schema。"""
 
     schema_version: str
     categories: List[SystemConfigCategorySchema]
 
 
 class SystemConfigItem(BaseModel):
-    """Config value entry with optional schema metadata."""
+    """单条配置项：当前值 + 关联字段元数据（敏感值已脱敏）。"""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -96,7 +97,7 @@ class SystemConfigItem(BaseModel):
 
 
 class SystemConfigResponse(BaseModel):
-    """Read response for current configuration values."""
+    """读取当前生效配置的响应体。"""
 
     config_version: str
     mask_token: str
@@ -105,7 +106,7 @@ class SystemConfigResponse(BaseModel):
 
 
 class SetupStatusCheck(BaseModel):
-    """One first-run setup readiness check."""
+    """首启引导阶段的一项就绪检查。"""
 
     key: str
     title: str
@@ -117,7 +118,7 @@ class SetupStatusCheck(BaseModel):
 
 
 class SetupStatusResponse(BaseModel):
-    """Read-only first-run setup status."""
+    """首启引导状态总览。"""
 
     is_complete: bool
     ready_for_smoke: bool
@@ -127,7 +128,7 @@ class SetupStatusResponse(BaseModel):
 
 
 class ExportSystemConfigResponse(BaseModel):
-    """Export payload for raw `.env` backups."""
+    """导出 `.env` 原始备份内容的载荷。"""
 
     content: str
     config_version: str
@@ -135,14 +136,14 @@ class ExportSystemConfigResponse(BaseModel):
 
 
 class SystemConfigUpdateItem(BaseModel):
-    """Single key-value update item."""
+    """单条键值更新项。"""
 
     key: str
     value: str
 
 
 class UpdateSystemConfigRequest(BaseModel):
-    """Update request payload with optimistic version and mask-token support."""
+    """批量更新配置请求：带乐观锁版本号与脱敏令牌支持。"""
 
     config_version: str
     mask_token: str = "******"
@@ -151,7 +152,7 @@ class UpdateSystemConfigRequest(BaseModel):
 
 
 class UpdateSystemConfigResponse(BaseModel):
-    """Update operation result payload."""
+    """批量更新配置的结果响应。"""
 
     success: bool
     config_version: str
@@ -163,13 +164,13 @@ class UpdateSystemConfigResponse(BaseModel):
 
 
 class ValidateSystemConfigRequest(BaseModel):
-    """Validation request payload."""
+    """配置项校验请求载荷。"""
 
     items: List[SystemConfigUpdateItem] = Field(..., min_length=1)
 
 
 class ImportSystemConfigRequest(BaseModel):
-    """Import request payload for raw `.env` backups."""
+    """从 `.env` 原始备份导入配置的请求载荷。"""
 
     config_version: str
     content: str
@@ -177,7 +178,7 @@ class ImportSystemConfigRequest(BaseModel):
 
 
 class ConfigValidationIssue(BaseModel):
-    """Validation issue details."""
+    """单条配置校验问题详情。"""
 
     key: str
     code: str
@@ -188,14 +189,14 @@ class ConfigValidationIssue(BaseModel):
 
 
 class ValidateSystemConfigResponse(BaseModel):
-    """Validation result payload."""
+    """配置校验结果响应。"""
 
     valid: bool
     issues: List[ConfigValidationIssue]
 
 
 class TestLLMChannelRequest(BaseModel):
-    """Request payload for testing one LLM channel without saving it first."""
+    """在不持久化的情况下，临时测试某个 LLM 通道连通性的请求载荷。"""
 
     name: str = "channel"
     protocol: str = "openai"
@@ -208,7 +209,7 @@ class TestLLMChannelRequest(BaseModel):
 
 
 class LLMCapabilityCheckResult(BaseModel):
-    """Runtime capability smoke result for one requested check."""
+    """单项能力冒烟测试的运行时结果（如 JSON 模式、工具调用、流式响应等）。"""
 
     status: Literal["passed", "failed", "skipped"]
     message: str
@@ -220,7 +221,7 @@ class LLMCapabilityCheckResult(BaseModel):
 
 
 class TestLLMChannelResponse(BaseModel):
-    """Response payload for one LLM channel connectivity test."""
+    """单条 LLM 通道连通性测试响应。"""
 
     success: bool
     message: str
@@ -236,7 +237,7 @@ class TestLLMChannelResponse(BaseModel):
 
 
 class NotificationTestAttempt(BaseModel):
-    """One notification delivery attempt result."""
+    """单条通知投递尝试的结果。"""
 
     channel: NotificationTestChannel
     success: bool
@@ -250,7 +251,7 @@ class NotificationTestAttempt(BaseModel):
 
 
 class TestNotificationChannelRequest(BaseModel):
-    """Request payload for testing one notification channel with draft config."""
+    """使用临时配置对某个通知通道进行连通性测试的请求载荷。"""
 
     channel: NotificationTestChannel
     items: List[SystemConfigUpdateItem] = Field(default_factory=list)
@@ -261,7 +262,7 @@ class TestNotificationChannelRequest(BaseModel):
 
 
 class TestNotificationChannelResponse(BaseModel):
-    """Response payload for one notification channel connectivity test."""
+    """通知通道连通性测试响应。"""
 
     success: bool
     message: str
@@ -273,7 +274,7 @@ class TestNotificationChannelResponse(BaseModel):
 
 
 class DiscoverLLMChannelModelsRequest(BaseModel):
-    """Request payload for discovering models from one unsaved LLM channel."""
+    """在不保存的前提下探测某 LLM 通道可用模型列表的请求载荷。"""
 
     name: str = "channel"
     protocol: str = "openai"
@@ -284,7 +285,7 @@ class DiscoverLLMChannelModelsRequest(BaseModel):
 
 
 class DiscoverLLMChannelModelsResponse(BaseModel):
-    """Response payload for one LLM channel model discovery request."""
+    """LLM 通道可用模型探测结果响应。"""
 
     success: bool
     message: str
@@ -299,7 +300,7 @@ class DiscoverLLMChannelModelsResponse(BaseModel):
 
 
 class SystemConfigValidationErrorResponse(BaseModel):
-    """Error payload for failed update validation."""
+    """配置更新校验失败时的错误响应。"""
 
     error: str
     message: str
@@ -307,7 +308,7 @@ class SystemConfigValidationErrorResponse(BaseModel):
 
 
 class SystemConfigConflictResponse(BaseModel):
-    """Error payload for optimistic lock conflict."""
+    """乐观锁版本冲突时的错误响应。"""
 
     error: str
     message: str

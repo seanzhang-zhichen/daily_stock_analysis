@@ -59,6 +59,7 @@ def test_non_a_share_is_not_supported_without_fetching_rankings():
 def test_pipeline_helper_injects_context_and_skips_non_a_share():
     class Service:
         def build_context(self, **kwargs):
+            assert kwargs["market_phase_summary"] == {"market": "cn", "phase": "intraday"}
             return {"schema_version": "market-structure-v1", "status": "ok", "market": kwargs["market"]}
 
     pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
@@ -66,6 +67,7 @@ def test_pipeline_helper_injects_context_and_skips_non_a_share():
     pipeline.fetcher_manager = object()
     assert pipeline._build_market_structure_context(
         code="600519", stock_name="测试", market="cn", fundamental_context={}
+        , market_phase_summary={"market": "cn", "phase": "intraday"}
     )["status"] == "ok"
     assert pipeline._build_market_structure_context(
         code="AAPL", stock_name="Apple", market="us", fundamental_context={}

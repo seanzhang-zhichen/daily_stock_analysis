@@ -137,7 +137,7 @@ def consume_verification_code(
     code: str,
     purpose: str,
 ) -> Optional[AppUserEmailVerification]:
-    """Consume a one-time numeric verification code for an email address."""
+    """消费一次性的数字邮箱验证码；成功返回对应记录，否则返回 None。"""
     if not email or not code:
         return None
     now = datetime.utcnow()

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Backtesting evaluation engine (pure logic).
+"""回测评估引擎（纯逻辑层）。
 
-This module is intentionally DB-agnostic: it operates on plain values or
-objects that look like daily OHLC bars.
+本模块刻意保持与数据库无关：它只处理普通数值或"看起来像日线 OHLC Bar"的对象，
+便于被仓库层、测试桩等任意调用方复用，评分规则保持纯粹与确定性。
 """
 
 from __future__ import annotations
@@ -17,7 +17,10 @@ OVERALL_SENTINEL_CODE = "__overall__"
 
 
 class DailyBarLike(Protocol):
-    """Protocol for objects representing a daily OHLC bar."""
+    """表征单根日线 OHLC Bar 的协议（Protocol）。
+
+    只需提供 date/high/low/close 字段即可被引擎当成日线数据使用。
+    """
 
     date: date
     high: Optional[float]
@@ -26,7 +29,10 @@ class DailyBarLike(Protocol):
 
 
 class BacktestResultLike(Protocol):
-    """Protocol for objects that behave like a stored BacktestResult."""
+    """行为上类似于已落库的 BacktestResult 的协议（Protocol）。
+
+    用于聚合统计时读取各评估字段，使仓库行对象或测试桩都能被复用。
+    """
 
     eval_status: str
     position_recommendation: Optional[str]
@@ -43,11 +49,11 @@ class BacktestResultLike(Protocol):
 
 @dataclass(frozen=True)
 class EvaluationConfig:
-    """Runtime knobs for one backtest evaluation window.
+    """单次回测评估窗口的运行时参数（knobs）。
 
-    ``neutral_band_pct`` defines the price-move band treated as inconclusive,
-    and ``engine_version`` is persisted with results so future scoring changes
-    can coexist with older evaluations.
+    ``neutral_band_pct`` 定义被视为"inconclusive（方向不明）"的价格波动带，
+    小于该幅度的涨跌不计入方向对错；``engine_version`` 会随结果一起持久化，
+    以便后续评分规则变更时，新旧评估结果仍可共存、便于对比。
     """
 
     eval_window_days: int
@@ -56,14 +62,13 @@ class EvaluationConfig:
 
 
 class BacktestEngine:
-    """Long-only daily-bar backtesting engine.
+    """仅做多（long-only）的日线回测引擎。
 
-    The engine deliberately works with Protocol-like inputs instead of ORM
-    models. Repositories can pass database rows, tests can pass small stubs, and
-    the scoring rules remain pure and deterministic.
+    引擎刻意接受 Protocol 风格的输入而非 ORM 模型：仓库层可传入数据库行对象，
+    测试可传入小型桩对象，而评分规则始终保持纯粹与确定性，便于复现与单测。
     """
 
-    # Operation advice keywords (Chinese + English)
+    # 操作建议关键词（中文 + 英文），命中即代表相应的多空意图
     _BULLISH_KEYWORDS = (
         "买入",
         "加仓",
@@ -99,12 +104,12 @@ class BacktestEngine:
         "wait",
     )
 
-    # Negation prefixes (trailing spaces stripped for suffix-matching against prefix text).
-    # English patterns include trailing space in their canonical form; rstrip is
-    # applied during matching so "do not" matches prefix "do not " or "do not".
+    # 否定前缀（negation prefixes）：用于对关键词之前的文本做后缀匹配，匹配前会先去掉尾部空格。
+    # 英文否定词的规范形式带尾随空格；匹配时会对前缀文本执行 rstrip，
+    # 因此 "do not" 既能匹配前缀 "do not " 也能匹配 "do not"。
     _NEGATION_PATTERNS = (
-        "not", "don't", "do not", "no", "never", "avoid",  # English
-        "不要", "不", "别", "勿", "没有",  # Chinese
+        "not", "don't", "do not", "no", "never", "avoid",  # 英文
+        "不要", "不", "别", "勿", "没有",  # 中文
     )
 
     _NEGATION_CONNECTOR_WORDS = (
@@ -122,7 +127,8 @@ class BacktestEngine:
 
     @classmethod
     def infer_direction_expected(cls, operation_advice: Optional[str]) -> str:
-        """Infer expected direction: up/down/not_down/flat."""
+        """根据操作建议推断预期方向：up（看多）/ down（看空）/ not_down（不看空）/ flat（观望）。"""
+        # 先判看空再判观望：避免"建议减仓并观望"这类复合建议被误判为纯观望
         text = cls._normalize_text(operation_advice)
         if cls._matches_intent(text, cls._BEARISH_KEYWORDS):
             return "down"
@@ -144,9 +150,9 @@ class BacktestEngine:
 
     @classmethod
     def infer_position_recommendation(cls, operation_advice: Optional[str]) -> str:
-        """Infer recommended position: long/cash (long-only system).
+        """根据操作建议推断推荐持仓：long（持仓）/ cash（空仓，因系统仅做多）。
 
-        Priority: bearish/wait -> cash, bullish/hold -> long, unrecognized -> cash.
+        优先级：看空/观望 → cash；看多/持有 → long；无法识别 → cash。
         """
         text = cls._normalize_text(operation_advice)
         if cls._matches_intent(text, cls._BEARISH_KEYWORDS):
@@ -177,12 +183,12 @@ class BacktestEngine:
         take_profit: Optional[float],
         config: EvaluationConfig,
     ) -> Dict[str, Any]:
-        """Evaluate one historical analysis against forward daily bars.
+        """用历史分析建议对照其后的日线 Bar 进行单条回测评估。
 
-        Notes:
-        - Daily bars cannot determine intraday ordering. If stop-loss and
-          take-profit are both touched in the same bar, we record
-          first_hit="ambiguous" and assume stop-loss first for simulated exit.
+        说明：
+        - 日线 Bar 无法还原当日盘中的先后顺序。若同一根 Bar 内止损价与止盈价
+          同时被触及，则记 first_hit="ambiguous"，并在模拟出场时假设先触发止损，
+          以对风险估计保持保守口径。
         """
 
         if start_price is None or start_price <= 0:
@@ -293,7 +299,7 @@ class BacktestEngine:
         eval_window_days: int,
         engine_version: str,
     ) -> Dict[str, Any]:
-        """Aggregate BacktestResult rows into summary metrics."""
+        """将多条 BacktestResult 记录聚合为汇总指标（胜率、方向准确率、触发率等）。"""
         results_list = list(results)
 
         total = len(results_list)
@@ -400,22 +406,22 @@ class BacktestEngine:
 
     @staticmethod
     def _normalize_text(value: Optional[str]) -> str:
-        """Normalize free-form advice before keyword matching."""
+        """关键词匹配前，对自由文本建议做归一化（去空白、转小写）。"""
         return str(value or "").strip().lower()
 
     @classmethod
     def _matches_intent(cls, text: str, keywords: Sequence[str]) -> bool:
-        """Check if text expresses the intent of any keyword, accounting for negation.
+        """判断文本是否表达了某个关键词的意图，并考虑否定词（negation）的影响。
 
-        Tier 1: exact match (covers clean labels like "买入", "hold").
-        Tier 2: substring match with negation guard.
-        Keywords are assumed to be lowercase (matching _normalize_text output).
+        第一层：精确匹配（覆盖"买入""hold"这类干净标签）。
+        第二层：带否定保护的子串匹配。
+        约定关键词均为小写，与 _normalize_text 的输出保持一致。
         """
         return cls._first_intent_position(text, keywords) is not None
 
     @classmethod
     def _first_intent_position(cls, text: str, keywords: Sequence[str]) -> Optional[int]:
-        """Return the earliest match position for intent keywords, or None."""
+        """返回意图关键词最先出现的位置下标，未命中则返回 None。"""
         if not text:
             return None
 
@@ -431,8 +437,7 @@ class BacktestEngine:
             if not keyword:
                 continue
 
-            # Use word-boundary matching for ASCII keywords to avoid
-            # false positives such as "watch" matching "wait".
+            # ASCII 关键词用词边界匹配，避免 "watch" 被误判为命中 "wait" 这类假阳性。
             if bool(re.search(r"[a-z]", keyword)):
                 for match in re.finditer(
                     rf"(?<![a-zA-Z0-9_]){re.escape(keyword)}(?![a-zA-Z0-9_])",
@@ -445,8 +450,7 @@ class BacktestEngine:
                             break
                     continue
 
-            # For non-ASCII terms (Chinese), use substring matching to keep
-            # natural language phrasings like "建议买入" effective.
+            # 非 ASCII 词条（中文）用子串匹配，这样"建议买入"等自然语言表述也能命中。
             if re.search(r"[\u4e00-\u9fff]", keyword):
                 start = 0
                 while True:
@@ -464,7 +468,7 @@ class BacktestEngine:
 
     @classmethod
     def _is_negated(cls, prefix: str, keyword: str) -> bool:
-        """Check if the prefix text indicates negation for a candidate intent."""
+        """判断候选意图前面的文本是否构成否定（negation）。"""
         stripped = prefix.rstrip()
         target = (keyword or "").lower().strip()
         if not target:
@@ -473,7 +477,9 @@ class BacktestEngine:
         if any(stripped.endswith(neg) for neg in cls._NEGATION_PATTERNS):
             return True
 
-        # 限定“否定 + 动作动词”匹配，避免将“条件位否定”误伤核心建议意图。
+        # 限定"否定词 + 动作动词"的紧邻匹配，避免把条件分句里的否定误伤到核心建议意图。
+        # 只回看关键词前 12 个字符：既覆盖"不要买入"这类紧邻否定，
+        # 又避免长句中远处的否定词（如"虽然不…但是买入"）误伤核心意图
         lookback = stripped[-12:]
         for neg in cls._NEGATION_PATTERNS:
             if not neg:
@@ -491,8 +497,7 @@ class BacktestEngine:
             if cls._contains_keyword(suffix_gap, target):
                 return True
 
-            # Keep English short-gap behavior where negation words are followed by
-            # connector words such as "to" (e.g. "not to sell").
+            # 英文短间隔规则：否定词后紧跟 to 等连接词（如 "not to sell"）时视为否定。
             if not any(ch >= "\u4e00" and ch <= "\u9fff" for ch in suffix_gap):
                 if len(suffix_gap) <= 6:
                     return True
@@ -505,7 +510,7 @@ class BacktestEngine:
 
     @classmethod
     def _contains_keyword(cls, text: str, keyword: str) -> bool:
-        """Check whether *keyword* exists in text with intent-aware boundaries."""
+        """判断 *keyword* 是否存在于文本中（带意图感知的边界处理）。"""
         if not text or not keyword:
             return False
         if bool(re.search(r"[a-z]", keyword)):
@@ -514,7 +519,7 @@ class BacktestEngine:
 
     @classmethod
     def _is_negation_connector_gap(cls, gap: str) -> bool:
-        """Whether a short Chinese negation gap is still a valid negation bridge."""
+        """判断一段短的中文否定间隔是否仍构成有效的否定桥接（如"不应买入"）。"""
         compact = re.sub(r"[\s,，。；;:!?！？]", "", gap).strip()
         if not compact:
             return True
@@ -528,7 +533,7 @@ class BacktestEngine:
         direction_expected: str,
         neutral_band_pct: float,
     ) -> tuple[Optional[str], Optional[bool]]:
-        """Classify realized stock return against the inferred advice direction."""
+        """将实际涨跌幅与推断出的建议方向对照，判出 win/loss/neutral 及方向是否正确。"""
         if stock_return_pct is None:
             return None, None
 
@@ -549,6 +554,7 @@ class BacktestEngine:
                 return "loss", False
             return "neutral", None
 
+        # not_down（持有/震荡）：只要不下跌即视为判断正确，中性带内的小幅上涨也算赢
         if direction_expected == "not_down":
             if r >= 0:
                 return "win", True
@@ -556,7 +562,7 @@ class BacktestEngine:
                 return "loss", False
             return "neutral", None
 
-        # flat
+        # flat（观望）：窗口内波动落在中性带内即为"判断正确"，否则视为踏空/误判
         if abs(r) <= band:
             return "win", True
         return "loss", False
@@ -579,12 +585,11 @@ class BacktestEngine:
         Optional[float],
         str,
     ]:
-        """Evaluate stop-loss/take-profit hits across forward daily bars.
+        """遍历后续日线 Bar，评估止损/止盈的触发情况。
 
-        Daily bars expose high/low but not intraday ordering. When both targets
-        are touched in the same bar, the result is marked ``ambiguous`` and the
-        simulated exit assumes stop-loss first to keep the risk estimate
-        conservative.
+        日线 Bar 提供最高/最低价但无法还原盘中先后顺序。当同一根 Bar 内两档目标
+        价格同时被触及，结果记 ``ambiguous``，且模拟出场假设先触发止损，以使风险
+        估计保持保守口径。
         """
         if position != "long":
             return (
@@ -632,9 +637,11 @@ class BacktestEngine:
                 continue
 
             first_hit_date = bar.date
+            # idx 从 1 开始，故此处即为"自分析日算起的第几个交易日触发"
             first_hit_days = idx
 
             if stop_hit and tp_hit:
+                # 同一根 Bar 内两档都被触及，无法还原先后顺序，保守按止损处理
                 first_hit = "ambiguous"
                 exit_price = stop_loss
                 exit_reason = "ambiguous_stop_loss"
@@ -663,7 +670,7 @@ class BacktestEngine:
 
     @staticmethod
     def _average(values: Iterable[Optional[float]]) -> Optional[float]:
-        """Return a rounded average while ignoring missing numeric values."""
+        """返回四舍五入后的平均值，忽略缺失（None）的数值；无有效值时返回 None。"""
         items = [float(v) for v in values if v is not None]
         if not items:
             return None
@@ -671,7 +678,7 @@ class BacktestEngine:
 
     @staticmethod
     def _compute_advice_breakdown(results: List[BacktestResultLike]) -> Dict[str, Any]:
-        """Aggregate win/loss/neutral counts by original operation advice text."""
+        """按原始操作建议文本聚合各建议的胜/负/中性计数及胜率。"""
         breakdown: Dict[str, Dict[str, int]] = {}
         for row in results:
             raw_advice = row.operation_advice
@@ -693,7 +700,7 @@ class BacktestEngine:
 
     @staticmethod
     def _compute_diagnostics(results: List[BacktestResultLike]) -> Dict[str, Any]:
-        """Return low-level status counts useful for API/debug dashboards."""
+        """返回底层状态计数（eval_status、first_hit 分布），供 API/调试面板使用。"""
         status_counts: Dict[str, int] = {}
         first_hit_counts: Dict[str, int] = {}
         for row in results:

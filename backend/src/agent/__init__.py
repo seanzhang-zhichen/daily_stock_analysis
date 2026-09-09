@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Agent module for stock analysis system.
+股票分析系统的 Agent 模块。
 
-Provides LLM-based agent with tool-calling capabilities,
-pluggable trading strategies, and multi-turn conversation support.
+提供基于 LLM、具备工具调用能力的 Agent，支持可插拔交易策略与多轮对话。
+通过环境变量 AGENT_MODE=true 启用。
 
-Enabled via AGENT_MODE=true environment variable.
-
-Use explicit imports to avoid pulling in heavy dependencies (e.g. json_repair)
-when only lightweight sub-modules like tools.registry are needed::
+建议使用显式导入，避免在仅需 tools.registry 等轻量子模块时
+连带引入 json_repair 等重型依赖::
 
     from src.agent.executor import AgentExecutor, AgentResult
     from src.agent.runner import run_agent_loop, RunLoopResult
@@ -18,7 +16,7 @@ when only lightweight sub-modules like tools.registry are needed::
 
 
 def __getattr__(name):
-    """Lazy import to avoid triggering json_repair etc. on package access."""
+    """惰性导入，避免访问包时触发 json_repair 等重依赖。"""
     if name == "AgentExecutor":
         from src.agent.executor import AgentExecutor
         return AgentExecutor

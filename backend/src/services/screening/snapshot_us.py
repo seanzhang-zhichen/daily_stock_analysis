@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-# Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
-# Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""US equity snapshot via yfinance.
+# 派生自 AlphaSift (commit 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf)，
+# 遵循 Apache-2.0 协议并适配本仓库。
+"""通过 yfinance 获取美股快照。
 
-US snapshot provider for the screening L1 pipeline. Fetches a configurable
-equity universe and returns the standard snapshot DataFrame schema.
+选股 L1 流水线的美股快照数据源：拉取可配置的美股股票池，并返回标准快照
+DataFrame schema（与 A 股快照列名一致，便于下游复用同一套过滤与打分逻辑）。
 
-HK is not supported yet: there is no HK universe source or ticker
-configuration path, so ``market="hk"`` is rejected at the pipeline level
-rather than silently screening the US pool.
+港股暂不支持：目前既没有港股股票池来源，也没有 ticker 配置入口，因此
+``market="hk"`` 会在流水线层面直接拒绝，而不是悄悄拿美股池去跑筛选。
 """
 
 import logging
@@ -31,13 +30,13 @@ _DEFAULT_US_UNIVERSE = [
 
 
 def fetch_us_universe(source: str = "auto") -> list[str]:
-    """Return a list of US equity tickers.
+    """返回美股股票池代码列表。
 
-    Sources:
-        sp500   — scrape S&P 500 from Wikipedia
-        env     — read SCREENING_US_TICKERS (comma-separated)
-        default — hardcoded top-50 US large-caps
-        auto    — try sp500 → env → default
+    数据源策略：
+    - ``sp500`` —— 从维基百科抓取标普 500 成分股
+    - ``env`` —— 读取环境变量 ``SCREENING_US_TICKERS``（逗号分隔）
+    - ``default`` —— 内置前 50 大市值美股
+    - ``auto`` —— 依次尝试 ``sp500`` → ``env`` → ``default``
     """
     src = source.lower()
     if src == "auto":
@@ -65,6 +64,11 @@ def fetch_us_universe(source: str = "auto") -> list[str]:
 
 
 def _fetch_sp500_tickers() -> list[str]:
+    """从维基百科抓取标普 500 成分股代码（点号写法统一转成连字符）。
+
+    Raises:
+        RuntimeError: 页面中找不到 Symbol 列。
+    """
     tables = pd.read_html(_SP500_WIKI_URL)
     for tbl in tables:
         if "Symbol" in tbl.columns:
@@ -78,12 +82,22 @@ def fetch_us_snapshot(
     universe_source: str = "auto",
     max_workers: int = 8,
 ) -> pd.DataFrame:
-    """Fetch a US equity snapshot in the screening schema.
+    """用 yfinance 抓取美股快照，返回与 A 股快照一致的 schema。
 
-    Uses yfinance to fetch current data for each ticker. Returns a
-    DataFrame matching the standard snapshot columns: code, name, price,
-    change_pct, amount, total_mv, pe_ratio, pb_ratio, volume_ratio,
-    turnover_rate, industry.
+    列与 A 股快照对齐：``code``、``name``、``price``、``change_pct``、``amount``、
+    ``total_mv``、``pe_ratio``、``pb_ratio``、``volume_ratio``、``turnover_rate``、``industry``，
+    便于下游复用同一套过滤与打分逻辑。
+
+    Args:
+        tickers: 显式代码列表；为 None 时按 ``universe_source`` 解析股票池。
+        universe_source: 股票池来源（``auto`` / ``sp500`` / ``env`` / ``default``）。
+        max_workers: yfinance 单 ticker 折算时的线程池大小。
+
+    Returns:
+        含标准快照列的美股快照 DataFrame。
+
+    Raises:
+        RuntimeError: 没有任何 ticker 解析出有效数据。
     """
     import yfinance as yf
 
@@ -107,7 +121,9 @@ def fetch_us_snapshot(
     rows = []
 
     def _process_ticker(ticker: str) -> dict | None:
+        """把单个 ticker 的历史行情折算成一行快照；数据不足时返回 None。"""
         try:
+            # 单 ticker 时 yfinance 不会加 Ticker 层级，需特殊处理列结构
             if len(tickers) == 1:
                 hist = data.copy()
                 if isinstance(hist.columns, pd.MultiIndex):
@@ -176,6 +192,7 @@ def fetch_us_snapshot(
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # 价格缺失或非正的行情行对下游过滤无意义，直接剔除
     df = df.dropna(subset=["price"])
     df = df[df["price"] > 0]
 
@@ -187,9 +204,14 @@ def fetch_us_snapshot(
 
 
 def _enrich_info_fields(df: pd.DataFrame) -> None:
-    """Best-effort enrichment of pe_ratio, pb_ratio, industry from yfinance info."""
+    """尽最大努力用 yfinance info 补齐 pe_ratio、pb_ratio 与 industry。
+
+    该接口按 ticker 逐个请求、很慢，因此仅当缺失比例过半时才触发；
+    失败也一律静默跳过，不影响快照主体。
+    """
     import yfinance as yf
 
+    # 缺失过半才补：说明批量接口没给估值数据，值得额外花时间逐个请求
     needs_pe = df["pe_ratio"].isna().sum() > len(df) * 0.5
     if not needs_pe:
         return
@@ -215,14 +237,25 @@ def fetch_daily_history_yfinance(
     *,
     lookback_days: int = 120,
 ) -> pd.DataFrame:
-    """Fetch daily OHLCV history for a US ticker via yfinance.
+    """用 yfinance 拉取单个美股标的的日线 OHLCV 历史。
 
-    Returns a DataFrame with columns: date, open, high, low, close, volume
-    matching the schema expected by the daily enrichment logic.
+    返回的 DataFrame 列名为中文（日期/开盘/最高/最低/收盘/成交量），
+    与日线特征增强逻辑（daily enrichment）期望的 schema 保持一致。
+
+    Args:
+        ticker: 美股代码。
+        lookback_days: 期望回溯的自然日天数。
+
+    Returns:
+        日线 DataFrame，最多保留 max(lookback_days, 30) 行。
+
+    Raises:
+        RuntimeError: yfinance 返回空历史。
     """
     import yfinance as yf
 
     end = pd.Timestamp.now().normalize()
+    # 按自然日取 2 倍天数（至少 180 天），保证扣除休市后仍有足够交易日
     start = end - pd.Timedelta(days=max(lookback_days * 2, 180))
     hist = yf.download(
         ticker,

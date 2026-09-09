@@ -1,6 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Portfolio service for P0 account/events/snapshot workflow."""
+"""组合（Portfolio）服务：账户、事件、快照重放。
 
+负责 P0 阶段的账户 CRUD、买入/卖出事件与现金台账、公司行为（分红/拆股）写入，
+以及按账户（account）维度的事件回放（event replay），输出当前或历史持仓快照。
+快照计算后会回写到 cache 表（positions/lots/snapshots），便于风险报表复用。
+
+主要能力：
+- 账户管理（支持 To C 模式下的 owner_id 归属校验）
+- 交易/现金/公司行为的写入与查询（带去重、越权、越卖校验）
+- FIFO / 平均成本 两种成本法的快照重放
+- 多币种估值与 FX 缓存回退（CNY 聚合）
+- 实时行情估值（按需并行拉取）+ 历史收盘价兜底
+- 组合级 limitations 标注（部分支持的市场）
+"""
 from __future__ import annotations
 
 import json
@@ -41,7 +53,7 @@ PORTFOLIO_REALTIME_QUOTE_MAX_WORKERS = 4
 
 
 def _portfolio_limitations_for_market(market: str) -> List[str]:
-    """Return explicit valuation limitations for markets with partial support."""
+    """返回仅得到部分支持的市场的显式估值能力限制清单。"""
     if market not in PARTIAL_VALUATION_MARKETS:
         return []
     return [
@@ -52,6 +64,7 @@ def _portfolio_limitations_for_market(market: str) -> List[str]:
 
 
 def _merge_portfolio_limitations(*groups: Iterable[str]) -> List[str]:
+    """按出现顺序合并多组 limitations，保持首次出现的顺序去重。"""
     merged: List[str] = []
     seen: Set[str] = set()
     for group in groups:
@@ -63,11 +76,11 @@ def _merge_portfolio_limitations(*groups: Iterable[str]) -> List[str]:
 
 
 class PortfolioConflictError(Exception):
-    """Raised when request conflicts with existing portfolio state."""
+    """当请求与既有组合状态冲突时抛出（如重复的 trade_uid / dedup_hash）。"""
 
 
 class PortfolioOversellError(ValueError):
-    """Raised when a sell would exceed the available position quantity."""
+    """当卖出数量超过当前可用持仓数量时抛出。"""
 
     def __init__(
         self,
@@ -77,7 +90,7 @@ class PortfolioOversellError(ValueError):
         requested_quantity: float,
         available_quantity: float,
     ) -> None:
-        """Capture oversell context for API-friendly error messages."""
+        """把越卖上下文保存到异常对象上，便于 API 返回结构化错误信息。"""
         self.symbol = symbol
         self.trade_date = trade_date
         self.requested_quantity = float(requested_quantity)
@@ -92,7 +105,7 @@ class PortfolioOversellError(ValueError):
 
 @dataclass
 class _AvgState:
-    """Mutable average-cost state while replaying one symbol position."""
+    """回放单一持仓时的平均成本（avg-cost）可变状态。"""
 
     quantity: float = 0.0
     total_cost: float = 0.0
@@ -100,7 +113,7 @@ class _AvgState:
 
 @dataclass(frozen=True)
 class _ResolvedPositionPrice:
-    """Resolved valuation price plus provenance/staleness metadata."""
+    """解析出的估值价格及其数据来源与陈旧度标记。"""
 
     price: float
     source: str
@@ -111,10 +124,10 @@ class _ResolvedPositionPrice:
 
 
 class PortfolioService:
-    """Business logic for account CRUD, event writes, and snapshot replay."""
+    """组合业务逻辑层：账户 CRUD、事件写入、快照回放与多币种估值。"""
 
     def __init__(self, repo: Optional[PortfolioRepository] = None):
-        """Initialize the portfolio repository dependency."""
+        """初始化组合仓储依赖；缺省时使用全局默认实例。"""
         self.repo = repo or PortfolioRepository()
 
     # ------------------------------------------------------------------
@@ -129,7 +142,21 @@ class PortfolioService:
         base_currency: str,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create an active portfolio account."""
+        """创建一个处于激活状态的组合账户。
+
+        Args:
+            name: 账户名（必填，trim 后非空）。
+            broker: 券商/经纪人，可为空。
+            market: 所属市场（cn/hk/us/jp/kr/tw）。
+            base_currency: 基础结算币种（标准化为大写）。
+            owner_id: To C 模式下的归属用户 ID，可为空。
+
+        Returns:
+            序列化后的账户字典。
+
+        Raises:
+            ValueError: 参数缺失或非法时抛出。
+        """
         name_norm = (name or "").strip()
         if not name_norm:
             raise ValueError("name is required")
@@ -149,7 +176,7 @@ class PortfolioService:
         include_inactive: bool = False,
         owner_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """List accounts, optionally scoped to one owner in To C mode."""
+        """列出账户列表；To C 模式下按 owner_id 做隔离过滤。"""
         owner_filter = self._normalize_owner_filter(owner_id)
         rows = self.repo.list_accounts(
             include_inactive=include_inactive,
@@ -169,18 +196,26 @@ class PortfolioService:
         is_active: Optional[bool] = None,
         owner_id_check: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update account fields.
+        """更新账户字段。
 
-        ``owner_id_check`` 为 To C 模式下的归属强校验值: 非空时, 若账户的
-        ``owner_id`` 与之不一致直接返回 ``None`` (404 语义)。``owner_id``
-        参数仍保留, 用于显式覆盖账户归属字段 (单租户模式或运营场景使用)。
+        ``owner_id_check`` 为 To C 模式下的归属强校验值：非空时，若账户的
+        ``owner_id`` 与之不一致直接返回 ``None``（404 语义）。``owner_id``
+        参数仍保留，用于显式覆盖账户归属字段（单租户模式或运营场景使用）。
+
+        Args:
+            account_id: 待更新的账户 ID。
+            name/broker/market/base_currency/owner_id/is_active: 任意子集。
+            owner_id_check: 归属校验值；非空时与账户原 owner_id 严格比对。
+
+        Returns:
+            更新后的账户字典；若归属校验失败或账号不存在则返回 None。
         """
         check_owner = self._normalize_owner_filter(owner_id_check)
         if check_owner is not None:
             existing = self.repo.get_account(account_id, include_inactive=True)
             if existing is None or not self._check_account_owner(existing, check_owner):
                 return None
-            # 防止用户改归属逃避隔离: 强制锁回当前 owner
+            # 防止用户改归属逃避隔离：强制锁回当前 owner
             owner_id = check_owner
 
         fields: Dict[str, Any] = {}
@@ -213,7 +248,7 @@ class PortfolioService:
         *,
         owner_id: Optional[str] = None,
     ) -> bool:
-        """Deactivate an account after optional owner isolation check."""
+        """停用一个账户（带可选 owner_id 归属校验）。"""
         owner_filter = self._normalize_owner_filter(owner_id)
         if owner_filter is not None:
             existing = self.repo.get_account(account_id, include_inactive=True)
@@ -242,7 +277,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record a buy/sell trade event after validation and oversell checks."""
+        """记录一笔买入/卖出交易事件（带校验、归属检查与越卖防护）。"""
         side_norm = (side or "").strip().lower()
         if side_norm not in VALID_SIDES:
             raise ValueError("side must be buy or sell")
@@ -307,7 +342,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record an account-level cash inflow or outflow event."""
+        """记录一笔账户级现金流入/流出事件。"""
         direction_norm = (direction or "").strip().lower()
         if direction_norm not in VALID_CASH_DIRECTIONS:
             raise ValueError("direction must be in or out")
@@ -341,7 +376,7 @@ class PortfolioService:
         note: Optional[str] = None,
         owner_id_check: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record a corporate action that affects future snapshot replay."""
+        """记录一笔公司行为事件（现金分红或拆股调整）。"""
         action_type_norm = (action_type or "").strip().lower()
         if action_type_norm not in VALID_CORPORATE_ACTIONS:
             raise ValueError("action_type must be cash_dividend or split_adjustment")
@@ -374,7 +409,7 @@ class PortfolioService:
             return {"id": int(row.id)}
 
     def delete_trade_event(self, trade_id: int, *, owner_id_check: Optional[str] = None) -> bool:
-        """Delete one trade event after optional owner isolation check."""
+        """删除一条交易事件（带可选 owner_id 归属校验）。"""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_trade_account_id(trade_id)
@@ -387,7 +422,7 @@ class PortfolioService:
             return self.repo.delete_trade_in_session(session=session, trade_id=trade_id)
 
     def delete_cash_ledger_event(self, entry_id: int, *, owner_id_check: Optional[str] = None) -> bool:
-        """Delete one cash-ledger event after optional owner isolation check."""
+        """删除一条现金台账事件（带可选 owner_id 归属校验）。"""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_cash_ledger_account_id(entry_id)
@@ -400,7 +435,7 @@ class PortfolioService:
             return self.repo.delete_cash_ledger_in_session(session=session, entry_id=entry_id)
 
     def delete_corporate_action_event(self, action_id: int, *, owner_id_check: Optional[str] = None) -> bool:
-        """Delete one corporate-action event after optional owner isolation check."""
+        """删除一条公司行为事件（带可选 owner_id 归属校验）。"""
         owner_check = self._normalize_owner_filter(owner_id_check)
         if owner_check is not None:
             account_id = self.repo.get_corporate_action_account_id(action_id)
@@ -424,7 +459,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """List trade events with date/symbol/side filters."""
+        """按日期/标的/方向分页查询交易事件。"""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -472,7 +507,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """List cash-ledger events with date/direction filters."""
+        """按日期/方向分页查询现金台账事件。"""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -514,7 +549,7 @@ class PortfolioService:
         page_size: int = 20,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """List corporate actions with date/symbol/type filters."""
+        """按日期/标的/类型分页查询公司行为事件。"""
         owner_filter = self._normalize_owner_filter(owner_id)
         if account_id is not None:
             self._require_active_account(account_id, owner_id=owner_filter)
@@ -563,10 +598,20 @@ class PortfolioService:
         owner_id: Optional[str] = None,
         include_realtime: bool = True,
     ) -> Dict[str, Any]:
-        """Replay account events into a current/historical portfolio snapshot.
+        """把账户事件回放为当前或历史组合快照。
 
-        Each per-account snapshot is persisted back into cache tables so risk
-        reports and later reads can reuse replayed positions/lots.
+        每个账户的快照会被持久化到 cache 表（positions/lots/snapshots），
+        便于风险报表与后续读取复用回放好的持仓/批次。
+
+        Args:
+            account_id: 单账户快照时必填；为空时聚合所有活跃账户。
+            as_of: 估值日期（默认今天）。
+            cost_method: 成本法，支持 "fifo" 或 "avg"。
+            owner_id: To C 模式归属过滤。
+            include_realtime: 是否在当日快照中并行抓取实时行情。
+
+        Returns:
+            组合快照字典，包含聚合字段与各账户 payload。
         """
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
@@ -712,7 +757,7 @@ class PortfolioService:
         as_of: Optional[date] = None,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Refresh account FX pairs online with stale fallback when fetch fails."""
+        """在线刷新账户相关 FX 汇率，失败时回退到陈旧缓存（保持流水线可用）。"""
         as_of_date = as_of or date.today()
         config = get_config()
         refresh_enabled = bool(getattr(config, "portfolio_fx_update_enabled", True))
@@ -755,7 +800,7 @@ class PortfolioService:
         dedup_hash: Optional[str],
         session: Optional[Any] = None,
     ) -> None:
-        """Reject duplicate broker trade ids or CSV content hashes."""
+        """拒绝重复的券商交易 ID 或 CSV 内容哈希。"""
         if trade_uid and self._has_trade_uid(account_id=account_id, trade_uid=trade_uid, session=session):
             raise PortfolioConflictError(f"Duplicate trade_uid for account_id={account_id}: {trade_uid}")
         if dedup_hash and self._has_trade_dedup_hash(account_id=account_id, dedup_hash=dedup_hash, session=session):
@@ -772,7 +817,7 @@ class PortfolioService:
         quantity: float,
         session: Optional[Any] = None,
     ) -> None:
-        """Ensure a sell order does not exceed holdings up to the trade date."""
+        """确保一笔卖出在交易日（含）之前的可用持仓足以覆盖。"""
         key = (
             self._normalize_symbol_for_position(symbol),
             self._normalize_market(market),
@@ -800,7 +845,7 @@ class PortfolioService:
         as_of_date: date,
         session: Optional[Any] = None,
     ) -> float:
-        """Replay historical trades/actions just far enough to compute holdings."""
+        """回放历史交易 / 公司行为直到指定日期，得出可用持仓数量。"""
         if session is None:
             trades = self.repo.list_trades(account_id, as_of=as_of_date)
             corporate_actions = self.repo.list_corporate_actions(account_id, as_of=as_of_date)
@@ -880,7 +925,7 @@ class PortfolioService:
         cost_method: str,
         include_realtime: bool = True,
     ) -> Dict[str, Any]:
-        """Replay one account's cash, trades, and corporate actions to a snapshot."""
+        """回放单一账户的现金台账、交易与公司行为，得到一次完整快照。"""
         trades = self.repo.list_trades(account.id, as_of=as_of_date)
         cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)
         corporate_actions = self.repo.list_corporate_actions(account.id, as_of=as_of_date)
@@ -1110,7 +1155,7 @@ class PortfolioService:
         avg_state: Dict[Tuple[str, str, str], _AvgState],
         include_realtime: bool = True,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool]:
-        """Build public positions and cache rows from replayed cost states."""
+        """根据回放后的成本状态构造持仓行、缓存行与基础货币市值。"""
         position_rows: List[Dict[str, Any]] = []
         lot_rows: List[Dict[str, Any]] = []
         market_value_base = 0.0
@@ -1243,7 +1288,7 @@ class PortfolioService:
         realtime_prices: Optional[Dict[str, Tuple[Optional[float], Optional[str]]]] = None,
         include_realtime: bool = True,
     ) -> _ResolvedPositionPrice:
-        """Resolve today's price from realtime quotes, then historical close fallback."""
+        """先尝试实时行情，再回退到历史收盘价；返回价格与来源标记。"""
         today = date.today()
 
         if include_realtime and as_of_date == today:
@@ -1285,7 +1330,7 @@ class PortfolioService:
         self,
         symbols: Iterable[str],
     ) -> Dict[str, Tuple[Optional[float], Optional[str]]]:
-        """Fetch multiple current quotes concurrently without sharing manager locks."""
+        """并发抓取多个标的的当前行情，避免共用 manager 锁引发阻塞。"""
         unique_symbols = sorted({symbol for symbol in symbols if symbol})
         if not unique_symbols:
             return {}
@@ -1317,7 +1362,7 @@ class PortfolioService:
 
     @staticmethod
     def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
-        """Fetch realtime price for current-day portfolio valuation."""
+        """抓取单只标的的实时报价（用于当日组合估值）。"""
         try:
             from data_provider.base import DataFetcherManager
 
@@ -1344,12 +1389,12 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_symbol_for_storage(symbol: str) -> str:
-        """Canonicalize symbols before persisting portfolio events."""
+        """把标的标准化后再写入组合事件表（保持 DB 内一致性）。"""
         return canonical_stock_code(symbol)
 
     @staticmethod
     def _normalize_symbol_for_position(symbol: str) -> str:
-        """Canonicalize symbols for position grouping and valuation lookup."""
+        """用于持仓聚合与估值键的标的规范化（保留 SH/SZ/BJ 等交易所前缀）。"""
         if not (symbol or "").strip():
             return ""
 
@@ -1368,10 +1413,9 @@ class PortfolioService:
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
         """
-        Canonicalization for symbol filtering with exchange-qualified input preservation.
+        用于过滤条件的标的规范化（保留显式交易所标注）。
 
-        Keep explicit A-share exchange annotations (SH/SZ/BJ) intact to avoid collapsing
-        different exchange variants of the same 6-digit core code.
+        保留 A 股的 SH/SZ/BJ 交易所前缀，避免把相同 6 位数字但不同交易所的标的折叠。
         """
         raw = canonical_stock_code(symbol)
         if not raw:
@@ -1390,7 +1434,7 @@ class PortfolioService:
 
     @classmethod
     def _build_symbol_filter_values(cls, symbol: str) -> List[str]:
-        """Build compatible symbol variants for querying legacy stored events."""
+        """构造与历史存储格式兼容的标的变体列表，用于查询兼容。"""
         original = (symbol or "").strip().upper()
         normalized = cls._normalize_symbol(original)
         if not normalized:
@@ -1400,7 +1444,7 @@ class PortfolioService:
         values: List[str] = []
 
         def _add(value: Optional[str]) -> None:
-            """Append one non-empty variant while preserving insertion order."""
+            """按插入顺序追加一个非空变体，自动去重。"""
             candidate = (value or "").strip().upper()
             if candidate and candidate not in seen:
                 seen.add(candidate)
@@ -1464,7 +1508,7 @@ class PortfolioService:
         symbol: str,
         trade_date: Optional[date] = None,
     ) -> float:
-        """Consume FIFO lots and return realized cost basis for a sell."""
+        """按 FIFO 规则消费批次，返回卖出对应的已实现成本基础。"""
         remaining = quantity
         cost_basis = 0.0
         while remaining > EPS:
@@ -1491,7 +1535,7 @@ class PortfolioService:
         symbol: str,
         trade_date: Optional[date] = None,
     ) -> float:
-        """Consume average-cost state and return realized cost basis for a sell."""
+        """按平均成本法消费持仓，返回卖出对应的已实现成本基础。"""
         if state.quantity + EPS < quantity:
             raise PortfolioOversellError(
                 symbol=symbol,
@@ -1523,7 +1567,7 @@ class PortfolioService:
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
         avg_state: Dict[Tuple[str, str, str], _AvgState],
     ) -> float:
-        """Return currently held quantity for one symbol/market/currency key."""
+        """返回某个 (symbol, market, currency) 当前持仓数量（按所选成本法）。"""
         if cost_method == "fifo":
             return sum(float(lot["remaining_quantity"]) for lot in fifo_lots.get(key, []))
         return float(avg_state.get(key, _AvgState()).quantity)
@@ -1536,7 +1580,7 @@ class PortfolioService:
         to_currency: str,
         as_of_date: date,
     ) -> Tuple[float, bool, str]:
-        """Convert amount to another currency using cached direct/inverse FX rates."""
+        """使用缓存中的直接 / 反向 FX 汇率把金额换算到目标币种。"""
         from_norm = self._normalize_currency(from_currency)
         to_norm = self._normalize_currency(to_currency)
         if abs(amount) <= EPS:
@@ -1560,7 +1604,7 @@ class PortfolioService:
         if inverse is not None and inverse.rate > 0:
             return float(amount) / float(inverse.rate), bool(inverse.is_stale), "inverse_rate"
 
-        # P0 fallback: keep pipeline available even when FX cache is missing.
+        # P0 兜底：FX 缓存缺失时仍让流水线可用，避免聚合报错。
         return float(amount), True, "fallback_1_to_1"
 
     def convert_amount(
@@ -1571,7 +1615,7 @@ class PortfolioService:
         to_currency: str,
         as_of_date: date,
     ) -> Tuple[float, bool, str]:
-        """Public conversion entry for cross-service consumers."""
+        """对外暴露的换算入口，供其它服务（风险/报表）复用。"""
         return self._convert_amount(
             amount=amount,
             from_currency=from_currency,
@@ -1586,7 +1630,7 @@ class PortfolioService:
         as_of_date: date,
         strict: bool = True,
     ) -> List[str]:
-        """Return distinct non-base currencies participating in refresh for one account."""
+        """返回单个账户在指定日期参与刷新的、非基础币种的去重列表。"""
         base_currency = self._normalize_currency(account.base_currency)
         currencies: Set[str] = set()
         rows = list(self.repo.list_trades(account.id, as_of=as_of_date))
@@ -1615,7 +1659,7 @@ class PortfolioService:
         as_of_date: date,
         refresh_enabled: bool,
     ) -> Dict[str, int]:
-        """Refresh FX pairs for one account and keep stale fallback on failures."""
+        """刷新单个账户相关的 FX 对；获取失败时回退到陈旧缓存。"""
         refresh_currencies = self._list_account_refresh_fx_currencies(
             account=account,
             as_of_date=as_of_date,
@@ -1689,7 +1733,7 @@ class PortfolioService:
         to_currency: str,
         as_of_date: date,
     ) -> Optional[float]:
-        """Fetch latest available FX close rate around as_of date."""
+        """从 yfinance 抓取 as_of 附近可用的最近 FX 收盘汇率。"""
         if yf is None:
             return None
         symbol = f"{from_currency}{to_currency}=X"
@@ -1712,7 +1756,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_owner_filter(owner_id: Optional[str]) -> Optional[str]:
-        """归一 owner_id 过滤值; 空串视为 None, 单租户模式行为不变。"""
+        """归一 owner_id 过滤值：空串视为 None，保持单租户模式行为不变。"""
         if owner_id is None:
             return None
         text = str(owner_id).strip()
@@ -1720,7 +1764,7 @@ class PortfolioService:
 
     @staticmethod
     def _check_account_owner(account: Any, owner_id: Optional[str]) -> bool:
-        """当 ``owner_id`` 非空时, 校验账户归属。返回 ``False`` 表示越权。"""
+        """当 ``owner_id`` 非空时校验账户归属；返回 ``False`` 表示越权。"""
         if owner_id is None:
             return True
         return (account.owner_id or "") == owner_id
@@ -1731,10 +1775,10 @@ class PortfolioService:
         *,
         owner_id: Optional[str] = None,
     ) -> Any:
-        """Return an active account or raise without leaking cross-owner existence."""
+        """返回激活状态的账户；若缺失或越权，统一抛错以避免泄露存在性。"""
         account = self.repo.get_account(account_id, include_inactive=False)
         if account is None or not self._check_account_owner(account, owner_id):
-            # 越权与不存在统一抛出, 避免泄露存在性。
+            # 越权与不存在统一抛出，避免泄露存在性。
             raise ValueError(f"Active account not found: {account_id}")
         return account
 
@@ -1745,7 +1789,7 @@ class PortfolioService:
         account_id: int,
         owner_id: Optional[str] = None,
     ) -> Any:
-        """Session-bound variant of ``_require_active_account`` for write locks."""
+        """绑定写会话的 `_require_active_account` 变体，用于持有写锁的场景。"""
         account = self.repo.get_account_in_session(
             session=session,
             account_id=account_id,
@@ -1756,7 +1800,7 @@ class PortfolioService:
         return account
 
     def _has_trade_uid(self, *, account_id: int, trade_uid: str, session: Optional[Any] = None) -> bool:
-        """Check broker trade-id uniqueness in or outside a write session."""
+        """检查券商交易 ID 唯一性（可在写会话内或外执行）。"""
         if session is None:
             return self.repo.has_trade_uid(account_id, trade_uid)
         return self.repo.has_trade_uid_in_session(session=session, account_id=account_id, trade_uid=trade_uid)
@@ -1768,7 +1812,7 @@ class PortfolioService:
         dedup_hash: str,
         session: Optional[Any] = None,
     ) -> bool:
-        """Check CSV/content-hash uniqueness in or outside a write session."""
+        """检查 CSV / 内容哈希唯一性（可在写会话内或外执行）。"""
         if session is None:
             return self.repo.has_trade_dedup_hash(account_id, dedup_hash)
         return self.repo.has_trade_dedup_hash_in_session(
@@ -1779,7 +1823,7 @@ class PortfolioService:
 
     @staticmethod
     def _account_to_dict(row: Any) -> Dict[str, Any]:
-        """Serialize an account ORM row for API responses."""
+        """把账户 ORM 行序列化为 API 响应字典。"""
         return {
             "id": row.id,
             "owner_id": row.owner_id,
@@ -1794,7 +1838,7 @@ class PortfolioService:
 
     @staticmethod
     def _trade_row_to_dict(row: Any) -> Dict[str, Any]:
-        """Serialize a trade event row for API responses."""
+        """把交易事件行序列化为 API 响应字典。"""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1814,7 +1858,7 @@ class PortfolioService:
 
     @staticmethod
     def _cash_ledger_row_to_dict(row: Any) -> Dict[str, Any]:
-        """Serialize a cash ledger row for API responses."""
+        """把现金台账行序列化为 API 响应字典。"""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1828,7 +1872,7 @@ class PortfolioService:
 
     @staticmethod
     def _corporate_action_row_to_dict(row: Any) -> Dict[str, Any]:
-        """Serialize a corporate action row for API responses."""
+        """把公司行为行序列化为 API 响应字典。"""
         return {
             "id": int(row.id),
             "account_id": int(row.account_id),
@@ -1847,7 +1891,7 @@ class PortfolioService:
 
     @staticmethod
     def _validate_paging(*, page: int, page_size: int) -> Tuple[int, int]:
-        """Validate list endpoint pagination bounds."""
+        """校验列表接口的分页参数上下界。"""
         if page < 1:
             raise ValueError("page must be >= 1")
         if page_size < 1 or page_size > 100:
@@ -1856,7 +1900,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_market(value: str) -> str:
-        """Normalize and validate supported market identifiers."""
+        """标准化并校验支持的市场标识。"""
         market = (value or "").strip().lower()
         if market not in VALID_MARKETS:
             raise ValueError("market must be one of: cn, hk, us")
@@ -1864,7 +1908,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_currency(value: str) -> str:
-        """Normalize currency codes to uppercase."""
+        """把币种代码标准化为大写，并要求非空。"""
         currency = (value or "").strip().upper()
         if not currency:
             raise ValueError("currency is required")
@@ -1872,7 +1916,7 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_cost_method(value: str) -> str:
-        """Normalize and validate supported cost methods."""
+        """标准化并校验支持的成本法。"""
         method = (value or "").strip().lower()
         if method not in VALID_COST_METHODS:
             raise ValueError("cost_method must be fifo or avg")
@@ -1880,7 +1924,7 @@ class PortfolioService:
 
     @staticmethod
     def _default_currency_for_market(market: str) -> str:
-        """Return default settlement currency for a supported market."""
+        """返回指定市场默认的结算币种。"""
         if market == "hk":
             return "HKD"
         if market == "us":

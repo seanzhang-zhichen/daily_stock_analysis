@@ -444,7 +444,7 @@ class YfinanceFetcher(BaseFetcher):
             return None
 
         def _fetch_prev_close() -> Optional[float]:
-            """Fetch the previous daily close from Stooq as a realtime quote fallback."""
+            """从 Stooq 拉取前一日收盘价，作为实时行情的兜底数据。"""
             history_url = f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=d"
             history_request = Request(
                 history_url,
@@ -573,15 +573,15 @@ class YfinanceFetcher(BaseFetcher):
         index_name: str,
     ) -> Optional[UnifiedRealtimeQuote]:
         """
-        Get realtime quote for US index (e.g. SPX -> ^GSPC).
+        获取美股指数的实时行情（如 SPX -> ^GSPC）。
 
         Args:
-            user_code: User input code (e.g. SPX)
-            yf_symbol: Yahoo Finance symbol (e.g. ^GSPC)
-            index_name: Chinese name for the index
+            user_code: 用户输入的代码（如 SPX）
+            yf_symbol: Yahoo Finance 对应的符号（如 ^GSPC）
+            index_name: 指数的中文名称
 
         Returns:
-            UnifiedRealtimeQuote or None
+            UnifiedRealtimeQuote 或 None
         """
         import yfinance as yf
 

@@ -40,7 +40,7 @@ class DingtalkPlatform(BotPlatform):
     """
     
     def __init__(self):
-        """Load DingTalk app credentials from runtime configuration."""
+        """从运行时配置加载钉钉应用凭证。"""
         from src.config import get_config
         config = get_config()
         

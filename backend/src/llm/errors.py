@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""LiteLLM error classification and one-shot parameter recovery."""
+"""LiteLLM 错误分类与一次性参数修复。
+
+把供应商返回的明确参数错误归类，并转换为安全的一次性参数修复动作
+（省略或重设特定参数）。
+"""
 
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ _ALLOWED_TEMPERATURE_PATTERNS = (
 
 
 def _collect_error_text(value: Any, seen: Optional[set] = None) -> List[str]:
-    """Flatten nested exception payloads into text fragments for classification."""
+    """把嵌套的异常载荷展平为文本片段，供分类使用。"""
     if seen is None:
         seen = set()
     if value is None:
@@ -61,12 +65,12 @@ def _collect_error_text(value: Any, seen: Optional[set] = None) -> List[str]:
 
 
 def _normalized_error_text(error: BaseException) -> str:
-    """Return lowercase searchable text collected from an exception object."""
+    """返回从异常对象收集到的小写可搜索文本。"""
     return " ".join(chunk for chunk in _collect_error_text(error) if chunk).lower()
 
 
 def _parse_allowed_temperature(text: str) -> Optional[float]:
-    """Extract a provider-mandated temperature value from an error message."""
+    """从错误信息中提取供应商强制要求的 temperature 值。"""
     for segment in re.split(r"(?<!\d)\.(?!\d)|[!?;\n]+", text):
         if "only" not in segment:
             continue
@@ -83,7 +87,7 @@ def _parse_allowed_temperature(text: str) -> Optional[float]:
 def classify_litellm_generation_param_error(
     error: BaseException,
 ) -> Optional[GenerationParamRecovery]:
-    """Classify explicit provider parameter errors into a safe one-shot recovery."""
+    """把供应商明确的参数错误归类为安全的一次性修复动作。"""
     text = _normalized_error_text(error)
     if not text:
         return None
@@ -125,7 +129,7 @@ def call_litellm_with_param_recovery(
     logger: Optional[Any] = None,
     log_label: str = "[LiteLLM]",
 ) -> Any:
-    """Call LiteLLM once, then retry once for explicit generation-parameter errors."""
+    """调用 LiteLLM 一次，遇到明确的生成参数错误时重试一次。"""
     effective_kwargs = dict(call_kwargs)
     try:
         return call(effective_kwargs)
@@ -134,6 +138,7 @@ def call_litellm_with_param_recovery(
         if recovery is None:
             raise
         retry_kwargs = apply_litellm_param_recovery(effective_kwargs, recovery)
+        # 修复动作没有带来任何变化时，直接抛出原始异常
         if retry_kwargs == effective_kwargs:
             raise
         if logger is not None:

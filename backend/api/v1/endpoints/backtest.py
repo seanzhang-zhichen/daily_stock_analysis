@@ -35,7 +35,7 @@ def _validate_analysis_date_range(
     analysis_date_from: Optional[date],
     analysis_date_to: Optional[date],
 ) -> None:
-    """Reject inverted inclusive analysis-date filters before service calls."""
+    """在调用服务层之前，拦截“起始日期晚于结束日期”的非法闭区间过滤。"""
     if analysis_date_from and analysis_date_to and analysis_date_from > analysis_date_to:
         raise HTTPException(
             status_code=400,
@@ -61,7 +61,7 @@ def run_backtest(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestRunResponse:
-    """Run backtest evaluation for the current user's analysis history."""
+    """对当前用户的历史分析记录执行回测评估。"""
     try:
         service = BacktestService(db_manager)
         stats = service.run_backtest(
@@ -101,7 +101,7 @@ def get_backtest_results(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestResultsResponse:
-    """Return paginated backtest result rows for the current user."""
+    """分页返回当前用户的回测结果记录。"""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -148,7 +148,7 @@ def get_overall_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
-    """Return aggregate backtest metrics across all stocks for the user."""
+    """返回当前用户全部股票回测的聚合表现指标。"""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -199,7 +199,7 @@ def get_stock_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
-    """Return aggregate backtest metrics for one stock code."""
+    """返回单只股票回测的聚合表现指标。"""
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)

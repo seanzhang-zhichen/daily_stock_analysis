@@ -106,7 +106,7 @@ def handle_webhook(
         logger.info("[BotHandler] 返回延迟 ACK，后台处理命令")
 
         def _deferred_dispatch() -> None:
-            """Process an acknowledged webhook in the background and send follow-up."""
+            """在后台处理已确认的 webhook 并发送后续补充消息。"""
             try:
                 dispatcher = get_dispatcher()
                 response = dispatcher.dispatch(message)
@@ -143,10 +143,10 @@ async def handle_webhook_async(
     body: bytes,
     query_params: Optional[Dict[str, list]] = None
 ) -> WebhookResponse:
-    """Async version of :func:`handle_webhook`.
+    """handle_webhook 的异步版本。
 
-    Preferred when called from an async context (e.g. FastAPI endpoint)
-    to avoid blocking the event loop.
+    在异步上下文（如 FastAPI 端点）中调用时更合适，
+    可避免阻塞事件循环。
     """
     logger.info(f"[BotHandler] 收到 {platform_name} Webhook 请求 (async)")
 
@@ -179,7 +179,7 @@ async def handle_webhook_async(
         logger.info("[BotHandler] 返回延迟 ACK，后台处理命令 (async)")
 
         async def _deferred_dispatch() -> None:
-            """Process an acknowledged async webhook and send follow-up off-loop."""
+            """在事件循环之外处理已确认的异步 webhook 并发送后续补充消息。"""
             try:
                 dispatcher = get_dispatcher()
                 response = await dispatcher.dispatch_async(message)

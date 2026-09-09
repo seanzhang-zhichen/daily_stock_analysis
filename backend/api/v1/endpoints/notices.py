@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Notice center endpoints (Phase 6).
+"""公告中心 API 端点（Notice Center endpoints）。
 
-用户端公开读取已发布且未过期的公告；管理员端负责草稿、发布、下架和删除。
-公告读取不要求登录，后台写操作通过 ``get_admin_user`` 保护。
+本模块提供用户端公开公告读取接口与管理端 CRUD 接口。
+
+- 用户端接口（无需登录）：列出已发布且未过期的公告、返回近期未读角标数量。
+- 管理员接口（依赖 ``get_admin_user``）：草稿创建、发布、下架与删除等写操作。
+
+所有公告内容在前端使用 camelCase 字段命名，因此 ORM 行通过 ``_to_notice_out``
+统一序列化为 ``NoticeOut`` 后再返回。
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ router = APIRouter()
 
 
 class NoticeOut(BaseModel):
-    """Notice payload returned to frontend clients."""
+    """返回给前端的公告 DTO（Data Transfer Object），使用 camelCase 字段命名。"""
 
     id: int
     title: str
@@ -45,7 +50,7 @@ class NoticeOut(BaseModel):
 
 
 def _to_notice_out(n: AppNotice) -> NoticeOut:
-    """Serialize notice ORM row using frontend camelCase field names."""
+    """将 ORM 行 ``AppNotice`` 序列化为前端约定的 camelCase 结构。"""
     return NoticeOut(
         id=n.id,
         title=n.title,
@@ -61,7 +66,7 @@ def _to_notice_out(n: AppNotice) -> NoticeOut:
 
 
 class NoticeCreateRequest(BaseModel):
-    """Admin request body for creating a notice draft."""
+    """管理员创建公告草稿的请求体。"""
 
     title: str = Field(..., max_length=255)
     content: str
@@ -72,7 +77,7 @@ class NoticeCreateRequest(BaseModel):
 
 
 class NoticeUpdateRequest(BaseModel):
-    """Admin partial update body for a notice draft or published notice."""
+    """管理员对公告（草稿或已发布）的局部更新请求体。"""
 
     title: Optional[str] = Field(default=None, max_length=255)
     content: Optional[str] = None
@@ -98,8 +103,9 @@ def list_notices(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> List[NoticeOut]:
-    """List published, non-expired notices with pinned items first."""
+    """分页列出已发布且未过期的公告，置顶项优先并按发布时间倒序。"""
     now = datetime.now()
+    # 已发布 且 未过期（expires_at 为空或晚于当前时间）
     query = (
         db.query(AppNotice)
         .filter(AppNotice.is_published == True)  # noqa: E712
@@ -121,7 +127,8 @@ def list_notices(
 def get_unread_count(
     db: Session = Depends(get_db),
 ) -> dict:
-    """Return recent published notice count for the header badge."""
+    """返回最近 30 天内仍处于有效状态的已发布公告数量，用于顶部铃铛角标。"""
+    # 仅统计最近 30 天发布的、且当前仍未过期的公告
     cutoff = datetime.now() - timedelta(days=30)
     now = datetime.now()
     count = (
@@ -152,7 +159,7 @@ def admin_list_notices(
     db: Session = Depends(get_db),
     _admin: AppUser = Depends(get_admin_user),
 ) -> List[NoticeOut]:
-    """List all notices, including drafts and unpublished items."""
+    """管理员列出全量公告（含草稿与已下架项）。"""
     offset = (page - 1) * page_size
     notices = (
         db.query(AppNotice)
@@ -175,8 +182,9 @@ def create_notice(
     db: Session = Depends(get_db),
     admin: AppUser = Depends(get_admin_user),
 ) -> NoticeOut:
-    """Create an unpublished notice draft."""
+    """管理员创建一条未发布的公告草稿。"""
     expires = None
+    # expiresAt 由前端以 ISO8601 字符串传入；解析失败时返回 422 提示格式问题
     if body.expiresAt:
         try:
             expires = datetime.fromisoformat(body.expiresAt)
@@ -187,6 +195,7 @@ def create_notice(
         content=body.content,
         notice_type=body.noticeType,
         is_pinned=body.isPinned,
+        # 新建即为草稿状态，需调用 publish 接口才会对用户可见
         is_published=False,
         target_plan=body.targetPlan,
         author_id=admin.id,
@@ -209,10 +218,11 @@ def update_notice(
     db: Session = Depends(get_db),
     _admin: AppUser = Depends(get_admin_user),
 ) -> NoticeOut:
-    """Update notice content, targeting, pinning, or expiration."""
+    """管理员更新公告的内容、面向人群、置顶状态或过期时间。"""
     notice = db.query(AppNotice).filter(AppNotice.id == notice_id).first()
     if notice is None:
         raise HTTPException(status_code=404, detail="公告不存在")
+    # 仅写入请求体中显式给出的字段，避免把已有值覆盖为 None
     if body.title is not None:
         notice.title = body.title
     if body.content is not None:
@@ -245,7 +255,7 @@ def delete_notice(
     db: Session = Depends(get_db),
     _admin: AppUser = Depends(get_admin_user),
 ) -> None:
-    """Delete a notice permanently."""
+    """管理员永久删除一条公告。"""
     notice = db.query(AppNotice).filter(AppNotice.id == notice_id).first()
     if notice is None:
         raise HTTPException(status_code=404, detail="公告不存在")
@@ -263,11 +273,12 @@ def publish_notice(
     db: Session = Depends(get_db),
     _admin: AppUser = Depends(get_admin_user),
 ) -> NoticeOut:
-    """Publish a notice and stamp its publication time."""
+    """管理员发布公告，并写入发布时间戳。"""
     notice = db.query(AppNotice).filter(AppNotice.id == notice_id).first()
     if notice is None:
         raise HTTPException(status_code=404, detail="公告不存在")
     notice.is_published = True
+    # 发布时间是用户端排序与角标统计的关键字段
     notice.published_at = datetime.now()
     db.commit()
     db.refresh(notice)
@@ -284,7 +295,7 @@ def unpublish_notice(
     db: Session = Depends(get_db),
     _admin: AppUser = Depends(get_admin_user),
 ) -> NoticeOut:
-    """Unpublish a notice without deleting it."""
+    """管理员下架公告（不删除记录，便于后续重新发布）。"""
     notice = db.query(AppNotice).filter(AppNotice.id == notice_id).first()
     if notice is None:
         raise HTTPException(status_code=404, detail="公告不存在")

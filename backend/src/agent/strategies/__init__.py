@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Compatibility re-exports for the legacy strategy namespace.
+旧版 strategy 命名空间的兼容性再导出。
 
-Provides:
-- :class:`StrategyAgent` — legacy alias of :class:`SkillAgent`
-- :class:`StrategyRouter` — legacy alias of :class:`SkillRouter`
-- :class:`StrategyAggregator` — legacy alias of :class:`SkillAggregator`
+提供：
+- :class:`StrategyAgent` —— :class:`SkillAgent` 的旧版别名
+- :class:`StrategyRouter` —— :class:`SkillRouter` 的旧版别名
+- :class:`StrategyAggregator` —— :class:`SkillAggregator` 的旧版别名
 """
 
 from src.agent.strategies.strategy_agent import StrategyAgent

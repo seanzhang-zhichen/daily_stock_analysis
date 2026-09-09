@@ -1,7 +1,15 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Lightweight daily K-line enrichment for narrowed candidate pools."""
+"""候选池日线 K 线增强（轻量级）。
+
+设计目标：
+- 只对已经经过快照层过滤的"窄候选池"补日线技术特征（MA/MACD/RSI/形态等）；
+- 不做全市场遍历，避免成为筛选流程的瓶颈；
+- 通过 ``history_fetcher`` 注入支持请求级覆盖（例如复用宿主数据能力）。
+
+被调用方：选股流水线（`src/services/screening/*`）的特征聚合阶段。
+"""
 
 from __future__ import annotations
 
@@ -46,15 +54,21 @@ _DAILY_FEATURE_DEFAULTS = {
     "daily_quality_flags": "",
     "daily_source": "",
 }
+# 默认单线程；日线抓取是带宽/限流敏感型，并发过大易触发数据源封禁
 _DAILY_ENRICH_MAX_WORKERS = 1
 _DAILY_HISTORY_CACHE_VERSION = 1
+# 默认缓存 24 小时；行情变化较慢，过短会增加下游请求压力
 _DAILY_HISTORY_CACHE_TTL_SECONDS = 24 * 60 * 60
+# 连续失败 3 次以上进入临时禁用，避免反复拖累整体性能
 _SOURCE_HEALTH_FAILURE_THRESHOLD = 3
 _SOURCE_HEALTH_COOLDOWN_SECONDS = 5 * 60
+# 单次日线抓取软超时；超时即视为本次失败但不让线程长驻
 _DAILY_CALL_TIMEOUT_SECONDS = 20.0
 _DEFAULT_TUSHARE_HTTP_URL = "http://api.waditu.com"
+# baostock 是带登录态的客户端 SDK，需要全局串行化避免多线程互相踢下线
 _BAOSTOCK_LOCK = threading.Lock()
 _BAOSTOCK_OUTAGE_ERROR: str | None = None
+# 各数据源健康指标：失败计数/冷却截止/平均返回行数等
 _SOURCE_HEALTH: dict[str, dict[str, object]] = {}
 _SOURCE_HEALTH_LOCK = threading.Lock()
 
@@ -71,12 +85,27 @@ def enrich_daily_features(
     max_workers: int | None = None,
     history_fetcher: Callable[..., pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
-    """Attach daily technical features to the first ``max_rows`` candidates.
+    """为候选 DataFrame 前 ``max_rows`` 行附加日线技术特征。
 
-    This intentionally runs after broad snapshot filtering; it is not a full
-    market historical-data pass. ``history_fetcher`` is a request-scoped
-    override; callers can reuse host data capabilities without replacing this
-    module's process-global ``fetch_daily_history`` function.
+    调用契约：
+    - 只对前 N 行抓取，避免在大池子上消耗带宽；
+    - 任何单条抓取失败都会被隔离，并写入 ``daily_quality_flags``；
+    - 统计信息（成功/失败计数、来源占比、健康度）写入 ``result.attrs``，
+      供上层做候选可信度评估。
+
+    Args:
+        df: 已含 ``code`` 列的候选 DataFrame。
+        max_rows: 只对前 N 行做日线增强。
+        lookback_days: 单次抓取的回溯窗口天数。
+        source: 数据源（akshare/baostock/tushare/tencent/sina/yfinance/auto）。
+        fetch_retries: 单源失败重试次数。
+        cache_dir: 可选缓存目录，启用本地 JSON 缓存。
+        cache_ttl_seconds: 缓存 TTL；None 表示用模块默认值。
+        max_workers: 并发抓取上限；None 走单线程。
+        history_fetcher: 请求级覆盖；不传则用进程级 ``fetch_daily_history``。
+
+    Returns:
+        与输入同形状但附加若干 ``daily_*`` 列的 DataFrame；元信息在 ``attrs`` 里。
     """
     if df.empty or max_rows <= 0:
         return df.copy()
@@ -95,10 +124,12 @@ def enrich_daily_features(
         raw_code = str(result.at[idx, "code"] if "code" in result.columns else "").strip()
         if not raw_code:
             continue
+        # 纯数字代码按 6 位补 0（A 股），非数字代码（如美股 ticker）原样保留
         code = raw_code.zfill(6) if raw_code.isdigit() else raw_code
         fetch_requests.append((idx, code))
 
     def fetch_one(request: tuple[object, str]) -> tuple[object, dict[str, object], str | None, dict[str, object]]:
+        """抓取单只股票日线并计算特征；失败时返回默认特征并标记 fetch_failed。"""
         idx, code = request
         try:
             hist = fetch_history(
@@ -119,11 +150,13 @@ def enrich_daily_features(
             }
             return idx, features, None, metadata
         except Exception as exc:
+            # 失败时填默认值，并打上 fetch_failed 标记，方便上层直接判别
             features = dict(_DAILY_FEATURE_DEFAULTS)
             features["daily_quality_score"] = 0.0
             features["daily_quality_flags"] = "fetch_failed"
             return idx, features, f"{code}: {exc}", {"daily_quality_flags": "fetch_failed"}
 
+    # 单条走顺序路径，避免开线程池的开销
     if len(fetch_requests) <= 1:
         fetched_rows = [fetch_one(request) for request in fetch_requests]
     else:
@@ -132,6 +165,7 @@ def enrich_daily_features(
             fetched_rows = list(executor.map(fetch_one, fetch_requests))
 
     for idx, features, error, metadata in fetched_rows:
+        # 统计 quality flag 频次，便于诊断某条规则是否系统性失败
         for flag in str(metadata.get("daily_quality_flags") or "").split(";"):
             if flag:
                 daily_quality_flag_counts[flag] = daily_quality_flag_counts.get(flag, 0) + 1
@@ -154,6 +188,7 @@ def enrich_daily_features(
         for key, value in features.items():
             result.at[idx, key] = value
 
+    # 把整体统计写到 DataFrame 的 attrs 上，供上层做诊断与候选可信度评估
     result.attrs["daily_errors"] = daily_errors
     result.attrs["daily_success_count"] = success_count
     result.attrs["daily_source_counts"] = daily_source_counts
@@ -172,15 +207,16 @@ def fetch_daily_history(
     cache_dir: str | Path | None = None,
     cache_ttl_seconds: float | None = None,
 ) -> pd.DataFrame:
-    """Fetch daily history for one stock code.
+    """按数据源顺序拉取单只股票的日线历史。
 
-    ``source`` accepts ``tencent``, ``sina``, ``akshare``, ``baostock``, ``tushare``,
-    ``yfinance`` or ``auto``. ``auto`` prefers Tushare when a token is
-    configured, then Tencent's direct HTTP K-line endpoint before wrapper-based
-    free sources. Without a token it starts with Tencent. Sina is a second
-    direct HTTP K-line source before wrapper-based fallbacks. ``yfinance`` is
-    explicit-only (never part of ``auto``) and expects a US ticker rather than
-    an A-share code.
+    ``source`` 取值：
+    - ``tencent``/``sina``：直连 HTTP K 线，依赖轻；
+    - ``akshare``/``baostock``/``tushare``：包装型数据源；
+    - ``yfinance``：仅显式指定时使用（不在 ``auto`` 中），期望美股 ticker；
+    - ``auto``：根据是否配置 Tushare token 决定首选源，并按健康度重排。
+
+    数据源健康度会随成功/失败被持续更新，冷却中或失败的源会被跳过。
+    全部失败时优先返回过期缓存（标记 ``daily_stale``），最后抛出聚合错误。
     """
     normalized_code = _normalize_daily_code(code)
     normalized_lookback_days = int(lookback_days)
@@ -191,6 +227,7 @@ def fetch_daily_history(
             if _has_tushare_token()
             else ("tencent", "sina", "akshare", "baostock")
         )
+        # 健康度重排：失败次数多/冷却中的源下沉，保持默认次序作 tie-breaker
         sources, source_order_notes = _rank_daily_sources_by_health(sources)
     elif src in ("akshare", "baostock", "tushare", "tencent", "sina", "yfinance"):
         sources = (src,)
@@ -264,6 +301,7 @@ def fetch_daily_history(
                         lookback_days=normalized_lookback_days,
                     )
                 _record_source_success(current, rows=len(result))
+                # 把诊断信息挂到 DataFrame.attrs，便于上层统计与展示
                 result.attrs["daily_source"] = current
                 result.attrs["daily_requested_source"] = src
                 result.attrs["daily_source_order"] = list(sources)
@@ -283,11 +321,13 @@ def fetch_daily_history(
                 last_error = exc
                 if attempt >= attempts - 1:
                     break
+                # 简单的线性 backoff，上限 2 秒；避免对同一源过度重试
                 time.sleep(min(0.5 * (attempt + 1), 2.0))
         errors.append(f"{current} after {attempts} attempts: {last_error}")
         _record_source_failure(current, last_error)
 
     if cache_path is not None:
+        # 所有源都失败时优先尝试返回过期缓存（best-effort 兜底）
         stale = _read_daily_history_cache(
             cache_path,
             ttl_seconds=cache_ttl_seconds,
@@ -307,6 +347,7 @@ def fetch_daily_history(
 
 
 def _normalize_daily_code(value: object) -> str:
+    """把任意输入规整成 6 位股票代码：去掉 ``.0``、空值占位符、非数字残留。"""
     text = "" if value is None else str(value).strip()
     if not text or text.lower() in {"nan", "none", "<na>"}:
         return ""
@@ -319,16 +360,19 @@ def _normalize_daily_code(value: object) -> str:
 
 
 def _normalize_daily_source(source: str | None) -> str:
+    """统一数据源名字大小写，缺省 akshare。"""
     return (source or "akshare").strip().lower()
 
 
 def _normalize_max_workers(value: int | None) -> int:
+    """夹紧 worker 数到 >=1，None 时取模块默认。"""
     if value is None:
         return _DAILY_ENRICH_MAX_WORKERS
     return max(1, int(value))
 
 
 def _call_daily_wrapper(fetcher, source: str, *args, **kwargs) -> pd.DataFrame:
+    """统一走 ``call_with_timeout``，避免每个 fetcher 单独处理超时。"""
     return call_with_timeout(
         fetcher,
         *args,
@@ -339,6 +383,7 @@ def _call_daily_wrapper(fetcher, source: str, *args, **kwargs) -> pd.DataFrame:
 
 
 def _daily_call_timeout_seconds() -> float | None:
+    """读取环境变量配置的单源超时；缺省走模块常量。"""
     return parse_source_timeout_seconds(
         "SCREENING_DAILY_CALL_TIMEOUT_SEC",
         default=_DAILY_CALL_TIMEOUT_SECONDS,
@@ -346,13 +391,15 @@ def _daily_call_timeout_seconds() -> float | None:
 
 
 def _rank_daily_sources_by_health(sources: tuple[str, ...]) -> tuple[tuple[str, ...], list[str]]:
-    """Move unhealthy daily sources later while preserving default order ties."""
+    """按健康度重排源：禁用 → 失败次数多 → 默认顺序靠后的下沉。"""
     now = time.monotonic()
     with _SOURCE_HEALTH_LOCK:
         health = {source: dict(_SOURCE_HEALTH.get(source, {})) for source in sources}
+    # 默认顺序作为 tie-breaker，确保重排是稳定排序
     default_rank = {source: idx for idx, source in enumerate(sources)}
 
     def rank_key(source: str) -> tuple[int, float, int]:
+        """数据源排序键：禁用优先下沉，其次按失败次数，最后按默认顺序。"""
         state = health.get(source, {})
         disabled_until = float(state.get("disabled_until", 0.0))
         disabled = disabled_until > now
@@ -366,6 +413,7 @@ def _rank_daily_sources_by_health(sources: tuple[str, ...]) -> tuple[tuple[str, 
 
 
 def _source_disabled_reason(source: str) -> str | None:
+    """检查数据源是否处于临时禁用窗口，并顺手清零过期禁用标志。"""
     now = time.monotonic()
     with _SOURCE_HEALTH_LOCK:
         state = _SOURCE_HEALTH.get(source)
@@ -373,6 +421,7 @@ def _source_disabled_reason(source: str) -> str | None:
             return None
         disabled_until = float(state.get("disabled_until", 0.0))
         if disabled_until <= now:
+            # 过期禁用重置为 0，避免下一轮误判
             if disabled_until:
                 state["disabled_until"] = 0.0
             return None
@@ -380,6 +429,7 @@ def _source_disabled_reason(source: str) -> str | None:
 
 
 def _record_source_success(source: str, *, rows: int | None = None) -> None:
+    """成功一次：清零失败计数、刷新平均返回行数，禁用窗口被解除。"""
     with _SOURCE_HEALTH_LOCK:
         state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
         successes = float(state.get("successes", 0.0)) + 1.0
@@ -394,6 +444,7 @@ def _record_source_success(source: str, *, rows: int | None = None) -> None:
 
 
 def _record_source_failure(source: str, error: object | None = None) -> None:
+    """失败一次：累计失败次数，超过阈值进入临时禁用窗口。"""
     now = time.monotonic()
     with _SOURCE_HEALTH_LOCK:
         state = _SOURCE_HEALTH.setdefault(source, {"failures": 0.0, "disabled_until": 0.0})
@@ -402,17 +453,19 @@ def _record_source_failure(source: str, error: object | None = None) -> None:
         state["total_failures"] = float(state.get("total_failures", 0.0)) + 1.0
         state["last_failure_at"] = time.time()
         if error is not None:
+            # 折叠空白，避免错误信息把日志打得很长
             state["last_error"] = " ".join(str(error).split())
         if failures >= _SOURCE_HEALTH_FAILURE_THRESHOLD:
             state["disabled_until"] = now + _SOURCE_HEALTH_COOLDOWN_SECONDS
 
 
 def daily_source_health_snapshot() -> dict[str, dict[str, float | bool | str]]:
-    """Return a copy of in-process daily-source health statistics."""
+    """返回一份进程内日线数据源健康度快照（拷贝，外部修改不影响内部状态）。"""
     return _daily_source_health_snapshot(tuple(_SOURCE_HEALTH))
 
 
 def _daily_source_health_snapshot(sources: tuple[str, ...]) -> dict[str, dict[str, float | bool | str]]:
+    """把内部统计规整成 JSON 友好的 dict，含禁用剩余秒数等。"""
     now = time.monotonic()
     snapshot: dict[str, dict[str, float | bool | str]] = {}
     with _SOURCE_HEALTH_LOCK:
@@ -442,6 +495,7 @@ def _daily_history_cache_path(
     source: str,
     lookback_days: int,
 ) -> Path:
+    """为单次抓取生成稳定、人类可读的缓存路径。"""
     key = f"{code}|{source}|{int(lookback_days)}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     safe_source = "".join(ch if ch.isalnum() else "-" for ch in source).strip("-") or "source"
@@ -455,12 +509,18 @@ def _read_daily_history_cache(
     ttl_seconds: float | None,
     allow_stale: bool = False,
 ) -> pd.DataFrame | None:
+    """读取缓存：版本不匹配或字段缺失一律视为 None。
+
+    ``allow_stale=True`` 时即使过期也返回，并把 ``daily_stale`` 标记挂上
+    DataFrame.attrs，方便上游区分"新鲜数据"与"过期缓存兜底"。
+    """
     try:
         stat = path.stat()
     except FileNotFoundError:
         return None
 
     ttl = _DAILY_HISTORY_CACHE_TTL_SECONDS if ttl_seconds is None else float(ttl_seconds)
+    # ttl<=0 视为禁用缓存，但仍允许 stale 读
     is_stale = ttl <= 0 or time.time() - stat.st_mtime > ttl
     if is_stale and not allow_stale:
         return None
@@ -497,6 +557,7 @@ def _write_daily_history_cache(
     source: str,
     lookback_days: int,
 ) -> None:
+    """原子写入缓存：先写临时文件再 rename，避免并发读到半截。"""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -521,12 +582,15 @@ def _write_daily_history_cache(
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp_path.replace(path)
     except Exception:
+        # 缓存写入失败不能影响主流程
         return
 
 
 def _fetch_daily_akshare(code: str, *, lookback_days: int) -> pd.DataFrame:
+    """通过 akshare 拉取前复权日线（兜底源之一）。"""
     import akshare as ak
 
+    # 双倍窗口避免节假日空窗，再截尾到用户期望长度
     start_date = (datetime.now() - timedelta(days=max(lookback_days * 2, 90))).strftime("%Y%m%d")
     end_date = datetime.now().strftime("%Y%m%d")
     df = ak.stock_zh_a_hist(
@@ -542,14 +606,14 @@ def _fetch_daily_akshare(code: str, *, lookback_days: int) -> pd.DataFrame:
 
 
 def _fetch_daily_tencent(code: str, *, lookback_days: int) -> pd.DataFrame:
-    """Fetch forward-adjusted daily history from Tencent's direct HTTP API.
+    """从腾讯直连 HTTP 拉取前复权日线。
 
-    The endpoint is the same low-friction source recommended by a-stock-data for
-    stable A-share market data access: no wrapper dependency, browser-like HTTP,
-    and much lower IP-ban risk than Eastmoney-heavy endpoints. Tencent returns
-    daily K-lines as rows shaped like ``date, open, close, high, low, volume``;
-    amount is not always present, so it is exposed as ``NA`` when absent to keep
-    the common daily schema stable.
+    选用腾讯的原因：
+    - 不依赖第三方包装库（akshare/baostock 等），可独立降级；
+    - 浏览器 UA 直连，被封 IP 的概率显著低于东方财富系；
+    - 返回 ``[date, open, close, high, low, volume, amount?]`` 列表结构。
+
+    ``amount`` 不一定存在，因此缺位时填 ``pd.NA``，避免破坏下游列宽约定。
     """
     symbol = _to_tencent_code(code)
     count = max(int(lookback_days), 30)
@@ -597,13 +661,7 @@ def _fetch_daily_tencent(code: str, *, lookback_days: int) -> pd.DataFrame:
 
 
 def _fetch_daily_sina(code: str, *, lookback_days: int) -> pd.DataFrame:
-    """Fetch unadjusted daily history from Sina's direct K-line API.
-
-    Sina provides a lightweight non-Eastmoney HTTP fallback for A-share daily
-    bars. It does not expose forward-adjusted prices on this endpoint, so it is
-    deliberately placed behind Tencent in ``auto`` but ahead of wrapper-heavy
-    sources that are more prone to dependency/API drift.
-    """
+    """从新浪直连 HTTP 拉取不复权日线（备选直连源）。"""
     symbol = _to_tencent_code(code)
     count = max(int(lookback_days), 30)
     response = requests.get(
@@ -643,7 +701,7 @@ def _fetch_daily_sina(code: str, *, lookback_days: int) -> pd.DataFrame:
 
 
 def _fetch_daily_tushare(code: str, *, lookback_days: int) -> pd.DataFrame:
-    """Fetch forward-adjusted daily history via Tushare Pro."""
+    """通过 Tushare Pro 拉取日线；可按 ``TUSHARE_DAILY_ADJ`` 切换复权方式。"""
     token = _tushare_token()
     if not token:
         raise RuntimeError("tushare requires TUSHARE_TOKEN")
@@ -680,6 +738,7 @@ def _fetch_daily_tushare(code: str, *, lookback_days: int) -> pd.DataFrame:
 
 
 def _tushare_token() -> str:
+    """从环境变量读取 Tushare token，兼容 ``TUSHARE_API_TOKEN`` 别名。"""
     return (
         os.getenv("TUSHARE_TOKEN", "").strip()
         or os.getenv("TUSHARE_API_TOKEN", "").strip()
@@ -687,10 +746,12 @@ def _tushare_token() -> str:
 
 
 def _has_tushare_token() -> bool:
+    """是否存在可用的 Tushare token，决定 auto 模式是否把它列在首选。"""
     return bool(_tushare_token())
 
 
 def _configure_tushare_client(pro: object, *, token: str) -> None:
+    """把 token 与 HTTP 端点注入 tushare 客户端，失败时静默忽略（不同版本字段名可能变化）。"""
     try:
         setattr(pro, "_DataApi__token", token)
     except Exception:
@@ -708,6 +769,7 @@ def _configure_tushare_client(pro: object, *, token: str) -> None:
 
 
 def _normalize_tushare_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """把 Tushare 字段名（``trade_date``/``vol``）映射为通用字段。"""
     rename_map = {
         "trade_date": "date",
         "vol": "volume",
@@ -728,6 +790,7 @@ def _apply_tushare_adjustment(
     end_date: str,
     adj: str,
 ) -> pd.DataFrame:
+    """按 ``adj`` 把 Tushare 日线换算成前复权/后复权价格。"""
     factors = pro.adj_factor(
         ts_code=ts_code,
         start_date=start_date,
@@ -739,10 +802,12 @@ def _apply_tushare_adjustment(
 
     merged = df.merge(factors, on="trade_date", how="left")
     merged = merged.sort_values("trade_date")
+    # 缺失的复权因子向后填充，确保复权因子序列连续
     merged["adj_factor"] = pd.to_numeric(merged["adj_factor"], errors="coerce").bfill()
     valid_factors = pd.to_numeric(factors["adj_factor"], errors="coerce").dropna()
     if valid_factors.empty:
         raise RuntimeError(f"tushare adj_factor invalid for {ts_code}")
+    # 用"最新一日因子"作为归一基准，得到常见的"复权到当前"曲线
     latest_factor = float(valid_factors.iloc[0])
     for col in ("open", "high", "low", "close"):
         merged[col] = pd.to_numeric(merged[col], errors="coerce")
@@ -754,6 +819,7 @@ def _apply_tushare_adjustment(
 
 
 def _normalize_tushare_adj(value: str | None) -> str | None:
+    """解析 ``TUSHARE_DAILY_ADJ``：空值/禁用字面量返回 None，其他只接受 qfq/hfq。"""
     text = (value or "").strip().lower()
     if text in {"", "none", "null", "no", "false", "0"}:
         return None
@@ -763,10 +829,11 @@ def _normalize_tushare_adj(value: str | None) -> str | None:
 
 
 def _fetch_daily_baostock(code: str, *, lookback_days: int) -> pd.DataFrame:
-    """Fetch daily history via Baostock as a free fallback source.
+    """通过 baostock 拉取前复权日线（免费兜底源）。
 
-    Baostock uses ``sh.600519`` / ``sz.000001`` style codes and exposes
-    forward-adjusted prices via ``adjustflag='2'``.
+    baostock 的 SDK 是带登录态的同步客户端，因此用全局锁串行化：
+    避免多个线程同时登录/登出导致服务端把连接踢掉。
+    检测到网络类故障会把错误信息固化到模块级变量，后续请求直接快速失败。
     """
     try:
         import baostock as bs
@@ -802,6 +869,7 @@ def _fetch_daily_baostock(code: str, *, lookback_days: int) -> pd.DataFrame:
             )
             if rs.error_code != "0":
                 message = f"baostock error {rs.error_code}: {rs.error_msg}"
+                # 网络类错误把消息固化，让后续请求快速短路而不是反复重试
                 if _is_baostock_network_outage(rs.error_code, rs.error_msg):
                     _BAOSTOCK_OUTAGE_ERROR = message
                 raise RuntimeError(message)
@@ -822,6 +890,7 @@ def _fetch_daily_baostock(code: str, *, lookback_days: int) -> pd.DataFrame:
 
 
 def _to_baostock_code(code: str) -> str:
+    """把 6 位代码转换为 baostock 的 ``sh.600519`` / ``sz.000001`` 形态。"""
     raw = str(code).strip().zfill(6)
     if raw.startswith(("6", "9", "5")):
         return f"sh.{raw}"
@@ -829,6 +898,7 @@ def _to_baostock_code(code: str) -> str:
 
 
 def _to_tushare_code(code: str) -> str:
+    """把 6 位代码转换为 Tushare 的 ``600519.SH`` / ``000001.SZ`` / ``830799.BJ`` 形态。"""
     raw = str(code).strip().zfill(6)
     if raw.startswith(("4", "8", "920")):
         return f"{raw}.BJ"
@@ -838,6 +908,7 @@ def _to_tushare_code(code: str) -> str:
 
 
 def _to_tencent_code(code: str) -> str:
+    """把 6 位代码转换为腾讯 K 线接口的 ``sh600519`` / ``sz000001`` / ``bj830799`` 形态。"""
     raw = str(code).strip().zfill(6)
     if raw.startswith(("4", "8", "920")):
         return f"bj{raw}"
@@ -847,13 +918,14 @@ def _to_tencent_code(code: str) -> str:
 
 
 def _is_baostock_network_outage(error_code: object, error_msg: object) -> bool:
+    """baostock 的网络类错误码/错误文案模式（用于快速短路）。"""
     code = str(error_code)
     message = str(error_msg)
     return code in {"10002007"} or "网络" in message or "接收" in message
 
 
 def compute_daily_features(hist: pd.DataFrame) -> dict[str, object]:
-    """Compute compact trend/reversal features from a daily K-line DataFrame."""
+    """从日线 DataFrame 计算趋势/反转/质量等综合特征。"""
     df = _normalize_daily_history(hist)
     if df.empty:
         raise RuntimeError("daily history is empty after normalization")
@@ -872,6 +944,7 @@ def compute_daily_features(hist: pd.DataFrame) -> dict[str, object]:
     shape = _compute_shape_features(df, last_close=last_close, last_ma20=last_ma20)
     quality = _compute_daily_quality(hist, df)
 
+    # 60 日涨跌幅：取当前与 ~60 个交易日之前的收盘价比
     lookback_idx = max(0, len(close) - 61)
     base_close = float(close.iloc[lookback_idx])
     change_60d = (last_close / base_close - 1.0) * 100 if base_close > 0 else None
@@ -908,6 +981,7 @@ def compute_daily_features(hist: pd.DataFrame) -> dict[str, object]:
 
 
 def _normalize_daily_history(hist: pd.DataFrame) -> pd.DataFrame:
+    """统一列名（中英文别名）、类型、缺失填充，确保下游计算不出错。"""
     rename_map = {
         "日期": "date",
         "收盘": "close",
@@ -928,6 +1002,7 @@ def _normalize_daily_history(hist: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=["close"]).copy()
     for col in ("open", "high", "low"):
         if col not in df.columns:
+            # 缺失的高低开字段用 close 兜底，避免后续 high>=low 校验失败
             df[col] = df["close"]
         else:
             df[col] = df[col].fillna(df["close"])
@@ -935,7 +1010,7 @@ def _normalize_daily_history(hist: pd.DataFrame) -> pd.DataFrame:
 
 
 def _compute_daily_quality(raw: pd.DataFrame, normalized: pd.DataFrame) -> dict[str, object]:
-    """Score daily-history quality and expose compact audit flags."""
+    """基于完整性、OHLC 合法性与来源错误对日线数据打分（0-100）。"""
     score = 100.0
     flags: list[str] = []
     points = len(normalized)
@@ -953,6 +1028,7 @@ def _compute_daily_quality(raw: pd.DataFrame, normalized: pd.DataFrame) -> dict[
             continue
         missing_ratio = float(pd.to_numeric(normalized[col], errors="coerce").isna().mean())
         if missing_ratio > 0:
+            # 缺失比例越高扣分越多，上限 20 分
             score -= min(missing_ratio * 40, 20)
             flags.append(f"incomplete_{col}")
 
@@ -974,6 +1050,7 @@ def _compute_daily_quality(raw: pd.DataFrame, normalized: pd.DataFrame) -> dict[
         high = pd.to_numeric(normalized["high"], errors="coerce")
         low = pd.to_numeric(normalized["low"], errors="coerce")
         close = pd.to_numeric(normalized["close"], errors="coerce")
+        # OHLC 合法性：high 必须 ≥ open/close/low，low 必须 ≤ open/close/high
         invalid_ohlc = (high < low) | (high < open_) | (high < close) | (low > open_) | (low > close)
         if invalid_ohlc.fillna(False).any():
             score -= 30
@@ -982,12 +1059,14 @@ def _compute_daily_quality(raw: pd.DataFrame, normalized: pd.DataFrame) -> dict[
             score -= 35
             flags.append("non_positive_price")
 
+    # 缓存是过期兜底时需要显著扣分，避免下游误用
     if bool(raw.attrs.get("daily_stale")):
         score -= 25
         flags.append("stale_cache")
 
     source_errors = list(raw.attrs.get("source_errors", []) or [])
     if source_errors:
+        # 每个错误扣 5 分，上限 20 分
         score -= min(len(source_errors) * 5, 20)
         flags.append("fallback_errors")
 
@@ -1003,6 +1082,7 @@ def _compute_shape_features(
     last_close: float,
     last_ma20: float | None,
 ) -> dict[str, object]:
+    """聚合"形态类"指标：突破/区间/量比/振幅/回撤/盘整天数等。"""
     previous = df.iloc[:-1].tail(20)
     recent = df.tail(20)
     last = df.iloc[-1]
@@ -1016,6 +1096,7 @@ def _compute_shape_features(
     )
     volume_ratio_20d = _volume_ratio_20d(df)
     body_pct = _body_pct(last)
+    # 收盘相对 MA20 的偏离百分比：>0 表示站上均线，<0 表示回踩
     pullback_to_ma20_pct = (
         (last_close / last_ma20 - 1.0) * 100
         if last_ma20 is not None and last_ma20 > 0
@@ -1040,6 +1121,7 @@ def _compute_shape_features(
 
 
 def _series_max(series: pd.Series) -> float | None:
+    """返回序列最大值；空序列或全部 NaN 返回 None。"""
     values = pd.to_numeric(series, errors="coerce").dropna()
     if values.empty:
         return None
@@ -1047,6 +1129,7 @@ def _series_max(series: pd.Series) -> float | None:
 
 
 def _range_pct(df: pd.DataFrame) -> float | None:
+    """近 20 日 high-max / low-min 振幅百分比；非正低价/缺列返回 None。"""
     if "high" not in df.columns or "low" not in df.columns:
         return None
     high = pd.to_numeric(df["high"], errors="coerce").dropna()
@@ -1060,6 +1143,7 @@ def _range_pct(df: pd.DataFrame) -> float | None:
 
 
 def _volume_ratio_20d(df: pd.DataFrame) -> float | None:
+    """最近一日成交量相对前 20 日均量的倍数。"""
     if "volume" not in df.columns:
         return None
     volume = pd.to_numeric(df["volume"], errors="coerce")
@@ -1075,6 +1159,7 @@ def _volume_ratio_20d(df: pd.DataFrame) -> float | None:
 
 
 def _volatility_20d_pct(close: pd.Series) -> float | None:
+    """近 20 日年化波动率（百分比）；样本不足返回 None。"""
     values = pd.to_numeric(close, errors="coerce").dropna()
     returns = values.pct_change().dropna()
     if len(returns) < 2:
@@ -1083,6 +1168,7 @@ def _volatility_20d_pct(close: pd.Series) -> float | None:
 
 
 def _max_drawdown_pct(close: pd.Series) -> float | None:
+    """近 20 日最大回撤（百分比）；最大回撤必然 ≤0。"""
     values = pd.to_numeric(close, errors="coerce").dropna()
     if values.empty:
         return None
@@ -1092,12 +1178,14 @@ def _max_drawdown_pct(close: pd.Series) -> float | None:
 
 
 def _atr_20_pct(df: pd.DataFrame) -> float | None:
+    """近 20 日 ATR（true range 平均）相对于最新收盘的百分比。"""
     if not {"high", "low", "close"}.issubset(df.columns):
         return None
     high = pd.to_numeric(df["high"], errors="coerce")
     low = pd.to_numeric(df["low"], errors="coerce")
     close = pd.to_numeric(df["close"], errors="coerce")
     previous_close = close.shift(1)
+    # 三种波动度的最大者即 true range
     true_range = pd.concat([
         high - low,
         (high - previous_close).abs(),
@@ -1114,6 +1202,10 @@ def _atr_20_pct(df: pd.DataFrame) -> float | None:
 
 
 def _consolidation_days(previous: pd.DataFrame, *, max_range_pct: float = 12.0) -> int | None:
+    """从最长窗口向短窗回溯，找到首个振幅 ≤ 阈值的盘整长度。
+
+    ``max_range_pct=12`` 表示 12% 振幅内算盘整；阈值越小盘整要求越严。
+    """
     if previous.empty or "high" not in previous.columns or "low" not in previous.columns:
         return None
     for days in range(min(len(previous), 20), 1, -1):
@@ -1125,6 +1217,7 @@ def _consolidation_days(previous: pd.DataFrame, *, max_range_pct: float = 12.0) 
 
 
 def _body_pct(row: pd.Series) -> float | None:
+    """单根 K 线的实体长度百分比（(close-open)/open）。"""
     open_price = row.get("open")
     close_price = row.get("close")
     if pd.isna(open_price) or pd.isna(close_price) or float(open_price) <= 0:
@@ -1133,12 +1226,15 @@ def _body_pct(row: pd.Series) -> float | None:
 
 
 def _round_or_none(value: float | None) -> float | None:
+    """保留 4 位小数；None/NaN 一律返回 None（便于 JSON 输出）。"""
     if value is None or pd.isna(value):
         return None
     return round(float(value), 4)
 
 
 def _compute_macd_status(close: pd.Series) -> str:
+    """MACD 状态：多头/空头/中性，依据 DIFF 与 DEA 的相对位置。"""
+    # 至少需要 35 个点才能让 EMA 收敛到稳定状态
     if len(close) < 35:
         return "neutral"
     ema12 = close.ewm(span=12, adjust=False).mean()
@@ -1155,6 +1251,7 @@ def _compute_macd_status(close: pd.Series) -> str:
 
 
 def _compute_rsi(close: pd.Series, period: int = 14) -> float | None:
+    """经典 Wilder 平滑方式的 14 日 RSI；样本不足返回 None。"""
     if len(close) <= period:
         return None
     delta = close.diff()
@@ -1169,6 +1266,7 @@ def _compute_rsi(close: pd.Series, period: int = 14) -> float | None:
 
 
 def _classify_rsi(value: float | None) -> str:
+    """RSI 阈值划分：<=35 超卖反弹机会、>=70 超买卖压。"""
     if value is None:
         return "neutral"
     if value <= 35:
@@ -1186,6 +1284,15 @@ def _compute_signal_score(
     macd_status: str,
     rsi_status: str,
 ) -> float:
+    """汇总趋势/RSI/涨幅信号到 0-100 的综合分。
+
+    评分机制（精简版）：
+    - 均线多头 +14、站上 MA20 +10；
+    - MACD 多头 +12、空头 -12；
+    - 60 日涨幅处于 0~35% 区间线性加分；过热或破位则扣分；
+    - RSI 超卖 +4（潜在反弹）、超买 -6（潜在回调）；
+    最终夹到 [0, 100]。
+    """
     score = 50.0
     if ma_bullish:
         score += 14
@@ -1199,8 +1306,10 @@ def _compute_signal_score(
         if 0 <= change_60d <= 35:
             score += min(change_60d * 0.35, 12)
         elif change_60d > 60:
+            # 涨幅过大视为追高风险
             score -= min((change_60d - 60) * 0.20, 12)
         elif change_60d < -25:
+            # 跌幅过深视为弱势
             score -= min(abs(change_60d + 25) * 0.25, 10)
     if rsi_status == "oversold":
         score += 4
@@ -1210,6 +1319,7 @@ def _compute_signal_score(
 
 
 def _last_float(series: pd.Series) -> float | None:
+    """取序列最后一个有效浮点值；NaN 返回 None。"""
     value = series.iloc[-1]
     if pd.isna(value):
         return None
@@ -1217,6 +1327,7 @@ def _last_float(series: pd.Series) -> float | None:
 
 
 def _is_true(value: bool) -> bool:
+    """``_compute_*`` 链路上统一的 bool 化包装。"""
     return bool(value)
 
 

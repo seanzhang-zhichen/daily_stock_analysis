@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-DecisionAgent — final synthesis and decision-making specialist.
+DecisionAgent —— 最终综合决策专员。
 
-Responsible for:
-- Aggregating opinions from technical + intel + risk + skill agents
-- Producing the final Decision Dashboard JSON
-- Generating actionable buy/hold/sell recommendations with price levels
+主要职责：
+- 汇总 Technical / Intel / Risk / Skill 等上游 Agent 的意见
+- 输出最终 Decision Dashboard（决策仪表盘）JSON
+- 生成可执行的买入 / 持有 / 卖出建议及关键价位
 """
 
 from __future__ import annotations
@@ -22,19 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionAgent(BaseAgent):
-    """Synthesise prior agent opinions into the final dashboard."""
+    """把此前各 Agent 的意见综合为最终仪表盘。"""
 
     agent_name = "decision"
-    max_steps = 3  # pure synthesis, should not need many tool calls
-    tool_names: Optional[List[str]] = []  # no tool access — works from context only
+    max_steps = 3  # 纯综合任务，不需要太多工具调用
+    tool_names: Optional[List[str]] = []  # 不访问工具，仅基于上下文工作
 
     @staticmethod
     def _is_chat_mode(ctx: AgentContext) -> bool:
-        """Return True when the decision stage should answer conversationally."""
+        """当决策阶段应以对话方式回答时返回 True。"""
         return ctx.meta.get("response_mode") == "chat"
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """Build the synthesis prompt for JSON dashboard or chat response modes."""
+        """为 JSON 仪表盘或对话两种响应模式构造综合提示词。"""
         report_language = normalize_report_language(ctx.meta.get("report_language", "zh"))
         if self._is_chat_mode(ctx):
             prompt = """\
@@ -127,7 +127,7 @@ new decision_type values.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """Package prior opinions, risk flags and the user query for synthesis."""
+        """打包此前意见、风险标记与用户问题，供综合使用。"""
         if self._is_chat_mode(ctx):
             parts = [
                 "# User Question",
@@ -143,7 +143,7 @@ new decision_type values.
                 "",
             ]
 
-        # Feed prior opinions
+        # 填入此前各 Agent 的意见
         if ctx.opinions:
             parts.append("## Agent Opinions")
             for op in ctx.opinions:
@@ -159,14 +159,14 @@ new decision_type values.
                         parts.append(f"Extra data: {json.dumps(extra_keys, ensure_ascii=False, default=str)}")
                 parts.append("")
 
-        # Feed risk flags
+        # 填入风险标记
         if ctx.risk_flags:
             parts.append("## Risk Flags")
             for rf in ctx.risk_flags:
                 parts.append(f"- [{rf.get('severity', 'medium')}] {rf.get('category', '')}: {rf.get('description', '')}")
             parts.append("")
 
-        # Skill meta
+        # 技能元信息
         requested_skills = ctx.meta.get("skills_requested") or ctx.meta.get("strategies_requested")
         if requested_skills:
             parts.append(f"## Skills: {', '.join(requested_skills)}")
@@ -182,7 +182,7 @@ new decision_type values.
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """Store the parsed dashboard in ctx.meta; also return an opinion."""
+        """把解析后的仪表盘存入 ctx.meta，同时返回一条意见。"""
         if self._is_chat_mode(ctx):
             text = (raw_text or "").strip()
             if not text:
@@ -219,7 +219,7 @@ new decision_type values.
                 raw_data=dashboard,
             )
         else:
-            # Even if JSON parsing fails, store the raw text for downstream use
+            # 即使 JSON 解析失败，也保留原始文本供下游使用
             ctx.set_data("final_dashboard_raw", raw_text)
             logger.warning("[DecisionAgent] failed to parse dashboard JSON")
             return None

@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-ResearchAgent — deep research specialist for in-depth analysis.
+"""ResearchAgent —— 面向深度分析的深度研究智能体。
 
-Responsible for:
-- Decomposing a complex research query into sub-questions
-- Iterative search and information gathering
-- Cross-verification of findings
-- Producing a structured research report
+负责：
+- 将复杂的研究问题拆解为若干子问题
+- 迭代式搜索与信息收集
+- 对发现进行交叉验证
+- 产出结构化的研究报告
 
-Triggered by ``/research`` command or API async task interface.
-Designed for long-running analysis (up to ``AGENT_DEEP_RESEARCH_BUDGET``
-tokens).
+由 ``/research`` 命令或 API 异步任务接口触发，
+面向长耗时分析场景设计（token 预算上限为 ``AGENT_DEEP_RESEARCH_BUDGET``）。
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ from src.agent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Default token budget for deep research
+# 深度研究的默认 token 预算
 _DEFAULT_TOKEN_BUDGET = 30000
 _DEFAULT_MAX_SUB_QUESTIONS = 8
 _DEFAULT_SUB_QUESTION_MAX_STEPS = 6
@@ -37,14 +35,13 @@ _DEFAULT_STEP_LLM_TIMEOUT_SECONDS = 600
 
 
 class ResearchAgent:
-    """Multi-turn deep research agent.
+    """多轮深度研究智能体。
 
-    Unlike the standard agent loop which runs a fixed number of steps,
-    the ResearchAgent:
-    1. Decomposes the query into sub-questions (planning phase)
-    2. Researches each sub-question with dedicated searches
-    3. Synthesises findings into a comprehensive report
-    4. Tracks total token usage against a configurable budget
+    与固定步数的标准智能体循环不同，ResearchAgent：
+    1. 将问题拆解为子问题（规划阶段）
+    2. 针对每个子问题进行专门检索
+    3. 将发现综合成完整的研究报告
+    4. 依据可配置的 token 预算追踪累计用量
     """
 
     agent_name = "research"
@@ -66,7 +63,7 @@ class ResearchAgent:
         max_sub_questions: int = _DEFAULT_MAX_SUB_QUESTIONS,
         sub_question_max_steps: int = _DEFAULT_SUB_QUESTION_MAX_STEPS,
     ):
-        """Store dependencies and clamp research planning/execution limits."""
+        """保存依赖，并将研究规划/执行的上限参数约束到合法范围。"""
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.token_budget = token_budget
@@ -80,24 +77,23 @@ class ResearchAgent:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         timeout_seconds: Optional[float] = None,
     ) -> ResearchResult:
-        """Execute a deep research task.
+        """执行一次深度研究任务。
 
         Args:
-            query: The research question or topic.
-            context: Optional context (stock_code, stock_name, etc.).
-            progress_callback: Optional progress updates.
-            timeout_seconds: Optional overall time budget for the whole
-                research task.
+            query: 研究问题或主题。
+            context: 可选上下文（stock_code、stock_name 等）。
+            progress_callback: 可选的进度回调。
+            timeout_seconds: 可选的整个研究任务的总时间预算。
 
         Returns:
-            A :class:`ResearchResult` containing the report and metadata.
+            一个包含报告与元数据的 :class:`ResearchResult` 实例。
         """
         started_at = time.monotonic()
         tokens_used = 0
         all_findings: List[Dict[str, Any]] = []
         questions: List[str] = [query]
 
-        # Phase 1: Decompose
+        # 阶段一：拆解问题
         if self._is_timed_out(started_at, timeout_seconds):
             return self._build_timeout_result(
                 query=query,
@@ -129,7 +125,7 @@ class ResearchAgent:
             )
         logger.info("[ResearchAgent] decomposed into %d sub-questions", len(questions))
 
-        # Phase 2: Research each sub-question
+        # 阶段二：逐个研究子问题
         for i, question in enumerate(questions):
             if self._is_timed_out(started_at, timeout_seconds):
                 return self._build_timeout_result(
@@ -170,7 +166,7 @@ class ResearchAgent:
                 )
             all_findings.append(finding)
 
-        # Phase 3: Synthesise
+        # 阶段三：综合成报告
         if self._is_timed_out(started_at, timeout_seconds):
             return self._build_timeout_result(
                 query=query,
@@ -218,20 +214,20 @@ class ResearchAgent:
 
     @staticmethod
     def _remaining_timeout_seconds(started_at: float, timeout_seconds: Optional[float]) -> Optional[float]:
-        """Return remaining overall time budget for the research task."""
+        """返回整个研究任务剩余的总时间预算。"""
         if timeout_seconds is None:
             return None
         return max(0.0, float(timeout_seconds) - (time.monotonic() - started_at))
 
     @staticmethod
     def _is_timed_out(started_at: float, timeout_seconds: Optional[float]) -> bool:
-        """Return whether the overall research deadline has been exceeded."""
+        """判断整个研究任务的截止时间是否已超。"""
         remaining = ResearchAgent._remaining_timeout_seconds(started_at, timeout_seconds)
         return remaining is not None and remaining <= 0
 
     @staticmethod
     def _resolve_step_timeout(default_timeout: int, timeout_seconds: Optional[float]) -> Optional[int]:
-        """Clamp one stage timeout to the remaining overall research budget."""
+        """将单个阶段的超时收敛到整个研究任务剩余预算之内。"""
         if timeout_seconds is None:
             return default_timeout
         if timeout_seconds <= 0:
@@ -240,7 +236,7 @@ class ResearchAgent:
 
     @staticmethod
     def _looks_like_timeout_error(error: Any) -> bool:
-        """Best-effort detection for timeout-like failures from lower layers."""
+        """尽力识别来自下层的超时类失败。"""
         message = str(error or "").lower()
         return (
             "timed out" in message
@@ -259,7 +255,7 @@ class ResearchAgent:
         duration_s: float,
         timeout_seconds: Optional[float],
     ) -> ResearchResult:
-        """Build a structured timeout result without leaving detached work behind."""
+        """构造结构化的超时结果，避免遗留未完成的工作。"""
         timeout_label = f"{timeout_seconds}s" if timeout_seconds is not None else "the configured limit"
         logger.warning("[ResearchAgent] timed out after %s for query: %s", timeout_label, query[:120])
         return ResearchResult(
@@ -281,7 +277,7 @@ class ResearchAgent:
         max_tokens: int,
         timeout: int,
     ) -> Dict[str, Any]:
-        """Run a text-only LLM completion via the shared adapter."""
+        """通过共享 adapter 执行一次纯文本 LLM 补全。"""
         response = self.llm_adapter.call_text(
             messages,
             temperature=temperature,
@@ -301,7 +297,7 @@ class ResearchAgent:
         context: Optional[Dict[str, Any]],
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Use LLM to decompose a research query into sub-questions."""
+        """使用 LLM 将研究问题拆解为若干子问题。"""
         started_at = time.monotonic()
         stock_hint = ""
         if context and context.get("stock_code"):
@@ -334,7 +330,7 @@ Return a JSON object:
             raw = completion["content"]
             tokens = completion["tokens"]
 
-            # Parse JSON
+            # 解析 JSON（兼容 ```json 代码块包裹的情况）
             if raw.startswith("```"):
                 raw = re.sub(r'^```(?:json)?\s*', '', raw)
                 raw = re.sub(r'\s*```$', '', raw)
@@ -362,7 +358,7 @@ Return a JSON object:
         current_tokens: int,
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Research a single sub-question using the agent loop."""
+        """使用智能体循环研究单个子问题。"""
         started_at = time.monotonic()
         if timeout_seconds is not None and timeout_seconds <= 0:
             return {
@@ -446,7 +442,7 @@ Token budget remaining: ~{remaining_budget}
         context: Optional[Dict[str, Any]],
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Synthesise all findings into a coherent research report."""
+        """将所有发现综合成连贯的研究报告。"""
         started_at = time.monotonic()
         findings_text = "\n\n".join(
             f"### Sub-question: {f['question']}\n{f.get('content', 'No data')}"
@@ -497,18 +493,18 @@ template suggestions, process explanations, or meta statements such as
             return {"content": findings_text, "tokens": 0, "error": str(exc)}
 
     def _filtered_registry(self) -> ToolRegistry:
-        """Return a registry restricted to research-related tools.
+        """返回仅包含研究相关工具的工具注册表。
 
-        Reuses the same filtering logic as :meth:`BaseAgent._filtered_registry`.
+        复用 :meth:`BaseAgent._filtered_registry` 的过滤逻辑。
         """
         from src.agent.agents.base_agent import BaseAgent
-        # Borrow the shared implementation; it respects self.tool_names / self.tool_registry.
+        # 借用共享实现；该方法会遵循 self.tool_names / self.tool_registry。
         return BaseAgent._filtered_registry(self)
 
 
 @dataclass
 class ResearchResult:
-    """Output from a deep research task."""
+    """深度研究任务的输出结果。"""
 
     success: bool = False
     report: str = ""

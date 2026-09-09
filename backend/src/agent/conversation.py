@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Conversation Manager for Agent multi-turn chat.
+Agent 多轮对话的会话管理器。
 
-Manages conversation sessions with TTL, storing message history and context.
+管理带 TTL（生存时间）的会话，存储消息历史与上下文。
 """
 
 import logging
@@ -38,14 +38,14 @@ def extract_user_id_from_session(session_id: Optional[str]) -> Optional[int]:
 
 @dataclass
 class ConversationSession:
-    """A single multi-turn conversation session."""
+    """单个多轮对话会话。"""
     session_id: str
     context: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
 
     def add_message(self, role: str, content: str):
-        """Add a message to the session history."""
+        """向会话历史追加一条消息。"""
         user_id = extract_user_id_from_session(self.session_id)
         get_db().save_conversation_message(
             self.session_id, role, content, user_id=user_id,
@@ -53,26 +53,26 @@ class ConversationSession:
         self.last_active = datetime.now()
 
     def update_context(self, key: str, value: Any):
-        """Update session context."""
+        """更新会话上下文。"""
         self.context[key] = value
         self.last_active = datetime.now()
 
     def get_history(self) -> List[Dict[str, Any]]:
-        """Get message history."""
+        """获取消息历史。"""
         messages = get_db().get_conversation_history(self.session_id)
         return messages
 
 class ConversationManager:
-    """Manages multiple conversation sessions with TTL."""
+    """管理多个带 TTL 的对话会话。"""
     
     def __init__(self, ttl_minutes: int = 30):
-        """Create an in-memory session cache with a fixed inactivity TTL."""
+        """以固定的不活跃超时时间创建内存会话缓存。"""
         self._sessions: Dict[str, ConversationSession] = {}
         self.ttl = timedelta(minutes=ttl_minutes)
         self._lock = threading.RLock()
 
     def get_or_create(self, session_id: str) -> ConversationSession:
-        """Get an existing session or create a new one."""
+        """获取已有会话，不存在则新建。"""
         with self._lock:
             self._cleanup_expired()
 
@@ -80,32 +80,31 @@ class ConversationManager:
                 self._sessions[session_id] = ConversationSession(session_id=session_id)
                 logger.info(f"Created new conversation session: {session_id}")
             else:
-                # Update last active time
+                # 更新最近活跃时间
                 self._sessions[session_id].last_active = datetime.now()
 
             return self._sessions[session_id]
 
     def add_message(self, session_id: str, role: str, content: str):
-        """Add a message to a session."""
+        """向某个会话追加一条消息。"""
         session = self.get_or_create(session_id)
         session.add_message(role, content)
 
     def get_history(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get message history for a session."""
+        """获取某个会话的消息历史。"""
         session = self.get_or_create(session_id)
         return session.get_history()
 
     def clear(self, session_id: str):
-        """Clear a session."""
+        """清除某个会话。"""
         with self._lock:
             if session_id in self._sessions:
                 del self._sessions[session_id]
                 logger.info(f"Cleared conversation session: {session_id}")
-        # We don't delete from DB here to keep history, or we could add a delete method.
-        # For now, just clear from memory.
+        # 此处不从 DB 删除以保留历史；目前仅从内存中清除。
 
     def _cleanup_expired(self):
-        """Remove expired sessions."""
+        """移除已过期的会话。"""
         with self._lock:
             now = datetime.now()
             expired = [
@@ -116,5 +115,5 @@ class ConversationManager:
                 del self._sessions[sid]
                 logger.info(f"Cleaned up expired conversation session: {sid}")
 
-# Global instance
+# 全局单例实例
 conversation_manager = ConversationManager()

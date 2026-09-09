@@ -1,29 +1,54 @@
 # -*- coding: utf-8 -*-
 """
-Shared data parsing and normalization helpers.
+共享的数据解析与规范化工具。
+
+为基本面上下文、市场结构、板块信息等结构化字段提供：
+- JSON 字符串最佳努力解析
+- 模型占位值归一化（如 "unknown"、"none"）
+- 板块/板块排名/财务报告/分红等字段清洗
+- 从持久化快照中按 schema 提取 API 友好的字段子集
+
+供分析服务、API 响应组装、上下文快照反序列化层复用。
 """
 
 import json
 from typing import Any, Dict, List, Optional
 
 
+# 模型占位/错误占位值集合，统一归一化为 None
 _MODEL_PLACEHOLDER_VALUES = {"unknown", "error", "none", "null", "n/a"}
 
 
 def normalize_model_used(value: Any) -> Optional[str]:
-    """Normalize placeholder/empty model values to None."""
+    """把占位/空模型值规范化为 None。
+
+    Args:
+        value: 任意输入（None / 字符串 / 其他类型）。
+
+    Returns:
+        - None 表示该字段为空或属于占位值
+        - 去除首尾空白后的字符串
+    """
     if value is None:
         return None
     text = str(value).strip()
     if not text:
         return None
+    # 大小写不敏感地比对预定义占位词表
     if text.lower() in _MODEL_PLACEHOLDER_VALUES:
         return None
     return text
 
 
 def parse_json_field(value: Any) -> Any:
-    """Best-effort JSON parse for string values; passthrough for others."""
+    """尽力而为地解析字符串字段为 JSON，非字符串则原样透传。
+
+    Args:
+        value: 待解析值。
+
+    Returns:
+        解析后的 Python 对象；解析失败或非字符串输入则原样返回。
+    """
     if value is None:
         return None
     if isinstance(value, str):
@@ -35,14 +60,21 @@ def parse_json_field(value: Any) -> Any:
 
 
 def _non_empty_dict(value: Any) -> Optional[Dict[str, Any]]:
-    """Return a dictionary only when it is both typed correctly and non-empty."""
+    """仅当值是 dict 且非空时返回该 dict，其余情况返回 None。"""
     if not isinstance(value, dict):
         return None
     return value if value else None
 
 
 def _normalize_belong_boards(value: Any) -> List[Dict[str, Any]]:
-    """Normalize board membership items into stable name/code/type dictionaries."""
+    """把所属板块列表归一化为稳定的 `{name, code?, type?}` 字典列表。
+
+    Args:
+        value: 原始所属板块字段，可能为 None / list / 其他类型。
+
+    Returns:
+        清洗后的字典列表；缺失 `name` 的项会被丢弃。
+    """
     if not isinstance(value, list):
         return []
 
@@ -70,7 +102,7 @@ def _normalize_belong_boards(value: Any) -> List[Dict[str, Any]]:
 
 
 def _safe_float(value: Any) -> Optional[float]:
-    """Parse numeric and percent-like strings into floats, returning None on failure."""
+    """把数字或带百分号的字符串解析为 float，失败返回 None。"""
     if value is None:
         return None
     try:
@@ -78,6 +110,7 @@ def _safe_float(value: Any) -> Optional[float]:
             text = value.strip()
             if not text:
                 return None
+            # 兼容 "1.23%" 形式的字符串，先去掉尾部 %
             if text.endswith("%"):
                 text = text[:-1].strip()
             return float(text)
@@ -87,7 +120,7 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _normalize_sector_ranking_items(value: Any) -> List[Dict[str, Any]]:
-    """Normalize sector ranking rows while preserving only useful fields."""
+    """清洗板块涨跌幅排行行，仅保留 `name` 与 `change_pct` 等有效字段。"""
     if not isinstance(value, list):
         return []
 
@@ -110,7 +143,7 @@ def _normalize_sector_ranking_items(value: Any) -> List[Dict[str, Any]]:
 
 
 def _normalize_sector_rankings(value: Any) -> Optional[Dict[str, List[Dict[str, Any]]]]:
-    """Normalize top/bottom sector rankings from a fundamental context block."""
+    """从基本面上下文的板块块中归一化 top / bottom 排行。"""
     if not isinstance(value, dict):
         return None
 
@@ -124,8 +157,14 @@ def extract_fundamental_context(
     context_snapshot: Any,
     fallback_fundamental_payload: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Resolve fundamental_context from context snapshot, with optional fallback payload.
+    """从 context snapshot 中解析 `fundamental_context`，必要时回退到备选 payload。
+
+    Args:
+        context_snapshot: 持久化的 JSON 快照（字符串或 dict）。
+        fallback_fundamental_payload: snapshot 不可用时的回退 payload。
+
+    Returns:
+        归一化后的 fundamental 字典；全部失败返回 None。
     """
     snapshot_obj = parse_json_field(context_snapshot)
     if isinstance(snapshot_obj, dict):
@@ -145,8 +184,14 @@ def extract_fundamental_detail_fields(
     context_snapshot: Any,
     fallback_fundamental_payload: Any = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
-    """
-    Extract stable API-facing financial and dividend blocks from fundamental_context.
+    """从 `fundamental_context` 提取稳定的财报与分红字段子集，供 API 层返回。
+
+    Args:
+        context_snapshot: 持久化的 JSON 快照。
+        fallback_fundamental_payload: snapshot 不可用时的回退 payload。
+
+    Returns:
+        形如 `{"financial_report": {...} | None, "dividend_metrics": {...} | None}` 的字典。
     """
     fundamental_ctx = extract_fundamental_context(
         context_snapshot=context_snapshot,
@@ -172,9 +217,7 @@ def extract_board_detail_fields(
     context_snapshot: Any,
     fallback_fundamental_payload: Any = None,
 ) -> Dict[str, Any]:
-    """
-    Extract stable board detail fields from fundamental_context.
-    """
+    """从 `fundamental_context` 提取稳定的板块详情字段（所属板块、板块排行）。"""
     fundamental_ctx = extract_fundamental_context(
         context_snapshot=context_snapshot,
         fallback_fundamental_payload=fallback_fundamental_payload,
@@ -185,6 +228,7 @@ def extract_board_detail_fields(
     boards_block = fundamental_ctx.get("boards")
     sector_rankings = None
     if isinstance(boards_block, dict):
+        # 仅在板块块状态正常（ok / partial / 未设置）时取出 data，避免把明显错误的数据传递给前端
         boards_status = boards_block.get("status")
         if boards_status in {"ok", "partial"} or boards_status is None:
             sector_rankings = boards_block.get("data")
@@ -195,7 +239,7 @@ def extract_board_detail_fields(
 
 
 def extract_market_structure_context(context_snapshot: Any) -> Optional[Dict[str, Any]]:
-    """Extract the versioned market-structure block from a persisted snapshot."""
+    """从持久化快照中提取带版本的市场结构数据块。"""
     snapshot_obj = parse_json_field(context_snapshot)
     if not isinstance(snapshot_obj, dict):
         return None

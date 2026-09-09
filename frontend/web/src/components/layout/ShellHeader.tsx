@@ -3,6 +3,8 @@ import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { APP_NAME } from '../../utils/brand';
 import { ThemeToggle } from '../theme/ThemeToggle';
+import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
+import { DesktopUpdateIndicator } from './DesktopUpdateIndicator';
 
 type ShellHeaderProps = {
   collapsed: boolean;
@@ -51,6 +53,8 @@ export const ShellHeader: React.FC<ShellHeaderProps> = ({
           <p className="truncate text-xs text-secondary-text">{current.description}</p>
         </div>
 
+        <UiLanguageToggle />
+        <DesktopUpdateIndicator />
         <ThemeToggle />
       </div>
     </header>

@@ -24,6 +24,10 @@
 
 ## {{ e.signal_emoji }} {{ e.stock_name }} ({{ result.code }})
 
+{% if e.market_status_line %}
+{{ e.market_status_line }}
+{% endif %}
+
 {% if e.empty_news_disclosure %}
 {{ e.empty_news_disclosure }}
 {% endif %}
@@ -86,6 +90,65 @@
 {% endif %}
 
 {{ market_snapshot(result) }}
+
+{% set fundamental = result.fundamental_context if result.fundamental_context else {} %}
+{% set earnings = fundamental.get('earnings') or {} %}
+{% set earnings_data = earnings.get('data') or {} %}
+{% set financial = earnings_data.get('financial_report') or {} %}
+{% set growth = (fundamental.get('growth') or {}).get('data') or {} %}
+{% if fundamental.get('market') == 'cn' and financial %}
+### 💼 财务摘要
+
+| 报告期 | 营收 | 归母净利润 | ROE | 营收同比 | 净利同比 |
+|:------:|-------:|-------:|------:|------:|------:|
+| {{ financial.get('report_date', 'N/A') }} | {{ financial.get('revenue', 'N/A') }} | {{ financial.get('net_profit_parent', 'N/A') }} | {{ financial.get('roe', growth.get('roe', 'N/A')) }} | {{ growth.get('revenue_yoy', 'N/A') }} | {{ growth.get('net_profit_yoy', 'N/A') }} |
+{% endif %}
+
+{% set market_context = result.market_structure_context if result.market_structure_context else {} %}
+{% set market_position = market_context.get('stock_market_position') or {} %}
+{% set related_boards = market_position.get('related_boards') or [] %}
+{% if market_context.get('market', 'cn') == 'cn' and related_boards %}
+### 🧩 关联板块
+
+{% for board in related_boards[:5] %}
+{% if board.get('name') %}
+- {{ board.name }}（{{ board.get('type') or '概念' }}{% if board.get('change_pct') is not none %} {{ '%+.2f'|format(board.change_pct|float) }}%{% endif %}）
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% set phase = dashboard.get('phase_decision') or {} %}
+{% set watch_conditions = phase.get('watch_conditions') or [] %}
+{% set limitations = phase.get('data_limitations') or [] %}
+{% if phase.get('action_window') or phase.get('immediate_action') or phase.get('next_check_time') or phase.get('confidence_reason') or watch_conditions or limitations %}
+### 🛡️ 阶段决策
+
+| 操作窗口 | 立即动作 | 下次检查 |
+|---------|---------|---------|
+| {{ phase.get('action_window') or 'N/A' }} | {{ phase.get('immediate_action') or 'N/A' }} | {{ phase.get('next_check_time') or 'N/A' }} |
+{% if watch_conditions %}
+
+**观察条件**：
+{% for item in watch_conditions %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+{% if phase.get('confidence_reason') %}
+
+**置信依据**：{{ phase.confidence_reason }}
+{% endif %}
+{% if limitations %}
+
+**数据限制**：
+{% for item in limitations %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if result.data_sources %}
+*📋 数据来源：{{ result.data_sources }}*
+{% endif %}
 
 {% if data_persp %}
 ### 📊 {{ labels.data_perspective_heading }}

@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Stock selection API schemas."""
+"""选股（Stock Selection）模块的对外 API 契约。
+
+本文件集中描述选股策略元数据、运行请求、候选标的与诊断指标的响应字段，
+由 `backend/api/v1/endpoints/stock_selection.py` 在路由层装配后返回给前端。
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from pydantic import BaseModel, Field
 
 
 class StockSelectionStrategyItem(BaseModel):
-    """Metadata for one stock selection strategy."""
+    """单个选股策略的元数据（名称、显示名、描述、别名、默认参数）。"""
 
     name: str
     display_name: str
@@ -20,13 +24,13 @@ class StockSelectionStrategyItem(BaseModel):
 
 
 class StockSelectionStrategiesResponse(BaseModel):
-    """Available stock selection strategies."""
+    """当前已注册的选股策略清单响应。"""
 
     items: List[StockSelectionStrategyItem] = Field(default_factory=list)
 
 
 class StockSelectionRequest(BaseModel):
-    """Request body for running a stock selection strategy."""
+    """运行一次选股策略的请求载荷。"""
 
     strategy: str = Field("near_new_high", description="Selection strategy name or alias.")
     stock_codes: Optional[List[str]] = Field(None, description="Optional explicit stock code universe.")
@@ -43,7 +47,7 @@ class StockSelectionRequest(BaseModel):
 
 
 class StockSelectionCandidateItem(BaseModel):
-    """One selected stock candidate."""
+    """被选中的单只股票候选。"""
 
     code: str
     name: Optional[str] = None
@@ -62,7 +66,7 @@ class StockSelectionCandidateItem(BaseModel):
 
 
 class StockSelectionDiagnosticsItem(BaseModel):
-    """Counters for a stock selection run."""
+    """单次选股运行的过程诊断计数器。"""
 
     total: int = 0
     processed: int = 0
@@ -74,7 +78,7 @@ class StockSelectionDiagnosticsItem(BaseModel):
 
 
 class StockSelectionResponse(BaseModel):
-    """Result returned after running stock selection."""
+    """运行选股后的完整结果响应。"""
 
     strategy: str
     params: Dict[str, Any] = Field(default_factory=dict)

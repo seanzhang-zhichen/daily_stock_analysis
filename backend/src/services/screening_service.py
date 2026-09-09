@@ -1,8 +1,18 @@
 # -*- coding: utf-8 -*-
-"""DSA-native stock screening service.
+"""DSA 原生股票选股服务。
 
-The bundled screening implementation incorporates code derived from AlphaSift;
-see ``THIRD_PARTY_NOTICES.md`` and per-file headers for attribution.
+本模块是 A 股 / 港股 / 美股智能分析系统的选股服务层，负责把内置的选股引擎
+（`src.services.screening.pipeline`）以及东方财富、同花顺等外部热点数据源
+封装为对外（API、调度器等）可调用的统一接口。
+
+主要职责：
+- 暴露选股服务的策略列表、运行历史、热点题材列表与题材详情等 API；
+- 把 DSA 自有的实时行情、日线、新闻、事件、基本面能力注入到选股流水线，
+  同时屏蔽跨进程的 LiteLLM 路由与 header 注入；
+- 管理热点缓存、详情缓存、快照源优先级、运行历史持久化等"非业务但必需"的能力。
+
+代码来源说明：本文件包含的部分实现源自 AlphaSift 项目，详细归属与许可证见
+``THIRD_PARTY_NOTICES.md`` 以及相关文件头部的归属说明。
 """
 
 from __future__ import annotations
@@ -40,29 +50,57 @@ from src.storage import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# 模块级常量：选股服务在 DSA 体系内的固定参数 / 缓存 / 超时配置
+# ---------------------------------------------------------------------------
+
+# 由本服务代为管理的 LiteLLM provider 集合（仅这些走 DSA 注入逻辑）
 SCREENING_MANAGED_LITELLM_PROVIDERS = frozenset({"gemini", "vertex_ai", "anthropic", "openai", "deepseek"})
+# 选股服务对外契约版本号，配合 client/前端做兼容性判断
 SCREENING_CONTRACT_VERSION = "1"
+# 进程全局可重入锁：保护"运行时环境变量桥接"过程不被并发改写
 _SCREENING_RUNTIME_ENV_LOCK = threading.RLock()
+# 单次选股运行中最多走 DSA 增广的候选数量
 DSA_ENRICHMENT_MAX_CANDIDATES = 3
+# 预排序阶段轻量上下文最多携带的候选数量
 DSA_PRE_RANK_CONTEXT_MAX_CANDIDATES = 3
+# LLM 候选数相对用户请求量的放大倍数（用于给 LLM 留出筛选空间）
 DSA_SCREENING_LLM_CANDIDATE_MULTIPLIER = 2
+# LLM 候选数的硬上限，避免长列表打爆上下文
 DSA_SCREENING_LLM_MAX_CANDIDATES = 12
+# 日线抓取失败时的默认重试次数
 DSA_SCREENING_DAILY_FETCH_RETRIES = 3
+# 未配置 Tushare token 时的快照数据源优先级
 DSA_SCREENING_SNAPSHOT_SOURCE_PRIORITY = "sina,efinance,akshare_em,em_datacenter"
+# 配置了 Tushare token 时的快照数据源优先级（Tushare 优先）
 DSA_SCREENING_SNAPSHOT_SOURCE_PRIORITY_WITH_TUSHARE = "tushare,sina,efinance,akshare_em,em_datacenter"
+# 选股阶段候选上下文允许启用的数据源（按业务场景裁剪）
 DSA_SCREENING_CANDIDATE_CONTEXT_PROVIDERS = "news,fund_flow,announcement,quote"
+# 选股服务在磁盘上保存热点缓存、日线缓存等的根目录
 DSA_SCREENING_DATA_DIR = Path("data") / "screening"
+# 热点列表的本地缓存文件路径
 DSA_SCREENING_HOTSPOT_CACHE_PATH = DSA_SCREENING_DATA_DIR / "hotspots.json"
+# 热点历史（追加式 JSONL）的本地路径
 DSA_SCREENING_HOTSPOT_HISTORY_PATH = DSA_SCREENING_DATA_DIR / "hotspot.history.jsonl"
+# 热点列表至少需要的有效条目数，过少则视为不可信缓存
 DSA_SCREENING_MIN_HOTSPOT_CACHE_COUNT = 3
+# 热点列表缓存的默认有效期（秒）
 DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS = 10 * 60
+# 热点详情缓存的默认有效期（秒）
 DSA_SCREENING_HOTSPOT_DETAIL_CACHE_TTL_SECONDS = 30 * 60
+# 热点事件摘要最多字符数（用于前端展示裁剪）
 DSA_SCREENING_HOTSPOT_EVENT_SUMMARY_MAX_CHARS = 90
+# 单次返回前端前主动预取的热点详情数量
 DSA_SCREENING_HOTSPOT_PREFETCH_DETAIL_COUNT = 8
+# 单次热点 provider 调用的超时上限（秒）
 DSA_SCREENING_HOTSPOT_CALL_TIMEOUT_SECONDS = 8
+# 热点消息搜索调用的超时上限（秒）
 DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS = 12
+# 东方财富热点源不可用时的错误码（前端据此降级提示）
 DSA_SCREENING_HOTSPOT_UNAVAILABLE_CODE = "eastmoney_hotspot_unavailable"
+# 东方财富热点源不可用时的前端提示文案
 DSA_SCREENING_HOTSPOT_UNAVAILABLE_MESSAGE = "热点源连接中断，暂无可用缓存。"
+# 识别"东财网络层瞬时故障"的关键字串，用于决定是否回退到缓存/降级提示
 DSA_SCREENING_HOTSPOT_CONNECTIVITY_ERROR_MARKERS = (
     "remote disconnected",
     "remote end closed connection",
@@ -78,22 +116,32 @@ DSA_SCREENING_HOTSPOT_CONNECTIVITY_ERROR_MARKERS = (
     "protocolerror",
     "incompleteread",
 )
+# 延迟初始化 DSA 数据获取管理器时使用的锁（避免重复构造）
 _DSA_FETCHER_MANAGER_LOCK = threading.RLock()
 _DSA_FETCHER_MANAGER: Any = None
+# 选股/基本面分析需要关注的基础数据维度（按需裁剪上下文）
 _FUNDAMENTAL_BLOCKS = ("valuation", "growth", "earnings", "institution", "capital_flow", "boards")
+# 选股调用 litellm completion 时注入的 header 路由表（ContextVar 跨调用栈传递）
 _SCREENING_LITELLM_COMPLETION_ROUTES: ContextVar[Optional[Tuple[Dict[str, Any], ...]]] = ContextVar(
     "screening_litellm_completion_routes",
     default=None,
 )
+# 热点 provider 调用的硬截止时间（deadline），用于可中断子进程/连接
 _DSA_HOTSPOT_CALL_DEADLINE: ContextVar[Optional[float]] = ContextVar(
     "dsa_hotspot_call_deadline",
     default=None,
 )
+# 标记已注入 DSA header 桥接的 litellm completion 函数属性名
 _SCREENING_LITELLM_COMPLETION_ATTR = "_screening_litellm_completion_bridge"
+# 桥接函数安装时的进程级互斥锁
 _SCREENING_LITELLM_COMPLETION_LOCK = threading.Lock()
 
 
 def _safe_float(value: Any) -> Optional[float]:
+    """把任意输入安全地转成 ``float``，失败或非有限值时返回 ``None``。
+
+    用于把候选股行、行情字段等可能含字符串/``None``/``NaN`` 的数据规整成数值。
+    """
     try:
         if value is None or value == "":
             return None
@@ -106,10 +154,12 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _utc_now_iso() -> str:
+    """返回当前 UTC 时间的 ISO8601 字符串（秒精度、``Z`` 后缀）。"""
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _resolve_screening_data_dir() -> Path:
+    """根据环境变量解析选股缓存根目录，未配置则使用默认值。"""
     configured = _env_text(os.getenv("SCREENING_DATA_DIR"))
     if configured:
         return Path(configured)
@@ -117,28 +167,36 @@ def _resolve_screening_data_dir() -> Path:
 
 
 def _screening_hotspot_cache_path() -> Path:
+    """返回当前生效的热点列表缓存文件路径。"""
     if _env_text(os.getenv("SCREENING_DATA_DIR")):
         return _resolve_screening_data_dir() / "hotspots.json"
     return DSA_SCREENING_HOTSPOT_CACHE_PATH
 
 
 def _screening_hotspot_history_path() -> Path:
+    """返回当前生效的热点历史 JSONL 文件路径。"""
     if _env_text(os.getenv("SCREENING_DATA_DIR")):
         return _resolve_screening_data_dir() / "hotspot.history.jsonl"
     return DSA_SCREENING_HOTSPOT_HISTORY_PATH
 
 
 def _screening_hotspot_detail_cache_dir() -> Path:
+    """返回热点详情缓存所在的目录路径。"""
     return _resolve_screening_data_dir() / "hotspot_details"
 
 
 def _screening_hotspot_detail_cache_path(*, provider: str, topic: str) -> Path:
+    """生成单个 (provider, topic) 对应的热点详情缓存文件路径。
+
+    通过对 provider+topic 拼接做 SHA1，把不同题材映射到稳定的文件名。
+    """
     provider_text = re.sub(r"[^A-Za-z0-9_.-]+", "_", _env_text(provider) or "akshare")
     digest = hashlib.sha1(f"{provider_text}\0{_env_text(topic)}".encode("utf-8")).hexdigest()
     return _screening_hotspot_detail_cache_dir() / f"{provider_text}.{digest}.json"
 
 
 def _parse_cache_datetime(value: Any) -> Optional[datetime]:
+    """解析缓存字段里的 ISO8601 时间字符串，失败时返回 ``None``。"""
     text = _env_text(value)
     if not text:
         return None
@@ -152,7 +210,12 @@ def _parse_cache_datetime(value: Any) -> Optional[datetime]:
 
 
 def _strip_hotspot_search_augmentation(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the cacheable hotspot detail without request-scoped search data."""
+    """返回剥离了"本次请求专用的搜索数据"后的可缓存热点详情。
+
+    单次请求在线索页上调用搜索服务时，会在 ``route`` / ``timeline`` 里追加
+    ``search_result=True`` 的临时项，这里把它们剔除，保证写入磁盘的缓存不带
+    用户级会话状态。
+    """
     base = dict(payload)
     for key in ("route", "timeline"):
         rows = base.get(key)
@@ -173,6 +236,16 @@ def _load_screening_hotspot_detail_cache(
     topic: str,
     allow_stale: bool = False,
 ) -> Optional[Dict[str, Any]]:
+    """读取单个题材的热点详情缓存。
+
+    Args:
+        provider: 数据源名（用于文件命名隔离）。
+        topic: 题材名。
+        allow_stale: 是否允许返回过期或"降级 leader-only"数据。
+
+    Returns:
+        命中且未过期时返回详情字典，否则 ``None``。
+    """
     cache_path = _screening_hotspot_detail_cache_path(provider=provider, topic=topic)
     try:
         raw = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -185,9 +258,8 @@ def _load_screening_hotspot_detail_cache(
     payload = raw.get("payload") if isinstance(raw, dict) else None
     if not isinstance(payload, dict):
         return None
-    # Do not treat a degraded leader-only response as a complete detail cache.
-    # Such payloads are useful as an explicit stale fallback, but reusing them
-    # as fresh data makes every subsequent click appear to have one constituent.
+    # 不把"只有领涨股的降级响应"当作完整的 detail 缓存：
+    # 这种数据可作为显式的过期回退，但作为新鲜数据复用会让后续每次点击都"看起来只有一只成份股"。
     if not allow_stale and (
         bool(payload.get("fallback_used"))
         or bool(payload.get("stale"))
@@ -220,6 +292,10 @@ def _load_screening_hotspot_detail_cache(
 
 
 def _write_screening_hotspot_detail_cache(*, provider: str, topic: str, payload: Dict[str, Any]) -> None:
+    """把单题材的热点详情写入本地 JSON 缓存文件。
+
+    写入前会清理掉请求级搜索增强，并补齐 ``stocks`` / ``leader_stocks`` 兼容字段。
+    """
     cache_path = _screening_hotspot_detail_cache_path(provider=provider, topic=topic)
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +324,11 @@ def _write_screening_hotspot_detail_cache(*, provider: str, topic: str, payload:
 
 
 def _ensure_hotspot_detail_compat_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep old and new Screening hotspot detail consumers on the same shape."""
+    """保证新旧两套热点详情消费者看到一致的字段形状。
+
+    主要补齐 ``stocks`` 与 ``leader_stocks`` 互为镜像、``stock_count`` 与列表长度一致等
+    兼容性要求。
+    """
     stocks = payload.get("stocks")
     leader_stocks = payload.get("leader_stocks")
     if not isinstance(stocks, list):
@@ -267,6 +347,7 @@ def _ensure_hotspot_detail_compat_fields(payload: Dict[str, Any]) -> Dict[str, A
 
 
 def _extract_nested_hotspot_leader_stocks(payload: Dict[str, Any]) -> List[Any]:
+    """从嵌套的 ``summary`` / ``summary_detail`` 里兜底提取领涨股列表。"""
     for key in ("summary_detail", "summary"):
         summary = payload.get(key)
         if not isinstance(summary, dict):
@@ -278,7 +359,7 @@ def _extract_nested_hotspot_leader_stocks(payload: Dict[str, Any]) -> List[Any]:
 
 
 def _screening_hotspot_cache_ttl_seconds() -> Optional[float]:
-    """Return the hotspot-list cache TTL; ``0`` disables fresh-cache reuse."""
+    """返回热点列表缓存的有效期；``0`` 表示禁用新鲜缓存复用。"""
     raw = os.getenv("SCREENING_HOTSPOT_CACHE_TTL_SEC")
     if raw is None or not raw.strip():
         return float(DSA_SCREENING_HOTSPOT_CACHE_TTL_SECONDS)
@@ -300,6 +381,16 @@ def _load_screening_hotspot_cache(
     top: int,
     allow_stale: bool = False,
 ) -> Optional[Dict[str, Any]]:
+    """读取热点列表缓存，过期或条目过少时返回 ``None``。
+
+    Args:
+        provider: 期望的数据源名。
+        top: 前端实际想要的数量，命中后会裁剪返回的 ``hotspots``。
+        allow_stale: 是否允许返回过期的缓存（用作 live 失败的兜底）。
+
+    Returns:
+        命中时返回裁剪后的热点字典，否则 ``None``。
+    """
     cache_path = _screening_hotspot_cache_path()
     try:
         raw = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -355,6 +446,7 @@ def _load_screening_hotspot_cache(
 
 
 def _normalize_screening_hotspot_cache_payload(raw: Any) -> Optional[Dict[str, Any]]:
+    """把磁盘上的旧/新两种缓存格式归一化为统一结构。"""
     if not isinstance(raw, dict):
         return None
     payload = raw.get("payload")
@@ -384,11 +476,19 @@ def _normalize_screening_hotspot_cache_payload(raw: Any) -> Optional[Dict[str, A
 
 @dataclass(frozen=True)
 class _HotspotSearchAugmentation:
+    """单题材"事件搜索增强"的结果封装。
+
+    Attributes:
+        routes: 命中并摘要后的搜索结果条目（最多 2 条）。
+        status: 整体状态字符串（``available`` / ``no_results`` / ``unavailable``）。
+    """
+
     routes: List[Dict[str, Any]]
     status: str
 
 
 def _build_hotspot_event_routes_from_search(topic: str) -> _HotspotSearchAugmentation:
+    """为指定题材调用 DSA 搜索服务，构造可拼接到 detail 的事件路由。"""
     topic_text = _env_text(topic)
     if not topic_text:
         return _HotspotSearchAugmentation(routes=[], status="unavailable")
@@ -404,9 +504,8 @@ def _build_hotspot_event_routes_from_search(topic: str) -> _HotspotSearchAugment
             topic_text,
             max_results=3,
             focus_keywords=[f'"{topic_text}"', "A股", "最新消息", "催化"],
-            # Bounded search owns a killable subprocess and therefore always
-            # needs a concrete hard deadline. Disabling the caller-side
-            # screening guard falls back to this safety ceiling.
+            # 受限搜索会启动可终止的子进程，因此必须设置一个硬性 deadline；
+            # 即便上层筛股禁用调用方超时，也会落到这个安全上限。
             timeout_seconds=(
                 configured_timeout
                 if configured_timeout is not None
@@ -457,7 +556,7 @@ def _build_hotspot_event_routes_from_search(topic: str) -> _HotspotSearchAugment
 
 
 def _normalize_external_http_url(value: Any) -> str:
-    """Accept only absolute HTTP(S) links for user-visible search events."""
+    """仅接受绝对 HTTP(S) 链接，供面向用户的搜索事件引用。"""
     text = _env_text(value)
     if not text:
         return ""
@@ -471,7 +570,7 @@ def _normalize_external_http_url(value: Any) -> str:
 
 
 def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) -> Dict[str, Any]:
-    """Attach opt-in search results to one response without changing its base detail."""
+    """在不修改基础 detail 的前提下，给响应追加"按需启用"的搜索结果。"""
     augmented = _strip_hotspot_search_augmentation(payload)
     search_result = _build_hotspot_event_routes_from_search(topic)
     search_routes = search_result.routes
@@ -482,9 +581,7 @@ def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) ->
         existing_timeline = timeline if isinstance(timeline, list) else []
         combined_routes = [*search_routes, *existing_routes]
         augmented["route"] = combined_routes
-        # Search is an additive response-only augmentation. Keep raw timeline
-        # records under their existing field instead of replacing them with the
-        # display-oriented route summaries.
+        # 搜索是"仅展示层"的附加项；原始 timeline 字段保持原样，不要被展示态的 route 覆盖。
         augmented["timeline"] = [*search_routes, *existing_timeline]
     augmented["news_search_requested"] = True
     augmented["news_search_status"] = search_result.status
@@ -492,11 +589,13 @@ def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) ->
 
 
 def _summarize_hotspot_news_event(*, topic: str, title: str, snippet: str) -> str:
+    """把一条搜索结果摘要成"用于展示的事件描述"。"""
     compact_text = _compact_hotspot_news_text(title=title, snippet=snippet)
     return _summarize_hotspot_news_event_locally(topic=topic, text=compact_text)
 
 
 def _summarize_hotspot_news_event_locally(*, topic: str, text: str) -> str:
+    """本地拼接"催化剂 + 影响"句式的事件摘要。"""
     cleaned = _strip_hotspot_news_noise(text)
     if not cleaned:
         return ""
@@ -513,6 +612,7 @@ def _summarize_hotspot_news_event_locally(*, topic: str, text: str) -> str:
 
 
 def _strip_hotspot_news_noise(text: str) -> str:
+    """清洗原始新闻文本，去掉【方括号】、日期、交易数据等噪音片段。"""
     cleaned = _normalize_inline_text(text)
     cleaned = re.sub(r"【[^】]{1,24}】", " ", cleaned)
     cleaned = re.sub(r"\[[^\]]{1,24}\]", " ", cleaned)
@@ -527,6 +627,7 @@ def _strip_hotspot_news_noise(text: str) -> str:
 
 
 def _extract_hotspot_catalyst_phrase(text: str) -> str:
+    """从清洗后的文本中抽取一句"催化剂"短语。"""
     patterns = (
         r"以[^，。；;]{1,12}代[^，。；;]{1,12}",
         r"[^，。；;]{1,18}(涨价|价格上行|供需偏紧|供应紧张|资源增储|订单增长|政策催化|出口管制|减产|并购重组|技术突破)[^，。；;]{0,24}",
@@ -540,6 +641,7 @@ def _extract_hotspot_catalyst_phrase(text: str) -> str:
 
 
 def _extract_hotspot_impact_phrases(text: str) -> str:
+    """从文本中识别受影响的产业链标签并以顿号拼接。"""
     impacts: List[str] = []
     keyword_groups = (
         ("小金属", ("小金属", "钼", "钨", "锑", "锗", "铟")),
@@ -554,6 +656,7 @@ def _extract_hotspot_impact_phrases(text: str) -> str:
 
 
 def _first_meaningful_hotspot_sentence(text: str) -> str:
+    """挑出第一条长度足够且不包含交易数据的句子作为摘要。"""
     sentences = [
         _normalize_inline_text(item).strip(" ，,；;。.")
         for item in re.split(r"[。！？!?；;]", text)
@@ -566,6 +669,7 @@ def _first_meaningful_hotspot_sentence(text: str) -> str:
 
 
 def _compact_hotspot_news_text(*, title: str, snippet: str) -> str:
+    """把"标题 + 摘要"压成一段适合摘要生成的紧凑文本。"""
     title_text = _normalize_inline_text(title)
     snippet_text = _normalize_inline_text(snippet)
     if title_text and snippet_text.startswith(title_text):
@@ -579,6 +683,7 @@ def _compact_hotspot_news_text(*, title: str, snippet: str) -> str:
 
 
 def _normalize_inline_text(value: Any) -> str:
+    """把任意输入归一化成一个不含换行/Tab、首尾无空白的纯文本。"""
     text = _env_text(value)
     text = re.sub(r"[\r\n\t]+", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -586,6 +691,7 @@ def _normalize_inline_text(value: Any) -> str:
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
+    """在句末标点处优先截断，避免截到半个词；超长时回退硬截并补省略号。"""
     text = _normalize_inline_text(text)
     if len(text) <= max_chars:
         return text
@@ -603,6 +709,7 @@ def _truncate_text(text: str, max_chars: int) -> str:
 
 
 def _extract_date_text(text: str) -> str:
+    """从文本里抽出形如 ``YYYY-MM-DD`` 的日期字符串；找不到则返回空串。"""
     match = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", text or "")
     if not match:
         return ""
@@ -611,6 +718,7 @@ def _extract_date_text(text: str) -> str:
 
 
 def _hotspot_rows_are_thin(rows: List[Any], *, top: int) -> bool:
+    """判断热点数据是否"信息稀薄"（缺少涨跌/趋势指标），用于触发直接拉取。"""
     if len(rows) < min(DSA_SCREENING_MIN_HOTSPOT_CACHE_COUNT, max(1, top)):
         return True
     rich_count = 0
@@ -631,11 +739,13 @@ def _hotspot_rows_are_thin(rows: List[Any], *, top: int) -> bool:
 
 
 def _snake_to_camel(value: str) -> str:
+    """把 ``snake_case`` 字符串转成 ``camelCase``（仅首段不变，后续首字母大写）。"""
     parts = value.split("_")
     return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
 
 
 def _enrich_hotspot_rows_from_provider(rows: List[Any], provider: Any, *, top: int) -> List[Dict[str, Any]]:
+    """用 provider 直拉的指标回填已有热点行缺失的字段。"""
     try:
         provider_rows = provider.hotspot_rows(top=max(top, len(rows), 30))
     except Exception as exc:
@@ -686,6 +796,7 @@ def _enrich_hotspot_rows_from_provider(rows: List[Any], provider: Any, *, top: i
 
 
 def _write_screening_hotspot_cache(payload: Dict[str, Any]) -> None:
+    """把热点列表写入本地缓存；同源时会与已有缓存合并，避免覆盖更新的行。"""
     cache_path = _screening_hotspot_cache_path()
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -742,11 +853,13 @@ def _write_screening_hotspot_cache(payload: Dict[str, Any]) -> None:
 
 
 def _merge_screening_hotspot_cache_rows(current_rows: List[Any], existing_rows: List[Any]) -> List[Any]:
+    """把两份热点行按题材去重拼接，保留较长的那一侧的总条数。"""
     merged: List[Any] = []
     seen_topics: set[str] = set()
     target_count = max(len(current_rows), len(existing_rows))
 
     def append_rows(rows: List[Any]) -> None:
+        """把一批行追加进 merged：dict 按题材去重，其它按相等去重。"""
         for row in rows:
             if isinstance(row, dict):
                 topic = _hotspot_topic_from_row(row)
@@ -766,6 +879,7 @@ def _merge_screening_hotspot_cache_rows(current_rows: List[Any], existing_rows: 
 
 
 def _merge_screening_hotspot_cache_details(current_details: Any, existing_details: Any) -> Dict[str, Any]:
+    """合并两份 ``details`` 字典（新值优先）。"""
     merged: Dict[str, Any] = {}
     if isinstance(existing_details, dict):
         merged.update(existing_details)
@@ -775,6 +889,7 @@ def _merge_screening_hotspot_cache_details(current_details: Any, existing_detail
 
 
 def _load_screening_hotspot_cache_payload_for_write(cache_path: Path) -> Optional[Dict[str, Any]]:
+    """读取已有缓存并归一化为内部结构，仅供写入时合并使用。"""
     try:
         raw = json.loads(cache_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -786,6 +901,7 @@ def _load_screening_hotspot_cache_payload_for_write(cache_path: Path) -> Optiona
 
 
 def _hotspot_topic_from_row(row: Any) -> str:
+    """从一条热点行里抽出题材名（兼容多种字段名）。"""
     if not isinstance(row, dict):
         return ""
     return _env_text(row.get("topic") or row.get("name") or row.get("canonical_topic"))
@@ -797,6 +913,7 @@ def _attach_cached_hotspot_details(
     provider: str,
     top: int,
 ) -> Dict[str, Any]:
+    """把已有的题材详情缓存按题材挂到列表响应上，避免前端再发起一次详情请求。"""
     rows = payload.get("hotspots")
     if not isinstance(rows, list) or not rows:
         return payload
@@ -822,6 +939,7 @@ def _empty_screening_hotspot_payload(
     source_errors: Optional[List[str]] = None,
     message: str = "",
 ) -> Dict[str, Any]:
+    """构造一个"空但形状齐全"的热点列表响应，便于在降级时直接返回。"""
     return {
         "enabled": True,
         "provider": provider,
@@ -839,6 +957,7 @@ def _empty_screening_hotspot_payload(
 
 
 def _is_known_eastmoney_hotspot_connectivity_error(exc: BaseException) -> bool:
+    """判断异常是否为"东财热点源的瞬时网络层错误"，用于决定是否走降级路径。"""
     retryable_types: List[Any] = [ConnectionError, TimeoutError]
     try:
         import requests
@@ -896,10 +1015,12 @@ def _is_known_eastmoney_hotspot_connectivity_error(exc: BaseException) -> bool:
 
 
 def _should_return_eastmoney_hotspot_unavailable(provider_arg: Any, exc: BaseException) -> bool:
+    """仅当 provider 是 DSA 东财热点且是已知网络层错误时，返回"不可用"提示。"""
     return isinstance(provider_arg, DsaEastMoneyHotspotProvider) and _is_known_eastmoney_hotspot_connectivity_error(exc)
 
 
 def _has_degraded_eastmoney_hotspot_failure(provider_arg: Any, source_errors: List[str]) -> bool:
+    """通过 ``source_errors`` 字符串判断东财热点是否已经处于"降级失败"状态。"""
     if not isinstance(provider_arg, DsaEastMoneyHotspotProvider):
         return False
     for source_error in source_errors:
@@ -911,6 +1032,8 @@ def _has_degraded_eastmoney_hotspot_failure(provider_arg: Any, source_errors: Li
 
 
 class ScreeningStrategyResponse(BaseModel):
+    """对外暴露的选股策略条目（Pydantic 模型）。"""
+
     id: str
     name: str = ""
     title: str = ""
@@ -924,7 +1047,7 @@ class ScreeningStrategyResponse(BaseModel):
 
 
 class ScreeningService:
-    """Coordinate stock screening with DSA-owned capabilities."""
+    """统一调度 DSA 自有能力与内置选股引擎的选股服务门面。"""
 
     def __init__(
         self,
@@ -932,14 +1055,16 @@ class ScreeningService:
         db_manager: Optional[DatabaseManager] = None,
         user_id: Optional[int] = None,
     ):
+        """注入全局配置、历史数据库与当前用户 ID，构造一个轻量的服务实例。"""
         self.config = config
         self.db_manager = db_manager
         self.user_id = user_id
 
     def status(self) -> Dict[str, Any]:
+        """汇总引擎可用性、版本、策略数量、来源健康度等状态信息。"""
         engine_status, available, diagnostics = _get_screening_status_snapshot()
         payload = {
-            # Screening is a built-in platform capability, not a user-configurable feature flag.
+            # 选股是平台内置能力，不是用户可配置的开关。
             "enabled": True,
             "available": available,
             "engine": engine_status.get("engine") or "builtin",
@@ -957,6 +1082,7 @@ class ScreeningService:
         return payload
 
     def strategies(self) -> Dict[str, Any]:
+        """返回当前可用的选股策略列表。"""
         _ensure_screening_available_for_use()
         strategies = _list_strategies()
         return {
@@ -972,6 +1098,7 @@ class ScreeningService:
         strategy: str = "",
         market: str = "",
     ) -> Dict[str, Any]:
+        """从持久化层拉取历史选股运行记录，可按策略/市场过滤。"""
         db_manager = self._require_history_database()
         runs = db_manager.list_screening_runs(
             limit=limit,
@@ -986,6 +1113,7 @@ class ScreeningService:
         }
 
     def history_detail(self, run_id: str) -> Dict[str, Any]:
+        """读取单次历史选股运行的完整结果。"""
         db_manager = self._require_history_database()
         run = db_manager.get_screening_run(run_id, user_id=self.user_id)
         if run is None:
@@ -999,11 +1127,13 @@ class ScreeningService:
         return {"enabled": True, **run}
 
     def source_history(self, *, limit: int = 100) -> Dict[str, Any]:
+        """把最近若干次选股运行按"数据源 + 错误"维度做聚合统计。"""
         db_manager = self._require_history_database()
         runs = db_manager.list_screening_runs(limit=limit, user_id=self.user_id)
         return _summarize_screening_source_history(runs)
 
     def _require_history_database(self) -> DatabaseManager:
+        """确保实例已注入数据库管理器，否则抛出 503 错误。"""
         if self.db_manager is None:
             raise HTTPException(
                 status_code=503,
@@ -1022,6 +1152,7 @@ class ScreeningService:
         refresh: bool = False,
         include_details: bool = False,
     ) -> Dict[str, Any]:
+        """返回当前热点题材列表，支持缓存复用与详情预取。"""
         _ensure_screening_available_for_use()
         provider_name, provider_arg = _resolve_hotspot_provider(provider)
         top_count = max(1, min(int(top or 12), 50))
@@ -1032,10 +1163,8 @@ class ScreeningService:
                 return _attach_cached_hotspot_details(cached, provider=provider_name, top=top_count) if include_details else cached
 
         try:
-            # Hotspot providers receive their runtime inputs explicitly. Do not
-            # hold the process-wide Screening environment lock during network
-            # I/O, otherwise a hotspot refresh that starts first can delay a
-            # concurrent stock-screening request for the full source timeout.
+            # 热点 provider 的入参显式传入；网络 I/O 期间不持全局 env 锁，
+            # 否则先开始的热点刷新会把并发的选股请求阻塞到完整超时。
             raw = screening_hotspot.discover_hotspots(
                 provider=provider_arg,
                 top=cache_top_count,
@@ -1139,6 +1268,7 @@ class ScreeningService:
         return payload
 
     def _prefetch_hotspot_details(self, payload: Dict[str, Any], *, provider: str, refresh: bool) -> Dict[str, Any]:
+        """给热点列表批量预取前 N 个题材的详情缓存，减少前端详情页等待。"""
         rows = payload.get("hotspots")
         if not isinstance(rows, list) or not rows:
             return payload
@@ -1169,6 +1299,7 @@ class ScreeningService:
         refresh: bool = False,
         include_search: bool = False,
     ) -> Dict[str, Any]:
+        """返回单题材的完整详情；可按需附加搜索增强。"""
         _ensure_screening_available_for_use()
         topic_text = _env_text(topic)
         if not topic_text:
@@ -1269,6 +1400,18 @@ class ScreeningService:
         selection_seed: str = "",
         progress_callback: Callable[[int, str], None] | None = None,
     ) -> Dict[str, Any]:
+        """执行一次完整的选股流程并返回归一化后的结果。
+
+        Args:
+            strategy: 策略 ID（与 ``strategies()`` 返回的条目对应）。
+            market: 目标市场代码（如 A 股/港股/美股）。
+            max_results: 最终候选数量上限。
+            selection_seed: 用于在多次筛选间稳定排序的随机种子。
+            progress_callback: 进度回调，签名为 ``(progress: int, message: str)``。
+
+        Returns:
+            选股响应字典，含 ``candidates``、``warnings``、LLM 字段、增广信息等。
+        """
         _ensure_screening_available_for_use()
         _ensure_supported_market(market)
         _ensure_supported_strategy(strategy)
@@ -1361,6 +1504,7 @@ def _emit_screening_progress(
     progress: int,
     message: str,
 ) -> None:
+    """包装进度回调，保证回调异常不会中断选股流程。"""
     if callback is None:
         return
     try:
@@ -1370,6 +1514,7 @@ def _emit_screening_progress(
 
 
 def _normalize_screening_hotspot_detail(detail: Any, *, provider: str, requested_topic: str) -> Dict[str, Any]:
+    """把上游返回的题材详情规整为前端期望的标准字段形状。"""
     raw_value = _remove_non_finite_json_values(_to_plain(detail))
     raw: Dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     summary_value = raw.get("summary")
@@ -1415,13 +1560,14 @@ def _normalize_screening_hotspot_detail(detail: Any, *, provider: str, requested
         "stale_age_hours": summary.get("stale_age_hours") or raw.get("stale_age_hours"),
         "resolver_candidates": _list_dict_values(summary.get("resolver_candidates") or raw.get("resolver_candidates")),
     })
-    # A leader-only fallback is a preview, not a complete constituent count.
+    # 仅含领涨股的"降级响应"是预览，不算完整成份股统计。
     if "live_stocks" in missing_fields:
         normalized["stock_count"] = 0
     return normalized
 
 
 def _list_text_values(value: Any) -> List[str]:
+    """把任意输入归一化为只含非空字符串的列表。"""
     if value is None:
         return []
     if isinstance(value, str):
@@ -1434,12 +1580,14 @@ def _list_text_values(value: Any) -> List[str]:
 
 
 def _list_dict_values(value: Any) -> List[Dict[str, Any]]:
+    """过滤并返回仅包含字典元素的列表。"""
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
 
 
 def _hotspot_timeline_to_route(timeline: List[Any]) -> List[Dict[str, Any]]:
+    """把原始 timeline 转换成可直接展示给前端的 route 列表。"""
     route: List[Dict[str, Any]] = []
     for item in timeline:
         if not isinstance(item, dict):
@@ -1471,6 +1619,7 @@ def _merge_provider_hotspot_route_fallback(
     provider: "DsaEastMoneyHotspotProvider",
     topic: str,
 ) -> Dict[str, Any]:
+    """当主路径拿不到足够的事件 route 时，用 provider 直拉做兜底。"""
     if _has_meaningful_hotspot_route(normalized.get("route")):
         return normalized
     try:
@@ -1503,6 +1652,7 @@ def _merge_provider_hotspot_route_fallback(
 
 
 def _has_meaningful_hotspot_route(route: Any) -> bool:
+    """判断 route 是否携带真实可展示的信息（排除"等待发酵"占位项）。"""
     if not isinstance(route, list):
         return False
     for item in route:
@@ -1520,6 +1670,7 @@ def _has_meaningful_hotspot_route(route: Any) -> bool:
 
 
 def _build_screening_hotspot_summary_text(summary: Dict[str, Any], *, topic: str, canonical_topic: str) -> str:
+    """把 summary 字典拼成一句话简介，用于无文本 summary 时的兜底展示。"""
     display_topic = canonical_topic or topic
     heat = _safe_float(summary.get("heat_score"))
     stage = _env_text(summary.get("stage"))
@@ -1535,6 +1686,7 @@ def _build_screening_hotspot_summary_text(summary: Dict[str, Any], *, topic: str
 
 
 def _ensure_screening_available_for_use() -> None:
+    """检查选股引擎是否可用，不可用时抛出带诊断信息的 424 异常。"""
     _, available, diagnostics = _get_screening_status_snapshot()
     if available:
         return
@@ -1548,6 +1700,7 @@ def _ensure_screening_available_for_use() -> None:
 def _include_screening_diagnostic_suffix(
     diagnostics: Optional[Dict[str, str]],
 ) -> Optional[Dict[str, str]]:
+    """为诊断字典补上默认的 ``resolution`` / ``message`` 字段，方便前端呈现。"""
     if diagnostics is None:
         return None
     normalized = dict(diagnostics)
@@ -1560,6 +1713,7 @@ def _include_screening_diagnostic_suffix(
 
 
 def _get_screening_status_snapshot() -> Tuple[Dict[str, Any], bool, Optional[Dict[str, str]]]:
+    """探测选股引擎状态，返回 ``(engine_status, available, diagnostics)`` 三元组。"""
     try:
         engine_status = _call_screening_status()
     except HTTPException as exc:
@@ -1572,6 +1726,7 @@ def _get_screening_status_snapshot() -> Tuple[Dict[str, Any], bool, Optional[Dic
 
 
 def _get_screening_source_health_snapshot() -> Dict[str, Any]:
+    """汇总选股相关模块（snapshot/daily）的健康度快照，用于状态页展示。"""
     health: Dict[str, Any] = {}
     for module_name, key, function_name in (
         ("src.services.screening.snapshot", "snapshot", "snapshot_source_health_snapshot"),
@@ -1590,12 +1745,14 @@ def _get_screening_source_health_snapshot() -> Dict[str, Any]:
 
 
 def _is_engine_available(engine_status: Any) -> bool:
+    """根据 engine_status 字典判断引擎是否可用（缺字段时视为可用）。"""
     if isinstance(engine_status, dict):
         return bool(engine_status.get("available", True))
     return True
 
 
 def _call_screening_status() -> Dict[str, Any]:
+    """读取内置选股引擎的版本与策略数量，构造对外可见的状态字典。"""
     try:
         strategy_count = len(load_screening_strategies())
     except Exception as exc:
@@ -1620,6 +1777,7 @@ def _screening_unavailable_exception(
     *,
     diagnostics: Optional[Dict[str, str]] = None,
 ) -> HTTPException:
+    """构造一个统一的"选股功能不可用" HTTPException（424 状态码）。"""
     detail: Dict[str, Any] = {"error": "screening_unavailable", "message": message}
     if diagnostics:
         detail["diagnostics"] = diagnostics
@@ -1627,6 +1785,7 @@ def _screening_unavailable_exception(
 
 
 def _log_unexpected_screening_exception(stage: str, exc: BaseException) -> Dict[str, str]:
+    """记录一次未预期的选股异常，并返回给前端展示的极简诊断字典。"""
     logger.warning("Unexpected Screening %s failure: %s", stage, exc, exc_info=exc.__traceback__ is not None)
     return {
         "reason": "unexpected_exception",
@@ -1636,6 +1795,7 @@ def _log_unexpected_screening_exception(stage: str, exc: BaseException) -> Dict[
 
 
 def _extract_screening_diagnostics(exc: HTTPException) -> Optional[Dict[str, str]]:
+    """从 ``HTTPException.detail`` 里安全地抽取诊断字典。"""
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     diagnostics = detail.get("diagnostics")
     if not isinstance(diagnostics, dict):
@@ -1644,6 +1804,7 @@ def _extract_screening_diagnostics(exc: HTTPException) -> Optional[Dict[str, str
 
 
 def _list_strategies() -> List[Dict[str, Any]]:
+    """返回归一化后的所有选股策略条目；返回结构非法时抛出 424。"""
     raw = _to_plain(load_screening_strategies())
     if not isinstance(raw, list):
         raise HTTPException(
@@ -1661,6 +1822,7 @@ def _list_strategies() -> List[Dict[str, Any]]:
 
 
 def _normalize_strategy(raw: Any) -> Dict[str, Any]:
+    """把引擎给出的策略条目转成 ``ScreeningStrategyResponse`` 形状。"""
     item = _to_plain(raw)
     if isinstance(item, str):
         return _strategy_model(id=item, name=item, title=item)
@@ -1699,6 +1861,7 @@ def _normalize_strategy(raw: Any) -> Dict[str, Any]:
 
 
 def _strategy_model(**kwargs: Any) -> Dict[str, Any]:
+    """通过 Pydantic 模型生成一份"可序列化"的策略字典。"""
     normalized = ScreeningStrategyResponse(**kwargs)
     try:
         return normalized.model_dump()
@@ -1707,10 +1870,12 @@ def _strategy_model(**kwargs: Any) -> Dict[str, Any]:
 
 
 def _summarize_screening_source_history(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """把若干次选股运行按"数据源 + 错误"维度聚合，给状态页呈现稳定度。"""
     source_stats: Dict[str, Dict[str, Any]] = {}
     fallback_runs = 0
 
     def source_entry(source: str) -> Dict[str, Any]:
+        """取某个数据源（或错误归因源）的统计槽位，不存在则初始化。"""
         return source_stats.setdefault(
             source,
             {
@@ -1752,6 +1917,7 @@ def _summarize_screening_source_history(runs: List[Dict[str, Any]]) -> Dict[str,
 
 
 def _screening_source_from_error(error: str) -> str:
+    """从一条错误文本里提取出对应的数据源短名；解析不到时返回 ``unknown``。"""
     text = _env_text(error)
     match = re.search(
         r"(?:snapshot source fallback:\s*)?([a-zA-Z][a-zA-Z0-9_-]{1,31})\s*(?:after\s+\d+\s+attempts)?\s*:",
@@ -1762,6 +1928,7 @@ def _screening_source_from_error(error: str) -> str:
 
 
 def _ensure_supported_strategy(strategy: str) -> None:
+    """若引擎返回的策略列表里存在 ``strategy``，保持透传以便支持自定义策略。"""
     strategies = _list_strategies()
     if not strategies:
         return
@@ -1782,9 +1949,9 @@ def _call_screening_screen(
     selection_seed: str = "",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> Any:
-    # Environment bridging is process-global, so keep it brief: materialize an
-    # immutable pipeline config while holding the lock, then release it before
-    # any network or LLM work. Hotspot refreshes can then run alongside screening.
+    """调用内置 pipeline 执行一次选股，并对运行时环境做最小侵入的桥接。"""
+    # 环境桥接是进程级的，耗时必须尽量短：先在锁内物化出不可变的 pipeline config，
+    # 再释放锁去做网络/LLM 工作。这样热点刷新才能与选股并行。
     with _screening_runtime_env(config, max_results=max_results):
         pipeline_config = ScreeningPipelineConfig.from_env()
         pipeline_context = _build_screening_context(config, max_results=max_results)
@@ -1806,6 +1973,7 @@ def _call_screening_screen(
 
 @contextmanager
 def _screening_runtime_env(config: Config, *, max_results: Optional[int] = None) -> Iterator[None]:
+    """在上下文范围内向 ``os.environ`` 注入选股所需的运行时变量，退出时恢复。"""
     updates = _build_screening_runtime_env(config, max_results=max_results)
     if not updates:
         yield
@@ -1826,11 +1994,10 @@ def _screening_runtime_env(config: Config, *, max_results: Optional[int] = None)
 
 
 def _build_screening_dsa_daily_history_fetcher() -> Optional[Callable[..., Any]]:
-    """Build one request-local DSA-first daily-history fetcher.
+    """构造一个"先走 DSA，失败再走 Screening 默认源"的日线 fetcher。
 
-    The returned closure captures the bundled Screening fetcher as its
-    fallback. It never replaces ``daily.fetch_daily_history``, so overlapping
-    screening requests cannot restore stale wrappers or build wrapper chains.
+    返回的闭包持有原 ``fetch_daily_history`` 作为回退；它不会替换模块符号，
+    因此并发请求之间不会出现"恢复过期包装"或"嵌套包装"的副作用。
     """
     try:
         daily_module = importlib.import_module("src.services.screening.daily")
@@ -1850,6 +2017,11 @@ def _build_screening_dsa_daily_history_fetcher() -> Optional[Callable[..., Any]]
         cache_dir: str | Path | None = None,
         cache_ttl_seconds: float | None = None,
     ) -> Any:
+        """先尝试 DSA 日线，成功则回填来源与缓存属性；失败交由调用方回退默认源。
+
+        返回的 DataFrame 带 ``daily_source`` / ``source_errors`` 等 attrs，
+        供上层合并展示数据源健康度。
+        """
         try:
             dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
             normalized = _normalize_dsa_daily_history(dsa_df)
@@ -1904,6 +2076,7 @@ def _build_screening_dsa_daily_history_fetcher() -> Optional[Callable[..., Any]]
 
 
 def _resolve_screening_snapshot_source_priority(config: Config) -> str:
+    """根据是否配置了 Tushare token 返回不同的快照源优先级串。"""
     token = _env_text(getattr(config, "tushare_token", None) or os.getenv("TUSHARE_TOKEN"))
     if token:
         return DSA_SCREENING_SNAPSHOT_SOURCE_PRIORITY_WITH_TUSHARE
@@ -1911,19 +2084,24 @@ def _resolve_screening_snapshot_source_priority(config: Config) -> str:
 
 
 def _build_screening_runtime_env(config: Config, *, max_results: Optional[int] = None) -> Dict[str, str]:
-    # Bridge runtime only: only inject resolved DSA values for this request/process scope.
-    # User .env/config is never rewritten here; unset channels/models are not silently migrated.
-    # 与 LiteLLM provider/model、openai-compatible `api_base` 与 headers 注入语义保持一致，
-    # 参见 https://docs.litellm.ai/docs/providers 与
-    # https://docs.litellm.ai/docs/proxy/configs#the-model_list-key
+    """构建要注入到 ``os.environ`` 的运行时变量字典。
+
+    仅桥接本次请求/进程范围内的 DSA 解析值，绝不覆盖用户的 .env；
+    未配置的渠道/模型也不会被静默迁移。与 LiteLLM provider/model、
+    openai-compatible ``api_base`` 与 headers 的注入语义保持一致，
+    参考 https://docs.litellm.ai/docs/providers 以及
+    https://docs.litellm.ai/docs/proxy/configs#the-model_list-key 。
+    """
     env: Dict[str, str] = {}
 
     def put(key: str, value: Any) -> None:
+        """把非空值写入运行时环境变量字典。"""
         text = _env_text(value)
         if text:
             env[key] = text
 
     def put_default(key: str, value: Any) -> None:
+        """仅当系统环境变量未设置时才写入默认值（不覆盖用户已有配置）。"""
         if os.getenv(key) not in (None, ""):
             return
         put(key, value)
@@ -1994,6 +2172,7 @@ def _build_screening_runtime_env(config: Config, *, max_results: Optional[int] =
 
 
 def _resolve_hotspot_provider(provider: str) -> Tuple[str, Any]:
+    """把入参或环境变量里的热点 provider 名称解析成 ``(name, instance_or_str)``。"""
     requested = (provider or "").strip()
     if requested.lower() == "akshare":
         return requested, DsaEastMoneyHotspotProvider()
@@ -2008,13 +2187,25 @@ def _resolve_hotspot_provider(provider: str) -> Tuple[str, Any]:
 
 
 class DsaEastMoneyHotspotProvider:
-    """Minimal EastMoney board provider for Screening hotspot scoring."""
+    """面向选股场景的极简东方财富/同花顺热点 Provider。
 
+    主要能力：
+    - 拉取概念/行业板块异动数据，计算热度/趋势/持续性等评分；
+    - 解析板块成份股与异动事件，构造题材详情；
+    - 内置超时与重试，规避上游瞬时故障。
+    """
+
+    # 表明本 provider 已经接入了 DSA 的"可终止调用预算"体系（子类按需使用）
     _screening_source_calls_bounded = True
+    # 东方财富板块排行 API 的基础地址
     _BASE_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+    # AkShare 类调用的默认子进程超时（秒）
     _AKSHARE_CALL_TIMEOUT_SECONDS = 4.0
+    # 直连 HTTP（成份股）的 (connect, read) 默认超时
     _CONSTITUENT_HTTP_TIMEOUT = (1.0, 2.0)
+    # 成份股并行 worker 的进程级限流
     _CONSTITUENT_WORKER_SLOTS = threading.BoundedSemaphore(4)
+    # 东方财富 clist 接口的通用参数（pn/po/np/ut/fltt/invt/fid/fields）
     _COMMON_PARAMS = {
         "pn": "1",
         "po": "1",
@@ -2025,6 +2216,7 @@ class DsaEastMoneyHotspotProvider:
         "fid": "f12",
         "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
     }
+    # "宽泛/指数类板块"黑名单关键词，用于剔除大盘/分类板块
     _BROAD_BOARD_KEYWORDS = (
         "融资融券",
         "深股通",
@@ -2065,6 +2257,7 @@ class DsaEastMoneyHotspotProvider:
         "Ⅱ",
         "Ⅲ",
     )
+    # 东方财富异动事件码到中文标签的映射
     _CHANGE_EVENT_LABELS = {
         4: "快速拉升",
         8: "快速回落",
@@ -2095,6 +2288,7 @@ class DsaEastMoneyHotspotProvider:
         8221: "向上突破",
         8222: "向下破位",
     }
+    # 金属类题材关键词到所属产业链分组的映射
     _METAL_TOPIC_GROUPS = {
         "钼": "小金属",
         "钨": "小金属",
@@ -2111,11 +2305,13 @@ class DsaEastMoneyHotspotProvider:
         "白银": "贵金属",
         "贵金属": "贵金属",
     }
+    # 同花顺题材名称到官方主题的别名映射，便于归一化
     _THS_TOPIC_ALIASES = {
         "文字媒体": ("文化传媒概念", "文化传媒"),
     }
 
     def __init__(self) -> None:
+        """初始化 session、节流锁与本地缓存结构。"""
         import requests
 
         self._board_changes_raw_cache: Any = None
@@ -2128,12 +2324,11 @@ class DsaEastMoneyHotspotProvider:
 
     @contextmanager
     def _source_call_budget(self) -> Iterator[None]:
-        """Apply one configured budget to a board, constituent, or detail call.
+        """为一次"板块/成份股/详情"调用应用统一的超时预算。
 
-        The provider uses killable subprocesses for AkShare and socket
-        timeouts for direct HTTP, so it must not be wrapped in the generic
-        daemon-thread timeout. Nested public calls reuse the same deadline to
-        prevent fallback steps from each receiving a fresh full budget.
+        AkShare 走 DSA 的可终止子进程、直连 HTTP 走 socket 超时，
+        因此不能再套通用守护线程超时。嵌套调用会复用同一 deadline，
+        避免每次 fallback 都重新获得完整预算。
         """
         if _DSA_HOTSPOT_CALL_DEADLINE.get() is not None:
             yield
@@ -2152,6 +2347,7 @@ class DsaEastMoneyHotspotProvider:
             _DSA_HOTSPOT_CALL_DEADLINE.reset(token)
 
     def _remaining_source_timeout(self, fallback: float) -> float:
+        """返回剩余预算（秒）；无 deadline 时退回到 ``fallback``。"""
         deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
         if deadline is None:
             return float(fallback)
@@ -2161,9 +2357,11 @@ class DsaEastMoneyHotspotProvider:
         return remaining
 
     def _akshare_timeout_seconds(self) -> float:
+        """获取 AkShare 调用剩余预算；无 deadline 时使用默认上限。"""
         return self._remaining_source_timeout(self._AKSHARE_CALL_TIMEOUT_SECONDS)
 
     def _http_timeout(self) -> Tuple[float, float]:
+        """计算当前 HTTP 调用的 (connect, read) 超时，受剩余 deadline 影响。"""
         deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
         if deadline is None:
             return self._CONSTITUENT_HTTP_TIMEOUT
@@ -2173,12 +2371,14 @@ class DsaEastMoneyHotspotProvider:
         return connect, read
 
     def _sleep_within_source_budget(self, seconds: float) -> None:
+        """在 deadline 内安全 sleep；若剩余时间不足则主动抛 TimeoutError。"""
         deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
         if deadline is not None and self._remaining_source_timeout(seconds) <= seconds:
             raise TimeoutError("screening hotspot provider call exceeded its configured timeout")
         time.sleep(seconds)
 
     def _eastmoney_get_once(self, url: str, **kwargs: Any) -> Any:
+        """单次直连东方财富的 HTTP 请求，自动节流并设置 timeout。"""
         with self._request_lock:
             elapsed = time.monotonic() - self._last_request_ts
             if elapsed < self._min_request_interval:
@@ -2190,7 +2390,7 @@ class DsaEastMoneyHotspotProvider:
                 self._last_request_ts = time.monotonic()
 
     def _eastmoney_get(self, url: str, **kwargs: Any) -> Any:
-        """Retry short-lived EastMoney failures without extending each socket wait."""
+        """带短重试的东方财富 GET（不延长单次 socket 等待）。"""
         import requests
 
         retryable_errors = (
@@ -2217,6 +2417,7 @@ class DsaEastMoneyHotspotProvider:
         raise last_error
 
     def stock_board_concept_name_em(self) -> Any:
+        """拉取概念板块的热点表（DataFrame），含异动/排行/名称三种 fallback。"""
         with self._source_call_budget():
             frame = self._fetch_board_changes_with_fallback()
             if frame is not None and not frame.empty:
@@ -2227,6 +2428,7 @@ class DsaEastMoneyHotspotProvider:
             return self._fetch_board_names(source_fs="m:90 t:3 f:!50")
 
     def stock_board_industry_name_em(self) -> Any:
+        """拉取行业板块的热点表（DataFrame）。如果概念异动里有结果则跳过额外请求。"""
         with self._source_call_budget():
             concept_frame = self._fetch_board_changes_with_fallback()
             if concept_frame is not None and not concept_frame.empty:
@@ -2239,6 +2441,7 @@ class DsaEastMoneyHotspotProvider:
             return self._fetch_board_names(source_fs="m:90 t:2 f:!50")
 
     def hotspot_rows(self, *, top: int = 12) -> List[Dict[str, Any]]:
+        """返回排序后的热点行字典列表（含热度/趋势/持续性评分）。"""
         import pandas as pd
 
         with self._source_call_budget():
@@ -2289,6 +2492,7 @@ class DsaEastMoneyHotspotProvider:
         return rows
 
     def stock_board_concept_cons_em(self, symbol: str = "") -> Any:
+        """获取概念板块成份股 DataFrame（多源并行，结果按顺序合并）。"""
         with self._source_call_budget():
             cached = self._get_constituent_cache("concept", symbol)
             if cached is not None:
@@ -2301,6 +2505,7 @@ class DsaEastMoneyHotspotProvider:
             return frame
 
     def stock_board_industry_cons_em(self, symbol: str = "") -> Any:
+        """获取行业板块成份股 DataFrame（多源并行，结果按顺序合并）。"""
         with self._source_call_budget():
             cached = self._get_constituent_cache("industry", symbol)
             if cached is not None:
@@ -2312,12 +2517,10 @@ class DsaEastMoneyHotspotProvider:
             return frame
 
     def _fetch_constituent_sources(self, topic: str, *, source: str) -> List[Any]:
-        """Fetch independent sources in parallel without orphan workers.
+        """并行抓取各数据源的成份股，避免产生孤儿 worker。
 
-        AkShare calls run in DSA's killable timeout subprocess; direct HTTP
-        calls have connect/read timeouts. A process-wide semaphore prevents
-        repeated upstream failures from creating unbounded active tasks, and
-        the executor joins every admitted worker before this method returns.
+        AkShare 走 DSA 的可终止子进程，HTTP 走 connect/read 超时。
+        进程级信号量限制并发上限，且执行器在返回前会 join 所有已 admitted worker。
         """
         fetchers: List[Tuple[str, Callable[[], Any]]] = [
             ("eastmoney", lambda: self._fetch_eastmoney_constituents(topic, source=source)),
@@ -2328,6 +2531,7 @@ class DsaEastMoneyHotspotProvider:
         source_deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
 
         def run(fetch: Callable[[], Any]) -> Any:
+            """在线程中执行抓取：恢复调用方的 DSA 截止时间并归还 worker 槽位。"""
             token = (
                 _DSA_HOTSPOT_CALL_DEADLINE.set(source_deadline)
                 if source_deadline is not None
@@ -2376,10 +2580,12 @@ class DsaEastMoneyHotspotProvider:
         ]
 
     def hotspot_detail(self, topic: str) -> Dict[str, Any]:
+        """对外暴露的题材详情入口，受 ``_source_call_budget`` 保护。"""
         with self._source_call_budget():
             return self._hotspot_detail(topic)
 
     def _hotspot_detail(self, topic: str) -> Dict[str, Any]:
+        """构造题材详情的核心逻辑，包含摘要、成份股、事件 route。"""
         try:
             summary = self._find_board_change(topic)
         except Exception as exc:
@@ -2425,6 +2631,7 @@ class DsaEastMoneyHotspotProvider:
         })
 
     def _fetch_board_changes(self) -> Any:
+        """读取并缓存东方财富"板块异动"原始 DataFrame，附带上评分与排名。"""
         import pandas as pd
 
         if self._board_changes_frame_cache is not None:
@@ -2467,6 +2674,7 @@ class DsaEastMoneyHotspotProvider:
         return frame.copy()
 
     def _fetch_board_changes_raw(self) -> Any:
+        """通过 AkShare 拉取板块异动原始 DataFrame，并在内部缓存。"""
         import akshare as ak
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2481,6 +2689,7 @@ class DsaEastMoneyHotspotProvider:
         return df.copy() if df is not None else df
 
     def _fetch_board_changes_with_fallback(self) -> Any:
+        """调用 ``_fetch_board_changes`` 并在异常时返回空 DataFrame，便于上游判断降级。"""
         import pandas as pd
 
         try:
@@ -2490,9 +2699,11 @@ class DsaEastMoneyHotspotProvider:
             return pd.DataFrame()
 
     def _is_broad_board(self, name: str) -> bool:
+        """判断板块名是否属于"宽泛/指数类"黑名单（用于过滤大盘/分类板块）。"""
         return any(keyword in name for keyword in self._BROAD_BOARD_KEYWORDS)
 
     def _fetch_rankings(self, source: str) -> Any:
+        """通过 DSA fetcher manager 拉取概念/行业板块排行（100 名 Top）。"""
         import pandas as pd
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2516,6 +2727,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(rows)
 
     def _fetch_rankings_with_fallback(self, source: str) -> Any:
+        """排行抓取的容错版本，失败时返回空 DataFrame。"""
         import pandas as pd
 
         try:
@@ -2525,6 +2737,7 @@ class DsaEastMoneyHotspotProvider:
             return pd.DataFrame()
 
     def _fetch_board_names(self, *, source_fs: str) -> Any:
+        """直接调用东方财富 clist 接口，按 ``fs`` 条件取板块名称列表。"""
         import pandas as pd
 
         params = dict(self._COMMON_PARAMS)
@@ -2557,6 +2770,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(normalized)
 
     def _find_board_change(self, topic: str) -> Dict[str, Any]:
+        """在板块异动表里精确/模糊查找 ``topic`` 对应行，返回首行字典。"""
         df = self._fetch_board_changes_raw()
         if df is None or df.empty:
             return {}
@@ -2568,8 +2782,8 @@ class DsaEastMoneyHotspotProvider:
         return rows.iloc[0].to_dict()
 
     def _is_industry_hotspot(self, topic: str) -> bool:
-        # EastMoney board-change rows are concept-like hot boards; if the topic is
-        # already in that live change set, avoid an extra industry request.
+        """判断题材是不是"行业板块"：先看异动表里没有，再去行业接口里确认。"""
+        # 东财异动行已经覆盖了"热点概念"；若题材已在异动表中，就避免再多发一次行业请求。
         try:
             concept_frame = self._fetch_board_changes_with_fallback()
             if self._board_frame_contains_topic(concept_frame, topic):
@@ -2588,14 +2802,17 @@ class DsaEastMoneyHotspotProvider:
         return self._board_frame_contains_topic(frame, topic)
 
     def _derive_trend_score(self, *, change_pct: Optional[float], event_count: int) -> float:
+        """根据涨跌幅与异动次数推导 1~99 的"趋势强度"评分。"""
         change_component = max(change_pct or 0.0, 0.0) * 12.0
         event_component = min(event_count / 8.0, 45.0)
         return round(min(99.0, max(1.0, change_component + event_component)), 1)
 
     def _derive_persistence_score(self, *, event_count: int) -> float:
+        """根据异动次数推导 1~99 的"持续性"评分。"""
         return round(min(99.0, max(1.0, event_count / 3.0)), 1)
 
     def _derive_hotspot_stage(self, *, change_pct: Optional[float], event_count: int) -> str:
+        """根据涨跌幅与异动次数给热点打阶段标签（加速发酵/持续发酵/快速拉升/初次异动）。"""
         positive_change = max(change_pct or 0.0, 0.0)
         if event_count >= 180 and positive_change >= 3.0:
             return "加速发酵"
@@ -2606,6 +2823,7 @@ class DsaEastMoneyHotspotProvider:
         return "初次异动"
 
     def _hotspot_group(self, topic: str) -> str:
+        """根据题材名匹配金属类题材分组（如小金属/工业金属/贵金属）。"""
         topic_text = _env_text(topic)
         for keyword, group in self._METAL_TOPIC_GROUPS.items():
             if keyword and keyword in topic_text:
@@ -2613,6 +2831,7 @@ class DsaEastMoneyHotspotProvider:
         return ""
 
     def _display_hotspot_name(self, topic: str) -> str:
+        """构造面向前端展示的题材名（自动加上产业链分组前缀）。"""
         topic_text = _env_text(topic)
         group = self._hotspot_group(topic_text)
         if group and topic_text != group:
@@ -2620,6 +2839,7 @@ class DsaEastMoneyHotspotProvider:
         return topic_text
 
     def _board_frame_contains_topic(self, frame: Any, topic: str) -> bool:
+        """在 DataFrame 的多种名称列里查找题材名是否出现。"""
         import pandas as pd
 
         topic_text = _env_text(topic)
@@ -2637,6 +2857,7 @@ class DsaEastMoneyHotspotProvider:
         return False
 
     def _build_hotspot_summary(self, topic: str, summary: Dict[str, Any]) -> str:
+        """把异动摘要拼成一句话简介，给前端卡片做摘要展示。"""
         if not summary:
             return f"{topic} 当前暂无可用的板块异动摘要。"
         change_pct = _safe_float(summary.get("涨跌幅"))
@@ -2651,10 +2872,12 @@ class DsaEastMoneyHotspotProvider:
         return "，".join(parts) + "。"
 
     def _build_hotspot_route(self, topic: str, summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """构造题材事件时间线：优先同花顺摘要，再叠加当日异动结构。"""
         route_by_date: Dict[str, Dict[str, Any]] = {}
         today = datetime.now().date().isoformat()
 
         def put_daily_item(*, date: str, title: str, description: str, source: str) -> None:
+            """按日期写入时间线条目；同日已有条目时合并描述与来源。"""
             day = date or today
             existing = route_by_date.get(day)
             if existing:
@@ -2706,6 +2929,7 @@ class DsaEastMoneyHotspotProvider:
         return route
 
     def _extract_route_date(self, text: str) -> str:
+        """从一段文本里抽出 ``YYYY-MM-DD`` 日期；找不到时返回空串。"""
         match = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", text or "")
         if not match:
             return ""
@@ -2713,6 +2937,7 @@ class DsaEastMoneyHotspotProvider:
         return f"{year}-{int(month):02d}-{int(day):02d}"
 
     def _parse_change_events(self, raw: Any) -> List[Dict[str, Any]]:
+        """把上游的异动事件列表（可能是字符串字面量）解析成结构化条目并按次数倒序。"""
         if isinstance(raw, str):
             try:
                 import ast
@@ -2736,6 +2961,7 @@ class DsaEastMoneyHotspotProvider:
         return sorted(events, key=lambda item: item["count"], reverse=True)
 
     def _fetch_ths_summary_event(self, topic: str) -> str:
+        """拉取同花顺的概念摘要事件（"驱动事件"），失败时返回空串。"""
         import akshare as ak
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2760,6 +2986,7 @@ class DsaEastMoneyHotspotProvider:
         return f"{date}：{event}" if date and event else event
 
     def _fetch_ths_info(self, topic: str) -> Dict[str, str]:
+        """拉取同花顺概念"项目-值"表，返回 ``{项目: 值}`` 字典。"""
         import akshare as ak
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2781,6 +3008,7 @@ class DsaEastMoneyHotspotProvider:
         }
 
     def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
+        """通过 AkShare 拉取概念或行业的成份股原始 DataFrame。"""
         import akshare as ak
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2797,6 +3025,7 @@ class DsaEastMoneyHotspotProvider:
         )
 
     def _fetch_ths_constituents(self, topic: str) -> Any:
+        """通过同花顺网页解析得到题材成份股（最多 80 条）。"""
         import pandas as pd
         import requests
 
@@ -2824,6 +3053,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(rows)
 
     def _resolve_ths_concept_code(self, topic: str) -> str:
+        """把题材名解析成同花顺的概念 code（精确 → 模糊 → 去尾"概念"再模糊）。"""
         df = self._fetch_ths_concept_names()
         if df is None or df.empty:
             return ""
@@ -2844,6 +3074,7 @@ class DsaEastMoneyHotspotProvider:
         return ""
 
     def _fetch_ths_concept_names(self) -> Any:
+        """拉取同花顺的概念名-代码对照表，供题材名归一化使用。"""
         import akshare as ak
         from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
@@ -2854,6 +3085,7 @@ class DsaEastMoneyHotspotProvider:
         )
 
     def _fallback_constituents(self, topic: str) -> Any:
+        """用板块异动摘要里的"高频异动个股"作为成份股的兜底行。"""
         import pandas as pd
 
         try:
@@ -2879,6 +3111,7 @@ class DsaEastMoneyHotspotProvider:
         }])
 
     def _related_hotspot_constituents(self, topic: str) -> Any:
+        """从同一金属分组下其他板块里聚合"活跃股"作为相关成份股。"""
         import pandas as pd
 
         group = self._hotspot_group(topic)
@@ -2918,6 +3151,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(rows)
 
     def _get_constituent_cache(self, source: str, topic: str) -> Any:
+        """读取已缓存的成份股 DataFrame；未命中返回 ``None``。"""
         import pandas as pd
 
         if not hasattr(self, "_constituent_cache"):
@@ -2928,6 +3162,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(frame).copy()
 
     def _set_constituent_cache(self, source: str, topic: str, frame: Any) -> None:
+        """把成份股 DataFrame 写入本地缓存（使用 ``copy`` 防止外部修改）。"""
         import pandas as pd
 
         if not hasattr(self, "_constituent_cache"):
@@ -2935,6 +3170,7 @@ class DsaEastMoneyHotspotProvider:
         self._constituent_cache[(source, _env_text(topic))] = pd.DataFrame(frame).copy()
 
     def _merge_constituent_frames(self, frames: List[Any]) -> Any:
+        """把多份成份股 DataFrame 合并成一份，按 code/name 去重。"""
         import pandas as pd
 
         merged: List[Dict[str, Any]] = []
@@ -2959,6 +3195,7 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(merged)
 
     def _normalize_constituent_records(self, frame: Any) -> List[Dict[str, Any]]:
+        """把成份股 DataFrame 转成前端友好的字典列表（补齐涨跌/成交额等字段）。"""
         import pandas as pd
 
         df = pd.DataFrame(frame)
@@ -2984,8 +3221,11 @@ class DsaEastMoneyHotspotProvider:
 
 
 def _build_screening_context(config: Config, *, max_results: Optional[int] = None) -> Dict[str, Any]:
-    # context.llm.model/fallback/model_list 与 LiteLLM 路由语义保持一致，
-    # 参见 https://docs.litellm.ai/docs/proxy/configs#the-model_list-key
+    """构造选股 pipeline 的 ``context`` 字典。
+
+    ``context.llm.model`` / ``fallback`` / ``model_list`` 与 LiteLLM 路由语义保持一致，
+    参考 https://docs.litellm.ai/docs/proxy/configs#the-model_list-key 。
+    """
     channels = _normalize_dsa_llm_channels(config)
     litellm_model, fallback_models = _resolve_screening_llm_models(config)
     return {
@@ -3023,6 +3263,11 @@ def _build_screening_context(config: Config, *, max_results: Optional[int] = Non
 
 @contextmanager
 def _screening_litellm_headers(config: Config) -> Iterator[None]:
+    """在上下文范围内把 DSA 渠道的 ``extra_headers`` 注入到 litellm 调用里。
+
+    注入逻辑会在第一次进入时把 ``litellm.completion`` 替换为一个带 ``extra_headers``
+    的包装函数；后续进入时直接复用上下文变量。
+    """
     header_routes = _build_screening_litellm_header_routes(config)
     if not header_routes:
         yield
@@ -3053,6 +3298,7 @@ def _screening_litellm_headers(config: Config) -> Iterator[None]:
     original_completion = completion
 
     def completion_with_dsa_headers(*args: Any, **kwargs: Any) -> Any:
+        """包装 litellm.completion：按当前路由注入匹配渠道的请求头。"""
         routes = _SCREENING_LITELLM_COMPLETION_ROUTES.get()
         if routes:
             headers = _match_screening_litellm_headers(args, kwargs, routes)
@@ -3087,6 +3333,7 @@ def _screening_litellm_headers(config: Config) -> Iterator[None]:
 
 
 def _build_screening_litellm_model_list(config: Config, channels: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """返回 LiteLLM 风格的 ``model_list``；优先使用用户显式配置，否则按渠道生成。"""
     explicit_model_list = _to_plain(config.llm_model_list or [])
     if isinstance(explicit_model_list, list) and explicit_model_list:
         return explicit_model_list
@@ -3094,6 +3341,7 @@ def _build_screening_litellm_model_list(config: Config, channels: List[Dict[str,
 
 
 def _channel_litellm_model_list(channels: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按渠道 + 模型 + key 展开成 LiteLLM ``model_list`` 结构。"""
     model_list_builder = getattr(Config, "_channels_to_model_list", None)
     if callable(model_list_builder):
         return _to_plain(model_list_builder(channels))
@@ -3116,6 +3364,7 @@ def _channel_litellm_model_list(channels: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def _build_screening_litellm_header_routes(config: Config) -> List[Dict[str, Any]]:
+    """从 ``model_list`` 抽取每个模型对应的 ``extra_headers`` 路由表。"""
     channels = _normalize_dsa_llm_channels(config)
     model_list = _build_screening_litellm_model_list(config, channels)
     routes: List[Dict[str, Any]] = []
@@ -3150,6 +3399,7 @@ def _match_screening_litellm_headers(
     kwargs: Dict[str, Any],
     routes: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """根据当前调用入参匹配一条 header 路由，未命中则返回空 dict。"""
     model = _env_text(kwargs.get("model"))
     if not model and args:
         model = _env_text(args[0])
@@ -3173,6 +3423,7 @@ def _match_screening_litellm_headers(
 
 
 def _resolve_dsa_llm_max_candidates(max_results: Optional[int]) -> int:
+    """根据用户请求数量推导 LLM 候选数量（带放大系数与硬上限）。"""
     requested = max_results if isinstance(max_results, int) and max_results > 0 else DSA_ENRICHMENT_MAX_CANDIDATES
     return min(
         DSA_SCREENING_LLM_MAX_CANDIDATES,
@@ -3181,6 +3432,7 @@ def _resolve_dsa_llm_max_candidates(max_results: Optional[int]) -> int:
 
 
 def _resolve_screening_llm_models(config: Config) -> Tuple[str, List[str]]:
+    """综合显式配置与渠道模型，决定主模型与 fallback 列表。"""
     primary = _env_text(config.litellm_model)
     configured_models = get_configured_llm_models(config.llm_model_list or [])
     configured_model_set = set(configured_models)
@@ -3213,6 +3465,7 @@ def _resolve_screening_llm_models(config: Config) -> Tuple[str, List[str]]:
 
 
 def _is_managed_litellm_model(model: str) -> bool:
+    """判断模型是否落在 DSA 管理的 provider 集合内（用于决定走自动注入）。"""
     text = _env_text(model)
     if not text:
         return False
@@ -3221,6 +3474,7 @@ def _is_managed_litellm_model(model: str) -> bool:
 
 
 def _normalize_dsa_llm_channels(config: Config) -> List[Dict[str, Any]]:
+    """把 ``config.llm_channels`` 列表规整成下游可直接消费的字典结构。"""
     channels: List[Dict[str, Any]] = []
     for index, raw in enumerate(config.llm_channels or []):
         if not isinstance(raw, dict):
@@ -3244,6 +3498,7 @@ def _normalize_dsa_llm_channels(config: Config) -> List[Dict[str, Any]]:
 
 
 def _channel_keys_for_provider(channels: List[Dict[str, Any]], providers: set[str]) -> List[str]:
+    """收集属于指定 provider 集合的渠道 API key。"""
     keys: List[str] = []
     for channel in channels:
         protocol = _env_text(channel.get("protocol")).lower()
@@ -3259,6 +3514,7 @@ def _channel_keys_for_provider(channels: List[Dict[str, Any]], providers: set[st
 
 
 def _first_channel_base_url(channels: List[Dict[str, Any]], providers: set[str]) -> str:
+    """返回首个匹配 provider 的渠道 base_url，没有匹配时返回空串。"""
     for channel in channels:
         protocol = _env_text(channel.get("protocol")).lower()
         base_url = _env_text(channel.get("base_url"))
@@ -3268,6 +3524,7 @@ def _first_channel_base_url(channels: List[Dict[str, Any]], providers: set[str])
 
 
 def _put_provider_keys(env: Dict[str, str], provider: str, keys: List[str]) -> None:
+    """把 ``keys`` 写入 ``env`` 的 ``PROVIDER_API_KEYS`` 与 ``PROVIDER_API_KEY``。"""
     if not keys:
         return
     env[f"{provider}_API_KEYS"] = ",".join(keys)
@@ -3275,6 +3532,7 @@ def _put_provider_keys(env: Dict[str, str], provider: str, keys: List[str]) -> N
 
 
 def _dedupe_strings(values: Any) -> List[str]:
+    """把任意输入去重成"只含非空字符串"的列表，保留首次出现顺序。"""
     result: List[str] = []
     seen: set[str] = set()
     if not isinstance(values, list):
@@ -3289,6 +3547,7 @@ def _dedupe_strings(values: Any) -> List[str]:
 
 
 def _collect_screening_warning_messages(payload: Dict[str, Any]) -> List[str]:
+    """把 ``warnings`` / ``degradation`` 字段合并、去重，输出统一的告警列表。"""
     warnings: List[str] = []
     seen: set[str] = set()
     for key in ("warnings", "degradation"):
@@ -3301,6 +3560,7 @@ def _collect_screening_warning_messages(payload: Dict[str, Any]) -> List[str]:
 
 
 def _env_text(value: Any) -> str:
+    """把任意值规范成"非空字符串"，过滤掉 ``nan`` / ``none`` / ``null`` 等伪值。"""
     if value is None:
         return ""
     if isinstance(value, float) and not math.isfinite(value):
@@ -3312,6 +3572,7 @@ def _env_text(value: Any) -> str:
 
 
 def _get_dsa_fetcher_manager() -> Any:
+    """懒加载并缓存 DSA 的 ``DataFetcherManager`` 实例（线程安全）。"""
     global _DSA_FETCHER_MANAGER
     if _DSA_FETCHER_MANAGER is None:
         with _DSA_FETCHER_MANAGER_LOCK:
@@ -3323,19 +3584,21 @@ def _get_dsa_fetcher_manager() -> Any:
 
 
 def _fetch_dsa_hotspot_rankings(source: str, limit: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Load DSA's ranking fallback inside the caller's killable subprocess."""
+    """在调用方的可终止子进程内拉取 DSA 的概念/行业排行（top, bottom）。"""
     manager = _get_dsa_fetcher_manager()
     fetch = manager.get_concept_rankings if source == "concept" else manager.get_sector_rankings
     return fetch(limit)
 
 
 def _get_dsa_search_service() -> Any:
+    """返回全局 DSA 搜索服务单例。"""
     from src.search_service import get_search_service
 
     return get_search_service()
 
 
 def get_dsa_daily_history(stock_code: str, *, lookback_days: int = 120) -> Tuple[Any, str]:
+    """从 DSA 历史加载器读取日线 DataFrame 与实际数据源名。"""
     from src.services.history_loader import load_history_df
 
     normalized_code = _env_text(stock_code).zfill(6)
@@ -3344,6 +3607,7 @@ def get_dsa_daily_history(stock_code: str, *, lookback_days: int = 120) -> Tuple
 
 
 def _normalize_dsa_daily_history(raw_df: Any) -> Any:
+    """把 DSA 日线 DataFrame 规整为统一列名（date/open/high/low/close/volume/amount）。"""
     if raw_df is None:
         return None
 
@@ -3387,6 +3651,7 @@ def _normalize_dsa_daily_history(raw_df: Any) -> Any:
 
 
 def _normalize_daily_date_value(value: Any) -> str:
+    """把 ``YYYYMMDD`` 形式的日期转成 ``YYYY-MM-DD``；其它情况原样返回。"""
     text = _env_text(value)
     if len(text) == 8 and text.isdigit():
         return f"{text[:4]}-{text[4:6]}-{text[6:]}"
@@ -3394,6 +3659,7 @@ def _normalize_daily_date_value(value: Any) -> str:
 
 
 def get_dsa_realtime_quote(stock_code: str) -> Dict[str, Any]:
+    """返回单只股票的实时行情字典（NaN/Inf 会被清理）。"""
     manager = _get_dsa_fetcher_manager()
     quote = manager.get_realtime_quote(stock_code, log_final_failure=False)
     if quote is None:
@@ -3405,12 +3671,14 @@ def get_dsa_realtime_quote(stock_code: str) -> Dict[str, Any]:
 
 
 def get_dsa_fundamental_context(stock_code: str) -> Dict[str, Any]:
+    """返回精简后的基本面上下文（只保留 status/data 等关键字段）。"""
     manager = _get_dsa_fetcher_manager()
     context = manager.get_fundamental_context(stock_code, budget_seconds=4.0)
     return _compact_fundamental_context(_remove_non_finite_json_values(_to_plain(context)))
 
 
 def search_dsa_stock_news(stock_code: str, stock_name: str = "", max_results: int = 3) -> Dict[str, Any]:
+    """通过 DSA 搜索服务拉取个股新闻，归一化后返回给选股使用。"""
     service = _get_dsa_search_service()
     if not getattr(service, "is_available", False):
         return {
@@ -3424,7 +3692,7 @@ def search_dsa_stock_news(stock_code: str, stock_name: str = "", max_results: in
 
 
 def search_dsa_stock_events(stock_code: str, stock_name: str = "", max_results: int = 3) -> Dict[str, Any]:
-    """Reuse DSA event search for earnings, reduction and announcement context."""
+    """复用 DSA 事件搜索，覆盖业绩/减持/公告等事件上下文。"""
     service = _get_dsa_search_service()
     if not getattr(service, "is_available", False):
         return {
@@ -3438,6 +3706,7 @@ def search_dsa_stock_events(stock_code: str, stock_name: str = "", max_results: 
 
 
 def _normalize_dsa_search_response(response: Any, *, max_results: int) -> Dict[str, Any]:
+    """把搜索服务的响应对象转成可序列化的字典结构。"""
     results = []
     for item in (getattr(response, "results", []) or [])[:max(0, int(max_results))]:
         results.append(
@@ -3468,6 +3737,7 @@ def get_dsa_candidate_context(
     include_fundamentals: bool = True,
     mode: str = "pre_rank_light",
 ) -> Dict[str, Any]:
+    """预排序阶段使用的轻量级候选上下文入口。"""
     candidate = {"code": stock_code, "name": stock_name, "raw": {}}
     context = _build_dsa_candidate_context(
         candidate,
@@ -3480,6 +3750,7 @@ def get_dsa_candidate_context(
 
 
 def _enrich_candidates_with_dsa(candidates: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """对最终入选候选执行 DSA 后置增广（行情、新闻、事件、基本面）。"""
     enriched_count = 0
     warnings: List[str] = []
     limit = min(len(candidates), DSA_ENRICHMENT_MAX_CANDIDATES)
@@ -3531,6 +3802,7 @@ def _enrich_candidates_with_dsa(candidates: List[Dict[str, Any]]) -> Tuple[List[
 
 
 def _candidate_has_dsa_news(candidate: Dict[str, Any]) -> bool:
+    """判断一个候选是否已经含有 DSA 新闻数据（用于跳过重复增广）。"""
     news_items = candidate.get("dsa_news")
     if isinstance(news_items, list) and any(isinstance(item, dict) for item in news_items):
         return True
@@ -3541,6 +3813,7 @@ def _candidate_has_dsa_news(candidate: Dict[str, Any]) -> bool:
 
 
 def _news_has_results(news: Any) -> bool:
+    """判断一个 ``news`` 字段是否带有真实的搜索结果。"""
     if isinstance(news, dict):
         results = news.get("results")
         return isinstance(results, list) and any(isinstance(item, dict) for item in results)
@@ -3557,6 +3830,7 @@ def _build_dsa_candidate_context(
     include_fundamentals: bool = True,
     profile: str = "post_rank_full",
 ) -> Dict[str, Any]:
+    """按 profile（预排序/后置）拉取行情、新闻、事件、基本面等上下文。"""
     code = _env_text(candidate.get("code"))
     name = _env_text(candidate.get("name"))
     warnings: List[str] = []
@@ -3679,6 +3953,7 @@ def _build_dsa_candidate_context(
 
 
 def _first_non_empty(*values: Any) -> Any:
+    """返回第一个非空（不为 ``None``/``""``）的值；全空时返回 ``None``。"""
     for value in values:
         if value not in (None, ""):
             return value
@@ -3686,6 +3961,7 @@ def _first_non_empty(*values: Any) -> Any:
 
 
 def _compact_fundamental_context(context: Any) -> Dict[str, Any]:
+    """精简基本面上下文，只保留 ``market`` / ``status`` / ``coverage`` 等关键字段。"""
     if not isinstance(context, dict):
         return {}
     compact: Dict[str, Any] = {
@@ -3713,6 +3989,7 @@ def _build_dsa_analysis_summary(
     news: Dict[str, Any],
     events: Optional[Dict[str, Any]] = None,
 ) -> str:
+    """把行情/基本面/新闻/事件拼成一段给前端展示的"分析摘要"文本。"""
     parts: List[str] = []
     price = _first_non_empty(quote.get("price"), candidate.get("price"))
     change_pct = _first_non_empty(quote.get("change_pct"), candidate.get("change_pct"))
@@ -3748,6 +4025,7 @@ def _build_dsa_analysis_summary(
 
 
 def _ensure_supported_market(market: str) -> None:
+    """校验 ``market`` 是否在引擎支持的市场范围内，否则抛出 422。"""
     status = _call_screening_status()
     supported_markets = status.get("supported_markets") or status.get("markets") or status.get("market")
     if not supported_markets:
@@ -3775,6 +4053,7 @@ def _ensure_supported_market(market: str) -> None:
 
 
 def _normalize_candidates(raw: Any) -> List[Dict[str, Any]]:
+    """把上游 pipeline 返回的 candidates 列表统一规整为标准字段结构。"""
     data = _to_plain(raw)
     items = data
     if isinstance(data, dict):
@@ -3788,6 +4067,7 @@ def _normalize_candidates(raw: Any) -> List[Dict[str, Any]]:
 
 
 def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
+    """把单条候选数据（兼容 ``item.raw`` 嵌套）转成对外的标准化结构。"""
     item = _remove_non_finite_json_values(_to_plain(raw))
     if not isinstance(item, dict):
         item = {"code": str(item)}
@@ -3836,6 +4116,7 @@ def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
 
 
 def _extract_dsa_news_from_context(context: Any) -> List[Dict[str, Any]]:
+    """从 ``dsa_context`` 中抽取规范化的新闻列表。"""
     if not isinstance(context, dict):
         return []
     news = context.get("news")
@@ -3851,6 +4132,7 @@ def _extract_dsa_news_from_context(context: Any) -> List[Dict[str, Any]]:
 
 
 def _extract_dsa_events_from_context(context: Any) -> List[Dict[str, Any]]:
+    """从 ``dsa_context`` 中抽取规范化的事件列表。"""
     if not isinstance(context, dict):
         return []
     events = context.get("events")
@@ -3866,6 +4148,7 @@ def _extract_dsa_events_from_context(context: Any) -> List[Dict[str, Any]]:
 
 
 def _extract_dsa_analysis_summary_from_context(context: Any) -> str:
+    """从 ``dsa_context`` 里按优先级提取"分析摘要"字符串。"""
     if not isinstance(context, dict):
         return ""
     for key in ("dsa_analysis_summary", "analysis_summary", "summary"):
@@ -3887,6 +4170,7 @@ def _extract_dsa_analysis_summary_from_context(context: Any) -> str:
 
 
 def _first_present(primary: Dict[str, Any], source: Dict[str, Any], *keys: str) -> Any:
+    """按 ``keys`` 顺序依次从 ``primary`` 与 ``source`` 中取首个非空值。"""
     for key in keys:
         if primary.get(key) is not None:
             return primary.get(key)
@@ -3896,6 +4180,7 @@ def _first_present(primary: Dict[str, Any], source: Dict[str, Any], *keys: str) 
 
 
 def _build_candidate_reason(item: Dict[str, Any]) -> str:
+    """基于 ``post_analysis_summaries`` / ``factor_scores`` 拼一段候选入选理由。"""
     summaries = item.get("post_analysis_summaries")
     if isinstance(summaries, dict):
         summary = next((str(value) for value in summaries.values() if value), "")
@@ -3921,6 +4206,7 @@ def _build_candidate_reason(item: Dict[str, Any]) -> str:
 
 
 def _to_plain(value: Any) -> Any:
+    """把 dataclass / Pydantic / 自定义对象尽量转成纯 Python dict/list/基础类型。"""
     if is_dataclass(value):
         return asdict(value)
     if hasattr(value, "model_dump"):
@@ -3933,6 +4219,7 @@ def _to_plain(value: Any) -> Any:
 
 
 def _remove_non_finite_json_values(value: Any) -> Any:
+    """递归把 ``NaN`` / ``Inf`` 转成 ``None``，保证返回结果可被 JSON 序列化。"""
     if isinstance(value, list):
         return [_remove_non_finite_json_values(item) for item in value]
     if isinstance(value, tuple):

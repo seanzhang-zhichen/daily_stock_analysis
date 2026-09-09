@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Legacy async task service used by Bot-style single-stock analysis.
+"""供 Bot 风格单股分析使用的旧版异步任务服务。
 
-New API task submission mostly goes through ``AnalysisTaskQueue``. This service
-is kept as a smaller compatibility layer for older Bot/web call sites that only
-need a thread-pool task id and in-memory status map.
+新的 API 任务提交大多走 ``AnalysisTaskQueue``。本服务保留为更小的兼容层，
+供仅需要线程池任务 id 与内存态状态映射的旧 Bot/Web 调用点使用。
 """
 
 from __future__ import annotations
@@ -35,7 +34,11 @@ class TaskService:
     _lock = threading.Lock()
 
     def __init__(self, max_workers: int = 3):
-        """Initialize the legacy task map and lazy thread pool."""
+        """初始化任务状态表与延迟创建的线程池。
+
+        Args:
+            max_workers: 线程池最大工作线程数，按需懒加载。
+        """
         self._executor: Optional[ThreadPoolExecutor] = None
         self._max_workers = max_workers
         self._tasks: Dict[str, Dict[str, Any]] = {}
@@ -109,12 +112,12 @@ class TaskService:
         }
 
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """获取任务状态"""
+        """按 task_id 查询任务状态；不存在时返回 None。"""
         with self._tasks_lock:
             return self._tasks.get(task_id)
 
     def list_tasks(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """列出最近的任务"""
+        """按 start_time 倒序列出最近若干条任务记录。"""
         with self._tasks_lock:
             tasks = list(self._tasks.values())
         # 按开始时间倒序
@@ -128,7 +131,7 @@ class TaskService:
         days: int = 30,
         limit: int = 50
     ) -> List[Dict[str, Any]]:
-        """获取分析历史记录"""
+        """从存储层拉取历史分析记录（按股票 / query_id / 时间窗过滤）。"""
         db = get_db()
         records = db.get_analysis_history(code=code, query_id=query_id, days=days, limit=limit)
         return [r.to_dict() for r in records]

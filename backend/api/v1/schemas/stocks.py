@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 class StockQuote(BaseModel):
-    """Normalized real-time quote for a single stock."""
+    """单只股票归一化后的实时行情。"""
     
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")
@@ -27,7 +27,7 @@ class StockQuote(BaseModel):
     update_time: Optional[str] = Field(None, description="更新时间")
     
     class Config:
-        """Document OpenAPI example metadata for realtime quote responses."""
+        """OpenAPI 中为实时行情响应提供示例元数据。"""
         json_schema_extra = {
             "example": {
                 "stock_code": "600519",
@@ -47,8 +47,8 @@ class StockQuote(BaseModel):
 
 
 class KLineData(BaseModel):
-    """One OHLCV data point in a historical K-line series."""
-    
+    """历史 K 线序列中的单根 OHLCV 数据点。"""
+
     date: str = Field(..., description="日期")
     open: float = Field(..., description="开盘价")
     high: float = Field(..., description="最高价")
@@ -57,9 +57,9 @@ class KLineData(BaseModel):
     volume: Optional[float] = Field(None, description="成交量")
     amount: Optional[float] = Field(None, description="成交额")
     change_percent: Optional[float] = Field(None, description="涨跌幅 (%)")
-    
+
     class Config:
-        """Document OpenAPI example metadata for one K-line data point."""
+        """OpenAPI 中为单根 K 线数据点提供示例元数据。"""
         json_schema_extra = {
             "example": {
                 "date": "2024-01-01",
@@ -75,7 +75,7 @@ class KLineData(BaseModel):
 
 
 class ExtractItem(BaseModel):
-    """One stock candidate extracted from an uploaded image."""
+    """从上传图片中识别出的单只股票候选。"""
 
     code: Optional[str] = Field(None, description="股票代码，None 表示解析失败")
     name: Optional[str] = Field(None, description="股票名称（如有）")
@@ -83,22 +83,22 @@ class ExtractItem(BaseModel):
 
 
 class ExtractFromImageResponse(BaseModel):
-    """Response for image-based stock code extraction."""
+    """基于图片识别股票代码接口的响应。"""
 
     items: List[ExtractItem] = Field(default_factory=list, description="提取结果明细（代码+名称+置信度）")
     raw_text: Optional[str] = Field(None, description="原始 LLM 响应（调试用）")
 
 
 class StockHistoryResponse(BaseModel):
-    """Historical quote series for one stock and one requested period."""
-    
+    """单只股票在某一周期的历史行情序列响应。"""
+
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")
     period: str = Field(..., description="K 线周期")
     data: List[KLineData] = Field(default_factory=list, description="K 线数据列表")
-    
+
     class Config:
-        """Document OpenAPI example metadata for K-line series responses."""
+        """OpenAPI 中为 K 线序列响应提供示例元数据。"""
         json_schema_extra = {
             "example": {
                 "stock_code": "600519",

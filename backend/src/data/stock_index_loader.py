@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Load and cache stock-code/name lookup data from the persisted stock index."""
+"""从持久化的股票索引加载并缓存股票代码/名称查找数据。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _STOCK_INDEX_CACHE_LOCK = RLock()
 
 
 def _add_lookup_key(keys: set[str], value: str) -> None:
-    """Add raw and uppercase variants of one non-empty lookup key."""
+    """为单个非空查找键添加原始与大写两种变体。"""
     candidate = str(value or "").strip()
     if not candidate:
         return
@@ -26,7 +26,7 @@ def _add_lookup_key(keys: set[str], value: str) -> None:
 
 
 def _build_lookup_keys(canonical_code: str, display_code: str) -> Iterable[str]:
-    """Build code variants used to match A-share, HK and suffixed symbols."""
+    """构造用于匹配 A 股、港股及带后缀代码的代码变体。"""
     keys: set[str] = set()
     _add_lookup_key(keys, canonical_code)
     _add_lookup_key(keys, display_code)
@@ -55,7 +55,7 @@ def _build_lookup_keys(canonical_code: str, display_code: str) -> Iterable[str]:
 
 
 def get_stock_name_index_map() -> Dict[str, str]:
-    """Lazily load and cache the generated stock-name index."""
+    """惰性加载并缓存生成的股票名称索引。"""
     global _STOCK_INDEX_CACHE
 
     if _STOCK_INDEX_CACHE is not None:
@@ -86,7 +86,7 @@ def get_stock_name_index_map() -> Dict[str, str]:
 
 
 def get_index_stock_name(stock_code: str) -> str | None:
-    """Resolve a stock name from the database stock index."""
+    """从数据库股票索引中解析股票名称。"""
     code = str(stock_code or "").strip()
     if not code:
         return None
@@ -101,7 +101,7 @@ def get_index_stock_name(stock_code: str) -> str | None:
 
 
 def _clear_stock_index_cache_for_tests() -> None:
-    """Reset the module cache so tests can reload stock index rows."""
+    """重置模块缓存，便于测试重新加载股票索引数据。"""
     global _STOCK_INDEX_CACHE
     with _STOCK_INDEX_CACHE_LOCK:
         _STOCK_INDEX_CACHE = None

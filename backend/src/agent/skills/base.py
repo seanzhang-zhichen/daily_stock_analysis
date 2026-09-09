@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""
-Trading skill base classes and SkillManager.
+"""交易技能（Skill）基类与 SkillManager。
 
-Skills are pluggable trading analysis modules defined in **natural language**
-(YAML files). Each skill describes a common or custom trading pattern
-(e.g., 龙头策略, 缩量回踩, 均线金叉) used for analysis and push notifications.
+技能以自然语言形式定义在 YAML 文件中，每条对应一种常见或自定义的交易模式
+（例如：龙头策略、缩量回踩、均线金叉），用于股票分析与推送通知的判断输入。
+最终用户无需写 Python 代码即可通过新增 YAML 文件扩展自身可用的技能集；
+兼容性方面，内置 YAML 文件仍保留在 ``strategies/`` 目录下。
 
-Users can write custom skills by creating a YAML file — no Python code needed.
-The built-in YAML files still live under ``strategies/`` for compatibility.
+主要导出：
+- :class:`Skill` 单条技能的 dataclass 表示
+- :class:`SkillManager` 技能注册/激活/组合指令生成器
+- :func:`load_skill_from_yaml` / :func:`load_skill_from_markdown` 单文件加载
+- :func:`load_skills_from_directory` 目录批量加载
 """
 
 import logging
@@ -19,41 +22,41 @@ from typing import Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
-# Built-in skill YAML directory under backend/strategies.
+# 内置技能 YAML 目录位于 backend/strategies；通过相对路径回溯到仓库的 strategies/。
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "strategies"
 
 
 @dataclass
 class Skill:
-    """A trading skill that can be injected into the agent prompt.
+    """可注入到 Agent 提示词的交易技能条目。
 
-    Each skill represents a common or custom trading pattern used
-    for stock analysis and push notifications. Strategies are typically
-    loaded from YAML files written in natural language.
+    每条技能代表一种常见或自定义的交易模式，用于个股分析与推送通知；
+    通常通过自然语言描述的 YAML 文件加载得到。
 
     Attributes:
-        name: Unique strategy identifier (e.g., "dragon_head").
-        display_name: Human-readable name (e.g., "龙头策略").
-        description: Brief description of when to apply this strategy.
-        instructions: Detailed natural language instructions injected into the system prompt.
-        category: Skill category — "trend" (趋势), "pattern" (形态), "reversal" (反转), "framework" (框架).
-        core_rules: List of core trading rule numbers this strategy relates to (1-7).
-        required_tools: List of tool names this skill depends on.
-        allowed_tools: Optional allowlist metadata from SKILL.md frontmatter.
-        aliases: Optional alias phrases used by NL selectors / bot commands.
-        enabled: Whether this skill is currently active.
-        source: Origin of this skill — "builtin" or file path of a custom definition.
-        entrypoint: Definition file path (YAML or SKILL.md).
-        bundle_dir: Skill bundle directory when loaded from SKILL.md.
-        disable_model_invocation: Whether the model should avoid auto-invoking this skill.
-        user_invocable: Whether the skill should be exposed in user-facing selectors.
-        default_active: Whether this skill participates in the default activation set.
-        default_router: Whether this skill participates in router fallback selection.
-        default_priority: Ordering hint for defaults / selectors (lower comes first).
-        market_regimes: Optional market regime tags used by the skill router.
-        execution_context: Inline/fork execution hint from frontmatter.
-        subagent_type: Optional subagent type hint from frontmatter.
-        preferred_model: Optional model hint from frontmatter.
+        name: 唯一策略标识（如 ``"dragon_head"``）。
+        display_name: 面向用户的展示名（如 ``"龙头策略"``）。
+        description: 简要说明该策略的适用场景。
+        instructions: 详细自然语言描述，会拼接到 system prompt 中。
+        category: 技能类别——``"trend"``（趋势）、``"pattern"``（形态）、
+            ``"reversal"``（反转）、``"framework"``（框架）。
+        core_rules: 与本策略关联的核心交易理念编号（1-7）。
+        required_tools: 本策略依赖的工具名列表。
+        allowed_tools: 来自 SKILL.md frontmatter 的可选工具白名单元数据。
+        aliases: 用于 NL 选择器 / 机器人命令的别名短语。
+        enabled: 当前是否处于激活状态。
+        source: 技能来源——``"builtin"`` 或自定义定义文件的绝对路径。
+        entrypoint: 定义文件路径（YAML 或 SKILL.md）。
+        bundle_dir: 从 SKILL.md 加载时所处的技能 bundle 目录。
+        disable_model_invocation: 是否禁止模型自动调用此技能。
+        user_invocable: 是否在面向用户的选择器中暴露此技能。
+        default_active: 是否纳入默认激活集合。
+        default_router: 是否纳入路由兜底选择集合。
+        default_priority: 默认排序提示（值越小越靠前）。
+        market_regimes: 技能路由器使用的可选市场状态标签。
+        execution_context: 来自 frontmatter 的 inline/fork 执行提示。
+        subagent_type: 来自 frontmatter 的可选子代理类型提示。
+        preferred_model: 来自 frontmatter 的可选模型提示。
     """
     name: str
     display_name: str
@@ -79,11 +82,12 @@ class Skill:
     preferred_model: str = ""
 
 
+# 匹配 SKILL.md 顶部 YAML frontmatter；DOTALL 用于跨行匹配到结束分隔符。
 _FRONTMATTER_RE = re.compile(r"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n?(.*)$", re.DOTALL)
 
 
 def _coerce_string_list(value: object) -> List[str]:
-    """Coerce YAML/frontmatter scalar or list values into a clean string list."""
+    """把 YAML/frontmatter 中的标量或列表值规整成干净的字符串列表。"""
     if value is None:
         return []
     if isinstance(value, str):
@@ -94,7 +98,7 @@ def _coerce_string_list(value: object) -> List[str]:
 
 
 def _coerce_bool(value: object, default: bool = False) -> bool:
-    """Coerce common YAML/string boolean spellings into bool."""
+    """把 YAML/字符串形式的常见布尔写法规整为 ``bool``。"""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -109,7 +113,7 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 
 
 def _coerce_int(value: object, default: int = 100) -> int:
-    """Coerce priority-like values into int with a safe default."""
+    """把 priority 类数值规整为 ``int``，解析失败时回退到安全默认值。"""
     if value is None:
         return default
     try:
@@ -119,7 +123,10 @@ def _coerce_int(value: object, default: int = 100) -> int:
 
 
 def _parse_skill_frontmatter(raw_text: str) -> tuple[Dict[str, object], str]:
-    """Split a SKILL.md file into YAML frontmatter metadata and Markdown body."""
+    """把 SKILL.md 文件拆成 YAML frontmatter 元数据与 Markdown 正文两部分。
+
+    若文件无 frontmatter，则返回空字典与去首尾空白后的原文。
+    """
     import yaml
 
     match = _FRONTMATTER_RE.match(raw_text)
@@ -134,31 +141,33 @@ def _parse_skill_frontmatter(raw_text: str) -> tuple[Dict[str, object], str]:
 
 
 def _infer_skill_description(instructions: str) -> str:
-    """Use the first Markdown paragraph as a fallback skill description."""
+    """当 frontmatter 没写 description 时，用 instructions 首段作为兜底描述。"""
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", instructions or "") if part.strip()]
     if not paragraphs:
         return ""
     first = re.sub(r"\s+", " ", paragraphs[0]).strip()
+    # 截断到 280 字符以内，避免 description 过长污染后续提示词。
     return first[:280]
 
 
 def load_skill_from_yaml(filepath: Union[str, Path]) -> Skill:
-    """Load a single Skill from a YAML file.
+    """从单个 YAML 文件加载一个 :class:`Skill`。
 
-    The YAML file must contain at minimum: ``name``, ``display_name``,
-    ``description``, and ``instructions``. All values are natural language text.
+    YAML 必须至少包含 ``name``、``display_name``、``description``、
+    ``instructions`` 四个字段，所有值均为自然语言文本。
 
     Args:
-        filepath: Path to the ``.yaml`` file.
+        filepath: ``.yaml`` / ``.yml`` 文件的路径。
 
     Returns:
-        A ``Skill`` instance with ``enabled=False``.
+        一个 ``enabled=False`` 的 :class:`Skill` 实例。
 
     Raises:
-        ValueError: If required fields are missing or the file is invalid.
-        FileNotFoundError: If the file does not exist.
+        ValueError: 必填字段缺失或文件内容不合法时抛出。
+        FileNotFoundError: 文件不存在时抛出。
     """
-    import yaml  # lazy import — only needed when loading skill YAML
+    # 延迟导入：仅在加载技能时才需要 yaml，避免模块导入时的强制依赖。
+    import yaml
 
     filepath = Path(filepath)
     if not filepath.exists():
@@ -170,7 +179,7 @@ def load_skill_from_yaml(filepath: Union[str, Path]) -> Skill:
     if not isinstance(data, dict):
         raise ValueError(f"Invalid skill file (expected YAML mapping): {filepath}")
 
-    # Validate required fields
+    # 校验必填字段，缺失时立即抛错，避免后续访问 data[...] 触发 KeyError。
     required_fields = ["name", "display_name", "description", "instructions"]
     missing = [fld for fld in required_fields if not data.get(fld)]
     if missing:
@@ -198,6 +207,7 @@ def load_skill_from_yaml(filepath: Union[str, Path]) -> Skill:
         default_router=_coerce_bool(data.get("default_router"), False),
         default_priority=_coerce_int(data.get("default_priority"), 100),
         market_regimes=(
+            # 兼容 kebab-case 与 snake_case 两种 key 命名。
             _coerce_string_list(data.get("market_regimes"))
             or _coerce_string_list(data.get("market-regimes"))
         ),
@@ -208,7 +218,11 @@ def load_skill_from_yaml(filepath: Union[str, Path]) -> Skill:
 
 
 def load_skill_from_markdown(filepath: Union[str, Path]) -> Skill:
-    """Load a single skill from a `SKILL.md` bundle entrypoint."""
+    """从 ``SKILL.md`` bundle 入口加载一条技能。
+
+    文件由 YAML frontmatter（描述元信息）+ Markdown 正文（实际策略说明）组成；
+    frontmatter 缺字段时会从文件名/正文首段做兜底推断。
+    """
     filepath = Path(filepath)
     if not filepath.exists():
         raise FileNotFoundError(f"Skill file not found: {filepath}")
@@ -225,12 +239,14 @@ def load_skill_from_markdown(filepath: Union[str, Path]) -> Skill:
         or skill_name
     ).strip()
     description = str(
+        # 缺 description 时用正文首段兜底，避免 SKILL.md 写得太简略导致空描述。
         metadata.get("description")
         or _infer_skill_description(instructions)
     ).strip()
     if not skill_name or not description:
         raise ValueError(f"Skill file {filepath.name} missing required name/description")
 
+    # 同时支持 kebab-case 与 snake_case 两种 key 的兼容写法。
     allowed_tools = _coerce_string_list(metadata.get("allowed-tools"))
     if not allowed_tools:
         allowed_tools = _coerce_string_list(metadata.get("allowed_tools"))
@@ -277,17 +293,16 @@ def load_skill_from_markdown(filepath: Union[str, Path]) -> Skill:
 
 
 def load_skills_from_directory(directory: Union[str, Path]) -> List[Skill]:
-    """Load all skills from YAML files in a directory.
+    """从一个目录下加载全部技能文件。
 
-    Scans for top-level ``*.yaml`` / ``*.yml`` compatibility files and
-    nested ``SKILL.md`` bundles, sorted alphabetically.
-    Skips files that fail to parse (logs a warning).
+    扫描顶层 ``*.yaml`` / ``*.yml`` 兼容文件，以及任意深度的 ``SKILL.md`` bundle，
+    按文件名字母序排序；解析失败的文件会被跳过并打 warning 日志。
 
     Args:
-        directory: Path to the directory containing skill definitions.
+        directory: 含技能定义文件的目录路径。
 
     Returns:
-        List of ``Skill`` instances (all disabled by default).
+        :class:`Skill` 实例列表（默认全部 ``enabled=False``）。
     """
     directory = Path(directory)
     if not directory.is_dir():
@@ -298,6 +313,7 @@ def load_skills_from_directory(directory: Union[str, Path]) -> List[Skill]:
     yaml_files = sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml"))
     markdown_files = sorted(directory.rglob("SKILL.md"))
 
+    # 先加载顶层 YAML 兼容文件，再递归加载 SKILL.md bundle；失败仅记日志、不影响整体。
     for filepath in yaml_files:
         try:
             skill = load_skill_from_yaml(filepath)
@@ -318,40 +334,40 @@ def load_skills_from_directory(directory: Union[str, Path]) -> List[Skill]:
 
 
 class SkillManager:
-    """Manages trading skills and generates combined prompt instructions.
+    """交易技能管理器：注册、激活并产出可拼接到提示词的组合指令。
 
-    Supports loading skills from:
-    1. YAML files in the built-in ``strategies/`` directory
-    2. YAML files in a user-specified custom directory
-    3. Programmatic ``Skill`` instances (backward compatible)
+    支持三种技能来源：
+    1. 内置 ``strategies/`` 目录下的 YAML 文件；
+    2. 用户自定义目录下的 YAML / SKILL.md 文件；
+    3. 直接以 :class:`Skill` 实例程序化注册（向后兼容）。
 
-    Usage::
+    使用示例::
 
         manager = SkillManager()
-        # Load built-in + custom skills from YAML
+        # 加载内置 + 自定义技能
         manager.load_builtin_skills()
         manager.load_custom_skills("./my_skills")
-        # Or register programmatically
+        # 也可以程序化注册
         manager.register(some_skill)
-        # Activate and generate prompt
+        # 激活并生成提示词片段
         manager.activate(["dragon_head", "shrink_pullback"])
         instructions = manager.get_skill_instructions()
     """
 
     def __init__(self):
-        """Create an empty in-memory skill registry."""
+        """创建一个内存中的空技能注册表。"""
         self._skills: Dict[str, Skill] = {}
 
     def register(self, skill: Skill) -> None:
-        """Register a skill (programmatic or YAML-loaded)."""
+        """注册一条技能（无论是程序化构造还是从 YAML 加载得到）。"""
         self._skills[skill.name] = skill
         logger.debug(f"Registered skill: {skill.name} ({skill.display_name})")
 
     def load_builtin_skills(self) -> int:
-        """Load all built-in skills from the compatibility `strategies/` directory.
+        """从兼容性 ``strategies/`` 目录加载全部内置技能。
 
         Returns:
-            Number of skills loaded.
+            实际加载到的技能数量。
         """
         skills_dir = _BUILTIN_SKILLS_DIR
         if not skills_dir.is_dir():
@@ -360,6 +376,7 @@ class SkillManager:
 
         skills = load_skills_from_directory(skills_dir)
         for skill in skills:
+            # 来自该目录的技能统一标记为 builtin，便于在元信息中区分来源。
             skill.source = "builtin"
             self.register(skill)
 
@@ -367,16 +384,13 @@ class SkillManager:
         return len(skills)
 
     def load_custom_skills(self, directory: Union[str, Path, None]) -> int:
-        """Load custom skills from a user-specified directory.
-
-        Custom skills override built-in ones if names conflict.
+        """从用户自定义目录加载技能；同名时自定义技能覆盖内置。
 
         Args:
-            directory: Path to the custom skill directory.
-                       If None or empty, does nothing.
+            directory: 自定义技能目录路径。若为 ``None`` 或为空则跳过。
 
         Returns:
-            Number of skills loaded.
+            实际加载到的技能数量。
         """
         if not directory:
             return 0
@@ -398,32 +412,33 @@ class SkillManager:
         return len(skills)
 
     def load_builtin_strategies(self) -> int:
-        """Compatibility wrapper for older call sites."""
+        """旧调用点使用的兼容别名，内部复用 :meth:`load_builtin_skills`。"""
         return self.load_builtin_skills()
 
     def load_custom_strategies(self, directory: Union[str, Path, None]) -> int:
-        """Compatibility wrapper for older call sites."""
+        """旧调用点使用的兼容别名，内部复用 :meth:`load_custom_skills`。"""
         return self.load_custom_skills(directory)
 
     def get(self, name: str) -> Optional[Skill]:
-        """Get a skill by name."""
+        """按名称取一条技能，未找到时返回 ``None``。"""
         return self._skills.get(name)
 
     def list_skills(self) -> List[Skill]:
-        """List all registered skills."""
+        """列出所有已注册技能（含未激活的）。"""
         return list(self._skills.values())
 
     def list_active_skills(self) -> List[Skill]:
-        """List only active (enabled) skills."""
+        """仅列出当前处于激活状态（``enabled=True``）的技能。"""
         return [s for s in self._skills.values() if s.enabled]
 
     def activate(self, skill_names: List[str]) -> None:
-        """Activate specific skills by name. Deactivate all others.
+        """按名称激活指定技能，并停用列表外的其他技能。
 
         Args:
-            skill_names: List of skill names to activate.
-                         If ["all"], activate everything.
+            skill_names: 要激活的技能名称列表。传 ``["all"]`` 或包含 ``"all"``
+                时全部激活。
         """
+        # 特殊值 "all"：一键激活全部技能，通常用于调试或无差别推送场景。
         if skill_names == ["all"] or "all" in skill_names:
             for s in self._skills.values():
                 s.enabled = True
@@ -437,16 +452,15 @@ class SkillManager:
         logger.info(f"Activated skills: {activated}")
 
     def get_skill_instructions(self) -> str:
-        """Generate combined instruction text for all active skills.
+        """将当前所有激活技能汇总为可注入到 Agent 提示词的指令字符串。
 
-        Returns a formatted string ready to be injected into the agent
-        system prompt, organized by category.
+        内部按技能类别分组渲染：已知类别使用中文标签，未知类别沿用原 key。
         """
         active = self.list_active_skills()
         if not active:
             return ""
 
-        # Group by category
+        # 按类别分组；已知英文 key 映射到中文标签，便于 LLM 阅读。
         categories = {"trend": "趋势", "pattern": "形态", "reversal": "反转", "framework": "框架"}
         grouped: Dict[str, List[Skill]] = {}
         for skill in active:
@@ -455,7 +469,7 @@ class SkillManager:
 
         parts = []
         idx = 1
-        # Render known categories in fixed order, then any remaining custom categories
+        # 先按固定顺序渲染四个已知类别，再把其他自定义类别追加到末尾。
         ordered_keys = ["trend", "pattern", "reversal", "framework"]
         for cat_key in ordered_keys + [k for k in grouped if k not in ordered_keys]:
             skills_in_cat = grouped.get(cat_key, [])
@@ -480,7 +494,7 @@ class SkillManager:
         return "\n".join(parts)
 
     def get_required_tools(self) -> List[str]:
-        """Get all tool names required by active skills."""
+        """汇总当前所有激活技能声明依赖的工具名列表（去重后）。"""
         tools: set = set()
         for s in self.list_active_skills():
             tools.update(s.required_tools)

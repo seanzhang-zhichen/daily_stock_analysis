@@ -23,7 +23,7 @@ class LLMUsageMixin:
         total_tokens: int,
         stock_code: Optional[str] = None,
     ) -> None:
-        """Append one LLM call record to llm_usage."""
+        """追加一条 LLM 调用记录到 ``llm_usage`` 表。"""
         row = LLMUsage(
             call_type=call_type,
             model=model or "unknown",
@@ -40,12 +40,14 @@ class LLMUsageMixin:
         from_dt: datetime,
         to_dt: datetime,
     ) -> Dict[str, Any]:
-        """Return aggregated token usage between from_dt and to_dt.
+        """汇总 ``[from_dt, to_dt]`` 时间窗内的 LLM token 用量。
 
-        Returns a dict with keys:
-          total_calls, total_tokens,
-          by_call_type: list of {call_type, calls, total_tokens},
-          by_model:     list of {model, calls, total_tokens}
+        返回字典字段::
+
+            total_calls / total_prompt_tokens / total_completion_tokens /
+            total_tokens：全局汇总
+            by_call_type：按 ``call_type`` 分组的统计列表
+            by_model：按 ``model`` 分组的统计列表（含 max_total_tokens）
         """
         with self.session_scope() as session:
             base_filter = and_(
@@ -126,7 +128,8 @@ class LLMUsageMixin:
         to_dt: datetime,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """Return newest usage records within a reporting window."""
+        """返回 ``[from_dt, to_dt]`` 窗口内最近的 LLM 用量记录（按时间倒序）。"""
+        # limit 强制在 [1, 200] 之间, 防止异常输入拖垮接口
         normalized_limit = max(1, min(int(limit or 50), 200))
         with self.session_scope() as session:
             rows = session.execute(

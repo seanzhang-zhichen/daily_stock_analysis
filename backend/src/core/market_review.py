@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Market review orchestration for A-share, HK, and US daily recaps.
+"""大盘复盘编排模块（覆盖 A股、港股、美股每日复盘）。
 
-This module is the CLI/API/Bot-facing wrapper around ``MarketAnalyzer``. It
-normalizes region selection, persists the generated recap into the same history
-table as stock analyses, saves a markdown file, and optionally sends a
-notification. Data collection and prompt construction stay in ``MarketAnalyzer``.
+本模块是 ``MarketAnalyzer`` 面向 CLI/API/Bot 的封装层。它负责归一化区域选择，
+将生成的复盘写入与个股分析相同的历史表，保存 markdown 文件，并可选择性推送通知。
+数据采集与提示词（prompt）构造仍保留在 ``MarketAnalyzer`` 中。
 """
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 import uuid
@@ -22,28 +22,81 @@ from src.analyzer import AnalysisResult, GeminiAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# 复写进历史表的固定代码与报告类型，用于把大盘复盘与个股分析区分开。
 MARKET_REVIEW_HISTORY_CODE = "MARKET"
 MARKET_REVIEW_REPORT_TYPE = "market_review"
+
+
+@dataclass
+class MarketReviewRunResult:
+    """为 API 调用方保留的结构化结果，同时维持 Markdown 兼容。"""
+
+    report: str
+    market_review_payload: Dict[str, Any] = field(default_factory=dict)
+
+
+def _coerce_market_review_payload(review_result: Any, *, region: str, report: str) -> Dict[str, Any]:
+    """取出结构化 payload；缺失时用单 section 的兼容结构兜底。"""
+    payload = getattr(review_result, "structured_payload", None)
+    if isinstance(payload, dict) and payload:
+        return payload
+    return {
+        "version": 1,
+        "kind": MARKET_REVIEW_REPORT_TYPE,
+        "region": region,
+        "title": "",
+        "sections": [{"key": "full_review", "title": "Review", "markdown": report or ""}],
+        "markdown_report": report or "",
+    }
+
+
+def _build_market_review_payload(
+    *, review_report: str, payloads: Dict[str, Dict[str, Any]], region: str, language: str
+) -> Dict[str, Any]:
+    """按市场数组装复盘 payload：单市场内联其详情，多市场按 markets 分桶。"""
+    if len(payloads) == 1:
+        payload = dict(next(iter(payloads.values())))
+        payload.update({
+            "version": payload.get("version") or 1,
+            "kind": MARKET_REVIEW_REPORT_TYPE,
+            "region": region,
+            "language": payload.get("language") or normalize_report_language(language),
+            "markdown_report": review_report,
+        })
+        return payload
+    return {
+        "version": 1,
+        "kind": MARKET_REVIEW_REPORT_TYPE,
+        "region": region,
+        "language": normalize_report_language(language),
+        "markets": payloads,
+        "markdown_report": review_report,
+    }
+# （市场键, 标题文案键, 中文名）三元组，数组顺序即多市场报告的拼接顺序。
 _MARKET_REVIEW_MARKETS = [('cn', 'cn_title', 'A股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股'), ('jp', 'jp_title', '日股'), ('kr', 'kr_title', '韩股')]
 
 
 def _run_daily_review_with_snapshot(
     market_analyzer: MarketAnalyzer,
-) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Return a report and its same-overview Market Light snapshot.
+) -> Tuple[str, Optional[Dict[str, Any]], Any]:
+    """返回一份复盘报告及其同视角的 Market Light 快照。
 
-    The fallback keeps compatibility with injected analyzers that only expose
-    the historical ``run_daily_review`` method.
+    该兜底逻辑用于兼容仅暴露历史 ``run_daily_review`` 方法的注入式分析器。
     """
     runner = type(market_analyzer).__dict__.get("run_daily_review_with_snapshot")
     if callable(runner):
-        report, snapshot = runner(market_analyzer)
-        return report, snapshot if isinstance(snapshot, dict) and snapshot else None
-    return market_analyzer.run_daily_review(), None
+        result = runner(market_analyzer)
+        if hasattr(result, "report"):
+            snapshot = getattr(result, "market_light_snapshot", None)
+            return result.report, snapshot if isinstance(snapshot, dict) and snapshot else None, result
+        report, snapshot = result
+        return report, snapshot if isinstance(snapshot, dict) and snapshot else None, result
+    report = market_analyzer.run_daily_review()
+    return report, None, None
 
 
 def _get_market_review_text(language: str) -> dict[str, str]:
-    """Return localized titles used by file output, push content, and sections."""
+    """返回本地化标题，用于文件输出、推送文案与各市场分节标题。"""
     normalized = normalize_report_language(language)
     if normalized == "en":
         return {
@@ -73,14 +126,14 @@ def run_market_review(
     merge_notification: bool = False,
     override_region: Optional[str] = None,
     query_id: Optional[str] = None,
+    return_structured: bool = False,
     save_report_file: bool = True,
     persist_history: bool = True,
-) -> Optional[str]:
+) -> Optional[str] | Optional[MarketReviewRunResult]:
     """执行大盘复盘分析。
 
-    ``merge_notification`` is used by the main stock-analysis flow: market
-    review should still be generated and persisted, but the notification is
-    delayed so individual-stock and market-review content can be pushed once.
+    ``merge_notification`` 供个股主分析流程使用：此时大盘复盘仍需生成并落库，
+    但推送会延后，以便个股与大盘内容合并后一次性发出。
 
     Args:
         notifier: 通知服务
@@ -105,8 +158,8 @@ def run_market_review(
     _ALL_MARKETS = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
     _VALID_SINGLES = {'cn', 'us', 'hk'}
 
-    # Accept both the legacy "both" flag and the newer comma-joined subset.
-    # Invalid entries are ignored so one bad token does not block valid regions.
+    # 同时兼容历史遗留的 "both" 标记与新式的逗号分隔子集（如 "cn,us"）。
+    # 非法片段直接忽略，避免单个错误 token 导致整个复盘被跳过。
     if ',' in region:
         run_markets = [m.strip() for m in region.split(',') if m.strip() in _VALID_SINGLES]
     elif region == 'both':
@@ -121,6 +174,7 @@ def run_market_review(
             # 多市场顺序执行，合并报告
             parts = []
             market_light_snapshots: Dict[str, Dict[str, Any]] = {}
+            market_review_payloads: Dict[str, Dict[str, Any]] = {}
             for mkt, title_key, label in _ALL_MARKETS:
                 if mkt not in run_markets:
                     continue
@@ -128,9 +182,12 @@ def run_market_review(
                 mkt_analyzer = MarketAnalyzer(
                     search_service=search_service, analyzer=analyzer, region=mkt
                 )
-                mkt_report, market_light_snapshot = _run_daily_review_with_snapshot(mkt_analyzer)
+                mkt_report, market_light_snapshot, review_result = _run_daily_review_with_snapshot(mkt_analyzer)
                 if market_light_snapshot is not None:
                     market_light_snapshots[mkt] = market_light_snapshot
+                market_review_payloads[mkt] = _coerce_market_review_payload(
+                    review_result, region=mkt, report=mkt_report
+                )
                 if mkt_report:
                     parts.append(f"{review_text[title_key]}\n\n{mkt_report}")
             if parts:
@@ -143,14 +200,23 @@ def run_market_review(
                 analyzer=analyzer,
                 region=region,
             )
-            review_report, market_light_snapshot = _run_daily_review_with_snapshot(market_analyzer)
+            review_report, market_light_snapshot, review_result = _run_daily_review_with_snapshot(market_analyzer)
             market_light_snapshots = (
                 {region: market_light_snapshot}
                 if market_light_snapshot is not None
                 else {}
             )
+            market_review_payloads = {
+                region: _coerce_market_review_payload(review_result, region=region, report=review_report)
+            }
         
         if review_report:
+            market_review_payload = _build_market_review_payload(
+                review_report=review_report,
+                payloads=market_review_payloads,
+                region=','.join(run_markets),
+                language=getattr(config, "report_language", "zh"),
+            )
             # 保存报告到文件
             date_str = datetime.now().strftime('%Y%m%d')
             report_filename = f"market_review_{date_str}.md"
@@ -170,6 +236,7 @@ def run_market_review(
                     config=config,
                     query_id=query_id,
                     market_light_snapshots=market_light_snapshots,
+                    market_review_payload=market_review_payload,
                 )
             
             # 推送通知（合并模式下跳过，由 main 层统一发送）
@@ -187,6 +254,11 @@ def run_market_review(
             elif not send_notification:
                 logger.info("已跳过推送通知 (--no-notify)")
             
+            if return_structured:
+                return MarketReviewRunResult(
+                    report=review_report,
+                    market_review_payload=market_review_payload,
+                )
             return review_report
         
     except Exception as e:
@@ -203,12 +275,12 @@ def _persist_market_review_history(
     config: object,
     query_id: Optional[str] = None,
     market_light_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+    market_review_payload: Optional[Dict[str, Any]] = None,
 ) -> int:
-    """Persist market review output into the existing analysis history table.
+    """将大盘复盘输出持久化到既有的分析历史表（AnalysisResult）。
 
-    Market recaps reuse ``AnalysisResult`` so API/history consumers do not need
-    a separate storage contract. Persistence is best-effort: failures are logged
-    and must not prevent report-file generation or notifications.
+    复盘复用 ``AnalysisResult`` 结构，使 API/历史消费者无需另建存储契约。持久化采用
+    尽力而为（best-effort）策略：失败时仅记录日志，绝不能阻断报告文件生成或通知发送。
     """
     try:
         from src.storage import DatabaseManager
@@ -227,6 +299,7 @@ def _persist_market_review_history(
         result = AnalysisResult(
             code=MARKET_REVIEW_HISTORY_CODE,
             name=stock_name,
+            # 复盘本身没有情绪分，用中性值 50 占位，避免前端出现"看空/看多"误读
             sentiment_score=50,
             trend_prediction=trend_prediction,
             operation_advice=operation_advice,
@@ -245,6 +318,8 @@ def _persist_market_review_history(
         }
         if market_light_snapshots:
             context_snapshot["market_light_snapshots"] = market_light_snapshots
+        if market_review_payload:
+            context_snapshot["market_review_payload"] = market_review_payload
 
         saved = DatabaseManager.get_instance().save_analysis_history(
             result=result,
@@ -265,7 +340,7 @@ def _persist_market_review_history(
 
 
 def _summarize_market_review(review_report: str, report_language: str) -> str:
-    """Extract a compact history summary from the first meaningful report line."""
+    """从报告首条有效行提取一段精简的历史摘要（取前 200 字）。"""
     for line in (review_report or "").splitlines():
         text = line.strip().lstrip("#").strip()
         if text and not text.startswith("---") and not text.startswith(">"):

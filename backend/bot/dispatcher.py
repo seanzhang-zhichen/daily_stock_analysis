@@ -238,13 +238,14 @@ class CommandDispatcher:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
+            # 当前线程没有事件循环，可以直接同步执行，避免线程切换开销
             return self._dispatch_sync(message)
 
         result_holder: Dict[str, BotResponse] = {}
         error_holder: Dict[str, BaseException] = {}
 
         def _runner() -> None:
-            """Run sync dispatch in a worker when caller already owns an event loop."""
+            """当调用方已持有事件循环时, 在工作线程里同步执行分发。"""
             try:
                 result_holder["response"] = self._dispatch_sync(message)
             except BaseException as exc:  # pragma: no cover
@@ -260,7 +261,7 @@ class CommandDispatcher:
         return result_holder.get("response", BotResponse.error_response("命令执行失败"))
 
     def _prepare_dispatch(self, message: BotMessage) -> tuple[Optional[str], List[str], Optional[BotCommand], Optional[BotResponse]]:
-        """Run shared dispatch pre-checks for sync/async entrypoints."""
+        """为同步/异步分发入口统一执行前置检查（限流、命令解析、参数校验、权限校验）。"""
         if not self._rate_limiter.is_allowed(message.user_id):
             remaining_time = self._rate_limiter.window_seconds
             return None, [], None, BotResponse.error_response(
@@ -292,7 +293,7 @@ class CommandDispatcher:
         return cmd_name, args, command, None
 
     def _dispatch_sync(self, message: BotMessage) -> BotResponse:
-        """Pure synchronous dispatch path for webhook/stream integrations."""
+        """为 webhook / 流式集成场景提供的纯同步分发路径。"""
         cmd_name, args, command, early_response = self._prepare_dispatch(message)
         if early_response is not None:
             return early_response
@@ -415,12 +416,11 @@ User: "analyze TSLA and NVDA using trend strategy"
 {"intent":"analysis","codes":["TSLA","NVDA"],"strategy":"trend"}
 """
 
-    # Cheap pre-filter: only invoke LLM when the message plausibly contains
-    # stock-related content.  This regex checks for:
-    #   - 6-digit A-share / BSE codes (0/3/6 and 43/83/87/88/92 prefixes)
-    #   - HK codes like hk00700
-    #   - 2-5 uppercase ASCII letters (US tickers)
-    #   - Common finance/analysis keywords (Chinese and English)
+    # 廉价前置过滤器：仅当消息可能包含股票相关内容时才调用 LLM。该正则匹配：
+    #   - 6 位 A 股 / 北交所代码（0/3/6 及 43/83/87/88/92 前缀）
+    #   - 港股代码，如 hk00700
+    #   - 2-5 个大写 ASCII 字母（美股代码）
+    #   - 常见的金融/分析关键词（中英文）
     _NL_PREFILTER = re.compile(
         r'(?:[036]\d{5}|(?:43|83|87|88|92)\d{4})'  # A-share / BSE 6-digit codes
         r'|(?:hk|HK)\d{5}'                    # HK code
@@ -443,7 +443,7 @@ User: "analyze TSLA and NVDA using trend strategy"
 
     @classmethod
     def _passes_nl_prefilter(cls, text: str) -> bool:
-        """Return whether the message is worth the LLM intent-routing cost."""
+        """判断消息是否值得为 LLM 意图路由付出推理成本。"""
         if cls._NL_PREFILTER.search(text):
             return True
 
@@ -456,19 +456,19 @@ User: "analyze TSLA and NVDA using trend strategy"
         return bool(_extract_stock_code(stripped))
 
     async def _try_nl_routing(self, message: BotMessage) -> Optional[BotResponse]:
-        """Route a non-command message to the appropriate command via LLM intent parsing.
+        """通过 LLM 意图解析将非命令消息路由到对应的命令。
 
-        Two-layer approach to balance cost and accuracy:
-        1. **Cheap regex pre-filter**: skip messages that clearly have no stock
-           or finance content (avoids LLM cost for irrelevant messages).
-        2. **LLM intent parsing**: extract intent, stock codes, and strategy
-           from the user text with full multilingual support.
+        采用两层方案以兼顾成本与准确率:
+        1. **正则前置过滤**: 跳过明显没有股票或金融内容的消息,
+           避免对无关消息产生 LLM 调用成本。
+        2. **LLM 意图解析**: 从用户文本中提取意图、股票代码与策略,
+           支持多语言。
 
-        Only activates when:
-        - ``AGENT_NL_ROUTING=true`` in config, **and**
-        - the message is in a private chat, **or** the bot was @mentioned.
+        仅当以下条件同时满足时启用:
+        - 配置中 ``AGENT_NL_ROUTING=true``, **且**
+        - 消息为私聊, **或** 机器人被 @ 提及。
 
-        Returns ``BotResponse`` if a route was found, ``None`` otherwise.
+        找到路由则返回 :class:`BotResponse`, 否则返回 ``None``。
         """
         from src.config import get_config
         config = get_config()
@@ -511,7 +511,7 @@ User: "analyze TSLA and NVDA using trend strategy"
             if resolved_code:
                 codes = [resolved_code]
 
-        # "chat" intent → route to /chat with original text
+        # "chat" 意图 → 以原始文本路由到 /chat
         if intent == "chat":
             chat_cmd = self.get_command("chat")
             if chat_cmd:
@@ -519,14 +519,14 @@ User: "analyze TSLA and NVDA using trend strategy"
                 return await chat_cmd.execute_async(message, [text])
             return None
 
-        # "analysis" intent → route to /ask
+        # "analysis" 意图 → 路由到 /ask
         if intent == "analysis" and codes:
             ask_cmd = self.get_command("ask")
             if not ask_cmd:
                 return None
 
-            # Build args: "code1,code2 [strategy]"
-            code_str = ",".join(codes[:5])  # cap at 5
+            # 构造参数："code1,code2 [strategy]"
+            code_str = ",".join(codes[:5])  # 最多取 5 个代码
             args = [code_str]
             if strategy:
                 args.append(strategy)
@@ -540,7 +540,7 @@ User: "analyze TSLA and NVDA using trend strategy"
         return None
 
     def _try_nl_routing_sync(self, message: BotMessage) -> Optional[BotResponse]:
-        """Synchronous companion to `_try_nl_routing` for legacy call sites."""
+        """为遗留调用点提供的同步版本 NL 路由。"""
         from src.config import get_config
 
         config = get_config()
@@ -604,7 +604,7 @@ User: "analyze TSLA and NVDA using trend strategy"
 
     @staticmethod
     async def _parse_intent_via_llm(text: str, config) -> Optional[dict]:
-        """Call LLM to parse user intent.  Returns parsed dict or None on failure."""
+        """调用 LLM 解析用户意图, 返回解析后的字典或失败时的 ``None``。"""
         try:
             from src.agent.llm_adapter import LLMToolAdapter
 
@@ -627,7 +627,7 @@ User: "analyze TSLA and NVDA using trend strategy"
 
     @staticmethod
     def _parse_intent_via_llm_sync(text: str, config) -> Optional[dict]:
-        """Synchronous variant for webhook/stream integrations."""
+        """为 webhook / 流式集成场景提供的同步版本 LLM 意图解析。"""
         try:
             from src.agent.llm_adapter import LLMToolAdapter
 
@@ -649,7 +649,7 @@ User: "analyze TSLA and NVDA using trend strategy"
 
     @staticmethod
     def _parse_intent_payload(raw: str) -> Optional[dict]:
-        """Parse the JSON payload returned by the intent-routing LLM call."""
+        """解析 LLM 意图路由调用返回的 JSON 负载。"""
         import json as _json
 
         cleaned = (raw or "").strip()
@@ -674,13 +674,13 @@ User: "analyze TSLA and NVDA using trend strategy"
 
     @classmethod
     def _resolve_stock_code_from_text(cls, text: str) -> Optional[str]:
-        """Best-effort stock name/code resolution for NL-routed analysis requests."""
+        """为 NL 路由的分析请求尽力把股票名称/代码解析为标准代码。"""
         from data_provider.base import canonical_stock_code
         from src.data.stock_mapping import STOCK_NAME_MAP
         from src.services.name_to_code_resolver import resolve_name_to_code
 
         def _iter_candidates(raw_text: str) -> List[str]:
-            """Generate cleaned whole-text and token candidates for name lookup."""
+            """为名称查找生成清洗后的全文与分词候选。"""
             candidates: List[str] = []
             stripped = (raw_text or "").strip()
             if stripped:
@@ -702,7 +702,7 @@ User: "analyze TSLA and NVDA using trend strategy"
             return sorted(candidates, key=len, reverse=True)
 
         def _unique_partial_match(candidate: str) -> Optional[str]:
-            """Return the code for a unique Chinese-name substring match."""
+            """对中文名称进行唯一子串匹配, 命中唯一结果时返回对应代码。"""
             if not re.search(r'[\u4e00-\u9fff]', candidate):
                 return None
             matches = [
@@ -716,8 +716,8 @@ User: "analyze TSLA and NVDA using trend strategy"
 
         candidates = _iter_candidates(text)
 
-        # Prefer deterministic local alias/partial-name matches before any
-        # resolver path that may touch online market data providers.
+        # 优先使用确定性的本地别名/部分名称匹配，
+        # 避免进入可能访问在线行情数据源的解析路径。
         for candidate in candidates:
             partial = _unique_partial_match(candidate)
             if partial:

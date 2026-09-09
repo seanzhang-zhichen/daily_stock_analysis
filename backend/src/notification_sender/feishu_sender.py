@@ -10,6 +10,10 @@ import hashlib
 import hmac
 import logging
 import time
+import json
+import os
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
@@ -18,8 +22,9 @@ from src.config import Config
 from src.formatters import (
     MIN_MAX_BYTES,
     PAGE_MARKER_SAFE_BYTES,
-    chunk_content_by_max_bytes,
+    chunk_markdown_preserving_blocks,
     format_feishu_markdown,
+    utf8_len,
 )
 
 
@@ -27,8 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuSender:
-    """Send notifications through Feishu custom robot webhooks."""
-    
+    """通过飞书自定义机器人 / 应用机器人发送消息。
+
+    支持两种投递通道：
+    - Webhook 自定义机器人：处理关键词前缀、签名校验、长文按块分批发送
+    - 应用机器人（OpenAPI）：当 ``feishu_send_as_file`` 启用且凭据齐全时，把 Markdown 报告落临时文件再上传
+    """
+
     def __init__(self, config: Config):
         """
         初始化飞书配置
@@ -41,22 +51,28 @@ class FeishuSender:
         self._feishu_keyword = (getattr(config, 'feishu_webhook_keyword', None) or '').strip()
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._webhook_verify_ssl = getattr(config, 'webhook_verify_ssl', True)
+        self._feishu_app_id = (getattr(config, 'feishu_app_id', None) or '').strip()
+        self._feishu_app_secret = (getattr(config, 'feishu_app_secret', None) or '').strip()
+        self._feishu_chat_id = (getattr(config, 'feishu_chat_id', None) or '').strip()
+        self._feishu_send_as_file = bool(getattr(config, 'feishu_send_as_file', False))
+        domain = (getattr(config, 'feishu_domain', None) or os.getenv('FEISHU_DOMAIN', 'feishu')).strip().lower()
+        self._feishu_domain = domain if domain in {'feishu', 'lark'} else 'feishu'
 
     def _get_keyword_prefix(self) -> str:
-        """Return the keyword prefix required by Feishu webhook security settings."""
+        """返回飞书 Webhook 安全设置要求的关键词前缀。"""
         if not self._feishu_keyword:
             return ""
         return f"{self._feishu_keyword}\n"
 
     def _apply_keyword_prefix(self, content: str) -> str:
-        """Prepend the optional keyword so each webhook request passes keyword checks."""
+        """为每条 webhook 请求前置可选关键词，使其通过飞书安全关键词校验。"""
         prefix = self._get_keyword_prefix()
         if not prefix:
             return content
         return f"{prefix}{content}" if content else self._feishu_keyword
 
     def _build_security_fields(self) -> Dict[str, str]:
-        """Build optional signing fields required by Feishu custom robot security."""
+        """构造飞书自定义机器人安全设置要求的签名（timestamp + HMAC-SHA256 sign）。"""
         if not self._feishu_secret:
             return {}
 
@@ -161,7 +177,12 @@ class FeishuSender:
             是否全部发送成功
         """
         try:
-            chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
+            chunks = chunk_markdown_preserving_blocks(
+                content,
+                max_bytes,
+                len_fn=utf8_len,
+                add_page_marker=True,
+            )
         except ValueError as e:
             logger.error("飞书消息分片失败，单片预算不足以安全分页（关键词过长或 max_bytes 过小）: %s", e)
             return False
@@ -194,7 +215,7 @@ class FeishuSender:
         security_fields = self._build_security_fields()
 
         def _post_payload(payload: Dict[str, Any]) -> bool:
-            """POST one Feishu payload with optional signing fields attached."""
+            """POST 一个飞书 payload（附带可选签名字段），成功返回 True。"""
             request_payload = dict(payload)
             request_payload.update(security_fields)
             logger.debug(f"飞书请求 URL: {self._feishu_url}")
@@ -262,3 +283,47 @@ class FeishuSender:
         }
 
         return _post_payload(text_payload)
+
+    def can_send_as_file(self) -> bool:
+        """判断应用机器人是否具备文件投递所需的凭据。"""
+        return bool(self._feishu_app_id and self._feishu_app_secret and self._feishu_chat_id)
+
+    def send_feishu_file(self, file_path: str) -> bool:
+        """上传报告文件并通过飞书/Lark 应用机器人 API 发送。"""
+        path = Path(file_path)
+        if not path.is_file() or not self.can_send_as_file():
+            return False
+        try:
+            import lark_oapi as lark
+            from lark_oapi.api.im.v1 import CreateFileRequest, CreateFileRequestBody, CreateMessageRequest, CreateMessageRequestBody
+            from lark_oapi.core.const import FEISHU_DOMAIN, LARK_DOMAIN
+        except ImportError:
+            logger.warning("lark-oapi is unavailable; cannot send Feishu report file")
+            return False
+        domain = LARK_DOMAIN if self._feishu_domain == 'lark' else FEISHU_DOMAIN
+        try:
+            client = lark.Client.builder().app_id(self._feishu_app_id).app_secret(self._feishu_app_secret).domain(domain).build()
+            with path.open('rb') as stream:
+                upload = client.im.v1.file.create(CreateFileRequest.builder().request_body(
+                    CreateFileRequestBody.builder().file_type('stream').file_name(path.name).file(stream).build()
+                ).build())
+            file_key = getattr(getattr(upload, 'data', None), 'file_key', None)
+            if not upload.success() or not file_key:
+                logger.error("Feishu file upload failed: code=%s", getattr(upload, 'code', 'unknown'))
+                return False
+            message = client.im.v1.message.create(CreateMessageRequest.builder().receive_id_type('chat_id').request_body(
+                CreateMessageRequestBody.builder().receive_id(self._feishu_chat_id).msg_type('file').content(json.dumps({'file_key': file_key})).build()
+            ).build())
+            return bool(message.success())
+        except Exception as exc:
+            logger.error("Feishu file delivery failed: %s", exc)
+            return False
+
+    def save_and_send_feishu_file(self, content: str, filename: str = 'a-share-report.md') -> bool:
+        """把内容落临时 Markdown 文件，再通过应用机器人投递；用完即删。"""
+        if not self.can_send_as_file():
+            return False
+        with tempfile.TemporaryDirectory(prefix='a_share_feishu_') as directory:
+            path = Path(directory) / filename
+            path.write_text(content, encoding='utf-8')
+            return self.send_feishu_file(str(path))

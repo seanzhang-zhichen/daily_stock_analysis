@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Prompt rendering for the shared market-structure context."""
+"""共享市场结构上下文（market-structure context）的 prompt 渲染。
+
+负责把 `market_structure_context` 字典按指定语言（zh / en / ko）渲染为
+紧凑、低敏感度的 prompt 段落，注入到分析 prompt 中；版本不匹配或状态为
+not_supported 时跳过，避免引入与上下文 schema 不一致的输入污染 LLM 输出。
+"""
 
 from __future__ import annotations
 
@@ -14,9 +19,18 @@ def format_market_structure_prompt_section(
     context: Any,
     report_language: str = "zh",
 ) -> str:
-    """Render a compact, low-sensitive market structure section for LLM prompts."""
+    """把市场结构上下文渲染为低敏感度的 prompt 段落。
+
+    Args:
+        context: 来自快照的 `market_structure_context` 字典。
+        report_language: 目标报告语言，支持 zh / en / ko。
+
+    Returns:
+        渲染后的多行字符串；context 缺失、版本不匹配或状态为 `not_supported` 时返回空串。
+    """
     if not isinstance(context, dict):
         return ""
+    # schema 版本不匹配视为历史数据，避免误把过期结构喂给 LLM
     if context.get("schema_version") != MARKET_STRUCTURE_SCHEMA_VERSION:
         return ""
     if context.get("status") == "not_supported":
@@ -46,6 +60,7 @@ def format_market_structure_prompt_section(
     data_quality = market_theme.get("data_quality")
     if isinstance(data_quality, dict):
         missing_fields.extend(_string_values(data_quality.get("missing_fields")))
+    # 去重并保序：dict.fromkeys 利用 dict 插入有序的特性做 O(1) 去重
     missing_fields = list(dict.fromkeys(missing_fields))
 
     if language == "en":
@@ -69,6 +84,7 @@ def _format_en(
     risk_tags: List[str],
     missing_fields: List[str],
 ) -> List[str]:
+    """按英文格式渲染市场结构上下文段落。"""
     lines = [
         "\n## Market Structure Context",
         f"- Status: {context.get('status', 'unknown')}",
@@ -101,6 +117,7 @@ def _format_zh(
     risk_tags: List[str],
     missing_fields: List[str],
 ) -> List[str]:
+    """按中文格式渲染市场结构上下文段落。"""
     lines = [
         "\n## 市场结构上下文",
         f"- 状态：{context.get('status', 'unknown')}",
@@ -133,6 +150,7 @@ def _format_ko(
     risk_tags: List[str],
     missing_fields: List[str],
 ) -> List[str]:
+    """按韩文格式渲染市场结构上下文段落。"""
     lines = [
         "\n## 시장 구조 컨텍스트",
         f"- 상태: {context.get('status', '알 수 없음')}",
@@ -156,6 +174,7 @@ def _format_ko(
 
 
 def _item_names(value: Any, *, limit: int) -> List[str]:
+    """从题材/概念/行业列表中提取 name（带涨跌幅时附加百分比），最多 limit 条。"""
     if not isinstance(value, list):
         return []
     names: List[str] = []
@@ -166,6 +185,7 @@ def _item_names(value: Any, *, limit: int) -> List[str]:
         if not name:
             continue
         change_pct = item.get("change_pct")
+        # 数字字段额外以 +x.xx% 形式附加，便于 LLM 直接读到强弱信息
         if isinstance(change_pct, (int, float)):
             names.append(f"{name}({change_pct:+.2f}%)")
         else:
@@ -176,6 +196,7 @@ def _item_names(value: Any, *, limit: int) -> List[str]:
 
 
 def _string_values(value: Any) -> List[str]:
+    """把可迭代的字段值统一归一化为去空白后的字符串列表。"""
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes, dict)):
         return []
     normalized: List[str] = []

@@ -60,7 +60,7 @@ class _DatabaseManagerBase:
     # ------------------------------------------------------------------
 
     def __new__(cls, *args, **kwargs):
-        """单例模式实现"""
+        """单例模式实现：全局共享一个 ``_DatabaseManagerBase`` 实例。"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -139,14 +139,14 @@ class _DatabaseManagerBase:
 
     @classmethod
     def get_instance(cls) -> "_DatabaseManagerBase":
-        """获取单例实例"""
+        """获取数据库管理器单例，首次访问时自动初始化。"""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
-        """重置单例（用于测试）"""
+        """重置单例并释放底层引擎（仅供测试使用）。"""
         if cls._instance is not None:
             if hasattr(cls._instance, '_engine') and cls._instance._engine is not None:
                 cls._instance._engine.dispose()
@@ -280,7 +280,7 @@ class _DatabaseManagerBase:
             session.close()
 
     def _bootstrap_super_admin(self) -> None:
-        """Apply optional SUPER_ADMIN_* bootstrap environment settings."""
+        """应用可选的 SUPER_ADMIN_* 环境变量引导设置。"""
         from src.users.bootstrap_admin import bootstrap_super_admin_from_env
 
         session = self._SessionLocal()
@@ -406,7 +406,7 @@ class _DatabaseManagerBase:
 
     @contextmanager
     def session_scope(self):
-        """Provide a transactional scope around a series of operations."""
+        """为一系列操作提供事务作用域：正常提交、异常回滚、始终关闭。"""
         session = self.get_session()
         try:
             yield session
@@ -497,12 +497,10 @@ class _DatabaseManagerBase:
 
     @staticmethod
     def _parse_sniper_value(value: Any) -> Optional[float]:
-        """
-        Parse a sniper point value from various formats to float.
+        """从多种格式的字符串中解析出狙击点位数值。
 
-        Handles: numeric types, plain number strings, Chinese price formats
-        like "18.50元", range formats like "18.50-19.00", and text with
-        embedded numbers while filtering out MA indicators.
+        支持：数字类型、纯数字字符串、中文价格格式如 ``18.50元``、区间格式如
+        ``18.50-19.00``，以及嵌入数字的文本（自动过滤 ``MA`` 开头技术指标）。
         """
         if value is None:
             return None
@@ -568,13 +566,13 @@ class _DatabaseManagerBase:
         return None
 
     def _extract_sniper_points(self, result: Any) -> Dict[str, Optional[float]]:
-        """
-        Extract sniper point values from an AnalysisResult.
+        """从 ``AnalysisResult`` 中抽取四个狙击点位。
 
-        Tries multiple extraction paths to handle different dashboard structures:
-        1. result.get_sniper_points() (standard path)
-        2. Direct dashboard dict traversal with various nesting levels
-        3. Fallback from raw_result dict if available
+        会按以下顺序尝试多条路径, 兼容不同 dashboard 结构::
+
+            1. ``result.get_sniper_points()``（标准路径）
+            2. 直接遍历 ``dashboard`` 字典（多种嵌套层级）
+            3. 兜底从 ``raw_result`` 字典中再找一次（Agent 模式结果）
         """
         raw_points = {}
 
@@ -603,10 +601,13 @@ class _DatabaseManagerBase:
 
     @staticmethod
     def _find_sniper_in_dashboard(d: dict) -> Optional[Dict[str, Any]]:
-        """
-        Recursively search for sniper_points in a dashboard dict.
-        Handles various nesting: dashboard.battle_plan.sniper_points,
-        dashboard.dashboard.battle_plan.sniper_points, etc.
+        """递归在 dashboard 字典中寻找 ``sniper_points`` 子树。
+
+        支持多种嵌套路径::
+
+            dashboard.battle_plan.sniper_points
+            dashboard.dashboard.battle_plan.sniper_points
+            ...
         """
         if not isinstance(d, dict):
             return None
@@ -645,9 +646,7 @@ class _DatabaseManagerBase:
         source: str,
         published_date: Optional[datetime]
     ) -> str:
-        """
-        生成无 URL 时的去重键（确保稳定且较短）
-        """
+        """当新闻无 URL 时，基于 (code, title, source, date) 生成稳定的去重键。"""
         date_str = published_date.isoformat() if published_date else ""
         raw_key = f"{code}|{title}|{source}|{date_str}"
         digest = hashlib.md5(raw_key.encode("utf-8")).hexdigest()

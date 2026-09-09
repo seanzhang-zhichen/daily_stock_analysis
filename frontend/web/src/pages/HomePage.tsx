@@ -9,11 +9,12 @@ import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, ConfirmDialog, Button, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { HistoryList } from '../components/history';
+import { HomeStockWorkspace } from '../components/dashboard/HomeStockWorkspace';
 import { TaskPanel } from '../components/tasks';
 import { ReportShareMenu } from '../components/report/ReportShareMenu';
 import { useAuth, useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { useStockIndex } from '../hooks/useStockIndex';
+import { useUiLanguage } from '../contexts/UiLanguageContext';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { formatDateTime, formatReportType } from '../utils/format';
 import { buildReportPdfFilename, exportReportToPdf } from '../utils/reportPdf';
@@ -23,8 +24,17 @@ import { searchStocks } from '../utils/searchStocks';
 const ReportSummary = lazy(() => import('../components/report/ReportSummary').then((module) => ({
   default: module.ReportSummary,
 })));
+const MarketReviewReportView = lazy(() => import('../components/report/MarketReviewReportView').then((module) => ({
+  default: module.MarketReviewReportView,
+})));
 const ReportMarkdown = lazy(() => import('../components/report/ReportMarkdown').then((module) => ({
   default: module.ReportMarkdown,
+})));
+const HistoryTrendDrawer = lazy(() => import('../components/report/HistoryTrendDrawer').then((module) => ({
+  default: module.HistoryTrendDrawer,
+})));
+const RunFlowPanel = lazy(() => import('../components/report/RunFlowPanel').then((module) => ({
+  default: module.RunFlowPanel,
 })));
 
 const EMPTY_QUICK_STOCKS = [
@@ -47,6 +57,7 @@ type StockAnalysisNavigationState = {
 };
 
 const HomePage: React.FC = () => {
+  const { t } = useUiLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const consumedNavigationKeyRef = useRef<string | null>(null);
@@ -56,6 +67,7 @@ const HomePage: React.FC = () => {
   const canViewReportDiagnostics = !(userMode?.userModeEnabled) || Boolean(userMode?.user?.isAdmin);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [historyTrendOpen, setHistoryTrendOpen] = useState(false);
   const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
   const [marketReviewNotice, setMarketReviewNotice] = useState<MarketReviewNotice>(null);
   const [marketReviewError, setMarketReviewError] = useState<ParsedApiError | null>(null);
@@ -137,8 +149,8 @@ const HomePage: React.FC = () => {
   const prefillStock = searchParams.get('stock')?.trim() || '';
 
   useEffect(() => {
-    document.title = '每日选股分析 - AlphaLens';
-  }, []);
+    document.title = `${t('home.title')} - AlphaLens`;
+  }, [t]);
 
   useEffect(() => {
     if (prefillStock && appliedPrefillStockRef.current !== prefillStock) {
@@ -622,20 +634,21 @@ const HomePage: React.FC = () => {
     () => (
       <div className="flex min-h-0 h-full flex-col gap-3 overflow-hidden">
         <TaskPanel tasks={activeTasks} />
-        <HistoryList
-          items={historyItems}
-          isLoading={isLoadingHistory}
+        <HomeStockWorkspace
+          historyItems={historyItems}
+          isLoadingHistory={isLoadingHistory}
           isLoadingMore={isLoadingMore}
           hasMore={hasMore}
           selectedId={selectedReport?.meta.id}
           selectedIds={selectedIds}
-          isDeleting={isDeletingHistory}
-          onItemClick={handleHistoryItemClick}
+          isDeletingHistory={isDeletingHistory}
+          activeTasks={activeTasks}
+          onHistoryItemClick={handleHistoryItemClick}
           onLoadMore={() => void loadMoreHistory()}
           onToggleItemSelection={toggleHistorySelection}
           onToggleSelectAll={toggleSelectAllVisible}
           onDeleteSelected={() => setShowDeleteConfirm(true)}
-          className="flex-1 overflow-hidden"
+          onTaskCreated={syncTaskCreated}
         />
       </div>
     ),
@@ -650,6 +663,7 @@ const HomePage: React.FC = () => {
       loadMoreHistory,
       selectedIds,
       selectedReport?.meta.id,
+      syncTaskCreated,
       toggleHistorySelection,
       toggleSelectAllVisible,
     ],
@@ -668,7 +682,7 @@ const HomePage: React.FC = () => {
                 type="button"
                 onClick={() => setSidebarOpen(true)}
                 className="md:hidden -ml-1 flex-shrink-0 rounded-lg p-1.5 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
-                aria-label="历史记录"
+                aria-label={t('home.historyAria')}
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -681,7 +695,7 @@ const HomePage: React.FC = () => {
                   onSubmit={(stockCode, stockName, selectionSource) => {
                     handleSubmitAnalysis(stockCode, stockName, selectionSource);
                   }}
-                  placeholder="输入股票代码或名称，如 600519、贵州茅台、AAPL"
+                  placeholder={t('home.searchPlaceholder')}
                   disabled={isAnalyzing}
                   className={inputError ? 'border-danger/50' : undefined}
                 />
@@ -701,7 +715,7 @@ const HomePage: React.FC = () => {
                     className="ui-button ui-button-secondary flex h-10 max-w-[8.5rem] items-center gap-1.5 rounded-xl px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-[11rem]"
                   >
                     <SlidersHorizontal className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-                    <span className="truncate">{selectedStrategy?.name || '选择策略'}</span>
+                    <span className="truncate">{selectedStrategy?.name || t('home.selectStrategy')}</span>
                   </button>
                   {strategyMenuOpen ? (
                     <div
@@ -747,29 +761,29 @@ const HomePage: React.FC = () => {
                   onChange={(e) => setNotify(e.target.checked)}
                   className="ui-checkbox h-3.5 w-3.5"
                 />
-                推送通知
+                {t('home.notify')}
               </label>
               <Button
                 type="button"
                 variant="secondary"
                 size="md"
                 isLoading={isSubmittingMarketReview}
-                loadingText="提交中"
+                loadingText={t('home.submitting')}
                 onClick={() => void handleTriggerMarketReview()}
                 className="h-10 flex-1 whitespace-nowrap md:flex-none"
               >
                 <BarChart3 className="h-4 w-4" aria-hidden="true" />
-                大盘复盘
+                {t('home.marketReview')}
               </Button>
               <Button
                 type="button"
                 onClick={() => handleSubmitAnalysis()}
                 disabled={!query || isAnalyzing}
                 isLoading={isAnalyzing}
-                loadingText="提交中"
+                loadingText={t('home.submitting')}
                 className="h-10 flex-1 whitespace-nowrap shadow-lg shadow-primary/20 md:flex-none"
               >
-                分析
+                {t('home.analyze')}
               </Button>
             </div>
           </div>
@@ -780,7 +794,7 @@ const HomePage: React.FC = () => {
             {inputError ? (
               <InlineAlert
                 variant="danger"
-                title="输入有误"
+                title={t('home.inputError')}
                 message={inputError}
                 className="rounded-xl px-3 py-2 text-xs shadow-none"
               />
@@ -788,7 +802,7 @@ const HomePage: React.FC = () => {
             {!inputError && duplicateError ? (
               <InlineAlert
                 variant="warning"
-                title="任务已存在"
+                title={t('home.duplicateTask')}
                 message={duplicateError}
                 className="rounded-xl px-3 py-2 text-xs shadow-none"
               />
@@ -800,11 +814,11 @@ const HomePage: React.FC = () => {
           <div className="px-3 pb-2 md:px-4">
             <InlineAlert
               variant="warning"
-              title="基础配置未完成"
+              title={t('home.setupIncomplete')}
               message={
                 setupMissingLabels
                   ? `还缺少 ${setupMissingLabels}，完成后即可开始最小可用分析。`
-                  : '还缺少基础配置，完成后即可开始最小可用分析。'
+                  : t('home.setupIncompleteMessage')
               }
               action={(
                 <Button
@@ -813,7 +827,7 @@ const HomePage: React.FC = () => {
                   size="sm"
                   onClick={() => navigate('/settings')}
                 >
-                  去配置
+                  {t('home.goSettings')}
                 </Button>
               )}
               className="rounded-xl px-3 py-2 text-xs shadow-none"
@@ -935,6 +949,15 @@ const HomePage: React.FC = () => {
                       </svg>
                       {reportText.reanalyze}
                     </Button>
+                    {!isMarketReviewHistoryReport && selectedReport.meta.id !== undefined ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setHistoryTrendOpen(true)}
+                      >
+                        趋势
+                      </Button>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
@@ -966,7 +989,26 @@ const HomePage: React.FC = () => {
                     </div>
                   )}
                 >
-                  <ReportSummary data={selectedReport} isHistory showDiagnostics={canViewReportDiagnostics} />
+                  {isMarketReviewHistoryReport ? (
+                    <MarketReviewReportView report={selectedReport} />
+                  ) : (
+                    <ReportSummary data={selectedReport} isHistory showDiagnostics={canViewReportDiagnostics} />
+                  )}
+                  {selectedReport.meta.id !== undefined && !isMarketReviewHistoryReport ? (
+                    <RunFlowPanel key={selectedReport.meta.id} recordId={selectedReport.meta.id} />
+                  ) : null}
+                  {!isMarketReviewHistoryReport ? (
+                    <HistoryTrendDrawer
+                      open={historyTrendOpen}
+                      stockCode={selectedReport.meta.stockCode}
+                      stockName={selectedReport.meta.stockName}
+                      onClose={() => setHistoryTrendOpen(false)}
+                      onDeleted={() => {
+                        setHistoryTrendOpen(false);
+                        void refreshHistory(true);
+                      }}
+                    />
+                  ) : null}
                 </Suspense>
               </div>
             ) : (

@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Gateway 工厂 — 从环境变量解析具体 :class:`PaymentGateway` 实例。
+"""支付网关工厂：根据环境变量与平台设置构造具体的 :class:`PaymentGateway` 实例。
 
-约定:
+设计要点：
 
-- ``PAYMENT_ENABLED=false`` 时永远返回 ``None`` (即使密钥已配置)。
-- 关键密钥任一缺失即返回 ``None``, 调用方必须容错 (callback 落库 + 503 提示等)。
-- 测试可通过 :func:`set_gateway_override` 注入 mock gateway, 优先级最高。
+- **关闭优先**：`PAYMENT_ENABLED=false`（平台设置 / 环境变量）时永远返回 ``None``，
+  即使密钥已经配置好，便于在不需要支付能力的环境（如开发/演示）中关闭通道。
+- **缺一不可**：关键凭据任一缺失即返回 ``None``；调用方必须容错（落库 + 503 提示等）。
+- **测试友好**：可通过 :func:`set_gateway_override` 注入 mock gateway，优先级最高，
+  避免污染真实环境。
 
-调用入口: :func:`get_gateway` / :func:`has_gateway`。
+对外暴露的入口函数是 :func:`get_gateway` 与 :func:`has_gateway`。
 """
 
 from __future__ import annotations
@@ -30,7 +32,12 @@ _OVERRIDES: Dict[str, PaymentGateway] = {}
 
 
 def set_gateway_override(provider: str, gateway: Optional[PaymentGateway]) -> None:
-    """供测试注入 mock gateway; 传 ``None`` 时清除 override。"""
+    """供测试注入 mock gateway；传 ``None`` 时清除对应 provider 的 override。
+
+    Args:
+        provider: 支付渠道标识，如 ``wechat`` / ``alipay``。
+        gateway: 要注入的网关实例；为 ``None`` 表示清除已有覆盖。
+    """
     if gateway is None:
         _OVERRIDES.pop(provider, None)
     else:
@@ -38,17 +45,25 @@ def set_gateway_override(provider: str, gateway: Optional[PaymentGateway]) -> No
 
 
 def clear_gateway_overrides() -> None:
-    """Clear all test/mock gateway overrides."""
+    """清空所有测试 / 沙箱注入的 mock gateway 覆盖。"""
     _OVERRIDES.clear()
 
 
 def _flag(name: str) -> bool:
-    """Read a boolean-like environment flag."""
+    """读取布尔形态的环境变量标志（1 / true / yes 视为开启，其余视为关闭）。"""
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
 def _read_pem_or_path(env_name_pem: str, env_name_path: str) -> Optional[str]:
-    """优先读 PEM 内容 (env), 没有就读文件路径。便于 docker secret / 测试两种场景。"""
+    """优先读取 PEM 内容环境变量，没有时再读取文件路径，便于 Docker secret / 本地测试两种部署场景。
+
+    Args:
+        env_name_pem: 直接存放 PEM 内容的环境变量名。
+        env_name_path: 指向 PEM 文件路径的环境变量名。
+
+    Returns:
+        Optional[str]: PEM 内容；两者均未配置或读取失败时返回 ``None``。
+    """
     pem = (os.environ.get(env_name_pem) or "").strip()
     if pem:
         return pem
@@ -63,7 +78,11 @@ def _read_pem_or_path(env_name_pem: str, env_name_path: str) -> Optional[str]:
 
 
 def _build_wechat() -> Optional[PaymentGateway]:
-    """Build a WeChat gateway when all required credentials are configured."""
+    """构造微信支付网关；任一关键凭据缺失时返回 ``None``。
+
+    关键凭据：``app_id`` / ``mch_id`` / ``apiv3_key`` / 平台证书 PEM 内容。
+    商户私钥、回调地址、可选证书序列号为非必需项，未配置时传入空串或 None。
+    """
     app_id = (os.environ.get("WECHAT_PAY_APP_ID") or "").strip()
     mch_id = (os.environ.get("WECHAT_PAY_MCH_ID") or "").strip()
     apiv3_key = (os.environ.get("WECHAT_PAY_APIV3_KEY") or "").strip()
@@ -77,6 +96,7 @@ def _build_wechat() -> Optional[PaymentGateway]:
     )
     cert_serial_no = (os.environ.get("WECHAT_PAY_CERT_SERIAL_NO") or "").strip()
 
+    # 核心凭据任一缺失即视为未配置支付
     if not (app_id and mch_id and apiv3_key and cert_pem):
         return None
 
@@ -98,7 +118,11 @@ def _build_wechat() -> Optional[PaymentGateway]:
 
 
 def _build_alipay() -> Optional[PaymentGateway]:
-    """Build an Alipay gateway when all required credentials are configured."""
+    """构造支付宝网关；任一关键凭据缺失时返回 ``None``。
+
+    关键凭据：``app_id`` / 支付宝公钥 PEM 内容；
+    应用私钥、回调 / 返回地址为可选项。
+    """
     app_id = (os.environ.get("ALIPAY_APP_ID") or "").strip()
     pubkey_pem = _read_pem_or_path(
         "ALIPAY_PUBLIC_KEY_PEM",
@@ -109,6 +133,7 @@ def _build_alipay() -> Optional[PaymentGateway]:
         "ALIPAY_APP_PRIVATE_KEY_PATH",
     )
 
+    # app_id 与公钥是验签 / 通信必需
     if not (app_id and pubkey_pem):
         return None
 
@@ -128,17 +153,24 @@ def _build_alipay() -> Optional[PaymentGateway]:
 
 
 def get_gateway(provider: str, db: Optional[Session] = None) -> Optional[PaymentGateway]:
-    """根据 provider 返回 gateway 实例; 未配置或 PAYMENT_ENABLED=false 时返回 None。
+    """根据 provider 返回当前可用的支付网关实例；未配置或 PAYMENT_ENABLED=false 时返回 ``None``。
 
     Args:
-        provider: ``wechat`` 或 ``alipay``。
+        provider: 支付渠道标识，目前支持 ``wechat`` / ``alipay``。
+        db: 可选数据库会话，用于读取平台级设置 ``PAYMENT_ENABLED``。
+
+    Returns:
+        Optional[PaymentGateway]: 可用网关实例；不可用时返回 ``None``。
     """
+    # 测试注入的 mock 优先级最高（避免打真实支付）
     if provider in _OVERRIDES:
         return _OVERRIDES[provider]
 
+    # 平台关闭支付时直接短路
     if not bool(get_platform_setting_value(db, "PAYMENT_ENABLED")):
         return None
 
+    # 按 provider 路由到具体网关构造器
     if provider == "wechat":
         return _build_wechat()
     if provider == "alipay":
@@ -147,7 +179,7 @@ def get_gateway(provider: str, db: Optional[Session] = None) -> Optional[Payment
 
 
 def has_gateway(provider: str) -> bool:
-    """Return whether a provider gateway is currently available."""
+    """判断指定 provider 的网关当前是否可用（已配置且未被关闭）。"""
     return get_gateway(provider) is not None
 
 

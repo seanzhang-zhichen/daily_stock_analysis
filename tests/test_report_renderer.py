@@ -79,6 +79,55 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
 
+    def test_a_share_structure_and_phase_decision_render_in_templates(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "等待确认"},
+                "phase_decision": {"immediate_action": "不追高，等待回踩确认"},
+            }
+        )
+        r.data_sources = "tencent,akshare"
+        r.market_structure_context = {
+            "market": "cn",
+            "stock_market_position": {
+                "related_boards": [{"name": "白酒", "type": "行业", "change_pct": 1.23}]
+            },
+        }
+        r.market_phase_summary = {"market": "cn", "phase": "intraday"}
+
+        markdown = render("markdown", [r], summary_only=False)
+        wechat = render("wechat", [r])
+        brief = render("brief", [r])
+
+        self.assertIn("关联板块", markdown)
+        self.assertIn("白酒（行业 +1.23%）", markdown)
+        self.assertIn("阶段决策", markdown)
+        self.assertIn("不追高，等待回踩确认", markdown)
+        self.assertIn("数据来源：tencent,akshare", markdown)
+        self.assertIn("市场状态：A股 · 盘中", markdown)
+        self.assertIn("市场状态：A股 · 盘中", wechat)
+        self.assertIn("市场状态：A股 · 盘中", brief)
+        self.assertIn("关联板块", wechat)
+        self.assertIn("阶段决策", wechat)
+        self.assertIn("不追高，等待回踩确认", brief)
+
+    def test_a_share_financial_facts_render_without_non_cn_leakage(self) -> None:
+        r = _make_result()
+        r.fundamental_context = {
+            "market": "cn",
+            "earnings": {"data": {"financial_report": {
+                "report_date": "2026Q2", "revenue": 120, "net_profit_parent": 60, "roe": 18.5,
+            }}},
+            "growth": {"data": {"revenue_yoy": 8.2, "net_profit_yoy": 9.1}},
+        }
+
+        markdown = render("markdown", [r], summary_only=False)
+        wechat = render("wechat", [r])
+
+        self.assertIn("财务摘要", markdown)
+        self.assertIn("2026Q2", markdown)
+        self.assertIn("营收 120", wechat)
+
     def test_render_wechat(self) -> None:
         """Wechat platform renders."""
         r = _make_result()

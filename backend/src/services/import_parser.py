@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-统一导入解析管道
-===================================
+"""统一导入解析管道。
 
-Parse CSV/Excel/clipboard text into stock items (code, name, confidence).
+把 CSV / Excel / 剪贴板文本解析成 (code, name, confidence) 形式的股票条目。
 """
 
 from __future__ import annotations
@@ -31,11 +28,10 @@ MAX_TEXT_BYTES = 100 * 1024  # 100KB
 
 def _should_use_single_column_fast_path(lines: List[str]) -> bool:
     """
-    Decide whether plain-text input should use the single-column fast path.
+    判断纯文本输入是否应走"单列快速路径"。
 
-    Guardrail: if a line looks like "CODE + NAME" separated by whitespace,
-    do not use single-column mode, otherwise code/name pairs would be glued
-    into one cell and hurt parsing quality.
+    护栏：若某行形如"代码 + 名称"以空白分隔，则不使用单列模式，
+    否则代码/名称对被粘进同一格会损害解析质量。
     """
     if not lines:
         return False
@@ -56,7 +52,7 @@ def _should_use_single_column_fast_path(lines: List[str]) -> bool:
 
 
 def _detect_column_indices(df: pd.DataFrame) -> Tuple[Optional[int], Optional[int]]:
-    """Return (code_col_idx, name_col_idx) from DataFrame columns."""
+    """根据 DataFrame 的列名返回 (code_col_idx, name_col_idx)。"""
     code_idx, name_idx = None, None
     cols = [str(c).strip().lower() for c in df.columns]
     for i, c in enumerate(cols):
@@ -68,15 +64,16 @@ def _detect_column_indices(df: pd.DataFrame) -> Tuple[Optional[int], Optional[in
 
 
 def _parse_dataframe(df: pd.DataFrame) -> List[Tuple[Optional[str], Optional[str], str]]:
-    """
-    Parse DataFrame into (code, name, confidence) items.
-    Returns list; code may be None if name resolution failed.
+    """把 DataFrame 解析成 (code, name, confidence) 条目列表。
+
+    code 在名称反查失败时会是 None，由调用方决定是否丢弃该行。
     """
     result: List[Tuple[Optional[str], Optional[str], str]] = []
     code_idx, name_idx = _detect_column_indices(df)
     has_header = code_idx is not None or name_idx is not None
 
     for _, row in df.iterrows():
+        # 有表头时按列下标取值，否则按"第 0 列代码、第 1 列名称"取值
         code_val = None
         name_val = None
         if has_header:
@@ -127,17 +124,17 @@ def _parse_dataframe(df: pd.DataFrame) -> List[Tuple[Optional[str], Optional[str
 
 def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List[Tuple[Optional[str], Optional[str], str]]:
     """
-    Parse file bytes (CSV/Excel) into items.
+    解析文件字节（CSV/Excel/纯文本）为导入条目。
 
     Args:
-        data: File content bytes.
-        filename: Optional filename for format detection (e.g. "a.csv", "b.xlsx").
+        data: 文件内容字节。
+        filename: 可选文件名，用于格式探测（如 "a.csv"、"b.xlsx"）。
 
     Returns:
-        List of (code, name, confidence); code may be None if resolution failed.
+        (code, name, confidence) 条目列表；解析失败的条目 code 可能为 None。
 
     Raises:
-        ValueError: On parse error or unsupported format.
+        ValueError: 解析失败或不支持的格式。
     """
     if len(data) > MAX_FILE_BYTES:
         raise ValueError(f"文件超过 {MAX_FILE_BYTES // (1024 * 1024)}MB 限制")
@@ -147,13 +144,14 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     logger.debug(f"[ImportParser] 开始解析文件: filename={filename or '-'}, ext={ext or '-'}, bytes={len(data)}")
 
+    # xlsx 本质是 zip 容器，用魔数判断比只看扩展名更可靠
     looks_like_zip = len(data) >= 4 and data[:4] == b"PK\x03\x04"
 
     # Excel: .xlsx (or zip magic)
     if ext == ".xlsx" or looks_like_zip:
         try:
-            # Use header=None to avoid silently consuming the first data row as column names
-            # when the sheet has no header row. We detect headers the same way as the CSV path.
+            # 用 header=None 读入，避免工作表无表头时第一行数据被当成列名；
+            # 表头判定方式与 CSV 路径保持一致
             df = pd.read_excel(io.BytesIO(data), sheet_name=0, engine="openpyxl", header=None, dtype=str)
             if df is None or df.empty:
                 return []
@@ -164,7 +162,7 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
                 df = df.iloc[1:].reset_index(drop=True)
             return _parse_dataframe(df)
         except Exception as e:
-            # If bytes strongly indicate xlsx container, treat as real Excel parse failure.
+            # 字节特征强烈表明是 xlsx 容器时，视为真正的 Excel 解析失败并直接报错
             if looks_like_zip:
                 hint = (
                     "请确认：(1) 文件为 .xlsx 格式；(2) 工作表不为空；(3) 文件未损坏。"
@@ -200,7 +198,7 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
             df = df.iloc[1:].reset_index(drop=True)
         return _parse_dataframe(df)
 
-    # Try pandas for CSV-like; use dtype=str to preserve leading zeros (e.g. 00700)
+    # 类 CSV 交给 pandas；dtype=str 是为了保住前导零（如 00700）
     try:
         df = pd.read_csv(io.StringIO(text), sep=None, engine="python", header=None, dtype=str)
         if df is not None and not df.empty:
@@ -235,14 +233,13 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
 
 
 def parse_import_from_text(text: str) -> List[Tuple[Optional[str], Optional[str], str]]:
-    """
-    Parse clipboard/text into items.
+    """解析剪贴板/纯文本（每行一个代码或代码+名称）为 ``(code, name, confidence)`` 列表。
 
     Args:
-        text: Raw text (e.g. from clipboard).
+        text: 待解析的纯文本。
 
     Returns:
-        List of (code, name, confidence).
+        ``(code, name, confidence)`` 三元组列表。
     """
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise ValueError(f"文本超过 {MAX_TEXT_BYTES // 1024}KB 限制")

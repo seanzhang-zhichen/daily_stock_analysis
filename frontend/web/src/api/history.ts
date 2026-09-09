@@ -7,6 +7,8 @@ import type {
   AnalysisReport,
   NewsIntelResponse,
   NewsIntelItem,
+  RunFlowSnapshot,
+  HistoryTrendResponse,
 } from '../types/analysis';
 
 // ============ API 接口 ============
@@ -78,6 +80,11 @@ export const historyApi = {
     return response.data.content;
   },
 
+  getRunFlow: async (recordId: number): Promise<RunFlowSnapshot> => {
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/history/${recordId}/flow`);
+    return toCamelCase<RunFlowSnapshot>(response.data);
+  },
+
   /** Generate a PNG share poster for one persisted report. */
   getShareImage: async (recordId: number): Promise<Blob> => {
     const response = await apiClient.get<Blob>(`/api/v1/history/${recordId}/share-image`, {
@@ -103,6 +110,18 @@ export const historyApi = {
       data: { record_ids: recordIds },
     });
 
+    return toCamelCase<{ deleted: number }>(response.data);
+  },
+
+  getTrendByCode: async (stockCode: string, limit = 100): Promise<HistoryTrendResponse> => {
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/history/by-code/${encodeURIComponent(stockCode)}/trend`, {
+      params: { limit },
+    });
+    return toCamelCase<HistoryTrendResponse>(response.data);
+  },
+
+  deleteByCode: async (stockCode: string): Promise<{ deleted: number }> => {
+    const response = await apiClient.delete<Record<string, unknown>>(`/api/v1/history/by-code/${encodeURIComponent(stockCode)}`);
     return toCamelCase<{ deleted: number }>(response.data);
   },
 };

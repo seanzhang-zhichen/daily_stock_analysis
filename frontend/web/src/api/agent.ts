@@ -21,6 +21,7 @@ export interface ChatResponse {
   content: string;
   session_id: string;
   error?: string;
+  selected_skill_ids?: string[] | null;
 }
 
 export interface SkillInfo {
@@ -49,6 +50,11 @@ export interface ChatSessionMessage {
   created_at: string | null;
 }
 
+export interface ChatSessionDetail {
+  messages: ChatSessionMessage[];
+  selected_skill_ids?: string[] | null;
+}
+
 export const agentApi = {
   async chat(payload: ChatRequest): Promise<ChatResponse> {
     const response = await apiClient.post<ChatResponse>('/api/v1/agent/chat', payload, {
@@ -67,6 +73,10 @@ export const agentApi = {
   async getChatSessionMessages(sessionId: string): Promise<ChatSessionMessage[]> {
     const response = await apiClient.get<{ messages: ChatSessionMessage[] }>(`/api/v1/agent/chat/sessions/${sessionId}`);
     return response.data.messages;
+  },
+  async getChatSession(sessionId: string): Promise<ChatSessionDetail> {
+    const response = await apiClient.get<ChatSessionDetail>(`/api/v1/agent/chat/sessions/${sessionId}`);
+    return response.data;
   },
   async deleteChatSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/api/v1/agent/chat/sessions/${sessionId}`);
