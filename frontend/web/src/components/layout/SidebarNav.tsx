@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Activity,
   BarChart3,
-  Bell,
   BellRing,
   BriefcaseBusiness,
   FileText,
@@ -18,7 +17,6 @@ import {
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { Radio } from 'lucide-react';
-import { noticesApi } from '../../api/notices';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAgentChatStore } from '../../stores/agentChatStore';
 import { cn } from '../../utils/cn';
@@ -27,7 +25,6 @@ import { BrandLogo } from '../common/BrandLogo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
 import { QuotaIndicator } from './QuotaIndicator';
-import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 
 type SidebarNavProps = {
@@ -55,7 +52,6 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'research', label: '研报', to: '/research-reports', icon: FileText },
   { key: 'usage', label: '用量', to: '/usage', icon: Gauge },
   { key: 'settings', label: '设置', to: '/settings', icon: Settings2 },
-  { key: 'notices', label: '公告', to: '/notices', icon: Bell },
   { key: 'intelligence', label: 'Intelligence', to: '/intelligence', icon: Radio },
 ];
 
@@ -78,22 +74,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const { authEnabled, loggedIn, userMode, logout } = useAuth();
   const completionBadge = useAgentChatStore((state) => state.completionBadge);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [noticeCount, setNoticeCount] = useState(0);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchCount = async () => {
-      try {
-        const count = await noticesApi.getUnreadCount();
-        if (!cancelled) setNoticeCount(count);
-      } catch {
-        /* ignore */
-      }
-    };
-    void fetchCount();
-    return () => { cancelled = true; };
-  }, []);
 
   const userModeEnabled = Boolean(userMode?.userModeEnabled);
   const userLoggedIn = Boolean(userMode?.loggedIn);
@@ -102,9 +84,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const displayName = userMode?.user?.displayName?.trim() || userMode?.user?.email?.split('@')[0] || '我的账户';
   const avatarUrl = userMode?.user?.avatarUrl?.trim();
   const mainNavItems = isAccessLocked
-    ? BASE_NAV_ITEMS.filter((item) => item.key === 'research' || item.key === 'notices')
+    ? BASE_NAV_ITEMS.filter((item) => item.key === 'research')
     : userModeEnabled && userLoggedIn && !userIsAdmin
-      ? BASE_NAV_ITEMS.filter((item) => item.key !== 'settings' && item.key !== 'usage')
+      ? BASE_NAV_ITEMS.filter((item) => item.key !== 'settings' && item.key !== 'usage' && item.key !== 'intelligence')
       : BASE_NAV_ITEMS;
   const navItems: NavItem[] = userModeEnabled && userLoggedIn
     ? [...mainNavItems, WATCHLIST_NAV_ITEM, ALERTS_NAV_ITEM]
@@ -113,7 +95,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
     const map: Record<string, Parameters<typeof t>[0]> = {
       home: 'layout.nav.home', chat: 'layout.nav.chat', tasks: 'layout.nav.tasks', stockSelection: 'layout.nav.screening',
       portfolio: 'layout.nav.portfolio', decisionSignals: 'layout.nav.decisionSignals', backtest: 'layout.nav.backtest',
-      research: 'layout.nav.research', usage: 'layout.nav.usage', settings: 'layout.nav.settings', notices: 'layout.nav.notices',
+      research: 'layout.nav.research', usage: 'layout.nav.usage', settings: 'layout.nav.settings',
       watchlist: 'layout.nav.watchlist', alerts: 'layout.nav.alerts', intelligence: 'layout.nav.intelligence',
     };
     return map[key] ? t(map[key]) : fallback;
@@ -225,17 +207,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
                     aria-label="问股有新消息"
                   />
                 ) : null}
-                {key === 'notices' && noticeCount > 0 ? (
-                  <span
-                    className={cn(
-                      'ui-sidebar-badge',
-                      collapsed ? 'right-0.5 top-0.5 h-4 min-w-4 text-[9px]' : 'right-2'
-                    )}
-                    aria-label={`${noticeCount} 条公告`}
-                  >
-                    {noticeCount > 99 ? '99+' : noticeCount}
-                  </span>
-                ) : null}
               </>
             )}
           </NavLink>
@@ -244,7 +215,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
       {/* Bottom actions */}
       <div className="flex flex-col gap-0.5">
-        <UiLanguageToggle />
         {/* Help link */}
         <NavLink
           to="/help"
@@ -280,7 +250,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           </button>
         ) : null}
       </div>
-
       {/* Divider */}
       <div className={cn('ui-sidebar-divider my-1', collapsed ? 'mx-0' : 'mx-1')} />
 

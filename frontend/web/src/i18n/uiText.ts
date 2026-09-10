@@ -1,9 +1,7 @@
-export type UiLanguage = 'zh' | 'en';
+export type UiLanguage = 'zh';
 export type UiTextKey = keyof typeof zh;
 export type UiTextParams = Record<string, string | number>;
 const zh = {
-  'language.toggle': '切换界面语言', 'language.uiLanguage': '界面语言', 'language.current': '中文',
-  'language.short.en': 'EN', 'language.short.zh': '中',
   'desktopUpdate.entry': '桌面端更新', 'desktopUpdate.idle': '当前版本 {version}。点击检查更新或查看状态。',
   'desktopUpdate.currentVersion': '当前版本 {version}', 'desktopUpdate.versionRange': '当前 {current} · 最新 {latest}',
   'desktopUpdate.check': '检查更新', 'desktopUpdate.checking': '检查中...', 'desktopUpdate.recheck': '重新检查',
@@ -51,6 +49,7 @@ const zh = {
   'home.title': '每日选股分析', 'home.historyAria': '历史记录', 'home.searchPlaceholder': '输入股票代码或名称，如 600519、贵州茅台、AAPL', 'home.selectStrategy': '选择策略', 'home.notify': '推送通知', 'home.submitting': '提交中', 'home.marketReview': '大盘复盘', 'home.analyze': '分析', 'home.inputError': '输入有误', 'home.duplicateTask': '任务已存在', 'home.setupIncomplete': '基础配置未完成', 'home.setupIncompleteMessage': '还缺少基础配置，完成后即可开始最小可用分析。', 'home.goSettings': '去配置',
 };
 const en: Record<UiTextKey, string> = {
+  ...zh,
   'language.toggle': 'Toggle interface language', 'language.uiLanguage': 'Interface language', 'language.current': 'English',
   'language.short.en': 'EN', 'language.short.zh': '中',
   'desktopUpdate.entry': 'Desktop updates', 'desktopUpdate.idle': 'Current version {version}. Click to check for updates or view status.',

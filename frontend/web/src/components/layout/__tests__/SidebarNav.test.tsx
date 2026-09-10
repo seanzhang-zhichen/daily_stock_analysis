@@ -162,7 +162,8 @@ describe('SidebarNav', () => {
     );
 
     expect(screen.getByRole('link', { name: '研报' })).toHaveAttribute('href', '/research-reports');
-    expect(screen.getByRole('link', { name: '公告' })).toHaveAttribute('href', '/notices');
+    expect(screen.queryByRole('link', { name: '公告' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '公告' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '首页' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '问股' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '设置' })).not.toBeInTheDocument();

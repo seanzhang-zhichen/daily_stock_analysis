@@ -6,7 +6,6 @@ import { Drawer } from '../common/Drawer';
 import { SidebarNav } from './SidebarNav';
 import { cn } from '../../utils/cn';
 import { ThemeToggle } from '../theme/ThemeToggle';
-import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 
 type ShellProps = {
   children?: React.ReactNode;
@@ -47,7 +46,6 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
         <div className="pointer-events-auto">
           <ThemeToggle />
         </div>
-        <UiLanguageToggle />
       </div>
 
       <div className="app-shell-frame">

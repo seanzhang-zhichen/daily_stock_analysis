@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] Web 情报池路由不再将普通用户错误重定向到账户设置页。
+- [改进] Web 公告入口改为侧边栏抽屉，保留完整公告历史页。
+- [改进] Web 界面固定使用中文，移除中英文界面切换入口；报告内容语言配置保持独立。
 
 - [修复] Alembic 在 MySQL 启动中断或并发时遇到已存在的会话状态表会复用现有表并继续记录迁移版本，避免服务启动失败。
 - [文档] 重组文档中心，合并重复的启动、配置、部署与架构说明。
