@@ -1,4 +1,4 @@
-"""add persisted alert cooldown state
+"""添加持久化告警冷却状态表
 
 Revision ID: 20260814_alert_cooldowns
 Revises: 20260814_decision_signals
@@ -18,6 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级：创建 alert_cooldowns 表并建立相关索引。"""
+    # 创建告警冷却状态表
     op.create_table(
         "alert_cooldowns",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -36,6 +38,7 @@ def upgrade() -> None:
             name="uix_alert_cooldown_rule_target_severity",
         ),
     )
+    # 创建告警冷却状态表相关索引
     op.create_index("ix_alert_cooldowns_rule_id", "alert_cooldowns", ["rule_id"])
     op.create_index("ix_alert_cooldowns_rule_key", "alert_cooldowns", ["rule_key"])
     op.create_index("ix_alert_cooldowns_target", "alert_cooldowns", ["target"])
@@ -47,6 +50,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除 alert_cooldowns 表及其所有索引。"""
+    # 删除告警冷却状态表的所有索引
     for name in (
         "ix_alert_cooldowns_updated_at",
         "ix_alert_cooldowns_state",
@@ -58,4 +63,5 @@ def downgrade() -> None:
         "ix_alert_cooldowns_rule_id",
     ):
         op.drop_index(name, table_name="alert_cooldowns")
+    # 删除告警冷却状态表
     op.drop_table("alert_cooldowns")

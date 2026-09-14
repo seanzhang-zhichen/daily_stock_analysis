@@ -316,7 +316,7 @@ class WechatGateway(PaymentGateway):
             notify_url: 异步回调地址；留空时使用初始化时的 ``notify_url``。
 
         Returns:
-            ``code_url`` 字符串，例如 ``weixin://wxpay/bizpayurl?pr=...``。
+            ``code_url`` 字符串，例如 ``weixin://wxpay/bizpayurl?pr=...`` 。
 
         Raises:
             :class:`GatewayError`: 私钥未配置 / API 返回错误 / 缺少 code_url。

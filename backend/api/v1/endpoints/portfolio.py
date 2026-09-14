@@ -1,5 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Portfolio endpoints (P0 core account + snapshot workflow).
+"""投资组合（Portfolio）API 端点模块。
+
+本模块提供完整的投资组合管理 RESTful API，包括：
+- 账户管理（创建、查询、更新、停用）
+- 交易记录（买入/卖出）
+- 资金流水（存取）
+- 公司行为（分红、拆合股）
+- 组合快照与估值
+- 持仓分析任务提交
+- CSV 导入（解析、提交）
+- 汇率刷新
+- 风险报告
 
 组合接口按当前登录用户隔离账户、交易、现金流水和公司行为。endpoint 层负责把
 服务层的业务错误映射为 HTTP 400/409/500，并把导入、快照、风控等结果收敛为
@@ -51,13 +62,22 @@ from src.services.portfolio_service import (
 )
 from src.services.task_queue import get_task_queue
 
+# 模块级日志记录器，用于记录本模块的诊断信息
 logger = logging.getLogger(__name__)
 
+# FastAPI 路由实例，本模块所有端点均挂载于此
 router = APIRouter()
 
 
 def _bad_request(exc: Exception) -> HTTPException:
-    """将组合服务的校验错误映射为 HTTP 400。"""
+    """将组合服务的校验错误映射为 HTTP 400。
+
+    Args:
+        exc: 原始异常对象
+
+    Returns:
+        HTTPException: 状态码 400，包含 validation_error 错误详情
+    """
     return HTTPException(
         status_code=400,
         detail={"error": "validation_error", "message": str(exc)},
@@ -65,7 +85,15 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 
 def _internal_error(message: str, exc: Exception) -> HTTPException:
-    """记录未预期的组合异常并映射为 HTTP 500。"""
+    """记录未预期的组合异常并映射为 HTTP 500。
+
+    Args:
+        message: 错误描述前缀
+        exc: 原始异常对象
+
+    Returns:
+        HTTPException: 状态码 500，包含 internal_error 错误详情
+    """
     logger.error(f"{message}: {exc}", exc_info=True)
     return HTTPException(
         status_code=500,
@@ -74,7 +102,15 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
 
 
 def _conflict_error(*, error: str, message: str) -> HTTPException:
-    """为组合忙/超卖/冲突等状态返回 HTTP 409。"""
+    """为组合忙/超卖/冲突等状态返回 HTTP 409。
+
+    Args:
+        error: 错误类型标识
+        message: 错误描述
+
+    Returns:
+        HTTPException: 状态码 409，包含冲突错误详情
+    """
     return HTTPException(
         status_code=409,
         detail={"error": error, "message": message},
@@ -82,7 +118,16 @@ def _conflict_error(*, error: str, message: str) -> HTTPException:
 
 
 def _serialize_import_record(item: dict) -> PortfolioImportTradeItem:
-    """在导入记录进入响应 schema 之前将其字段规范化。"""
+    """在导入记录进入响应 schema 之前将其字段规范化。
+
+    将 trade_date 字段统一转换为 ISO 格式字符串，确保响应格式一致。
+
+    Args:
+        item: 原始导入记录字典
+
+    Returns:
+        PortfolioImportTradeItem: 规范化后的导入交易记录
+    """
     payload = dict(item)
     trade_date = payload.get("trade_date")
     if isinstance(trade_date, date):
@@ -102,7 +147,18 @@ def create_account(
     request: PortfolioAccountCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
-    """创建一个属于当前用户的投资组合账户。"""
+    """创建一个属于当前用户的投资组合账户。
+
+    Args:
+        request: 账户创建请求，包含账户名称、券商、市场、基础货币等信息
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioAccountItem: 创建成功的账户信息
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -130,7 +186,18 @@ def list_accounts(
     include_inactive: bool = Query(False, description="Whether to include inactive accounts"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountListResponse:
-    """列出当前登录用户可见的投资组合账户。"""
+    """列出当前登录用户可见的投资组合账户。
+
+    Args:
+        include_inactive: 是否包含已停用账户，默认 False
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioAccountListResponse: 账户列表
+
+    Raises:
+        HTTPException: 500 当查询失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -151,7 +218,19 @@ def update_account(
     request: PortfolioAccountUpdateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioAccountItem:
-    """更新投资组合账户的可变元数据。"""
+    """更新投资组合账户的可变元数据。
+
+    Args:
+        account_id: 账户 ID，路径参数
+        request: 账户更新请求
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioAccountItem: 更新后的账户信息
+
+    Raises:
+        HTTPException: 404 当账户不存在时；400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -188,7 +267,18 @@ def delete_account(
     account_id: int,
     current_user: AppUser = Depends(get_current_user),
 ):
-    """停用一个投资组合账户，但保留历史事件记录不做物理删除。"""
+    """停用一个投资组合账户，但保留历史事件记录不做物理删除。
+
+    Args:
+        account_id: 账户 ID，路径参数
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含 deleted 字段的删除结果
+
+    Raises:
+        HTTPException: 404 当账户不存在时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -215,7 +305,18 @@ def create_trade(
     request: PortfolioTradeCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """记录一笔买入/卖出交易，并重算受影响的组合状态。"""
+    """记录一笔买入/卖出交易，并重算受影响的组合状态。
+
+    Args:
+        request: 交易创建请求，包含账户、股票、交易日期、方向、数量、价格等
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioEventCreatedResponse: 交易记录创建结果
+
+    Raises:
+        HTTPException: 409 当组合忙或超卖时；400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -263,7 +364,24 @@ def list_trades(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioTradeListResponse:
-    """按可选的账户/日期/股票代码维度分页列出交易事件。"""
+    """按可选的账户/日期/股票代码维度分页列出交易事件。
+
+    Args:
+        account_id: 账户 ID 筛选，可选
+        date_from: 交易日期起始，可选
+        date_to: 交易日期结束，可选
+        symbol: 股票代码筛选，可选
+        side: 交易方向筛选（buy/sell），可选
+        page: 页码，从 1 开始
+        page_size: 每页数量，默认 20，最大 100
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioTradeListResponse: 交易事件列表及分页信息
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当查询失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -294,7 +412,18 @@ def delete_trade(
     trade_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """删除一笔交易事件，并返回实际删除数量。"""
+    """删除一笔交易事件，并返回实际删除数量。
+
+    Args:
+        trade_id: 交易记录 ID，路径参数
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioDeleteResponse: 删除结果
+
+    Raises:
+        HTTPException: 404 当交易不存在时；409 当组合忙时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -323,7 +452,18 @@ def create_cash_ledger(
     request: PortfolioCashLedgerCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """为投资组合账户记录一笔资金存取事件。"""
+    """为投资组合账户记录一笔资金存取事件。
+
+    Args:
+        request: 资金流水创建请求，包含账户、日期、方向、金额、货币等
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioEventCreatedResponse: 资金流水记录创建结果
+
+    Raises:
+        HTTPException: 409 当组合忙时；400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -360,7 +500,23 @@ def list_cash_ledger(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCashLedgerListResponse:
-    """按可选筛选条件分页列出资金存取事件。"""
+    """按可选筛选条件分页列出资金存取事件。
+
+    Args:
+        account_id: 账户 ID 筛选，可选
+        date_from: 资金事件日期起始，可选
+        date_to: 资金事件日期结束，可选
+        direction: 方向筛选（in/out），可选
+        page: 页码，从 1 开始
+        page_size: 每页数量，默认 20，最大 100
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioCashLedgerListResponse: 资金流水列表及分页信息
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当查询失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -390,7 +546,18 @@ def delete_cash_ledger(
     entry_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """删除一笔资金存取事件。"""
+    """删除一笔资金存取事件。
+
+    Args:
+        entry_id: 资金流水记录 ID，路径参数
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioDeleteResponse: 删除结果
+
+    Raises:
+        HTTPException: 404 当记录不存在时；409 当组合忙时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -419,7 +586,18 @@ def create_corporate_action(
     request: PortfolioCorporateActionCreateRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioEventCreatedResponse:
-    """记录一笔分红或拆合股等公司行为事件。"""
+    """记录一笔分红或拆合股等公司行为事件。
+
+    Args:
+        request: 公司行为创建请求，包含账户、股票、生效日期、行为类型等
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioEventCreatedResponse: 公司行为记录创建结果
+
+    Raises:
+        HTTPException: 409 当组合忙时；400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -460,7 +638,24 @@ def list_corporate_actions(
     page_size: int = Query(20, ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioCorporateActionListResponse:
-    """按可选筛选条件分页列出公司行为事件。"""
+    """按可选筛选条件分页列出公司行为事件。
+
+    Args:
+        account_id: 账户 ID 筛选，可选
+        date_from: 生效日期起始，可选
+        date_to: 生效日期结束，可选
+        symbol: 股票代码筛选，可选
+        action_type: 行为类型筛选，可选
+        page: 页码，从 1 开始
+        page_size: 每页数量，默认 20，最大 100
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioCorporateActionListResponse: 公司行为事件列表及分页信息
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当查询失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -491,7 +686,18 @@ def delete_corporate_action(
     action_id: int,
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioDeleteResponse:
-    """删除一笔公司行为事件。"""
+    """删除一笔公司行为事件。
+
+    Args:
+        action_id: 公司行为记录 ID，路径参数
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioDeleteResponse: 删除结果
+
+    Raises:
+        HTTPException: 404 当记录不存在时；409 当组合忙时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -526,7 +732,23 @@ def get_snapshot(
     ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioSnapshotResponse:
-    """返回单个或全部账户的投资组合估值快照。"""
+    """返回单个或全部账户的投资组合估值快照。
+
+    根据指定日期和成本计算方法，计算账户的持仓市值、成本、盈亏等关键指标。
+
+    Args:
+        account_id: 账户 ID，可选，默认返回所有账户
+        as_of: 快照日期，默认今天
+        cost_method: 成本计算方法，fifo（先进先出）或 avg（平均成本）
+        include_realtime: 是否优先使用实时行情，否则使用历史收盘价
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioSnapshotResponse: 组合估值快照
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当查询失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -561,7 +783,23 @@ def analyze_position(
     request: PortfolioPositionAnalysisRequest,
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskAccepted | JSONResponse:
-    """提交一个带有私有持仓上下文的异步分析任务。"""
+    """提交一个带有私有持仓上下文的异步分析任务。
+
+    从用户当前持仓中解析指定股票的持仓信息，并将持仓上下文附加到分析任务中，
+    使分析结果能够结合用户的实际持仓情况进行个性化分析。
+
+    Args:
+        symbol: 股票代码，路径参数
+        request: 持仓分析请求，包含账户 ID、分析阶段等
+        current_user: 当前登录用户
+
+    Returns:
+        TaskAccepted: 任务已接受
+        JSONResponse: 409 当任务重复时
+
+    Raises:
+        HTTPException: 404 当持仓不存在时；400 当参数校验失败时；500 当服务内部错误时
+    """
     service = PortfolioService()
     owner_id = str(current_user.id)
     try:
@@ -616,7 +854,23 @@ def _resolve_position_analysis_context(
     account_id: Optional[int],
     owner_id: str,
 ) -> dict:
-    """从当前用户的持仓快照中解析一个非零持仓。"""
+    """从当前用户的持仓快照中解析一个非零持仓。
+
+    获取用户完整持仓快照，筛选出指定股票的非零持仓，并构建包含持仓上下文的字典。
+    如果未指定账户且该股票在多个账户中有持仓，则返回 400 错误要求前端显式选择账户。
+
+    Args:
+        service: 投资组合服务实例
+        symbol: 股票代码
+        account_id: 账户 ID，可选
+        owner_id: 用户 ID
+
+    Returns:
+        dict: 包含持仓上下文的字典，包括账户信息、股票信息、持仓数量、成本、盈亏等
+
+    Raises:
+        HTTPException: 404 当没有非零持仓时；400 当持仓分布在多个账户时
+    """
     target = service._normalize_symbol_for_position(symbol)
     if not target:
         raise ValueError("symbol must not be empty")
@@ -695,7 +949,20 @@ def parse_csv_import(
     broker: str = Form(..., description="Broker id: huatai/citic/cmb"),
     file: UploadFile = File(...),
 ) -> PortfolioImportParseResponse:
-    """解析上传的券商 CSV 但不写入交易事件。"""
+    """解析上传的券商 CSV 但不写入交易事件。
+
+    仅做解析和校验，返回解析结果供前端预览，确认后再提交。
+
+    Args:
+        broker: 券商标识，如 huatai/citic/cmb
+        file: 上传的 CSV 文件
+
+    Returns:
+        PortfolioImportParseResponse: 解析结果，包含记录数、跳过的记录数、错误数及解析后的记录
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当解析失败时
+    """
     importer = PortfolioImportService()
     try:
         content = file.file.read()
@@ -721,7 +988,14 @@ def parse_csv_import(
     summary="List supported broker CSV parsers",
 )
 def list_csv_brokers() -> PortfolioImportBrokerListResponse:
-    """列出导入服务当前支持的券商 CSV 解析器。"""
+    """列出导入服务当前支持的券商 CSV 解析器。
+
+    Returns:
+        PortfolioImportBrokerListResponse: 支持的券商列表
+
+    Raises:
+        HTTPException: 500 当查询失败时
+    """
     importer = PortfolioImportService()
     try:
         return PortfolioImportBrokerListResponse(brokers=importer.list_supported_brokers())
@@ -742,7 +1016,23 @@ def commit_csv_import(
     file: UploadFile = File(...),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioImportCommitResponse:
-    """解析券商 CSV 并带去重地提交交易记录。"""
+    """解析券商 CSV 并带去重地提交交易记录。
+
+    先校验账户归属权，然后解析 CSV 并提交交易记录，支持 dry_run 模式预览结果。
+
+    Args:
+        account_id: 目标账户 ID
+        broker: 券商标识
+        dry_run: 是否为试运行模式，默认 False
+        file: 上传的 CSV 文件
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioImportCommitResponse: 提交结果
+
+    Raises:
+        HTTPException: 404 当账户不存在或不属于当前用户时；400 当参数校验失败时；500 当提交失败时
+    """
     importer = PortfolioImportService()
     owner_id_str = str(current_user.id)
     if owner_id_str is not None:
@@ -786,7 +1076,19 @@ def refresh_fx_rates(
     as_of: Optional[date] = Query(None, description="Rate date, default today"),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioFxRefreshResponse:
-    """在线刷新组合估值所用的汇率，保留过期值作为兜底。"""
+    """在线刷新组合估值所用的汇率，保留过期值作为兜底。
+
+    Args:
+        account_id: 账户 ID，可选
+        as_of: 汇率日期，默认今天
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioFxRefreshResponse: 汇率刷新结果
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当刷新失败时
+    """
     service = PortfolioService()
     owner_id_str = str(current_user.id)
     try:
@@ -814,7 +1116,21 @@ def get_risk_report(
     ),
     current_user: AppUser = Depends(get_current_user),
 ) -> PortfolioRiskResponse:
-    """返回集中度、回撤、止损等多个维度的组合风险报告。"""
+    """返回集中度、回撤、止损等多个维度的组合风险报告。
+
+    Args:
+        account_id: 账户 ID，可选，默认返回所有账户
+        as_of: 风险报告日期，默认今天
+        cost_method: 成本计算方法，fifo 或 avg
+        include_realtime: 是否优先使用实时行情
+        current_user: 当前登录用户
+
+    Returns:
+        PortfolioRiskResponse: 组合风险报告
+
+    Raises:
+        HTTPException: 400 当参数校验失败时；500 当查询失败时
+    """
     service = PortfolioRiskService()
     owner_id_str = str(current_user.id)
     try:

@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 def _record_to_signal(record: Any) -> Optional[Dict[str, Any]]:
-    """把 AnalysisHistory 记录转换为信号字典；解析出错时跳过。"""
+    """把 AnalysisHistory 记录转换为信号字典；解析出错时跳过。
+
+    参数:
+        record: AnalysisHistory 数据库记录对象。
+
+    返回:
+        包含信号信息的字典；解析失败时返回 None。
+    """
     try:
         return {
             "created_at": record.created_at.isoformat() if record.created_at else None,
@@ -27,6 +34,7 @@ def _record_to_signal(record: Any) -> Optional[Dict[str, Any]]:
             "trend_prediction": record.trend_prediction,
         }
     except Exception as e:
+        # 记录解析失败，记录调试日志并跳过
         logger.debug("Skip record for history comparison: %s", e)
         return None
 
@@ -39,12 +47,12 @@ def get_signal_changes(
     """
     获取单只股票近期的信号变化。
 
-    Args:
+    参数:
         code: 股票代码
         limit: 最多返回的记录数
         exclude_query_id: 排除该 query_id 对应的记录（例如当前这次运行）
 
-    Returns:
+    返回:
         信号字典列表（created_at、sentiment_score、operation_advice、trend_prediction）
     """
     db = DatabaseManager.get_instance()
@@ -70,12 +78,12 @@ def get_signal_changes_batch(
     """
     获取多只股票近期的信号变化。
 
-    Args:
+    参数:
         codes: 股票代码列表
         limit: 每只股票最多返回的记录数
         exclude_query_ids: 代码 -> query_id 的映射，用于逐只股票排除对应记录
 
-    Returns:
+    返回:
         代码 -> 信号字典列表 的映射
     """
     exclude_query_ids = exclude_query_ids or {}

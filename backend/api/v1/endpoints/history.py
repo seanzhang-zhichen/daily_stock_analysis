@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""History and persisted report endpoints.
+"""历史记录与持久化报告 API 端点模块。
 
-历史记录接口按当前登录用户隔离数据，支持列表摘要、批量删除、结构化报告详情、
-关联新闻和 Markdown 报告输出。详情接口需要兼容旧历史数据，因此会在 endpoint
-层补齐语言、本地化展示、实时价格兜底和结构化财务/板块字段。
+本模块提供历史分析记录的查询、删除、详情展示、关联新闻获取、Markdown 报告生成
+以及分享图片生成等功能。历史记录接口按当前登录用户隔离数据，支持列表摘要、
+批量删除、结构化报告详情、关联新闻和 Markdown 报告输出。详情接口需要兼容旧历史数据，
+因此会在 endpoint 层补齐语言、本地化展示、实时价格兜底和结构化财务/板块字段。
 """
 
 import logging
@@ -41,6 +42,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.services.history_service import HistoryService, MarkdownReportGenerationError
+from src.services.research_artifact_service import build_research_artifact
 from src.services.empty_news import empty_news_disclosure_from_stored
 from src.config import get_config
 from src.md2img import markdown_to_image
@@ -52,13 +54,22 @@ from src.utils.data_processing import (
     extract_market_structure_context,
 )
 
+# 模块级日志记录器，用于记录本模块的诊断信息
 logger = logging.getLogger(__name__)
 
+# FastAPI 路由实例，本模块所有端点均挂载于此
 router = APIRouter()
 
 
 def _current_user_id_or_none(current_user: AppUser) -> Optional[int]:
-    """返回当前用户的数值 id，便于在测试等无 id 场景下保持服务层容错。"""
+    """返回当前用户的数值 id，便于在测试等无 id 场景下保持服务层容错。
+
+    Args:
+        current_user: 当前用户对象
+
+    Returns:
+        Optional[int]: 用户 ID，若不存在则返回 None
+    """
     return getattr(current_user, "id", None)
 
 
@@ -69,7 +80,22 @@ def get_history_trend_by_code(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HistoryTrendResponse:
-    """返回当前用户在指定股票上的时序 A 股分析结论。"""
+    """返回当前用户在指定股票上的时序 A 股分析结论。
+
+    按时间顺序返回该股票的历史分析趋势点，用于展示分析结论的变化趋势。
+
+    Args:
+        stock_code: 股票代码，路径参数
+        limit: 返回记录数，范围 1-100，默认 100
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        HistoryTrendResponse: 股票历史趋势数据
+
+    Raises:
+        HTTPException: 400 当股票代码为空时
+    """
     code = str(stock_code or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail={"error": "invalid_request", "message": "stock_code 不能为空"})
@@ -91,7 +117,19 @@ def delete_history_by_code(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> DeleteHistoryResponse:
-    """删除当前用户范围内某只股票的全部历史分析记录。"""
+    """删除当前用户范围内某只股票的全部历史分析记录。
+
+    Args:
+        stock_code: 股票代码，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        DeleteHistoryResponse: 删除结果，包含删除记录数
+
+    Raises:
+        HTTPException: 400 当股票代码为空时
+    """
     code = str(stock_code or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail={"error": "invalid_request", "message": "stock_code 不能为空"})
@@ -108,7 +146,21 @@ def get_history_diagnostics(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> RunDiagnosticSummaryResponse:
-    """返回当前用户拥有的 A 股报告的脱敏诊断摘要。"""
+    """返回当前用户拥有的 A 股报告的脱敏诊断摘要。
+
+    诊断摘要包含分析过程中的关键指标和诊断信息，用于排查分析质量问题。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        RunDiagnosticSummaryResponse: 诊断摘要
+
+    Raises:
+        HTTPException: 404 当记录不存在时
+    """
     summary = HistoryService(db_manager).resolve_and_get_diagnostics(
         record_id,
         user_id=_current_user_id_or_none(current_user),
@@ -124,7 +176,21 @@ def get_history_run_flow(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> RunFlowSnapshot:
-    """返回当前用户拥有的 A 股报告的脱敏运行流（节点、边、事件）。"""
+    """返回当前用户拥有的 A 股报告的脱敏运行流（节点、边、事件）。
+
+    运行流展示了分析任务的执行流程，包括各节点的执行顺序、依赖关系和事件记录。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        RunFlowSnapshot: 运行流快照
+
+    Raises:
+        HTTPException: 404 当记录不存在时
+    """
     snapshot = HistoryService(db_manager).resolve_and_get_run_flow(
         record_id,
         user_id=_current_user_id_or_none(current_user),
@@ -135,7 +201,18 @@ def get_history_run_flow(
 
 
 def _history_share_image_payload(result: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
-    """选择用于填充分享图海报的持久化结构化载荷。"""
+    """选择用于填充分享图海报的持久化结构化载荷。
+
+    根据报告类型选择合适的数据源：
+    - 盘后点评类报告：优先使用上下文快照内的市场点评专用载荷
+    - 其他报告：回退到原始结果字典
+
+    Args:
+        result: 历史记录结果字典
+
+    Returns:
+        Optional[Mapping[str, Any]]: 用于分享图的结构化数据，若不存在则返回 None
+    """
 
     if result.get("report_type") == "market_review":
         # 盘后点评类报告：优先使用上下文快照内的市场点评专用载荷
@@ -155,8 +232,21 @@ def _history_share_image_input(
     db_manager: DatabaseManager,
     user_id: Optional[int],
 ) -> tuple[Mapping[str, Any], str]:
-    """为 PNG 与桌面端 HTML 渲染器加载同一份用户拥有的报告。"""
+    """为 PNG 与桌面端 HTML 渲染器加载同一份用户拥有的报告。
 
+    先获取报告详情，再生成 Markdown 内容，确保两种渲染方式使用同一份数据。
+
+    Args:
+        record_id: 记录 ID 或 query_id
+        db_manager: 数据库管理器
+        user_id: 用户 ID
+
+    Returns:
+        tuple[Mapping[str, Any], str]: 报告详情字典和 Markdown 内容字符串
+
+    Raises:
+        HTTPException: 404 当记录不存在时；500 当 Markdown 生成失败时
+    """
     service = HistoryService(db_manager)
     result = service.resolve_and_get_detail(record_id, user_id=user_id)
     if result is None:
@@ -210,7 +300,23 @@ def get_history_list(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HistoryListResponse:
-    """返回当前登录用户的历史分析摘要，支持分页与股票代码/日期范围筛选。"""
+    """返回当前登录用户的历史分析摘要，支持分页与股票代码/日期范围筛选。
+
+    Args:
+        stock_code: 股票代码筛选，可选
+        start_date: 开始日期 (YYYY-MM-DD)，可选
+        end_date: 结束日期 (YYYY-MM-DD)，可选
+        page: 页码，从 1 开始
+        limit: 每页数量，默认 20，最大 100
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        HistoryListResponse: 历史记录列表及分页信息
+
+    Raises:
+        HTTPException: 500 当查询失败时
+    """
     try:
         service = HistoryService(db_manager)
 
@@ -273,7 +379,19 @@ def delete_history_records(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> DeleteHistoryResponse:
-    """在请求 id 去重后删除所选历史记录。"""
+    """在请求 id 去重后删除所选历史记录。
+
+    Args:
+        request: 删除请求，包含要删除的记录 ID 列表
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        DeleteHistoryResponse: 删除结果，包含删除记录数
+
+    Raises:
+        HTTPException: 400 当记录 ID 为空时；500 当删除失败时
+    """
     # 用 set 去重 + sorted 保证删除顺序稳定，便于日志与审计对齐
     record_ids = sorted({record_id for record_id in request.record_ids if record_id is not None})
     if not record_ids:
@@ -321,7 +439,22 @@ def get_history_detail(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> AnalysisReport:
-    """根据数字 id 或历史 query_id 返回一条结构化报告。"""
+    """根据数字 id 或历史 query_id 返回一条结构化报告。
+
+    从数据库加载历史记录，补齐语言、本地化展示、实时价格等信息，
+    构建结构化的 AnalysisReport 响应。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        AnalysisReport: 结构化分析报告
+
+    Raises:
+        HTTPException: 404 当记录不存在时；500 当查询失败时
+    """
     try:
         service = HistoryService(db_manager)
 
@@ -462,7 +595,8 @@ def get_history_detail(
             meta=meta,
             summary=summary,
             strategy=strategy,
-            details=details
+            details=details,
+            structured_report=build_research_artifact(result),
         )
 
     except HTTPException:
@@ -494,7 +628,20 @@ def get_history_news(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> NewsIntelResponse:
-    """返回某条历史记录（按 id 或 query_id）所关联的新闻情报。"""
+    """返回某条历史记录（按 id 或 query_id）所关联的新闻情报。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        limit: 返回新闻数量，范围 1-100，默认 20
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        NewsIntelResponse: 新闻情报列表
+
+    Raises:
+        HTTPException: 500 当查询失败时
+    """
     try:
         service = HistoryService(db_manager)
         items = service.resolve_and_get_news(
@@ -544,7 +691,19 @@ def get_history_markdown(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> MarkdownReportResponse:
-    """为某条历史记录生成通知风格的 Markdown 报告。"""
+    """为某条历史记录生成通知风格的 Markdown 报告。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        MarkdownReportResponse: Markdown 格式报告内容
+
+    Raises:
+        HTTPException: 404 当记录不存在时；500 当生成失败时
+    """
     service = HistoryService(db_manager)
 
     try:
@@ -600,7 +759,22 @@ def get_history_share_image_html(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> HTMLResponse:
-    """为浏览器渲染器构造需要鉴权的 HTML 海报页。"""
+    """为浏览器渲染器构造需要鉴权的 HTML 海报页。
+
+    生成包含报告内容的 HTML 页面，用于在浏览器中渲染并截图生成分享图片。
+    设置了严格的内容安全策略，防止 XSS 攻击。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        HTMLResponse: HTML 页面响应
+
+    Raises:
+        HTTPException: 404 当记录不存在时；413 当内容过长时；500 当生成失败时
+    """
 
     result, markdown_content = _history_share_image_input(
         record_id,
@@ -661,7 +835,21 @@ def get_history_share_image(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> Response:
-    """将当前用户拥有的历史报告渲染成可下载的 PNG 分享图。"""
+    """将当前用户拥有的历史报告渲染成可下载的 PNG 分享图。
+
+    使用 Markdown 转图片工具将报告内容渲染为 PNG 格式，支持结构化数据叠加。
+
+    Args:
+        record_id: 记录 ID 或 query_id，路径参数
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        Response: PNG 图片响应，包含下载头信息
+
+    Raises:
+        HTTPException: 404 当记录不存在时；500 当生成失败时；503 当渲染器不可用时
+    """
 
     result, markdown_content = _history_share_image_input(
         record_id,

@@ -10,6 +10,13 @@
 底层委托：规则/触发/通知的持久化交给 `AlertRepository`；
 真实行情、量价、技术指标的判定分别走 `src.services.portfolio_alerts`、
 `src.services.market_light_alerts`、`src.services.alert_indicators`。
+
+该模块是告警系统的核心服务层，负责：
+1. 告警规则的完整生命周期管理（创建、查询、更新、删除、启用/禁用）
+2. 告警规则的 dry-run 试算，支持单目标和批量评估
+3. 触发历史和通知历史的查询与序列化
+4. 规则参数的标准化和校验
+5. 冷却策略和通知策略的管理
 """
 
 from __future__ import annotations
@@ -21,78 +28,93 @@ import re
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+# 导入事件监控和相关告警类型，用于实时行情监控和告警评估
 from src.agent.events import (
-    EventMonitor,
-    PriceAlert,
-    PriceChangeAlert,
-    VolumeAlert,
-    _read_quote_float,
-    validate_event_alert_rule,
+    EventMonitor,              # 事件监控器，负责监听和分发市场事件
+    PriceAlert,              # 价格穿越告警：当价格突破指定阈值时触发
+    PriceChangeAlert,        # 价格涨跌幅告警：当涨跌幅超过指定百分比时触发
+    VolumeAlert,             # 成交量异动告警：当成交量异常放大时触发
+    _read_quote_float,       # 从行情数据中提取浮点数值的辅助函数
+    validate_event_alert_rule,  # 验证事件告警规则参数的合法性
 )
+# 导入告警数据访问对象，用于告警规则的持久化操作
 from src.repositories.alert_repo import AlertRepository
+# 导入技术指标告警相关模块
 from src.services.alert_indicators import (
-    TECHNICAL_ALERT_TYPES,
-    TechnicalIndicatorAlert,
-    compute_requested_days,
-    evaluate_indicator_alert,
-    normalize_indicator_parameters,
-    threshold_for_indicator,
+    TECHNICAL_ALERT_TYPES,           # 支持的技术指标告警类型集合
+    TechnicalIndicatorAlert,         # 技术指标告警数据模型
+    compute_requested_days,          # 计算技术指标所需的历史数据天数
+    evaluate_indicator_alert,        # 评估技术指标告警是否触发
+    normalize_indicator_parameters,   # 标准化技术指标告警参数
+    threshold_for_indicator,         # 获取技术指标告警的阈值
 )
+# 导入组合风险告警相关模块
 from src.services.portfolio_alerts import (
-    DRY_RUN_TARGET_TIMEOUT_SECONDS,
-    DRY_RUN_TOTAL_TIMEOUT_SECONDS,
-    PORTFOLIO_ALERT_TYPES,
-    SYMBOL_BATCH_TARGET_SCOPES,
-    PortfolioRiskAlert,
-    RuntimeAlertPayload,
-    StaticAlertEvaluation,
-    aggregate_dry_run_results,
-    ensure_active_portfolio_account,
-    evaluate_portfolio_risk_alert,
-    evaluate_static_alert,
-    expand_symbol_targets,
-    make_portfolio_risk_payload,
-    make_static_payload,
-    normalize_batch_target_scope_target,
-    normalize_portfolio_alert_parameters,
-    portfolio_effective_target,
-    result_to_target_result,
+    DRY_RUN_TARGET_TIMEOUT_SECONDS,   # 单目标 dry-run 评估的超时时间（秒）
+    DRY_RUN_TOTAL_TIMEOUT_SECONDS,    # 批量 dry-run 评估的总超时时间（秒）
+    PORTFOLIO_ALERT_TYPES,            # 支持的组合风险告警类型集合
+    SYMBOL_BATCH_TARGET_SCOPES,       # 支持批量目标展开的作用域
+    PortfolioRiskAlert,               # 组合风险告警数据模型
+    RuntimeAlertPayload,              # 运行时告警载荷，包含规则和评估目标
+    StaticAlertEvaluation,            # 静态告警评估结果
+    aggregate_dry_run_results,        # 汇总批量 dry-run 评估结果
+    ensure_active_portfolio_account,  # 确保组合账户处于活跃状态
+    evaluate_portfolio_risk_alert,    # 评估组合风险告警
+    evaluate_static_alert,            # 评估静态告警
+    expand_symbol_targets,            # 展开符号目标列表
+    make_portfolio_risk_payload,      # 构建组合风险告警载荷
+    make_static_payload,              # 构建静态告警载荷
+    normalize_batch_target_scope_target,  # 标准化批量目标作用域
+    normalize_portfolio_alert_parameters, # 标准化组合风险告警参数
+    portfolio_effective_target,       # 获取组合的有效目标
+    result_to_target_result,          # 将评估结果转换为目标结果
 )
+# 导入市场灯告警相关模块
 from src.services.market_light_alerts import (
-    MARKET_ALERT_TYPES,
-    MARKET_LIGHT_DATA_SOURCE,
-    MarketLightAlert,
-    evaluate_market_light_alert,
-    make_market_light_payload,
-    normalize_market_alert_parameters,
+    MARKET_ALERT_TYPES,               # 支持的市场灯告警类型集合
+    MARKET_LIGHT_DATA_SOURCE,         # 市场灯数据源标识
+    MarketLightAlert,                 # 市场灯告警数据模型
+    evaluate_market_light_alert,      # 评估市场灯告警
+    make_market_light_payload,        # 构建市场灯告警载荷
+    normalize_market_alert_parameters, # 标准化市场灯告警参数
 )
+# 导入市场灯服务工具函数
 from src.services.market_light_service import normalize_market_alert_region
+# 导入决策信号摘要生成函数
 from src.services.decision_signal_summary import summarize_decision_signal
+# 导入分析上下文包概览提取函数
 from src.analysis_context_pack_overview import (
-    ANALYSIS_CONTEXT_PACK_OVERVIEW_KEY,
-    extract_analysis_context_pack_overview,
+    ANALYSIS_CONTEXT_PACK_OVERVIEW_KEY,    # 分析上下文包概览的键名
+    extract_analysis_context_pack_overview, # 提取分析上下文包概览
 )
+# 导入市场阶段摘要相关函数
 from src.market_phase_summary import MARKET_PHASE_SUMMARY_KEY, extract_market_phase_summary
+# 导入数据库存储模型
 from src.storage import (
-    AlertCooldownRecord,
-    AlertNotificationRecord,
-    AlertRuleRecord,
-    AlertTriggerRecord,
-    DatabaseManager,
+    AlertCooldownRecord,      # 告警冷却记录，记录规则触发后的冷却状态
+    AlertNotificationRecord,    # 告警通知记录，记录通知发送历史
+    AlertRuleRecord,            # 告警规则记录，存储规则定义
+    AlertTriggerRecord,       # 告警触发记录，记录触发事件
+    DatabaseManager,          # 数据库管理器，提供数据库连接
 )
+# 导入文本脱敏工具
 from src.utils.sanitize import sanitize_diagnostic_text
 
 
 # 传统"运行时"告警类型：价格穿越/涨跌幅/成交量异动；这些规则仍走单标的实时评估
 LEGACY_RUNTIME_ALERT_TYPES = frozenset({"price_cross", "price_change_percent", "volume_spike"})
+# 单标的告警类型：传统运行时告警 + 技术指标告警
 SYMBOL_ALERT_TYPES = LEGACY_RUNTIME_ALERT_TYPES | TECHNICAL_ALERT_TYPES
+# 所有支持的告警类型：单标的 + 组合 + 市场灯
 SUPPORTED_ALERT_TYPES = SYMBOL_ALERT_TYPES | PORTFOLIO_ALERT_TYPES | MARKET_ALERT_TYPES
 # 所有受支持的 target_scope：单标的、自选股、组合持仓、组合账户、市场灯
 SUPPORTED_TARGET_SCOPES = frozenset({"single_symbol", "watchlist", "portfolio_holdings", "portfolio_account", "market"})
+# 支持的告警严重程度级别
 SUPPORTED_SEVERITIES = frozenset({"info", "warning", "critical"})
 # 更新规则时允许显式置 None 的字段（保留现状语义）
 NULLABLE_RULE_UPDATE_FIELDS = frozenset({"cooldown_policy", "notification_policy"})
 
+# 创建日志记录器实例，用于记录告警服务的运行日志
 logger = logging.getLogger(__name__)
 
 
@@ -119,25 +141,60 @@ class AlertService:
 
     通过 `db_manager` 拿到数据库会话，把所有 SQL 访问委托给 `AlertRepository`，
     本类只负责参数标准化、跨字段校验、序列化与触发状态编排。
+
+    核心职责：
+    - 告警规则的 CRUD 操作
+    - 规则参数的校验和标准化
+    - dry-run 试算（支持单目标和批量评估）
+    - 触发历史和通知历史的查询
+    - 冷却策略和通知策略的管理
+
+    Attributes:
+        db (DatabaseManager): 数据库管理器实例
+        repo (AlertRepository): 告警数据访问对象
     """
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         """初始化：获取 DatabaseManager 单例并创建告警仓库。
 
         未显式传入 db_manager 时取全局单例，便于直接以默认配置运行。
+
+        Args:
+            db_manager: 数据库管理器实例（可选），如未提供则使用全局单例
         """
         self.db = db_manager or DatabaseManager.get_instance()
         self.repo = AlertRepository(self.db)
 
     def create_rule(self, payload: Dict[str, Any], *, user_id: Optional[int] = None) -> Dict[str, Any]:
-        """创建一条告警规则，返回序列化结果。"""
+        """创建一条告警规则，返回序列化结果。
+
+        对输入参数进行标准化和校验后，委托 AlertRepository 持久化到数据库。
+
+        Args:
+            payload: 规则创建参数，包含 target_scope、target、alert_type、parameters 等
+            user_id: 用户 ID（可选），用于标识规则归属
+
+        Returns:
+            Dict[str, Any]: 序列化后的规则数据，包含规则 ID、名称、参数等
+        """
         fields = self._normalize_rule_payload(payload)
         if user_id is not None:
             fields["user_id"] = user_id
         return self._serialize_rule(self.repo.create_rule(fields))
 
     def get_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> Dict[str, Any]:
-        """按 ID 取单条规则；不存在时抛 AlertNotFoundError。"""
+        """按 ID 取单条规则；不存在时抛 AlertNotFoundError。
+
+        Args:
+            rule_id: 规则 ID
+            user_id: 用户 ID（可选），用于权限校验
+
+        Returns:
+            Dict[str, Any]: 序列化后的规则数据
+
+        Raises:
+            AlertNotFoundError: 规则不存在时抛出
+        """
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -148,6 +205,18 @@ class AlertService:
 
         先校验 rule 存在并对 payload 做"非空字段校验"，再把旧值与新值合并
         后整体重新走一次标准化流程，确保写入数据库的字段自洽。
+
+        Args:
+            rule_id: 规则 ID
+            payload: 更新参数字典，仅包含需要更新的字段
+            user_id: 用户 ID（可选），用于权限校验
+
+        Returns:
+            Dict[str, Any]: 更新后的序列化规则数据
+
+        Raises:
+            AlertNotFoundError: 规则不存在时抛出
+            AlertServiceError: payload 为空或字段校验失败时抛出
         """
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
@@ -165,11 +234,31 @@ class AlertService:
         return self._serialize_rule(updated)
 
     def delete_rule(self, rule_id: int, *, user_id: Optional[int] = None) -> bool:
-        """删除规则；底层实现决定是否级联清理触发/通知记录。"""
+        """删除规则；底层实现决定是否级联清理触发/通知记录。
+
+        Args:
+            rule_id: 规则 ID
+            user_id: 用户 ID（可选），用于权限校验
+
+        Returns:
+            bool: 删除成功返回 True，失败返回 False
+        """
         return self.repo.delete_rule(rule_id, user_id=user_id)
 
     def enable_rule(self, rule_id: int, enabled: bool, *, user_id: Optional[int] = None) -> Dict[str, Any]:
-        """切换规则的启用状态。"""
+        """切换规则的启用状态。
+
+        Args:
+            rule_id: 规则 ID
+            enabled: 是否启用，True 表示启用，False 表示禁用
+            user_id: 用户 ID（可选），用于权限校验
+
+        Returns:
+            Dict[str, Any]: 更新后的序列化规则数据
+
+        Raises:
+            AlertNotFoundError: 规则不存在时抛出
+        """
         updated = self.repo.update_rule(rule_id, {"enabled": enabled}, user_id=user_id)
         if updated is None:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
@@ -187,7 +276,21 @@ class AlertService:
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        """分页查询规则；返回 items + total + 分页元信息。"""
+        """分页查询规则；返回 items + total + 分页元信息。
+
+        Args:
+            enabled: 按启用状态过滤（可选）
+            alert_type: 按告警类型过滤（可选）
+            target_scope: 按目标作用域过滤（可选）
+            target: 按目标标识过滤（可选）
+            source: 按来源过滤（可选）
+            user_id: 用户 ID（可选），用于权限过滤
+            page: 页码，从 1 开始
+            page_size: 每页数量
+
+        Returns:
+            Dict[str, Any]: 包含 items（规则列表）、total（总数）、page（页码）、page_size（每页数量）
+        """
         rows, total = self.repo.list_rules(
             enabled=enabled,
             alert_type=alert_type,
@@ -211,6 +314,13 @@ class AlertService:
         单标的目标走快速路径；组合/市场/批量目标走并发评估并由
         ``aggregate_dry_run_results`` 汇总。任何抛出都会被转成
         ``evaluation_error`` 结构返回，避免试算调用把 5xx 透出去。
+
+        Args:
+            rule_id: 规则 ID
+            user_id: 用户 ID（可选），用于权限校验
+
+        Returns:
+            Dict[str, Any]: dry-run 评估结果，包含触发状态、观察值、阈值等信息
         """
         row = self.repo.get_rule(rule_id, user_id=user_id)
         if row is None:
@@ -251,7 +361,19 @@ class AlertService:
         monitor: EventMonitor,
         daily_cache: Optional[Dict[Any, Any]] = None,
     ) -> Dict[str, Any]:
-        """按规则类型分发到对应的评估器；不识别则返回 evaluation_error。"""
+        """按规则类型分发到对应的评估器；不识别则返回 evaluation_error。
+
+        支持的价格类告警走异步评估，组合风险和市场灯是 CPU/IO 密集型，
+        丢到默认线程池避免阻塞事件循环。
+
+        Args:
+            rule: 告警规则对象
+            monitor: 事件监控器实例
+            daily_cache: 日线数据缓存（可选），用于避免重复拉取数据
+
+        Returns:
+            Dict[str, Any]: 评估结果字典
+        """
         if isinstance(rule, PriceAlert):
             return await self._evaluate_price(rule, monitor)
         if isinstance(rule, PriceChangeAlert):
@@ -274,7 +396,17 @@ class AlertService:
         payloads: List[RuntimeAlertPayload],
         monitor: EventMonitor,
     ) -> List[Dict[str, Any]]:
-        """并发评估一批 payload；总耗时受 DRY_RUN 总超时控制，单条受目标超时控制。"""
+        """并发评估一批 payload；总耗时受 DRY_RUN 总超时控制，单条受目标超时控制。
+
+        使用信号量限制并发数，避免短时间内打爆数据源。
+
+        Args:
+            payloads: 运行时告警载荷列表
+            monitor: 事件监控器实例
+
+        Returns:
+            List[Dict[str, Any]]: 评估结果列表
+        """
         # 并发上限 8，避免短时间内打爆数据源
         semaphore = asyncio.Semaphore(8)
         daily_cache: Dict[Any, Any] = {}

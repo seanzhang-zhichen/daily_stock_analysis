@@ -265,7 +265,7 @@ class NotificationService(
     def _get_history_compare_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """获取并缓存历史对比数据，供 Markdown 渲染使用。
 
-        按“对比条数 + 股票代码与 query_id 组合”做缓存键，避免同一批报告重复查库。
+        按"对比条数 + 股票代码与 query_id 组合"做缓存键，避免同一批报告重复查库。
         """
         config = get_config()
         history_compare_n = getattr(config, 'report_history_compare_n', 0)

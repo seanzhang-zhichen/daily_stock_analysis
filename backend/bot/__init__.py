@@ -31,9 +31,12 @@
 - /status             - 系统状态
 """
 
+# 导入核心模型类，供外部统一引用
 from bot.models import BotMessage, BotResponse, ChatType, WebhookResponse
+# 导入命令分发器核心类与单例获取函数
 from bot.dispatcher import CommandDispatcher, get_dispatcher
 
+# 公开接口：外部通过 from bot import ... 可直接使用的符号
 __all__ = [
     'BotMessage',
     'BotResponse',

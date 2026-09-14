@@ -19,12 +19,16 @@ from src.storage.base import Base
 
 
 class AlertRuleRecord(Base):
-    """通过 Alert API 管理的告警规则持久化记录。"""
+    """告警规则持久化记录：通过 Alert API 管理的规则定义。
+
+    每条规则归属特定用户（``user_id``），支持按目标范围、告警类型、
+    严重程度等维度索引，便于快速检索生效规则。
+    """
 
     __tablename__ = 'alert_rules'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # To C 多用户隔离: 每条规则归属特定用户。
+    # To C 多用户隔离: 每条规则归属特定用户，NULL 表示系统级默认规则
     user_id = Column(Integer, nullable=True, index=True)
     name = Column(String(64), nullable=False)
     target_scope = Column(String(32), nullable=False, default='single_symbol', index=True)
@@ -40,7 +44,9 @@ class AlertRuleRecord(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
 
     __table_args__ = (
+        # 复合索引：按告警类型和目标联合查询
         Index('ix_alert_rule_type_target', 'alert_type', 'target'),
+        # 复合索引：按用户 ID 查询其所有规则
         Index('ix_alert_rule_user_id', 'user_id'),
     )
 
@@ -48,7 +54,8 @@ class AlertRuleRecord(Base):
 class AlertTriggerRecord(Base):
     """告警触发历史记录表。
 
-    P1 暴露读 API 与表结构，运行时的写入集成在后续阶段落地。
+    记录每次告警规则被触发的详细信息，包括观测值、阈值、触发原因等，
+    便于后续审计和告警效果分析。P1 暴露读 API 与表结构，运行时的写入集成在后续阶段落地。
     """
 
     __tablename__ = 'alert_triggers'
@@ -66,6 +73,7 @@ class AlertTriggerRecord(Base):
     diagnostics = Column(Text)
 
     __table_args__ = (
+        # 复合索引：按规则 ID 和触发时间查询历史触发记录
         Index('ix_alert_trigger_rule_time', 'rule_id', 'triggered_at'),
     )
 

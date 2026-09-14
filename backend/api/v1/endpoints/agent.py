@@ -118,7 +118,15 @@ class ChatRequest(BaseModel):
         return self.skills
 
 class ChatResponse(BaseModel):
-    """非流式对话端点的响应体。"""
+    """非流式对话端点的响应体。
+
+    Attributes:
+        success: 对话是否成功完成。
+        content: Agent 返回的文本内容。
+        session_id: 当前会话的唯一标识符。
+        error: 错误信息，仅在失败时存在。
+        selected_skill_ids: 本次对话实际使用的技能 id 列表。
+    """
 
     success: bool
     content: str

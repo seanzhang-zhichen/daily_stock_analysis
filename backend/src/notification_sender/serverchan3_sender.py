@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class Serverchan3Sender:
     """通过 Server酱3 SendKey API 发送通知。"""
-    
+
     def __init__(self, config: Config):
         """
         初始化 Server酱3 配置
@@ -28,7 +28,7 @@ class Serverchan3Sender:
             config: 配置对象
         """
         self._serverchan3_sendkey = getattr(config, 'serverchan3_sendkey', None)
-        
+
     def send_to_serverchan3(
         self,
         content: str,

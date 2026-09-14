@@ -4,6 +4,15 @@
 按业务域拆分到子模块，再统一在此 re-export，方便其他模块通过
 ``from src.storage.models import StockDaily`` 或 ``from src.storage import StockDaily``
 两种方式访问。
+
+导入顺序与分组逻辑：
+- alert: 告警规则与触发记录
+- app: C 端用户体系（用户、订单、订阅、积分等）
+- backtest: 回测结果与汇总
+- conversation: 对话历史与 LLM 用量
+- decision_signal / decision_signal_outcome / decision_signal_feedback / skill_opinion: AI 决策信号与反馈
+- core: 核心业务（日线、新闻、分析历史、选股、股票索引）
+- portfolio: 投资组合
 """
 
 from src.storage.models.alert import (
@@ -74,7 +83,7 @@ from src.storage.models.portfolio import (
 )
 
 __all__ = [
-    # core
+    # core: 核心业务数据模型
     "StockDaily",
     "NewsIntel",
     "IntelligenceSource",
@@ -85,10 +94,10 @@ __all__ = [
     "ScreeningRun",
     "StockIndexEntry",
     "StockIndexMeta",
-    # backtest
+    # backtest: 回测相关模型
     "BacktestResult",
     "BacktestSummary",
-    # portfolio
+    # portfolio: 投资组合相关模型
     "PortfolioAccount",
     "PortfolioTrade",
     "PortfolioCashLedger",
@@ -97,23 +106,23 @@ __all__ = [
     "PortfolioPositionLot",
     "PortfolioDailySnapshot",
     "PortfolioFxRate",
-    # conversation / llm
+    # conversation / llm: 对话历史与 LLM 用量模型
     "ConversationMessage",
     "ConversationSessionState",
     "ConversationSummary",
     "LLMUsage",
-    # decision signals
+    # decision signals: 决策信号与反馈模型
     "DecisionSignalRecord",
     "DecisionSignalOutcomeRecord",
     "DecisionSignalFeedbackRecord",
     "SkillOpinionSampleRecord",
     "SkillOpinionOutcomeRecord",
-    # alert
+    # alert: 告警规则与通知模型
     "AlertRuleRecord",
     "AlertTriggerRecord",
     "AlertNotificationRecord",
     "AlertCooldownRecord",
-    # app (To C)
+    # app (To C): C 端用户体系相关模型
     "AppUser",
     "AppUserSession",
     "AppUserEmailVerification",

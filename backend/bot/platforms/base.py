@@ -132,21 +132,25 @@ class BotPlatform(ABC):
         return None
     
     def handle_webhook(
-        self, 
-        headers: Dict[str, str], 
+        self,
+        headers: Dict[str, str],
         body: bytes,
         data: Dict[str, Any]
     ) -> Tuple[Optional[BotMessage], Optional[WebhookResponse]]:
         """
         处理 Webhook 请求
-        
+
         这是主入口方法，协调验证、解析等流程。
-        
+        处理顺序：
+        1. 检查是否是验证请求（challenge）
+        2. 验证请求签名（防止伪造请求）
+        3. 解析消息内容
+
         Args:
-            headers: HTTP 请求头
-            body: 请求体原始字节
-            data: 解析后的 JSON 数据
-            
+            headers: HTTP 请求头（包含签名、时间戳等验证信息）
+            body: 请求体原始字节（用于签名验证）
+            data: 解析后的 JSON 数据（用于业务逻辑处理）
+
         Returns:
             (BotMessage, WebhookResponse) 元组
             - 如果是验证请求：(None, challenge_response)

@@ -86,14 +86,18 @@ _SINGLE_STOCK_NOTIFY_LOCK_INIT_GUARD = threading.Lock()
 def _a_share_intelligence_scope_values(code: str) -> List[str]:
     """返回 6 位 A 股代码对应的已持久化新闻作用域别名集合。"""
     raw = str(code or "").strip()
+    # 提取最后 6 位数字作为股票代码主体
     digits = raw[-6:] if len(raw) >= 6 and raw[-6:].isdigit() else ""
     if not digits:
         return []
+    # 根据代码首位判断交易所：5/6/9 开头为上海，其余为深圳
     exchange = "SH" if digits.startswith(("5", "6", "9")) else "SZ"
+    # 生成多种可能的代码格式，用于匹配不同数据源中的股票标识
     values = (
         digits, digits.upper(), digits.lower(), f"{exchange}{digits}",
         f"{exchange.lower()}{digits}", f"{digits}.{exchange}", f"{digits}.{exchange.lower()}",
     )
+    # 使用 dict.fromkeys 去重同时保持顺序
     return list(dict.fromkeys(values))
 
 
@@ -164,19 +168,23 @@ class StockAnalysisPipeline:
         self.daily_market_context_allow_generate = daily_market_context_allow_generate
         self._daily_market_context_service_lock = threading.Lock()
         
-        # 初始化各模块
+        # === 初始化各模块 ===
+        # 数据库连接
         self.db = get_db()
+        # 数据获取管理器（统一入口，支持多数据源自动切换）
         self.fetcher_manager = DataFetcherManager()
+        # 市场结构服务（A股板块、主题等）
         self.market_structure_service = MarketStructureService(
             fetcher_manager=self.fetcher_manager,
         )
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
-        self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
+        self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器（均线/趋势/量价）
         self.analyzer = GeminiAnalyzer(config=self.config, skills=self.analysis_skills, user_id=user_id)
         self.notifier = NotificationService(source_message=source_message)
         self._single_stock_notify_lock = threading.Lock()
         
         # 初始化搜索服务（可选，初始化失败不应阻断主分析流程）
+        # 搜索服务用于多维度情报收集（新闻、风险、业绩预期等）
         try:
             self.search_service = SearchService(
                 bocha_keys=self.config.bocha_api_keys,
@@ -187,10 +195,12 @@ class StockAnalysisPipeline:
                 minimax_keys=self.config.minimax_api_keys,
                 searxng_base_urls=self.config.searxng_base_urls,
                 searxng_public_instances_enabled=self.config.searxng_public_instances_enabled,
+                searxng_timeout_seconds=getattr(self.config, "searxng_timeout_seconds", None),
                 news_max_age_days=self.config.news_max_age_days,
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
             )
         except Exception as exc:
+            # 搜索服务失败时降级为无搜索模式，不影响核心分析流程
             logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc, exc_info=True)
             self.search_service = None
         
@@ -213,6 +223,7 @@ class StockAnalysisPipeline:
             logger.warning("搜索服务未启用（未配置搜索能力）")
 
         # 初始化社交舆情服务（仅美股，可选）
+        # 社交舆情数据源包括 Reddit、X（Twitter）、Polymarket 等，仅适用于美股
         try:
             self.social_sentiment_service = SocialSentimentService(
                 api_key=self.config.social_sentiment_api_key,
@@ -221,6 +232,7 @@ class StockAnalysisPipeline:
             if self.social_sentiment_service.is_available:
                 logger.info("Social sentiment service enabled (Reddit/X/Polymarket, US stocks only)")
         except Exception as exc:
+            # 社交舆情服务失败时静默降级，不影响主分析流程
             logger.warning(
                 "社交舆情服务初始化失败，将跳过舆情分析: %s",
                 exc,
@@ -288,10 +300,11 @@ class StockAnalysisPipeline:
                 )
                 return True, None
 
-            # 从数据源获取数据
+            # 从数据源获取数据（30 日历史数据，用于后续分析）
             logger.info(f"{stock_name}({code}) 开始从数据源获取数据...")
             df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
 
+            # 数据为空时返回失败，但允许上游决定是否继续
             if df is None or df.empty:
                 return False, "获取数据为空"
 
@@ -354,9 +367,10 @@ class StockAnalysisPipeline:
             realtime_quote = None
             try:
                 if self.config.enable_realtime_quote:
+                    # 尝试从多个数据源获取实时行情，失败时自动切换
                     realtime_quote = self.fetcher_manager.get_realtime_quote(code, log_final_failure=False)
                     if realtime_quote:
-                        # 使用实时行情返回的真实股票名称
+                        # 使用实时行情返回的真实股票名称覆盖默认值
                         if realtime_quote.name:
                             stock_name = realtime_quote.name
                         # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
@@ -366,10 +380,13 @@ class StockAnalysisPipeline:
                                   f"量比={volume_ratio}, 换手率={turnover_rate}% "
                                   f"(来源: {realtime_quote.source.value if hasattr(realtime_quote, 'source') else 'unknown'})")
                     else:
+                        # 所有实时数据源均不可用，降级为历史收盘价
                         logger.warning(f"{stock_name}({code}) 所有实时行情数据源均不可用，已降级为历史收盘价继续分析")
                 else:
+                    # 实时行情开关关闭，直接使用历史数据
                     logger.info(f"{stock_name}({code}) 实时行情已禁用，使用历史收盘价继续分析")
             except Exception as e:
+                # 实时行情链路异常时降级，不影响主流程
                 logger.warning(f"{stock_name}({code}) 实时行情链路异常，已降级为历史收盘价继续分析: {e}")
 
             # 如果还是没有名称，使用代码作为名称
@@ -377,17 +394,22 @@ class StockAnalysisPipeline:
                 stock_name = f'股票{code}'
 
             # Step 2: 获取筹码分布 - 使用统一入口，带熔断保护
+            # 筹码分布反映不同价位上的持仓成本，用于判断支撑/压力位
             chip_data = None
             try:
                 chip_data = self.fetcher_manager.get_chip_distribution(code)
                 if chip_data:
+                    # 记录关键筹码指标：获利比例和集中度
                     logger.info(f"{stock_name}({code}) 筹码分布: 获利比例={chip_data.profit_ratio:.1%}, "
                               f"90%集中度={chip_data.concentration_90:.2%}")
                 else:
+                    # 筹码数据为空可能是由于数据源未返回或功能已禁用
                     logger.debug(f"{stock_name}({code}) 筹码分布获取失败或已禁用")
             except Exception as e:
+                # 筹码获取失败不影响主流程，仅记录警告
                 logger.warning(f"{stock_name}({code}) 获取筹码分布失败: {e}")
 
+            # Agent 模式决策逻辑：
             # 只有当 Agent 模式被显式开启、或配置了具体 Agent 技能时，才走 Agent 分析链路。
             # 注意：这里刻意用 config.agent_mode（显式 opt-in）而非 config.is_agent_available()，
             # 避免只为传统分析路径配了 API Key 的用户被静默切到更慢、更贵的 Agent 模式。
@@ -406,8 +428,10 @@ class StockAnalysisPipeline:
             self._emit_progress(32, f"{stock_name}：正在聚合基本面与趋势数据")
 
             # Step 2.5: 基本面能力聚合（统一入口，异常降级）
-            # - 失败时返回 partial/failed，不影响既有技术面/新闻链路
-            # - 关闭开关时仍返回 not_supported 结构
+            # 基本面数据包括财务指标、估值水平、行业地位等，用于辅助 AI 生成更全面的分析报告。
+            # 设计原则：
+            # - 失败时返回 partial/failed，不影响既有技术面/新闻链路（fail-open）
+            # - 关闭开关时仍返回 not_supported 结构，保持接口一致性
             fundamental_context = None
             try:
                 fundamental_context = self.fetcher_manager.get_fundamental_context(
@@ -448,13 +472,15 @@ class StockAnalysisPipeline:
                 logger.debug(f"{stock_name}({code}) 基本面快照写入失败: {e}")
 
             # Step 3: 趋势分析（基于交易理念）— 在 Agent 分支之前执行，供两条路径共用
+            # 趋势分析是核心决策依据之一，计算均线排列、量价关系、买卖信号等技术指标。
             trend_result: Optional[TrendAnalysisResult] = None
             try:
                 from src.services.history_loader import get_frozen_target_date
                 _mkt = get_market_for_stock(normalize_stock_code(code))
                 frozen = get_frozen_target_date()
+                # 89 个自然日约合 60 个交易日，满足 MA60 计算所需的样本量
                 end_date = frozen if frozen else get_market_now(_mkt).date()
-                start_date = end_date - timedelta(days=89)  # 89 个自然日约合 60 个交易日，满足 MA60 样本量
+                start_date = end_date - timedelta(days=89)
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
@@ -485,6 +511,8 @@ class StockAnalysisPipeline:
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
+            # 情报搜索为分析提供外部信息输入，包括新闻、公告、研报、社交媒体等。
+            # 搜索维度通常包括：最新动态、风险事件、业绩预期、行业政策等。
             news_context = None
             news_result_count: Optional[int] = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
@@ -492,7 +520,7 @@ class StockAnalysisPipeline:
                 news_result_count = 0
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
 
-                # 使用多维度搜索（最多5次搜索）
+                # 使用多维度搜索（最多5次搜索），覆盖不同信息维度
                 intel_results = self.search_service.search_comprehensive_intel(
                     stock_code=code,
                     stock_name=stock_name,
@@ -733,9 +761,10 @@ class StockAnalysisPipeline:
             增强后的上下文
         """
         enhanced = context.copy()
+        # 统一报告语言设置，支持 zh/en，供后续 analyzer 和本地化函数使用
         enhanced["report_language"] = normalize_report_language(getattr(self.config, "report_language", "zh"))
         
-        # 添加股票名称
+        # 添加股票名称：优先使用传入的 stock_name，其次从实时行情获取
         if stock_name:
             enhanced['stock_name'] = stock_name
         elif realtime_quote and getattr(realtime_quote, 'name', None):
@@ -881,7 +910,11 @@ class StockAnalysisPipeline:
         *,
         target_date: Optional[date] = None,
     ) -> Optional[DailyMarketContext]:
-        """加载共享的 A股大盘上下文，且不阻塞个股分析流程。"""
+        """加载共享的 A股大盘上下文，且不阻塞个股分析流程。
+        
+        大盘上下文包括指数涨跌、市场情绪、板块表现等，用于为个股分析提供宏观背景。
+        仅在 A股（market="cn"）且功能开启时生效，其他市场返回 None。
+        """
         if market != "cn" or not getattr(self, "daily_market_context_enabled", False):
             return None
         try:
@@ -921,9 +954,10 @@ class StockAnalysisPipeline:
         daily_market_context: Optional[DailyMarketContext],
     ) -> None:
         """把 A股大盘上下文挂载到个股分析上下文中。
-
-        同时写入结构化字典与已格式化的提示词段落：前者供护栏（guardrail）逻辑读取，
-        后者供 LLM 提示词直接拼接使用。
+        
+        同时写入结构化字典与已格式化的提示词段落：
+        - 前者供护栏（guardrail）逻辑读取
+        - 后者供 LLM 提示词直接拼接使用
         """
         if daily_market_context is None:
             return
@@ -943,6 +977,7 @@ class StockAnalysisPipeline:
         将 A股所属板块（belong_boards）作为顶层补充字段附加到基本面上下文。
 
         采用浅拷贝，避免取出后的缓存基本面上下文被就地（in place）修改。
+        该字段用于后续分析中了解股票的行业归属和板块联动关系。
         """
         if isinstance(fundamental_context, dict):
             enriched_context = dict(fundamental_context)
@@ -994,7 +1029,11 @@ class StockAnalysisPipeline:
         daily_market_context: Optional[DailyMarketContext] = None,
         market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """构建共享的 A股市场结构上下文，采用 fail-open（放行）策略。"""
+        """构建共享的 A股市场结构上下文，采用 fail-open（放行）策略。
+        
+        市场结构上下文包括板块排名、主题热度、个股在行业中的相对位置等信息。
+        仅在 A股市场生效，非 A股或失败时返回空字典，不影响主流程。
+        """
         if str(market or "").strip().lower() != "cn":
             return self._market_structure_not_supported_context(
                 code=code,
@@ -1078,7 +1117,11 @@ class StockAnalysisPipeline:
         }
 
     def _ensure_agent_history(self, code: str, min_days: int = 240) -> None:
-        """确保数据库中存在至少 *min_days* 根 K 线历史，供 Agent 工具调用。"""
+        """确保数据库中存在至少 *min_days* 根 K 线历史，供 Agent 工具调用。
+        
+        Agent 工具需要足够的历史数据进行深度分析，本方法在 Agent 执行前预取数据，
+        避免 Agent 执行时因数据不足而中断。
+        """
         from src.services.history_loader import get_frozen_target_date
 
         target = get_frozen_target_date()
@@ -1105,7 +1148,11 @@ class StockAnalysisPipeline:
         stock_name: str,
         limit: int = 6,
     ) -> Optional[str]:
-        """先取 A 股个股证据再取市场证据，全程不阻塞分析主流程。"""
+        """先取 A 股个股证据再取市场证据，全程不阻塞分析主流程。
+        
+        从本地情报库加载已持久化的新闻和资讯，作为搜索结果的补充。
+        优先加载个股相关证据，不足时再加载市场级证据。
+        """
         if not _a_share_intelligence_scope_values(code):
             return None
         try:
@@ -1186,6 +1233,7 @@ class StockAnalysisPipeline:
             executor = build_agent_executor(self.config, requested_skills, user_id=self.user_id)
 
             # 预置初始上下文，避免 Agent 再重复调用工具取这些已知数据
+            # 将已获取的数据直接注入，减少 Agent 执行时的额外网络请求
             initial_context = {
                 "stock_code": code,
                 "stock_name": stock_name,
@@ -1429,7 +1477,7 @@ class StockAnalysisPipeline:
                     "股东与管理层背景、财务质量、估值背景、近期催化、关键风险、来源线索、尚未确认的未知项，以及对最终投资报告的影响。"
                     "只使用工具或上下文中可验证的信息，缺失内容请明确说明未知。"
                     "只输出可直接展示在最终报告里的股票基本情况正文。"
-                    "禁止输出“如果你愿意”“我可以下一步”“我可以帮你整理成模板”“包括如下内容”等对话式收尾、模板说明、待办清单、过程解释或元话术。"
+                    "禁止输出'如果你愿意''我可以下一步''我可以帮你整理成模板''包括如下内容'等对话式收尾、模板说明、待办清单、过程解释或元话术。"
                 )
 
             try:
@@ -2235,7 +2283,8 @@ class StockAnalysisPipeline:
         3. AI 分析
         4. 单股推送（可选，#55）
 
-        此方法会被线程池调用，需要处理好异常
+        此方法会被线程池调用，需要处理好异常。
+        异常处理策略：任何步骤失败都不应影响其他股票的分析。
 
         Args:
             analysis_query_id: 查询链路关联 id
@@ -2318,13 +2367,13 @@ class StockAnalysisPipeline:
         merge_notification: bool = False
     ) -> List[AnalysisResult]:
         """
-        运行完整的分析流程
+        运行完整的分析流程（批量并发处理多只股票）
 
         流程：
-        1. 获取待分析的股票列表
-        2. 使用线程池并发处理
+        1. 获取待分析的股票列表（默认从配置读取自选股）
+        2. 使用线程池并发处理（默认 max_workers=3，避免触发反爬）
         3. 收集分析结果
-        4. 发送通知
+        4. 发送通知（支持单股/汇总/合并等多种模式）
 
         Args:
             stock_codes: 股票代码列表（可选，默认使用配置中的自选股）
@@ -2424,7 +2473,7 @@ class StockAnalysisPipeline:
 
                     # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
                     if idx < len(stock_codes) - 1 and analysis_delay > 0:
-                        # 注意：此 sleep 发生在“主线程收集 future 的循环”中，
+                        # 注意：此 sleep 发生在"主线程收集 future 的循环"中，
                         # 并不会阻止线程池中的任务同时发起网络请求。
                         # 因此它对降低并发请求峰值的效果有限；真正的峰值主要由 max_workers 决定。
                         # 该行为目前保留（按需求不改逻辑）。
@@ -2544,7 +2593,9 @@ class StockAnalysisPipeline:
         """
         发送分析结果通知
         
-        生成决策仪表盘格式的报告
+        生成决策仪表盘格式的报告，并推送到多个通知渠道。
+        支持渠道：企业微信、飞书、Telegram、邮件、Slack、Discord、Webhook 等。
+        各渠道有独立的格式适配（如企业微信限制消息长度，需发精简版）。
         
         Args:
             results: 分析结果列表

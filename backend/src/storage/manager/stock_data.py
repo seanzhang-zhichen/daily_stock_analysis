@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class StockDataMixin:
-    """日线数据读写 Mixin。依赖 ``_DatabaseManagerBase`` 提供的 session/事务工具。"""
+    """日线数据读写 Mixin：封装股票日线数据的查询、保存与分析上下文获取。
+
+    依赖 ``_DatabaseManagerBase`` 提供的 session/事务工具，
+    提供按日期范围查询、批量 upsert 写入、以及计算均线形态等分析辅助功能。
+    """
 
     def has_today_data(self, code: str, target_date: Optional[date] = None) -> bool:
         """

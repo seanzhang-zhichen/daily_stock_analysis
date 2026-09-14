@@ -627,7 +627,7 @@ def load_futu_stock_codes() -> List[str]:
 
     仅保留状态为 ACTIVE 的真实账户，以及数量非零的 Futu ``SecurityType.STOCK``
     LONG（多头）持仓。``FUTU_ACC_ID`` 可选择单个账户；否则合并 NORMAL 与 MASTER
-    账户。``MASTER`` 是账户角色，而“只读”描述的是本集成仅做查询类 API 调用的
+    账户。``MASTER`` 是账户角色，而"只读"描述的是本集成仅做查询类 API 调用的
     特性。券商发现默认使用 SDK 的 ``SecurityFirm.NONE`` 自动探测，除非显式设置了
     ``FUTU_SECURITY_FIRM``。持仓数据始终强制刷新。代码转换仅支持 A/HK/US 股票，
     其他 Futu 市场的持仓会在日志中记录代码并跳过。

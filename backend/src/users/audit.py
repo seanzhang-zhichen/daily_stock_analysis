@@ -32,6 +32,13 @@ def write_audit_log(
 ) -> None:
     """写入一条审计日志。失败时记 warning 并静默，不向调用方抛异常。
 
+    设计说明：
+    - 采用 fire-and-forget 模式，写入失败不影响主业务链路，
+      仅记录 warning 日志供后续排查。
+    - 字段长度截断：action 最长 64 字符，target_ref 最长 128 字符，
+      ip 最长 64 字符，user_agent 最长 512 字符，防止超长数据导致数据库异常。
+    - detail 会序列化为 JSON 字符串存储，调用方需注意敏感信息脱敏。
+
     Args:
         db: SQLAlchemy session（调用方保持打开状态）。
         action: 动作标识，如 ``auth.login``、``order.create``。
@@ -44,6 +51,7 @@ def write_audit_log(
         user_agent: 请求 User-Agent。
     """
     try:
+        # 构造审计日志记录，对可变长字段做截断处理，避免超长导致数据库写入失败
         row = AppAuditLog(
             action=action[:64],
             user_id=user_id,
@@ -57,12 +65,14 @@ def write_audit_log(
         db.add(row)
         db.commit()
     except Exception:  # noqa: BLE001
+        # 审计日志写入失败不应影响主业务，记录 warning 并静默处理
         logger.warning(
             "audit log write failed action=%s user_id=%s",
             action,
             user_id,
             exc_info=True,
         )
+        # 尝试回滚当前事务，避免脏数据影响后续操作
         try:
             db.rollback()
         except Exception:  # noqa: BLE001
@@ -70,7 +80,14 @@ def write_audit_log(
 
 
 def serialize_audit_log(row: AppAuditLog) -> dict:
-    """将 AppAuditLog ORM 行序列化为前端友好的字典。"""
+    """将 AppAuditLog ORM 行序列化为前端友好的字典。
+
+    字段映射说明：
+    - 数据库字段使用下划线命名（如 user_id），返回字典使用驼峰命名（如 userId），
+      便于前端 JavaScript/TypeScript 消费。
+    - created_at 字段格式化为 ISO 8601 字符串（如 2024-01-01T12:00:00），
+      若为空则返回 None。
+    """
     return {
         "id": int(row.id),
         "action": row.action,

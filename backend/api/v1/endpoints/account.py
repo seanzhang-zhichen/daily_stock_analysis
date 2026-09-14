@@ -81,7 +81,16 @@ router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
-    """注册请求体，包含邮箱密码、邀请码和协议同意状态。"""
+    """用户注册请求体，包含邮箱、密码、邀请码和协议同意状态。
+
+    Attributes:
+        email: 用户邮箱地址
+        password: 用户密码
+        password_confirm: 密码确认，用于校验两次输入是否一致
+        invite_code: 可选的邀请码，用于注册奖励或限制注册
+        terms_agreed: 是否同意服务协议（Phase 6 必填）
+        terms_version: 同意的协议版本号
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -95,33 +104,57 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """邮箱密码登录请求体。"""
+    """用户邮箱密码登录请求体。
+
+    Attributes:
+        email: 用户注册时使用的邮箱地址
+        password: 用户密码
+    """
 
     email: str = Field(default="")
     password: str = Field(default="")
 
 
 class VerifyEmailRequest(BaseModel):
-    """邮箱验证码请求体。"""
+    """邮箱验证码验证请求体，用于完成邮箱验证流程。
+
+    Attributes:
+        email: 待验证的邮箱地址
+        code: 用户收到的验证码
+    """
 
     email: str = Field(default="")
     code: str = Field(default="")
 
 
 class RequestResetRequest(BaseModel):
-    """密码重置邮件请求体。"""
+    """请求发送密码重置邮件的请求体。
+
+    Attributes:
+        email: 用户注册邮箱，重置链接将发送至此邮箱
+    """
 
     email: str = Field(default="")
 
 
 class RequestEmailVerificationRequest(BaseModel):
-    """重新发送邮箱验证邮件请求体。"""
+    """请求重新发送邮箱验证邮件的请求体。
+
+    Attributes:
+        email: 需要重新验证的邮箱地址
+    """
 
     email: str = Field(default="")
 
 
 class ResetPasswordRequest(BaseModel):
-    """使用一次性 token 重置密码的请求体。"""
+    """使用一次性 token 重置密码的请求体。
+
+    Attributes:
+        token: 从密码重置邮件中获取的一次性 token
+        new_password: 新密码
+        new_password_confirm: 新密码确认
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -131,7 +164,13 @@ class ResetPasswordRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """登录态下修改密码的请求体。"""
+    """登录态下修改密码的请求体。
+
+    Attributes:
+        current_password: 当前密码，用于身份校验
+        new_password: 新密码
+        new_password_confirm: 新密码确认
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -141,13 +180,21 @@ class ChangePasswordRequest(BaseModel):
 
 
 class RedeemRequest(BaseModel):
-    """兑换码升级套餐请求体。"""
+    """兑换码升级套餐请求体。
+
+    Attributes:
+        code: 兑换码字符串
+    """
 
     code: str = Field(default="")
 
 
 class ModelPreferenceUpdateRequest(BaseModel):
-    """当前用户模型偏好更新请求体。"""
+    """当前用户模型偏好更新请求体。
+
+    Attributes:
+        preferred_model: 用户偏好的 LLM 模型 ID，None 表示使用系统默认
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -155,7 +202,12 @@ class ModelPreferenceUpdateRequest(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    """当前用户个人资料更新请求体。"""
+    """当前用户个人资料更新请求体。
+
+    Attributes:
+        display_name: 用户昵称，可选
+        avatar_url: 用户头像 URL，可选
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -164,7 +216,12 @@ class ProfileUpdateRequest(BaseModel):
 
 
 class WatchlistAddRequest(BaseModel):
-    """添加单只自选股的请求体。"""
+    """添加单只自选股的请求体。
+
+    Attributes:
+        stock_code: 股票代码
+        stock_name: 股票名称，可选
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -173,7 +230,11 @@ class WatchlistAddRequest(BaseModel):
 
 
 class WatchlistSetRequest(BaseModel):
-    """全量替换当前用户自选股列表的请求体。"""
+    """全量替换当前用户自选股列表的请求体。
+
+    Attributes:
+        stocks: 股票列表，每个元素为包含 stockCode/stock_name 的字典
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -181,7 +242,15 @@ class WatchlistSetRequest(BaseModel):
 
 
 class NotificationPrefsUpdateRequest(BaseModel):
-    """当前用户通知偏好增量更新请求体。"""
+    """当前用户通知偏好增量更新请求体。
+
+    Attributes:
+        daily_push_enabled: 是否启用每日推送
+        email_enabled: 是否启用邮件通知
+        webhook_url: Webhook 地址
+        webhook_type: Webhook 类型
+        clear_webhook: 是否清空 webhook 设置
+    """
 
     model_config = {"populate_by_name": True}
 
@@ -217,7 +286,14 @@ _USER_ERROR_HTTP_STATUS = {
 
 
 def _user_error_response(exc: UserError) -> JSONResponse:
-    """将领域层 UserError 映射为前端稳定的 JSON 错误响应。"""
+    """将领域层 UserError 映射为前端稳定的 JSON 错误响应。
+
+    Args:
+        exc: 用户错误异常对象，包含错误码和错误信息
+
+    Returns:
+        JSONResponse: 包含错误码和错误信息的 JSON 响应
+    """
     status = _USER_ERROR_HTTP_STATUS.get(exc.code, 400)
     return JSONResponse(
         status_code=status,
@@ -226,7 +302,15 @@ def _user_error_response(exc: UserError) -> JSONResponse:
 
 
 def _cookie_kwargs(request: Request, settings: UserModeSettings) -> dict:
-    """根据运行时设置构造 C 端用户会话 cookie 的属性。"""
+    """根据运行时设置构造 C 端用户会话 cookie 的属性。
+
+    Args:
+        request: FastAPI 请求对象，用于获取协议信息
+        settings: 用户模式设置，包含 session 过期时间等配置
+
+    Returns:
+        dict: cookie 参数字典，包含 key、httponly、samesite、secure、path、max_age 等属性
+    """
     secure = False
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
         # 反代部署：信任反代透传的协议头决定 cookie 的 Secure 标志
@@ -251,13 +335,28 @@ def _attach_session_cookie(
     issued: IssuedSession,
     settings: UserModeSettings,
 ) -> None:
-    """将签发的 C 端用户会话写入 FastAPI 响应。"""
+    """将签发的 C 端用户会话写入 FastAPI 响应。
+
+    Args:
+        response: FastAPI 响应对象，用于设置 cookie
+        request: FastAPI 请求对象，用于获取协议信息
+        issued: 已签发的会话对象，包含 cookie 值
+        settings: 用户模式设置
+    """
     params = _cookie_kwargs(request, settings)
     response.set_cookie(value=issued.cookie_value, **params)
 
 
 def _serialize_user(user, *, terms_version: str | None = None) -> dict:
-    """把 AppUser 序列化为账号 API 的前端结构。"""
+    """把 AppUser 序列化为账号 API 的前端结构。
+
+    Args:
+        user: AppUser 对象，包含用户基本信息
+        terms_version: 当前协议版本号，用于判断是否需要重新同意协议
+
+    Returns:
+        dict: 前端所需的结构化用户数据字典
+    """
     current_terms_version = (terms_version or CURRENT_TERMS_VERSION).strip()
     return {
         "id": user.id,
@@ -286,6 +385,12 @@ def _build_renewal_payload(user) -> Optional[dict]:
     - 已过期 (理论上 `plan_lifecycle` 会自动降级, 这里兜底): ``expired=True``
     - 距到期 ≤ max(REMINDER_OFFSET_DAYS) 天: ``willExpireSoon=True``
     - 其它情况返回基础剩余天数信息, 供前端按需展示
+
+    Args:
+        user: 当前用户对象，包含套餐和到期时间信息
+
+    Returns:
+        Optional[dict]: 包含续费信息的字典，或 None（如果无需提醒）
     """
     plan_code = (getattr(user, "plan_code", None) or "free").strip().lower()
     expires_at = getattr(user, "plan_expires_at", None)
@@ -321,7 +426,16 @@ def _status_payload(
     request: Request,
     db: Session,
 ) -> dict:
-    """构造 /status 与 /me 共用的账户状态响应体。"""
+    """构造 /status 与 /me 共用的账户状态响应体。
+
+    Args:
+        settings: 用户模式设置
+        request: FastAPI 请求对象
+        db: 数据库会话
+
+    Returns:
+        dict: 包含用户状态、套餐、配额、积分、续费提醒等信息的字典
+    """
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
 
@@ -380,12 +494,23 @@ def _status_payload(
 
 
 def _get_settings_or_disabled(db: Session | None = None):
-    """为需要运行时账户配置的端点加载用户态配置。"""
+    """为需要运行时账户配置的端点加载用户态配置。
+
+    Args:
+        db: 数据库会话，可选
+
+    Returns:
+        UserModeSettings: 用户模式配置对象
+    """
     return load_user_mode_settings(db)
 
 
 def _commit_or_rollback(db: Session) -> None:
-    """提交数据库事务；失败时回滚并重新抛出异常。"""
+    """提交数据库事务；失败时回滚并重新抛出异常。
+
+    Args:
+        db: 数据库会话对象
+    """
     try:
         db.commit()
     except Exception:
@@ -398,7 +523,15 @@ def _commit_or_rollback(db: Session) -> None:
 
 @router.get("/status", summary="C 端用户态")
 async def account_status(request: Request, db: Session = Depends(get_db)):
-    """无需登录即可访问, 用于前端启动时拉取用户态。"""
+    """无需登录即可访问, 用于前端启动时拉取用户态。
+
+    Args:
+        request: FastAPI 请求对象
+        db: 数据库会话
+
+    Returns:
+        dict: 包含用户登录状态、套餐、配额等信息的字典
+    """
     settings = load_user_mode_settings(db)
     return _status_payload(settings, request, db)
 
@@ -409,7 +542,16 @@ async def account_register(
     body: RegisterRequest,
     db: Session = Depends(get_db),
 ):
-    """注册新用户并返回是否需要邮箱验证；不自动登录。"""
+    """注册新用户并返回是否需要邮箱验证；不自动登录。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 注册请求体
+        db: 数据库会话
+
+    Returns:
+        JSONResponse: 包含用户信息或错误信息的 JSON 响应
+    """
     try:
         settings = _get_settings_or_disabled(db)
         result = svc_register(
@@ -452,7 +594,16 @@ async def account_login(
     body: LoginRequest,
     db: Session = Depends(get_db),
 ):
-    """校验邮箱密码凭据，并通过 cookie 下发用户会话。"""
+    """校验邮箱密码凭据，并通过 cookie 下发用户会话。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 登录请求体
+        db: 数据库会话
+
+    Returns:
+        JSONResponse: 包含用户信息的 JSON 响应，并设置会话 cookie
+    """
     try:
         settings = _get_settings_or_disabled(db)
         issued = svc_login(
@@ -485,7 +636,15 @@ async def account_login(
 
 @router.post("/logout", summary="登出当前 session")
 async def account_logout(request: Request, db: Session = Depends(get_db)):
-    """撤销当前会话（若存在），并始终清除浏览器中的会话 cookie。"""
+    """撤销当前会话（若存在），并始终清除浏览器中的会话 cookie。
+
+    Args:
+        request: FastAPI 请求对象
+        db: 数据库会话
+
+    Returns:
+        Response: 204 无内容响应
+    """
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     revoked = False
     if cookie_value:
@@ -506,7 +665,15 @@ async def account_logout(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/verify-email", summary="邮箱验证")
 async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
-    """使用发送到邮箱的验证码完成验证。"""
+    """使用发送到邮箱的验证码完成验证。
+
+    Args:
+        body: 邮箱验证请求体
+        db: 数据库会话
+
+    Returns:
+        dict: 包含验证后用户信息的字典
+    """
     try:
         settings = _get_settings_or_disabled(db)
         user = svc_verify_email(db, email=body.email, code=body.code, settings=settings)
@@ -519,7 +686,15 @@ async def account_verify_email(body: VerifyEmailRequest, db: Session = Depends(g
 
 @router.post("/request-email-verification", summary="重新发送邮箱验证邮件")
 async def account_request_email_verification(body: RequestEmailVerificationRequest, db: Session = Depends(get_db)):
-    """重新发送验证邮件，不暴露账号是否存在。"""
+    """重新发送验证邮件，不暴露账号是否存在。
+
+    Args:
+        body: 请求体，包含邮箱地址
+        db: 数据库会话
+
+    Returns:
+        dict: 包含操作结果的字典
+    """
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -542,7 +717,15 @@ async def account_request_email_verification(body: RequestEmailVerificationReque
 
 @router.post("/request-password-reset", summary="发起密码重置邮件")
 async def account_request_reset(body: RequestResetRequest, db: Session = Depends(get_db)):
-    """发起密码重置流程，对未知邮箱保持响应一致以防账号枚举。"""
+    """发起密码重置流程，对未知邮箱保持响应一致以防账号枚举。
+
+    Args:
+        body: 请求体，包含邮箱地址
+        db: 数据库会话
+
+    Returns:
+        dict: 包含操作结果的字典
+    """
     try:
         settings = _get_settings_or_disabled(db)
         try:
@@ -565,7 +748,15 @@ async def account_request_reset(body: RequestResetRequest, db: Session = Depends
 
 @router.post("/reset-password", summary="使用 token 重置密码")
 async def account_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """使用一次性 token 重置密码。"""
+    """使用一次性 token 重置密码。
+
+    Args:
+        body: 请求体，包含 token 和新密码
+        db: 数据库会话
+
+    Returns:
+        Response: 204 无内容响应
+    """
     try:
         settings = _get_settings_or_disabled(db)
         svc_reset_password(
@@ -584,7 +775,18 @@ async def account_reset_password(body: ResetPasswordRequest, db: Session = Depen
 
 
 def _require_current_user(request: Request, db: Session):
-    """从 cookie 解析当前登录用户，未登录则抛出领域层鉴权错误。"""
+    """从 cookie 解析当前登录用户，未登录则抛出领域层鉴权错误。
+
+    Args:
+        request: FastAPI 请求对象
+        db: 数据库会话
+
+    Returns:
+        tuple: (settings, user) 用户模式设置和当前用户对象
+
+    Raises:
+        UserError: 未登录或会话无效时抛出
+    """
     settings = load_user_mode_settings(db)
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(db, cookie_value) if cookie_value else None
@@ -595,7 +797,15 @@ def _require_current_user(request: Request, db: Session):
 
 @router.get("/me", summary="当前登录用户信息")
 async def account_me(request: Request, db: Session = Depends(get_db)):
-    """返回当前会话用户与当前生效的协议版本。"""
+    """返回当前会话用户与当前生效的协议版本。
+
+    Args:
+        request: FastAPI 请求对象
+        db: 数据库会话
+
+    Returns:
+        dict: 包含用户信息的字典
+    """
     try:
         settings, user = _require_current_user(request, db)
     except UserError as exc:
@@ -604,7 +814,17 @@ async def account_me(request: Request, db: Session = Depends(get_db)):
 
 
 def _normalize_display_name(value: str | None) -> str | None:
-    """规范化可选的昵称字段。"""
+    """规范化可选的昵称字段。
+
+    Args:
+        value: 原始昵称字符串
+
+    Returns:
+        str | None: 规范化后的昵称，或 None（如果为空）
+
+    Raises:
+        UserError: 昵称超过 32 个字符时抛出
+    """
     normalized = (value or "").strip()
     if not normalized:
         return None
@@ -614,7 +834,17 @@ def _normalize_display_name(value: str | None) -> str | None:
 
 
 def _normalize_avatar_url(value: str | None) -> str | None:
-    """规范化头像 URL，并拒绝非 http/https 协议。"""
+    """规范化头像 URL，并拒绝非 http/https 协议。
+
+    Args:
+        value: 原始头像 URL 字符串
+
+    Returns:
+        str | None: 规范化后的头像 URL，或 None（如果为空）
+
+    Raises:
+        UserError: URL 过长或非 http/https 协议时抛出
+    """
     normalized = (value or "").strip()
     if not normalized:
         return None
@@ -633,7 +863,16 @@ async def account_update_profile(
     body: ProfileUpdateRequest,
     db: Session = Depends(get_db),
 ):
-    """更新当前用户的昵称和头像 URL。"""
+    """更新当前用户的昵称和头像 URL。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 个人资料更新请求体
+        db: 数据库会话
+
+    Returns:
+        dict: 包含更新后用户信息的字典
+    """
     try:
         settings, user = _require_current_user(request, db)
         user.display_name = _normalize_display_name(body.display_name)
@@ -667,7 +906,16 @@ async def account_change_password(
     body: ChangePasswordRequest,
     db: Session = Depends(get_db),
 ):
-    """修改当前用户密码，并清除旧 session 以强制重新登录。"""
+    """修改当前用户密码，并清除旧 session 以强制重新登录。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 修改密码请求体
+        db: 数据库会话
+
+    Returns:
+        Response: 204 无内容响应，同时清除会话 cookie
+    """
     try:
         settings, user = _require_current_user(request, db)
         svc_change_password(
@@ -704,7 +952,16 @@ async def account_redeem(
     body: RedeemRequest,
     db: Session = Depends(get_db),
 ):
-    """为当前用户兑换套餐码并返回更新后的权益信息。"""
+    """为当前用户兑换套餐码并返回更新后的权益信息。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 兑换请求体
+        db: 数据库会话
+
+    Returns:
+        dict: 包含用户、订阅和套餐信息的字典
+    """
     try:
         settings, user = _require_current_user(request, db)
         sub = svc_redeem_code(db, user, code=body.code)

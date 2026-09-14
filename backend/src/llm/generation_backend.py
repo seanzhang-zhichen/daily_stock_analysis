@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Protocol
 
+
 class GenerationErrorCode(str, Enum):
     """生成失败的统一分类错误码。
 
@@ -39,6 +40,7 @@ class GenerationErrorCode(str, Enum):
     UNSAFE_CONFIG = "unsafe_config"
     UNKNOWN_BACKEND_ERROR = "unknown_backend_error"
 
+
 @dataclass
 class GenerationResult:
     """生成成功的结构化结果。
@@ -62,6 +64,7 @@ class GenerationResult:
     raw: Any = None
     # 诊断元数据（耗时、重试次数、流式增量等）
     diagnostics: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class GenerationError(Exception):
@@ -95,6 +98,7 @@ class GenerationError(Exception):
     def message(self) -> str:
         """返回人类可读的异常消息，格式固定便于日志聚合。"""
         return f"{self.error_code.value} at {self.stage} for backend {self.backend}"
+
 
 class GenerationBackend(Protocol):
     """生成后端必须实现的接口约定（Protocol，无需显式继承）。

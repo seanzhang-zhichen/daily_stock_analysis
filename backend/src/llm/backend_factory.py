@@ -7,6 +7,7 @@ litellm 后端由上层 litellm 直接管理，本工厂仅在本地 CLI 后端�
 from src.llm.backend_registry import resolve_generation_backend_id, LITELLM_BACKEND_ID
 from src.llm.local_cli_backend import LocalCliGenerationBackend
 
+
 def build_generation_backend(config):
     """根据配置构造生成后端实例。
 

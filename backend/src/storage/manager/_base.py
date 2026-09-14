@@ -60,7 +60,11 @@ class _DatabaseManagerBase:
     # ------------------------------------------------------------------
 
     def __new__(cls, *args, **kwargs):
-        """单例模式实现：全局共享一个 ``_DatabaseManagerBase`` 实例。"""
+        """单例模式实现：全局共享一个 ``_DatabaseManagerBase`` 实例。
+
+        通过 ``cls._instance`` 类属性缓存实例，确保无论多少次实例化，
+        返回的都是同一个对象，避免重复创建数据库连接池。
+        """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -68,10 +72,15 @@ class _DatabaseManagerBase:
 
     def __init__(self, db_url: Optional[str] = None):
         """
-        初始化数据库管理器
+        初始化数据库管理器。
+
+        从 ``src.config`` 读取数据库配置，创建 SQLAlchemy 引擎与 Session 工厂。
+        对于 SQLite 数据库，会根据配置设置 busy_timeout 与 WAL 模式；
+        对于 MySQL 数据库，会配置连接池参数。
+        非内存数据库通过 Alembic 迁移维护 schema，内存 SQLite 测试库使用 ``create_all``。
 
         Args:
-            db_url: 数据库连接 URL（可选，默认从配置读取）
+            db_url: 数据库连接 URL（可选，默认从配置读取）。
         """
         if getattr(self, '_initialized', False):
             return
@@ -385,12 +394,16 @@ class _DatabaseManagerBase:
 
     def get_session(self) -> Session:
         """
-        获取数据库 Session
+        获取一个新的数据库 Session。
 
-        使用示例:
+        使用示例::
+
             with db.get_session() as session:
                 # 执行查询
                 session.commit()  # 如果需要
+
+        Returns:
+            新创建的 SQLAlchemy Session 对象。
         """
         if not getattr(self, '_initialized', False) or not hasattr(self, '_SessionLocal'):
             raise RuntimeError(

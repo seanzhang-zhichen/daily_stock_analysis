@@ -3,9 +3,14 @@
 负责解析并持久化每个对话会话（conversation session）选择的 skill 列表，
 供后续 Agent 路由/工具调度按会话复用同一组 skill。
 
-- 与单次请求级别的 skill 解析（见 :func:`src.agent.factory.normalize_requested_skill_ids`）
-  配合：前者负责"本次请求带哪些 skill"，后者负责"按 session 记住哪些 skill"
-- 仅维护会话维度的 skill 偏好，不参与 LLM 调用或工具执行
+主要功能：
+- 解析用户请求的 skill 列表
+- 按会话持久化 skill 选择偏好
+- 支持 skill 的规范化校验
+
+与单次请求级别的 skill 解析（见 :func:`src.agent.factory.normalize_requested_skill_ids`）
+配合：前者负责"本次请求带哪些 skill"，后者负责"按 session 记住哪些 skill"。
+仅维护会话维度的 skill 偏好，不参与 LLM 调用或工具执行。
 """
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ from src.storage import DatabaseManager
 class ChatSkillSelection:
     """单次请求解析后的 skill 选择结果。
 
+    封装了本次请求实际生效的 skill 列表，
+    以及是否需要更新会话偏好的标志。
+
     Attributes:
         effective_skill_ids: 本次实际生效的 skill 列表（含历史值或新值）；
             ``None`` 表示沿用会话已保存的偏好。
@@ -28,7 +36,10 @@ class ChatSkillSelection:
     """
 
     effective_skill_ids: Optional[List[str]]
+    """本次请求实际生效的 skill ID 列表。None 表示沿用会话历史偏好。"""
+
     selected_skill_ids_update: Optional[List[str]]
+    """需要持久化到会话的 skill ID 列表。None 表示不更新会话偏好。"""
 
 
 class AgentChatSessionService:

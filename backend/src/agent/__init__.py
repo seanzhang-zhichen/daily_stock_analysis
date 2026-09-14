@@ -16,7 +16,36 @@
 
 
 def __getattr__(name):
-    """惰性导入，避免访问包时触发 json_repair 等重依赖。"""
+    """惰性导入，避免访问包时触发 json_repair 等重依赖。
+
+    Args:
+        name (str): 需要导入的属性名。
+
+    Returns:
+        Any: 对应属性的值。
+
+    Raises:
+        AttributeError: 当属性名不在支持的列表中时抛出。
+    """
+    if name == "AgentExecutor":
+        from src.agent.executor import AgentExecutor
+        return AgentExecutor
+    if name == "AgentResult":
+        from src.agent.executor import AgentResult
+        return AgentResult
+    if name == "RunLoopResult":
+        from src.agent.runner import RunLoopResult
+        return RunLoopResult
+    if name in ("AgentContext", "AgentOpinion", "StageResult", "AgentRunStats"):
+        from src.agent import protocols
+        return getattr(protocols, name)
+    if name == "AgentOrchestrator":
+        from src.agent.orchestrator import AgentOrchestrator
+        return AgentOrchestrator
+    if name == "AgentMemory":
+        from src.agent.memory import AgentMemory
+        return AgentMemory
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     if name == "AgentExecutor":
         from src.agent.executor import AgentExecutor
         return AgentExecutor

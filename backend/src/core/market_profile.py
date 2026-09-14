@@ -12,7 +12,20 @@ from typing import List
 
 @dataclass
 class MarketProfile:
-    """市场复盘所需的区域专属输入与功能开关。"""
+    """市场复盘所需的区域专属输入与功能开关。
+    
+    每个 profile 描述一个区域的代表性指数、新闻搜索关键词、prompt 提示语
+    以及可用的市场统计板块。MarketAnalyzer 借助这些 profile 切换 CN/HK/US
+    复盘行为，避免把区域相关常量散落在分析代码各处。
+    
+    Attributes:
+        region: 区域代码（cn/us/hk/jp/kr）
+        mood_index_code: 判断整体走势的指数代码（如上证 000001、标普 SPX）
+        news_queries: 新闻搜索关键词列表
+        prompt_index_hint: 指数点评 Prompt 提示语
+        has_market_stats: 是否包含涨跌家数、涨停跌停统计（A 股有，美股无）
+        has_sector_rankings: 是否包含板块涨跌排名（A 股有，美股暂无）
+    """
 
     region: str  # "cn" | "us"
     # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX
@@ -86,7 +99,11 @@ KR_PROFILE = MarketProfile(
 
 
 def get_profile(region: str) -> MarketProfile:
-    """返回已配置的 MarketProfile，未知区域默认回退到 CN。"""
+    """返回已配置的 MarketProfile，未知区域默认回退到 CN。
+    
+    回退策略：对于未明确支持的区域（如欧洲、东南亚等），
+    默认使用 CN_PROFILE，因为 A 股数据最完整、分析逻辑最成熟。
+    """
     if region == "us":
         return US_PROFILE
     if region == "hk":

@@ -76,27 +76,50 @@ _svc = OrderService()
 
 
 class ApproveRefundRequest(BaseModel):
-    """管理员审核通过退款时可选的三方退款单号。"""
+    """管理员审核通过退款时可选的三方退款单号。
+
+    Attributes:
+        provider_refund_no: 可选的三方支付通道退款单号（如支付宝/微信退款单号），
+            用于与支付平台对账和追踪退款进度。
+    """
 
     model_config = {"populate_by_name": True}
     provider_refund_no: Optional[str] = Field(default=None, alias="providerRefundNo")
 
 
 class RejectRefundRequest(BaseModel):
-    """管理员拒绝退款时填写的备注。"""
+    """管理员拒绝退款时填写的备注信息。
+
+    Attributes:
+        note: 可选的拒绝原因说明，会展示给用户并随邮件通知发送。
+            建议清晰说明拒绝依据，便于用户理解。
+    """
 
     note: Optional[str] = Field(default=None)
 
 
 class IssueInvoiceRequest(BaseModel):
-    """管理员标记发票已开具时可选的发票访问链接。"""
+    """管理员标记发票已开具时可选的发票访问链接。
+
+    Attributes:
+        issued_url: 可选的发票文件在线查看或下载链接（如 PDF 地址），
+            用户可在发票记录中点击访问。
+    """
 
     model_config = {"populate_by_name": True}
     issued_url: Optional[str] = Field(default=None, alias="issuedUrl")
 
 
 class GrantPlanRequest(BaseModel):
-    """管理员手动为用户开通套餐的请求体。"""
+    """管理员手动为用户开通套餐的请求体。
+
+    Attributes:
+        user_email: 目标用户邮箱（与 user_id 二选一，优先使用邮箱）。
+        user_id: 目标用户 ID（与 user_email 二选一）。
+        plan_code: 要开通的套餐代码（如 free、pro、enterprise）。
+        grant_days: 套餐有效期天数（正整数）。
+        note: 可选的备注说明，会写入订阅记录和审计日志。
+    """
 
     model_config = {"populate_by_name": True}
     user_email: Optional[str] = Field(default=None, alias="userEmail")

@@ -22,19 +22,44 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionAgent(BaseAgent):
-    """把此前各 Agent 的意见综合为最终仪表盘。"""
+    """把此前各 Agent 的意见综合为最终仪表盘。
 
+    该 Agent 不调用任何工具，仅基于上游 Agent 已产生的意见、
+    风险标记和技能结果进行综合判断，输出结构化的决策仪表盘。
+    """
+
+    # Agent 唯一标识
     agent_name = "decision"
-    max_steps = 3  # 纯综合任务，不需要太多工具调用
-    tool_names: Optional[List[str]] = []  # 不访问工具，仅基于上下文工作
+    # 纯综合任务不需要工具调用，步数可较少
+    max_steps = 3
+    # 不访问任何工具，仅基于上下文工作
+    tool_names: Optional[List[str]] = []
 
     @staticmethod
     def _is_chat_mode(ctx: AgentContext) -> bool:
-        """当决策阶段应以对话方式回答时返回 True。"""
+        """判断当前是否处于聊天模式。
+
+        当决策阶段应以对话方式回答时返回 True。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            bool: 聊天模式返回 True，仪表盘模式返回 False。
+        """
         return ctx.meta.get("response_mode") == "chat"
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """为 JSON 仪表盘或对话两种响应模式构造综合提示词。"""
+        """为 JSON 仪表盘或对话两种响应模式构造综合提示词。
+
+        根据上下文中的 response_mode 决定生成仪表盘 JSON 还是自然语言回答。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            str: 完整的系统提示词字符串。
+        """
         report_language = normalize_report_language(ctx.meta.get("report_language", "zh"))
         if self._is_chat_mode(ctx):
             prompt = """\
@@ -127,7 +152,17 @@ new decision_type values.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """打包此前意见、风险标记与用户问题，供综合使用。"""
+        """打包此前意见、风险标记与用户问题，供综合使用。
+
+        根据聊天模式或仪表盘模式构造不同的消息前缀，
+        然后将所有上游 Agent 的意见、风险标记和技能信息拼接成完整消息。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            str: 拼接后的用户消息字符串。
+        """
         if self._is_chat_mode(ctx):
             parts = [
                 "# User Question",
@@ -182,7 +217,18 @@ new decision_type values.
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """把解析后的仪表盘存入 ctx.meta，同时返回一条意见。"""
+        """解析 LLM 输出，把仪表盘存入上下文，同时返回一条意见。
+
+        聊天模式下直接保存自然语言回复；
+        仪表盘模式下尝试解析 JSON 仪表盘，失败时保留原始文本。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+            raw_text: LLM 返回的原始文本。
+
+        Returns:
+            Optional[AgentOpinion]: 解析后的结构化意见；解析失败时返回 None。
+        """
         if self._is_chat_mode(ctx):
             text = (raw_text or "").strip()
             if not text:

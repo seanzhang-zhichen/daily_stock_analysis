@@ -2,7 +2,7 @@
 """大盘复盘运行的共享执行锁。
 
 该锁将进程内的本地标志与同主机的锁文件（lock file）结合使用。它防止共享同一
-数据目录的 API、CLI、调度器入口并发运行大盘复盘，同时允许在进程崩溃或被强制退出
+data directory 的 API、CLI、调度器入口并发运行大盘复盘，同时允许在进程崩溃或被强制退出
 后清理已失效（stale）的锁文件。
 """
 
@@ -17,16 +17,21 @@ from typing import Any, Optional
 
 from src.config import Config
 
+# 尝试导入 fcntl 模块（Unix 系统用于文件锁）
+# Windows 平台无 fcntl，走锁文件兜底实现
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows 平台无 fcntl，走锁文件兜底实现
     fcntl = None
 
 
+# 进程内全局锁，用于保护 _market_review_running 标志的线程安全访问
 _market_review_lock = threading.Lock()
+# 进程内标志：当前是否有大盘复盘任务正在运行
 _market_review_running = False
 # 锁文件的过期时限：24 小时，覆盖"进程崩溃后锁文件残留"这一最常见的失效场景
 _MARKET_REVIEW_LOCK_STALE_TTL_SECONDS = 24 * 60 * 60
+# 模块级日志记录器
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +39,11 @@ logger = logging.getLogger(__name__)
 class MarketReviewExecutionLock:
     """成功获取复盘锁后返回给调用方的令牌（token），用于后续释放。"""
 
+    # 锁文件的文件句柄，用于后续释放 flock 或关闭文件
     handle: Any
+    # 锁文件的完整路径
     path: Path
+    # 是否使用 flock 机制（True 表示 Unix 平台，False 表示 Windows 平台）
     uses_flock: bool
 
 

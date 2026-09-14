@@ -38,7 +38,14 @@ class RiskAgent(BaseAgent):
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """构造仅关注风险的提示词与严格的 JSON 输出模式。"""
+        """构造仅关注风险的提示词与严格的 JSON 输出模式。
+
+        Args:
+            ctx: 当前调用上下文（实际未使用，保留以对齐父类签名）。
+
+        Returns:
+            str: 包含风险检查清单与 JSON schema 的完整提示词。
+        """
         return """\
 You are a **Risk Screening Agent** focused exclusively on identifying \
 risks and red flags for the given stock.
@@ -83,7 +90,14 @@ from your search results. Do NOT invent risks.
 """
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """请求风险扫描，已有情报数据时直接复用。"""
+        """请求风险扫描，已有情报数据时直接复用。
+
+        Args:
+            ctx: 当前调用上下文，包含股票代码与可选的情报数据。
+
+        Returns:
+            str: 多行 Markdown 字符串，要求 LLM 执行风险扫描。
+        """
         parts = [f"Screen stock **{ctx.stock_code}**"]
         if ctx.stock_name:
             parts[0] += f" ({ctx.stock_name})"
@@ -97,7 +111,15 @@ from your search results. Do NOT invent risks.
         return "\n".join(parts)
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
-        """解析风险 JSON，并把每条结构化标记传递到上下文。"""
+        """解析风险 JSON，并把每条结构化标记传递到上下文。
+
+        Args:
+            ctx: 当前调用上下文，风险标记会写入 ``ctx.risk_flags``。
+            raw_text: LLM 原始返回字符串。
+
+        Returns:
+            Optional[AgentOpinion]: 标准化意见；JSON 解析失败时返回 ``None``。
+        """
         parsed = try_parse_json(raw_text)
         if parsed is None:
             logger.warning("[RiskAgent] failed to parse risk JSON")
@@ -122,7 +144,20 @@ from your search results. Do NOT invent risks.
 
 
 def _risk_to_signal(risk_level: str) -> str:
-    """把风险等级映射为交易信号（方向相反）。"""
+    """把风险等级映射为交易信号（方向相反）。
+
+    映射关系：
+    - none → buy
+    - low → hold
+    - medium → sell
+    - high → strong_sell
+
+    Args:
+        risk_level: 风险等级字符串。
+
+    Returns:
+        str: 对应的交易信号。
+    """
     mapping = {
         "none": "buy",
         "low": "hold",

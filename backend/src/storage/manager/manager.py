@@ -37,18 +37,17 @@ class DatabaseManager(
     ScreeningMixin,
     _DatabaseManagerBase,
 ):
-    """
-    数据库管理器 - 单例模式
-    
+    """数据库管理器 - 单例模式，通过多重继承组合所有业务 Mixin。
+
     职责：
-    1. 管理数据库连接池
-    2. 提供 Session 上下文管理
-    3. 封装数据存取操作
+    1. 管理数据库连接池与引擎生命周期。
+    2. 提供 Session 上下文管理（``get_session`` / ``session_scope``）。
+    3. 封装各业务域的数据存取操作（日线、新闻、分析历史、对话、LLM 用量、选股等）。
 
-    实际逻辑分布在 ``_DatabaseManagerBase`` 与各 Mixin 中, 此类本身仅做装配。
+    实际逻辑分布在 ``_DatabaseManagerBase`` 与各 Mixin 中，此类本身仅做装配与类型收窄。
     """
 
-    # 收紧类型注解到具体子类, 便于 IDE / 类型检查识别。
+    # 收紧类型注解到具体子类，便于 IDE / 类型检查识别。
     _instance: Optional["DatabaseManager"] = None
 
 

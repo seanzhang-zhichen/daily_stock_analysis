@@ -38,9 +38,11 @@ class BaseAgent(ABC):
     - :meth:`post_process` —— 把 LLM 原始文本转换为 :class:`AgentOpinion`
     """
 
-    # 子类覆盖项
+    # 子类覆盖项：Agent 的唯一标识名称
     agent_name: str = "base"
-    tool_names: Optional[List[str]] = None  # None 表示可用全部工具
+    # 子类覆盖项：允许使用的工具白名单；None 表示可用全部工具
+    tool_names: Optional[List[str]] = None
+    # 子类覆盖项：该 Agent 的最大执行步数（LLM 往返次数）
     max_steps: int = 6
 
     def __init__(
@@ -50,7 +52,14 @@ class BaseAgent(ABC):
         skill_instructions: str = "",
         technical_skill_policy: str = "",
     ):
-        """保存共享依赖并初始化可选的内存校准。"""
+        """初始化 Agent，保存共享依赖并初始化可选的记忆模块。
+
+        Args:
+            tool_registry: 全局工具注册表，供 Agent 调用工具时使用。
+            llm_adapter: LLM 适配器，负责与底层大模型交互。
+            skill_instructions: 可选的技能指令文本，注入到提示词中。
+            technical_skill_policy: 可选的技术面技能策略文本。
+        """
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions
@@ -58,19 +67,33 @@ class BaseAgent(ABC):
         self.memory = AgentMemory.from_config()
 
     # -----------------------------------------------------------------
-    # 抽象接口
+    # 抽象接口：子类必须实现
     # -----------------------------------------------------------------
 
     @abstractmethod
     def system_prompt(self, ctx: AgentContext) -> str:
-        """构造该 Agent 的系统提示词。"""
+        """构造该 Agent 的系统提示词（system prompt）。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文，包含股票代码、查询等信息。
+
+        Returns:
+            str: 供 LLM 使用的系统提示词字符串。
+        """
 
     @abstractmethod
     def build_user_message(self, ctx: AgentContext) -> str:
-        """构造发送给 LLM 的用户消息。"""
+        """构造发送给 LLM 的用户消息（user message）。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            str: 用户消息内容。
+        """
 
     # -----------------------------------------------------------------
-    # 结构化输出的默认钩子
+    # 结构化输出的默认钩子（子类可覆盖）
     # -----------------------------------------------------------------
 
     def post_process(self, ctx: AgentContext, raw_text: str) -> Optional[AgentOpinion]:
@@ -78,11 +101,18 @@ class BaseAgent(ABC):
 
         默认返回 ``None``（原始文本仍保存在 ``StageResult.meta["raw_text"]``）。
         产出分析意见的子类应覆盖此方法。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+            raw_text: LLM 返回的原始文本。
+
+        Returns:
+            Optional[AgentOpinion]: 解析后的结构化意见，默认返回 None。
         """
         return None
 
     # -----------------------------------------------------------------
-    # 执行
+    # 执行入口
     # -----------------------------------------------------------------
 
     def run(
@@ -93,12 +123,20 @@ class BaseAgent(ABC):
     ) -> StageResult:
         """执行该 Agent 并返回 :class:`StageResult`。
 
-        步骤：
-        1. 构造 system + user 消息。
-        2. 可选地注入来自 ``ctx.data`` 的预取数据。
-        3. 委托给 :func:`run_agent_loop`。
-        4. 调用 :meth:`post_process` 产出意见。
-        5. 把意见追加到 ``ctx.opinions``。
+        执行步骤：
+        1. 构造 system + user 消息列表。
+        2. 可选地注入来自 ``ctx.data`` 的预取数据，避免重复工具调用。
+        3. 委托给 :func:`run_agent_loop` 运行 ReAct 循环。
+        4. 调用 :meth:`post_process` 将原始输出转为结构化意见。
+        5. 把意见追加到 ``ctx.opinions`` 供下游 Agent 使用。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+            progress_callback: 可选的进度回调函数，接收进度字典。
+            timeout_seconds: 可选的总超时时间（秒）。
+
+        Returns:
+            StageResult: 包含执行状态、意见、错误信息等的阶段结果。
         """
         t0 = time.time()
         result = StageResult(stage_name=self.agent_name, status=StageStatus.RUNNING)
@@ -154,11 +192,25 @@ class BaseAgent(ABC):
     # -----------------------------------------------------------------
 
     def _build_messages(self, ctx: AgentContext) -> List[Dict[str, Any]]:
-        """组装发送给 LLM 的初始消息列表。"""
+        """组装发送给 LLM 的初始消息列表。
+
+        消息结构：
+        1. system 提示词
+        2. 可选的对话历史
+        3. 可选的预取数据上下文
+        4. user 消息
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            List[Dict[str, Any]]: 符合 OpenAI 格式的消息字典列表。
+        """
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt(ctx)},
         ]
 
+        # 注入对话历史（如果存在）
         history = ctx.meta.get("conversation_history")
         if isinstance(history, list):
             for message in history:
@@ -182,6 +234,13 @@ class BaseAgent(ABC):
         """由 ``ctx.data`` 中已取到的数据构造上下文字符串。
 
         当前置阶段已取好该 Agent 所需数据时，可避免重复工具调用。
+        同时会注入记忆上下文（如果启用）。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            str: 拼接后的预取数据字符串；无数据时返回空字符串。
         """
         import json
         parts: List[str] = []
@@ -205,6 +264,9 @@ class BaseAgent(ABC):
         """返回限定为 ``self.tool_names`` 的工具注册表。
 
         若 ``tool_names`` 为 None（默认值），则返回完整注册表。
+
+        Returns:
+            ToolRegistry: 过滤后的工具注册表。
         """
         if self.tool_names is None:
             return self.tool_registry
@@ -220,7 +282,17 @@ class BaseAgent(ABC):
         return filtered
 
     def _build_memory_context(self, ctx: AgentContext) -> str:
-        """汇总近期分析历史，用于提示词注入。"""
+        """汇总近期分析历史，用于提示词注入。
+
+        从 AgentMemory 中读取该股票最近 3 条分析记录，
+        格式化为 Markdown 列表供 LLM 参考。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+
+        Returns:
+            str: 记忆上下文字符串；未启用或无记录时返回空字符串。
+        """
         if not self.memory.enabled or not ctx.stock_code:
             return ""
 
@@ -248,7 +320,16 @@ class BaseAgent(ABC):
         return "\n".join(lines)
 
     def _apply_memory_calibration(self, ctx: AgentContext, opinion: AgentOpinion, result: StageResult) -> None:
-        """启用时依据历史校准调整置信度。"""
+        """启用时依据历史校准调整置信度。
+
+        根据该 Agent 对该股票的历史表现，计算校准因子并调整当前置信度。
+        校准信息会写入 result.meta 供后续分析。
+
+        Args:
+            ctx: 当前 Agent 运行的上下文。
+            opinion: 当前产生的意见对象，其 confidence 会被修改。
+            result: 当前阶段结果，用于写入校准元数据。
+        """
         if not self.memory.enabled:
             return
 

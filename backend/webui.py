@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """WebUI 专用启动脚本。
 
-该入口面向“本地打开完整 Web 界面”的场景，和 ``backend/server.py`` 的
+该入口面向"本地打开完整 Web 界面"的场景，和 ``backend/server.py`` 的
 API-only 入口分开维护。它会读取 ``WEBUI_HOST`` / ``WEBUI_PORT``，
 并向后兼容旧版 ``API_HOST`` / ``API_PORT`` 环境变量，然后启动
 ``api.app:app``。

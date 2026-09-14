@@ -1,4 +1,4 @@
-"""add persisted stock screening runs
+"""添加持久化股票筛选运行记录表
 
 Revision ID: 20260814_screening_runs
 Revises: 20260604_user_profile
@@ -18,6 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级：创建 screening_runs 表并建立相关索引。"""
+    # 创建股票筛选运行记录表
     op.create_table(
         "screening_runs",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -38,6 +40,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("run_id"),
     )
+    # 创建股票筛选运行记录表相关索引
     op.create_index("ix_screening_runs_user_id", "screening_runs", ["user_id"], unique=False)
     op.create_index("ix_screening_runs_run_id", "screening_runs", ["run_id"], unique=True)
     op.create_index("ix_screening_runs_strategy", "screening_runs", ["strategy"], unique=False)
@@ -59,6 +62,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除 screening_runs 表及其所有索引。"""
+    # 删除股票筛选运行记录表的所有索引
     op.drop_index("ix_screening_run_market_created", table_name="screening_runs")
     op.drop_index("ix_screening_run_strategy_created", table_name="screening_runs")
     op.drop_index("ix_screening_runs_created_at", table_name="screening_runs")
@@ -67,4 +72,5 @@ def downgrade() -> None:
     op.drop_index("ix_screening_runs_strategy", table_name="screening_runs")
     op.drop_index("ix_screening_runs_run_id", table_name="screening_runs")
     op.drop_index("ix_screening_runs_user_id", table_name="screening_runs")
+    # 删除股票筛选运行记录表
     op.drop_table("screening_runs")

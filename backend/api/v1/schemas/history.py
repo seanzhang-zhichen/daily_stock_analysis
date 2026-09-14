@@ -15,6 +15,7 @@
 from typing import Optional, List, Any, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
+from api.v1.schemas.research_artifact import ResearchArtifact
 
 
 class RunDiagnosticComponent(BaseModel):
@@ -227,6 +228,7 @@ class AnalysisReport(BaseModel):
     summary: ReportSummary = Field(..., description="概览区")
     strategy: Optional[ReportStrategy] = Field(None, description="策略点位区")
     details: Optional[ReportDetails] = Field(None, description="详情区")
+    structured_report: Optional[ResearchArtifact] = Field(None, description="稳定的结构化研究产物")
 
     class Config:
         """OpenAPI 中为结构化报告响应提供示例元数据。"""

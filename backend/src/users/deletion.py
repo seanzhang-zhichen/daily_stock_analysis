@@ -48,9 +48,19 @@ def request_deletion(
 ) -> None:
     """发起账号注销申请。
 
-    - 若账号已在冷静期内，幂等返回（不重置计时）。
-    - 立即撤销所有 session，用户将被迫下线。
-    - 发送确认邮件，告知冷静期截止日期与取消方式。
+    执行流程：
+    - 若账号已注销，抛出 UserError
+    - 若账号已在冷静期内，幂等返回（不重置计时）
+    - 记录 deletion_requested_at 时间戳
+    - 立即撤销所有 session，用户将被迫下线
+    - 发送确认邮件，告知冷静期截止日期与取消方式
+
+    Args:
+        db: 数据库会话
+        user: 目标用户
+        ip: 请求来源 IP，用于审计
+        user_agent: 请求 User-Agent，用于审计
+        email_backend: 邮件发送后端，默认使用系统配置的后端
     """
     if user.status == "deleted":
         raise UserError(UserErrorCode.VALIDATION_ERROR, "账号已注销")
@@ -64,8 +74,10 @@ def request_deletion(
     db.add(user)
     db.commit()
 
+    # 撤销所有会话，强制用户下线
     revoke_all_user_sessions(db, user.id)
 
+    # 记录审计日志
     write_audit_log(
         db,
         action="account.deletion_requested",
@@ -75,6 +87,7 @@ def request_deletion(
         user_agent=user_agent,
     )
 
+    # 发送注销确认邮件
     deadline = now + timedelta(days=_COOLING_OFF_DAYS)
     backend = email_backend or get_email_backend()
     try:
@@ -104,7 +117,16 @@ def cancel_deletion(
     ip: Optional[str] = None,
     user_agent: Optional[str] = None,
 ) -> None:
-    """取消冷静期内的注销申请。"""
+    """取消冷静期内的注销申请。
+
+    若用户没有待处理的注销申请，则抛出 UserError。
+
+    Args:
+        db: 数据库会话
+        user: 目标用户
+        ip: 请求来源 IP，用于审计
+        user_agent: 请求 User-Agent，用于审计
+    """
     if user.deletion_requested_at is None:
         raise UserError(UserErrorCode.VALIDATION_ERROR, "没有待处理的注销申请")
 
@@ -130,6 +152,9 @@ def execute_pending_deletions(db: Session) -> int:
 
     将 ``deletion_requested_at`` 早于 ``now - COOLING_OFF_DAYS`` 且
     ``status='active'`` 的用户标记为 ``status='deleted'``，并撤销所有 session。
+
+    Args:
+        db: 数据库会话
 
     Returns:
         本次软删的用户数。
@@ -176,6 +201,7 @@ def cleanup_deleted_users(db: Session, *, dry_run: bool = False) -> int:
     - 保留：id / status / plan_code / created_at / updated_at（统计用）；订单 / 发票 / 审计日志（财税合规）
 
     Args:
+        db: 数据库会话
         dry_run: 若为 True 只扫描不写库。
 
     Returns:
@@ -208,7 +234,16 @@ def cleanup_deleted_users(db: Session, *, dry_run: bool = False) -> int:
 
 
 def _purge_user_personal_data(db: Session, user: AppUser) -> None:
-    """清除单个用户的个人数据（不删行，只置空敏感字段）。"""
+    """清除单个用户的个人数据（不删行，只置空敏感字段）。
+
+    清除范围：
+    - 关联表：自选股、通知偏好、会话、邮箱验证记录
+    - 用户主表：email（替换为占位符）、password_hash、plan_code、
+      plan_expires_at、email_verified_at、deletion_requested_at、terms_version
+
+    保留字段：
+    - id、status、plan_code（重置为 free）、created_at、updated_at
+    """
     uid = user.id
 
     # 清除关联表个人数据

@@ -1167,7 +1167,7 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
 (List the main risks to monitor.)
 
 ### 7. Strategy Plan
-(Provide an offensive/balanced/defensive stance, a position-sizing guideline, one invalidation trigger, and end with “For reference only, not investment advice.”)
+(Provide an offensive/balanced/defensive stance, a position-sizing guideline, one invalidation trigger, and end with "For reference only, not investment advice.")
 
 ---
 
@@ -1215,7 +1215,7 @@ Output the report content directly, no extra commentary.
 > 一句话给出今日市场状态、核心矛盾和明日优先观察方向。
 
 ### 一、盘面总览
-（2-3句话概括指数、涨跌家数、成交额和情绪温度，明确“强势/偏暖/震荡/偏弱”判断）
+（2-3句话概括指数、涨跌家数、成交额和情绪温度，明确"强势/偏暖/震荡/偏弱"判断）
 
 ### 二、指数结构
 （{self._get_index_hint()}，说明谁在护盘、谁在拖累，以及关键支撑/压力）

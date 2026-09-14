@@ -28,16 +28,29 @@ from src.data.stock_index_loader import get_index_stock_name
 from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
 from .fundamental_adapter import AkshareFundamentalAdapter
 
-# 配置日志
+# 配置日志：获取当前模块的日志记录器实例，用于输出调试、信息、警告和错误日志
 logger = logging.getLogger(__name__)
 
 
 # === 标准化列名定义 ===
+# 定义所有数据源统一输出的标准列名，确保不同数据源返回的数据格式一致
 STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']
 
 
 def unwrap_exception(exc: Exception) -> Exception:
-    """沿异常链向下追溯，返回最深层的非循环根因异常。"""
+    """
+    沿异常链向下追溯，返回最深层的非循环根因异常。
+
+    当异常被多次包装（如 raise NewException() from old_exc）时，
+    该函数会沿着 __cause__ 和 __context__ 链一直向下查找，
+    直到找到最原始的异常。使用 visited 集合防止循环引用导致的死循环。
+
+    Args:
+        exc: 最外层异常对象
+
+    Returns:
+        异常链最底层的根因异常
+    """
     current = exc
     visited = set()
 
@@ -468,8 +481,8 @@ class BaseFetcher(ABC):
         df['ma20'] = df['close'].rolling(window=20, min_periods=1).mean()
         
         # 量比：当日成交量 / 5日平均成交量
-        # 注意：此处的 volume_ratio 是“日线成交量 / 前5日均量(shift 1)”的相对倍数，
-        # 与部分交易软件口径的“分时量比（同一时刻对比）”不同，含义更接近“放量倍数”。
+        # 注意：此处的 volume_ratio 是"日线成交量 / 前5日均量(shift 1)"的相对倍数，
+        # 与部分交易软件口径的"分时量比（同一时刻对比）"不同，含义更接近"放量倍数"。
         # 该行为目前保留（按需求不改逻辑）。
         avg_volume_5 = df['volume'].rolling(window=5, min_periods=1).mean()
         df['volume_ratio'] = df['volume'] / avg_volume_5.shift(1)
@@ -1041,6 +1054,13 @@ class DataFetcherManager:
         else:
             logger.debug("[数据源初始化] 跳过未配置的 LongbridgeFetcher")
 
+        futu_host = (getattr(config, "futu_opend_host", None) or "").strip()
+        if futu_host:
+            from .futu_fetcher import FutuFetcher
+            optional_fetchers.append(FutuFetcher(futu_host, config.futu_opend_port))
+        else:
+            logger.debug("[数据源初始化] 跳过未配置的 FutuFetcher")
+
         finnhub_api_key = (getattr(config, "finnhub_api_key", None) or "").strip()
         if finnhub_api_key:
             from .finnhub_fetcher import FinnhubFetcher
@@ -1218,6 +1238,10 @@ class DataFetcherManager:
                 source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
             else:
                 source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
+            source_order = self._order_us_sources_by_priority(
+                source_order,
+                pin_first=bool(is_us_index or prefer_lb),
+            )
             market_label = "美股指数" if is_us_index else "美股"
 
             for src_name in source_order:
@@ -1476,8 +1500,9 @@ class DataFetcherManager:
                 primary_kw: dict = {}
                 secondary_kw: dict = {}
             else:
-                primary_src = "LongbridgeFetcher" if prefer_lb else "AkshareFetcher"
-                secondary_src = "AkshareFetcher" if prefer_lb else "LongbridgeFetcher"
+                futu_available = self._get_fetcher_by_name("FutuFetcher", capability="realtime_quote") is not None
+                primary_src = "FutuFetcher" if futu_available else "LongbridgeFetcher" if prefer_lb else "AkshareFetcher"
+                secondary_src = "LongbridgeFetcher" if futu_available and prefer_lb else "AkshareFetcher" if futu_available else "AkshareFetcher" if prefer_lb else "LongbridgeFetcher"
                 market_label = "港股"
                 primary_kw = {"source": "hk"} if primary_src == "AkshareFetcher" else {}
                 secondary_kw = {"source": "hk"} if secondary_src == "AkshareFetcher" else {}
@@ -1612,6 +1637,34 @@ class DataFetcherManager:
                     setattr(primary, f, val)
                     filled.append(f)
         return filled
+
+    def _order_us_sources_by_priority(
+        self,
+        source_order: List[str],
+        *,
+        pin_first: bool,
+    ) -> List[str]:
+        """Apply configured fetcher priorities to the US daily fallback chain.
+
+        Index routing and an explicitly preferred Longbridge source keep their
+        first provider pinned; remaining providers still honor their priorities.
+        """
+        if not source_order:
+            return source_order
+        priority_by_name = {
+            fetcher.name: fetcher.priority
+            for fetcher in self._get_fetchers_snapshot()
+        }
+        if pin_first:
+            pinned, rest = source_order[0], source_order[1:]
+            return [pinned] + sorted(
+                rest,
+                key=lambda name: priority_by_name.get(name, 10 ** 9),
+            )
+        return sorted(
+            source_order,
+            key=lambda name: priority_by_name.get(name, 10 ** 9),
+        )
 
     def _longbridge_preferred(self, capability: str = "realtime_quote") -> bool:
         """配置了长桥凭据且可用时返回 True。
@@ -2299,9 +2352,8 @@ class DataFetcherManager:
         market = _market_tag(stock_code)
         is_etf = _is_etf_code(stock_code)
         if market in {"us", "hk"}:
-            return self._build_market_not_supported(
-                market=market,
-                reason="market not supported",
+            return self._build_offshore_fundamental_context(
+                stock_code, market=market, budget_seconds=budget_seconds
             )
 
         stage_timeout = float(
@@ -2581,6 +2633,94 @@ class DataFetcherManager:
                 }
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
         return result_ctx
+
+    def _build_offshore_fundamental_context(
+        self, stock_code: str, *, market: str, budget_seconds: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Adapt yfinance fundamentals to the existing block contract."""
+        from src.config import get_config
+
+        config = get_config()
+        timeout = float(
+            budget_seconds
+            if budget_seconds is not None
+            else config.fundamental_fetch_timeout_seconds
+        )
+        if timeout <= 0:
+            return self._build_market_not_supported(market, "fundamental stage timeout")
+        adapter = getattr(self, "_yfinance_fundamental_adapter", None)
+        if adapter is None:
+            from .yfinance_fundamental_adapter import YfinanceFundamentalAdapter
+
+            adapter = self._yfinance_fundamental_adapter = YfinanceFundamentalAdapter()
+        payload, error, elapsed = self._run_with_retry(
+            lambda: adapter.get_fundamental_bundle(stock_code),
+            timeout,
+            "fundamental_bundle_yfinance",
+        )
+        payload = payload if isinstance(payload, dict) else {}
+        if market == "hk":
+            futu = self._get_fetcher_by_name("FutuFetcher")
+            if futu is not None:
+                futu_payload, futu_error, _ = self._run_with_retry(
+                    lambda: futu.get_fundamental_bundle(stock_code),
+                    timeout,
+                    "fundamental_bundle_futu",
+                )
+                if isinstance(futu_payload, dict):
+                    for key in ("institution", "belong_boards"):
+                        if futu_payload.get(key):
+                            payload[key] = futu_payload[key]
+                    payload.setdefault("source_chain", []).extend(futu_payload.get("source_chain", []))
+                    payload.setdefault("errors", []).extend(futu_payload.get("errors", []))
+                if futu_error:
+                    payload.setdefault("errors", []).append(futu_error)
+        status = str(payload.get("status", "not_supported"))
+        chain = self._normalize_source_chain(
+            payload.get("source_chain"),
+            "fundamental_bundle_yfinance",
+            status,
+            elapsed,
+        )
+        errors = list(payload.get("errors", [])) + ([error] if error else [])
+        blocks: Dict[str, Any] = {}
+        for name in ("growth", "earnings", "institution"):
+            value = payload.get(name) if isinstance(payload.get(name), dict) else {}
+            blocks[name] = self._build_fundamental_block(
+                self._infer_block_status(value, status), value, chain, errors
+            )
+        boards = (
+            payload.get("belong_boards")
+            if isinstance(payload.get("belong_boards"), list)
+            else []
+        )
+        blocks["boards"] = self._build_fundamental_block(
+            "ok" if boards else "not_supported",
+            {"boards": boards} if boards else {},
+            chain,
+            errors,
+        )
+        for name in ("valuation", "capital_flow", "dragon_tiger"):
+            blocks[name] = self._build_fundamental_block(
+                "not_supported", {}, chain, ["not supported for offshore market"]
+            )
+        coverage = {name: block["status"] for name, block in blocks.items()}
+        active = [coverage[name] for name in ("growth", "earnings", "boards")]
+        if all(value == "not_supported" for value in active):
+            overall = "not_supported"
+        elif any(value in {"partial", "failed"} for value in active):
+            overall = "partial"
+        else:
+            overall = "ok"
+        return {
+            "market": market,
+            "status": overall,
+            "coverage": coverage,
+            "source_chain": chain,
+            "errors": errors,
+            "belong_boards": boards,
+            **blocks,
+        }
 
     def get_capital_flow_context(self, stock_code: str, budget_seconds: Optional[float] = None) -> Dict[str, Any]:
         """资金流向块（fail-open）。"""

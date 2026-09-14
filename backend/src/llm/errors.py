@@ -16,6 +16,7 @@ from src.llm.generation_params import (
     remember_litellm_generation_param_recovery,
 )
 
+# 供应商返回错误文本中，暗示参数不受支持的常见关键词集合
 _UNSUPPORTED_PARAM_MARKERS = (
     "unsupported",
     "not supported",
@@ -26,6 +27,7 @@ _UNSUPPORTED_PARAM_MARKERS = (
     "does not support",
 )
 
+# 用于从错误信息中提取供应商强制要求的 temperature 值的正则模式
 _TEMPERATURE_VALUE_PATTERN = r"-?\d+(?:\.\d+)?"
 _ALLOWED_TEMPERATURE_PATTERNS = (
     re.compile(

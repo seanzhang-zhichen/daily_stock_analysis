@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Billing endpoints (Phase 2 + Phase 5).
+"""计费（Billing）API 端点模块。
+
+本模块提供完整的计费相关 RESTful API，包括：
+- 套餐目录查询（无需登录）
+- 用户订阅状态查询
+- 订单创建、查询、支付、取消
+- 支付通道回调（微信、支付宝）
+- 退款申请与查询
+- 发票申请与查询
 
 挂载位置: ``/api/v1/billing/*``。
 
@@ -47,12 +55,22 @@ from src.users.audit import write_audit_log
 from src.users.platform_settings import get_platform_setting_value
 
 
+# 模块级日志记录器，用于记录本模块的诊断信息
 logger = logging.getLogger(__name__)
+
+# FastAPI 路由实例，本模块所有端点均挂载于此
 router = APIRouter()
 
 
 def _serialize_subscription(row: AppSubscription) -> dict:
-    """将订阅 ORM 行序列化为前端驼峰命名字段。"""
+    """将订阅 ORM 行序列化为前端驼峰命名字段。
+
+    Args:
+        row: 订阅 ORM 记录
+
+    Returns:
+        dict: 包含订阅信息的字典，字段使用驼峰命名
+    """
     return {
         "id": int(row.id),
         "planCode": row.plan_code,
@@ -65,7 +83,17 @@ def _serialize_subscription(row: AppSubscription) -> dict:
 
 
 def _resolve_request_user(request: Request, db: Session) -> Optional[AppUser]:
-    """在公开计费页面中按 cookie 解析可选用户。"""
+    """在公开计费页面中按 cookie 解析可选用户。
+
+    用于无需登录即可访问的页面（如套餐目录），如果用户已登录则附带当前套餐信息。
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+
+    Returns:
+        Optional[AppUser]: 解析出的用户对象，若未登录则返回 None
+    """
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_value:
         return None
@@ -74,7 +102,17 @@ def _resolve_request_user(request: Request, db: Session) -> Optional[AppUser]:
 
 @router.get("/plans", summary="列出当前可见套餐目录")
 async def billing_plans(request: Request, db: Session = Depends(get_db)):
-    """套餐目录，无需登录即可访问（用于落地页/注册流引导）。"""
+    """套餐目录，无需登录即可访问（用于落地页/注册流引导）。
+
+    已登录用户会附带当前生效套餐信息，便于前端展示升级/降级入口。
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+
+    Returns:
+        dict: 包含套餐列表和当前用户套餐信息
+    """
     plans = list_plan_catalog(db)
 
     user = _resolve_request_user(request, db)
@@ -102,7 +140,16 @@ async def billing_subscription(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """返回当前用户生效中的套餐与最近订阅历史。"""
+    """返回当前用户生效中的套餐与最近订阅历史。
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含当前套餐信息和订阅历史列表
+    """
     plan = resolve_user_plan(db, current_user)
     history_rows = (
         db.query(AppSubscription)
@@ -140,22 +187,46 @@ async def billing_subscription(
 # Phase 5 — 订单 / 支付 / 回调 / 退款 / 发票
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# 订单服务单例，处理订单生命周期管理
 _svc = OrderService()
+
+# 积分订单服务单例，处理积分充值订单
 _credit_svc = CreditOrderService()
 
 
 def _flag(name: str) -> bool:
-    """判断指定环境变量特性开关是否为真。"""
+    """判断指定环境变量特性开关是否为真。
+
+    Args:
+        name: 环境变量名称
+
+    Returns:
+        bool: 当环境变量值为 "1"/"true"/"yes" 时返回 True
+    """
     return os.environ.get(name, "false").lower() in ("1", "true", "yes")
 
 
 def _payment_enabled(db: Session) -> bool:
-    """读取真实支付通道的平台级开关。"""
+    """读取真实支付通道的平台级开关。
+
+    Args:
+        db: 数据库会话
+
+    Returns:
+        bool: 支付通道是否启用
+    """
     return bool(get_platform_setting_value(db, "PAYMENT_ENABLED"))
 
 
 def _order_expire_minutes(db: Session) -> int:
-    """读取订单过期的分钟数（来自平台配置）。"""
+    """读取订单过期的分钟数（来自平台配置）。
+
+    Args:
+        db: 数据库会话
+
+    Returns:
+        int: 订单过期分钟数
+    """
     return int(get_platform_setting_value(db, "ORDER_EXPIRE_MINUTES"))
 
 
@@ -164,6 +235,9 @@ def _payment_mock_enabled() -> bool:
     ``mock-pay`` 端点手动触发 fulfill，用于本地/沙箱前端联调。
 
     生产环境必须显式关闭（默认 false），防止绕过支付。
+
+    Returns:
+        bool: Mock 支付是否启用
     """
     return _flag("PAYMENT_MOCK_ENABLED")
 
@@ -180,6 +254,18 @@ async def create_order(
     """用户选择套餐后创建订单；同一用户同套餐 15 分钟内未支付的订单直接复用（幂等）。
 
     请求体: ``{ "planCode": "pro", "provider": "wechat" }``
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+        current_user: 当前登录用户
+        body: 请求体，包含 planCode 和 provider
+
+    Returns:
+        dict: 包含创建成功的订单信息
+
+    Raises:
+        HTTPException: 422 当 planCode 为空或 provider 不合法时
     """
     plan_code = body.get("planCode") or ""
     provider = body.get("provider") or "manual"
@@ -224,7 +310,19 @@ async def get_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """返回当前用户拥有的指定订单。"""
+    """返回当前用户拥有的指定订单。
+
+    Args:
+        order_no: 订单号，路径参数
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含订单信息
+
+    Raises:
+        HTTPException: 404 当订单不存在时
+    """
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -248,6 +346,18 @@ async def pay_order(
     - ``PAYMENT_ENABLED=false`` + ``PAYMENT_MOCK_ENABLED=true``: 返回 mock 二维码内容,
       允许通过 :meth:`mock_pay_order` 端点手动 fulfill 订单, 用于前端联调。
     - ``PAYMENT_ENABLED=false`` + 关闭 mock: 返回 503 并附人工收款兜底说明 (§11.10)。
+
+    Args:
+        order_no: 订单号，路径参数
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含支付二维码 URL、过期时间、支付提供商等信息
+
+    Raises:
+        HTTPException: 404 当订单不存在时；400 当订单状态不允许支付时；
+                       503 当支付通道未启用时；502 当支付下单失败时
     """
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
@@ -316,6 +426,18 @@ async def mock_pay_order(
 
     用途: 本地/沙箱环境下让前端轮询能拿到 ``status=paid`` 走通整条 UX。
     生产环境必须关闭 ``PAYMENT_MOCK_ENABLED`` 以防绕过付款。
+
+    Args:
+        order_no: 订单号，路径参数
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含更新后的订单信息和是否已支付标志
+
+    Raises:
+        HTTPException: 403 当 mock 模式未启用时；404 当订单不存在时；
+                       400 当订单状态不允许 mock 支付时；500 当 fulfill 失败时
     """
     if not _payment_mock_enabled():
         raise HTTPException(
@@ -350,7 +472,19 @@ async def cancel_order(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """取消当前用户拥有的、可取消的订单。"""
+    """取消当前用户拥有的、可取消的订单。
+
+    Args:
+        order_no: 订单号，路径参数
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含取消后的订单信息
+
+    Raises:
+        HTTPException: 404 当订单不存在时；400 当订单状态不允许取消时
+    """
     order = _svc.get_order(db, order_no, user_id=current_user.id)
     if order is None:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -375,6 +509,13 @@ def _legacy_record_unverified(
 
     保留这条路径是为了在密钥还没下发 / .env 还没配齐时，仍能审计通道是否在敲门；
     不会驱动业务 fulfill。
+
+    Args:
+        db: 数据库会话
+        provider: 支付提供商（wechat/alipay）
+        body_text: 回调请求体文本
+        signature: 签名头信息
+        event_id_hint: 事件 ID 提示
     """
     event_id = event_id_hint or f"{provider}-{datetime.utcnow().timestamp()}"
     try:
@@ -406,6 +547,13 @@ async def wechat_callback(request: Request, db: Session = Depends(get_db)):
        签名 + 金额一致性驱动 ``fulfill_order``（幂等）。
 
     无论业务驱动是否命中，回调统一返回 HTTP 200。
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+
+    Returns:
+        dict: 包含 code 和 message 的响应，微信要求返回 HTTP 200
     """
     body_bytes = await request.body()
     raw = body_bytes.decode("utf-8", errors="replace")
@@ -461,6 +609,13 @@ async def alipay_callback(request: Request, db: Session = Depends(get_db)):
     """支付宝 PC 网站支付异步通知入口。
 
     流程同 :func:`wechat_callback`（gateway → verify → process_callback）。
+
+    Args:
+        request: HTTP 请求对象
+        db: 数据库会话
+
+    Returns:
+        PlainTextResponse: 支付宝要求返回纯文本 "success"
     """
     from fastapi.responses import PlainTextResponse
 
@@ -519,7 +674,20 @@ async def request_refund(
     current_user: AppUser = Depends(get_current_user),
     body: dict = Body(...),
 ):
-    """为当前用户的某笔已支付订单创建退款申请。"""
+    """为当前用户的某笔已支付订单创建退款申请。
+
+    Args:
+        db: 数据库会话
+        current_user: 当前登录用户
+        body: 请求体，包含 orderNo 和 reason
+
+    Returns:
+        dict: 包含退款申请信息
+
+    Raises:
+        HTTPException: 422 当 orderNo 为空时；404 当订单不存在时；
+                       400 当退款申请校验失败时
+    """
     order_no = body.get("orderNo") or ""
     reason = body.get("reason") or ""
     if not order_no:
@@ -556,7 +724,19 @@ async def get_refund(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """返回当前用户拥有的指定退款单。"""
+    """返回当前用户拥有的指定退款单。
+
+    Args:
+        refund_no: 退款单号，路径参数
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含退款单信息
+
+    Raises:
+        HTTPException: 404 当退款记录不存在时
+    """
     refund = _svc.get_refund(db, refund_no, user_id=current_user.id)
     if refund is None:
         raise HTTPException(status_code=404, detail="退款记录不存在")
@@ -572,7 +752,20 @@ async def request_invoice(
     current_user: AppUser = Depends(get_current_user),
     body: dict = Body(...),
 ):
-    """在字段校验通过后为指定订单创建发票申请。"""
+    """在字段校验通过后为指定订单创建发票申请。
+
+    Args:
+        db: 数据库会话
+        current_user: 当前登录用户
+        body: 请求体，包含 orderNo、invoiceType、title、email、taxId 等
+
+    Returns:
+        dict: 包含发票申请信息
+
+    Raises:
+        HTTPException: 422 当必填字段缺失或格式不正确时；
+                       404 当订单不存在时；400 当发票申请校验失败时
+    """
     order_no = body.get("orderNo") or ""
     invoice_type = body.get("invoiceType") or "personal"
     title = body.get("title") or ""
@@ -616,7 +809,15 @@ async def list_invoices(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """列出当前用户的所有发票申请记录。"""
+    """列出当前用户的所有发票申请记录。
+
+    Args:
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含发票申请列表
+    """
     invoices = _svc.list_invoices(db, user_id=current_user.id)
     from src.services.billing.order_service import serialize_invoice
     return {"invoices": [serialize_invoice(i) for i in invoices]}
@@ -627,7 +828,15 @@ async def list_orders(
     db: Session = Depends(get_db),
     current_user: AppUser = Depends(get_current_user),
 ):
-    """列出当前用户的所有订单。"""
+    """列出当前用户的所有订单。
+
+    Args:
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    Returns:
+        dict: 包含订单列表
+    """
     orders = _svc.list_orders(db, user_id=current_user.id)
     from src.services.billing.order_service import serialize_order
     return {"orders": [serialize_order(o) for o in orders]}

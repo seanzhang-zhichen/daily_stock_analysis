@@ -1,6 +1,27 @@
 # feishu_doc.py
 # -*- coding: utf-8 -*-
-"""基于官方 lark-oapi SDK 的飞书云文档集成辅助函数。"""
+"""基于官方 lark-oapi SDK 的飞书云文档集成辅助函数。
+
+本模块封装了与飞书（Feishu/Lark）云文档的交互能力，提供从 Markdown 内容
+创建飞书文档的完整流程。主要功能包括：
+
+- 读取飞书应用凭据（app_id、app_secret、folder_token）
+- 初始化 lark-oapi SDK 客户端（自动处理 tenant_access_token 的获取与刷新）
+- 在指定文件夹下创建飞书文档
+- 将 Markdown 内容解析为飞书 Block 结构并分批写入文档
+
+依赖：
+    lark-oapi: 飞书官方 Python SDK，用于与飞书开放平台 API 交互。
+
+配置：
+    需要在配置文件中提供以下字段：
+    - feishu_app_id: 飞书应用 ID
+    - feishu_app_secret: 飞书应用密钥
+    - feishu_folder_token: 目标文件夹的 token
+
+注意：
+    飞书 API 对单次写入的 Block 数量有限制（建议约 50 个），因此写入时会自动分批。
+"""
 
 import logging
 import json
@@ -13,10 +34,27 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuDocManager:
-    """飞书云文档管理器 (基于官方 SDK lark-oapi)"""
+    """飞书云文档管理器 (基于官方 SDK lark-oapi)。
+
+    该类负责管理飞书云文档的生命周期，包括客户端初始化、文档创建和内容写入。
+    所有操作均通过飞书官方 SDK 完成，确保与飞书 API 的兼容性。
+
+    Attributes:
+        config: 应用配置对象，包含飞书相关的配置项。
+        app_id: 飞书应用 ID，用于 SDK 认证。
+        app_secret: 飞书应用密钥，用于 SDK 认证。
+        folder_token: 目标文件夹的 token，新文档将创建在此文件夹下。
+        client: 初始化后的 lark-oapi SDK 客户端实例，配置完整时可用。
+    """
 
     def __init__(self):
-        """读取飞书凭据，并在配置完整时初始化 SDK 客户端。"""
+        """读取飞书凭据，并在配置完整时初始化 SDK 客户端。
+
+        从全局配置中读取飞书相关的凭据信息（app_id、app_secret、folder_token）。
+        如果所有必需配置项均已提供，则构建并初始化 lark-oapi SDK 客户端。
+        SDK 会自动处理 tenant_access_token 的获取和刷新，无需人工干预。
+        如果配置不完整，client 将被设为 None，后续操作会安全跳过。
+        """
         self.config = get_config()
         self.app_id = self.config.feishu_app_id
         self.app_secret = self.config.feishu_app_secret
@@ -34,12 +72,31 @@ class FeishuDocManager:
             self.client = None
 
     def is_configured(self) -> bool:
-        """检查配置是否完整"""
+        """检查飞书配置是否完整。
+
+        判断 app_id、app_secret 和 folder_token 是否均已配置。
+        这是执行任何飞书操作的前提条件。
+
+        Returns:
+            bool: 配置完整返回 True，否则返回 False。
+        """
         return bool(self.app_id and self.app_secret and self.folder_token)
 
     def create_daily_doc(self, title: str, content_md: str) -> Optional[str]:
-        """
-        创建日报文档
+        """创建日报文档并将 Markdown 内容写入飞书云文档。
+
+        该方法执行以下步骤：
+        1. 检查 SDK 客户端是否已初始化且配置完整。
+        2. 调用飞书 API 在指定文件夹下创建新文档。
+        3. 将 Markdown 文本解析为飞书 Block 对象列表。
+        4. 分批将 Block 写入文档（规避 API 单次写入数量限制）。
+
+        Args:
+            title: 文档标题。
+            content_md: 要写入的 Markdown 格式内容字符串。
+
+        Returns:
+            Optional[str]: 成功时返回飞书文档的访问链接；失败时返回 None。
         """
         if not self.client or not self.is_configured():
             logger.warning("飞书 SDK 未初始化或配置缺失，跳过创建")
@@ -102,8 +159,24 @@ class FeishuDocManager:
             return None
 
     def _markdown_to_sdk_blocks(self, md_text: str) -> List[Block]:
-        """
-        将简单的 Markdown 转换为飞书 SDK 的 Block 对象
+        """将简单的 Markdown 文本转换为飞书 SDK 的 Block 对象列表。
+
+        目前支持的 Markdown 元素：
+        - 普通文本行（转换为 Text Block）
+        - 一级标题（# 开头，转换为 Heading1 Block）
+        - 二级标题（## 开头，转换为 Heading2 Block）
+        - 三级标题（### 开头，转换为 Heading3 Block）
+        - 分割线（--- 开头，转换为 Divider Block）
+
+        注意：
+            当前实现为简化版解析器，仅按行处理，不支持嵌套格式、列表、
+            表格等复杂 Markdown 语法。对于不支持的格式，将按普通文本处理。
+
+        Args:
+            md_text: 输入的 Markdown 格式文本。
+
+        Returns:
+            List[Block]: 转换后的飞书 SDK Block 对象列表。
         """
         blocks = []
         lines = md_text.split('\n')

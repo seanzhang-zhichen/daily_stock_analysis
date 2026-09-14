@@ -12,12 +12,20 @@ from pydantic import BaseModel, Field
 
 
 class RootResponse(BaseModel):
-    """API-only 根路由返回的轻量服务状态。"""
-    
+    """API-only 根路由返回的轻量服务状态。
+
+    用于在 API 根路径（如 /api/v1/）被访问时返回服务的基本信息，
+    告知调用方 API 当前在线并附带版本号。
+
+    Attributes:
+        message: API 运行状态消息，如 "Daily Stock Analysis API is running"
+        version: API 版本号，可选
+    """
+
     # 用于告诉调用方 API 当前在线，并附带版本号（可选）
     message: str = Field(..., description="API 运行状态消息", example="Daily Stock Analysis API is running")
     version: Optional[str] = Field(None, description="API 版本", example="1.0.0")
-    
+
     class Config:
         """配置根状态响应在 OpenAPI 文档中的示例元数据。"""
         json_schema_extra = {
@@ -29,13 +37,21 @@ class RootResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """健康检查响应，供负载均衡、监控和 smoke test 使用。"""
-    
+    """健康检查响应，供负载均衡、监控和 smoke test 使用。
+
+    用于在 /health 等健康检查端点返回服务状态，
+    负载均衡器、容器编排系统（如 Kubernetes）和监控系统可以据此判断服务是否健康。
+
+    Attributes:
+        status: 服务状态，"ok" 表示正常；其他值（如 "degraded"）由具体端点自定义
+        timestamp: 服务端生成的时间戳（ISO 格式），便于排查跨节点时钟漂移，可选
+    """
+
     # "ok" 表示正常；其他值（如 "degraded"）由具体端点自定义
     status: str = Field(..., description="服务状态", example="ok")
     # 服务端生成的时间戳，便于排查跨节点时钟漂移
     timestamp: Optional[str] = Field(None, description="时间戳")
-    
+
     class Config:
         """配置健康检查响应在 OpenAPI 文档中的示例元数据。"""
         json_schema_extra = {
@@ -51,15 +67,20 @@ class ErrorResponse(BaseModel):
 
     ``error`` 是稳定的机器可读错误码，``message`` 面向用户或前端展示，
     ``detail`` 用于放验证错误列表、冲突字段等可选调试信息。
+
+    Attributes:
+        error: 稳定的错误码，前端可以基于此做 i18n / 分支处理
+        message: 人类可读的错误消息
+        detail: 可选结构化详情，例如验证错误列表、冲突字段等
     """
-    
+
     # 稳定的错误码，前端可以基于此做 i18n / 分支处理
     error: str = Field(..., description="错误类型", example="validation_error")
     # 人类可读的错误消息
     message: str = Field(..., description="错误详情", example="请求参数错误")
     # 可选结构化详情：例如验证错误列表、冲突字段等
     detail: Optional[Any] = Field(None, description="附加错误信息")
-    
+
     class Config:
         """配置统一错误响应在 OpenAPI 文档中的示例元数据。"""
         json_schema_extra = {
@@ -72,15 +93,24 @@ class ErrorResponse(BaseModel):
 
 
 class SuccessResponse(BaseModel):
-    """通用成功响应，适用于不需要专门业务模型的简单操作。"""
-    
+    """通用成功响应，适用于不需要专门业务模型的简单操作。
+
+    用于返回操作成功的结果，可以携带任意业务数据。
+    如果需要返回失败状态，请改用 :class:`ErrorResponse`。
+
+    Attributes:
+        success: 是否成功，固定为 True
+        message: 可选的简短消息（如 "订阅成功"）
+        data: 任意业务负载（前端通常直接使用 data.*）
+    """
+
     # 固定为 True；如果需要失败态请改用 :class:`ErrorResponse`
     success: bool = Field(True, description="是否成功")
     # 可选的简短消息（如 "订阅成功"）
     message: Optional[str] = Field(None, description="成功消息")
     # 任意业务负载（前端通常直接使用 data.*）
     data: Optional[Any] = Field(None, description="响应数据")
-    
+
     class Config:
         """配置通用成功响应在 OpenAPI 文档中的示例元数据。"""
         json_schema_extra = {

@@ -1,4 +1,4 @@
-"""add research reports
+"""添加研究报告相关表
 
 Revision ID: 20260604_research_reports
 Revises: 20260603_seed_credit_packages
@@ -18,22 +18,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(inspector: sa.Inspector, table_name: str) -> bool:
+    """检查指定表名是否已存在于数据库中。"""
     return table_name in inspector.get_table_names()
 
 
 def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> bool:
+    """检查指定索引是否已存在于表中。"""
     if not _table_exists(inspector, table_name):
         return False
     return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
 
 
 def _column_exists(inspector: sa.Inspector, table_name: str, column_name: str) -> bool:
+    """检查指定列是否已存在于表中。"""
     if not _table_exists(inspector, table_name):
         return False
     return column_name in {column["name"] for column in inspector.get_columns(table_name)}
 
 
 def _refresh_inspector() -> sa.Inspector:
+    """刷新并返回当前数据库连接的检查器对象。"""
     return sa.inspect(op.get_bind())
 
 
@@ -45,6 +49,7 @@ def _create_index_if_missing(
     *,
     unique: bool = False,
 ) -> sa.Inspector:
+    """如果索引不存在，则创建索引并刷新检查器。"""
     if not _index_exists(inspector, table_name, index_name):
         op.create_index(index_name, table_name, columns, unique=unique)
         return _refresh_inspector()
@@ -52,6 +57,7 @@ def _create_index_if_missing(
 
 
 def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: str) -> sa.Inspector:
+    """如果索引存在，则删除索引并刷新检查器。"""
     if _index_exists(inspector, table_name, index_name):
         op.drop_index(index_name, table_name=table_name)
         return _refresh_inspector()
@@ -59,8 +65,10 @@ def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: 
 
 
 def upgrade() -> None:
+    """升级：添加研究报告相关表和字段，包括研究报告、购买记录、反应和评论表。"""
     inspector = _refresh_inspector()
 
+    # 为用户表添加研究员标识字段
     if _table_exists(inspector, "app_users") and not _column_exists(inspector, "app_users", "is_research_operator"):
         op.add_column(
             "app_users",
@@ -74,6 +82,7 @@ def upgrade() -> None:
         ["is_research_operator"],
     )
 
+    # 创建研究报告表
     if not _table_exists(inspector, "app_research_reports"):
         op.create_table(
             "app_research_reports",
@@ -105,6 +114,7 @@ def upgrade() -> None:
     ]:
         inspector = _create_index_if_missing(inspector, name, "app_research_reports", columns, unique=unique)
 
+    # 创建研究报告购买记录表
     if not _table_exists(inspector, "app_research_report_purchases"):
         op.create_table(
             "app_research_report_purchases",
@@ -128,6 +138,7 @@ def upgrade() -> None:
     ]:
         inspector = _create_index_if_missing(inspector, name, "app_research_report_purchases", columns)
 
+    # 创建研究报告反应表
     if not _table_exists(inspector, "app_research_report_reactions"):
         op.create_table(
             "app_research_report_reactions",
@@ -150,6 +161,7 @@ def upgrade() -> None:
     ]:
         inspector = _create_index_if_missing(inspector, name, "app_research_report_reactions", columns)
 
+    # 创建研究报告评论表
     if not _table_exists(inspector, "app_research_report_comments"):
         op.create_table(
             "app_research_report_comments",
@@ -176,6 +188,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除研究报告相关表和字段。"""
     inspector = _refresh_inspector()
 
     for name in [

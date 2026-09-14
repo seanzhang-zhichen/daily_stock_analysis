@@ -88,6 +88,14 @@ class FeishuReplyClient:
         """
         发送交互卡片消息（支持 Markdown 渲染）
 
+        飞书交互卡片是一种富文本消息格式，支持 Markdown 渲染、
+        按钮、图片等丰富的交互元素。相比纯文本消息，交互卡片的
+        展示效果更好，适合发送分析报告等结构化内容。
+
+        发送方式：
+        - 回复消息：通过 ``message_id`` 指定原消息，在原消息下方回复
+        - 主动发送：通过 ``chat_id`` 指定目标会话，主动发送消息
+
         Args:
             content: Markdown 格式的内容
             message_id: 原消息 ID（回复时使用）
@@ -166,6 +174,16 @@ class FeishuReplyClient:
         """
         回复文本消息（支持交互卡片和分段发送）
 
+        将文本内容转换为飞书 Markdown 格式后发送。如果内容超过
+        配置的最大字节数限制，会自动分段发送，确保每条消息
+        都在平台限制范围内。
+
+        发送流程：
+        1. 将文本转换为飞书 Markdown 格式
+        2. 检查内容长度是否超过限制
+        3. 超长时自动分段，逐条发送
+        4. 正常长度时直接发送交互卡片
+
         Args:
             message_id: 原消息 ID
             text: 回复文本
@@ -204,6 +222,15 @@ class FeishuReplyClient:
         """
         发送消息到指定会话（支持交互卡片和分段发送）
 
+        主动向指定会话发送消息，支持自动分段。与 ``reply_text`` 的区别：
+        - ``reply_text``: 回复某条消息（需要 message_id）
+        - ``send_to_chat``: 主动发送到指定会话（需要 chat_id）
+
+        适用场景：
+        - 定时任务发送通知
+        - 系统事件推送
+        - 主动提醒用户
+
         Args:
             chat_id: 会话 ID
             text: 消息文本
@@ -237,12 +264,20 @@ class FeishuReplyClient:
         """
         分批发送消息（支持交互卡片和分段发送）
 
+        当消息内容超过平台限制时，将内容分割成多个小块，
+        逐块发送。每发送完一块后等待 1 秒，避免触发频率限制。
+
+        分块策略：
+        - 使用 ``chunk_content_by_max_bytes`` 按字节数分割
+        - 每块添加页码标记，方便用户识别顺序
+        - 发送失败时记录错误日志，继续发送下一块
+
         Args:
             content: 消息文本
             send_func: 发送单个分片的函数，返回是否发送成功
 
         Returns:
-            是否全部发送成功
+            是否全部发送成功（所有分片都发送成功才返回 True）
         """
         chunks = chunk_content_by_max_bytes(content, self._max_bytes, add_page_marker=True)
         success_count = 0
@@ -286,7 +321,21 @@ class FeishuStreamHandler:
         self._shutdown = False
 
     def _conversation_key(self, bot_message: BotMessage) -> str:
-        """返回用于"同一会话 FIFO 顺序处理"的会话键。"""
+        """返回用于"同一会话 FIFO 顺序处理"的会话键。
+
+        会话键的生成规则：
+        - 私聊：使用 chat_id 或 user_id 或 message_id 作为键
+        - 群聊：使用 "chat_id:user_id" 组合键，确保同一用户在群聊中的消息按顺序处理
+
+        这样设计的目的是：不同会话可以并行处理，但同一会话内的消息
+        必须按 FIFO 顺序处理，避免多轮对话和回复出现乱序。
+
+        Args:
+            bot_message: 消息对象
+
+        Returns:
+            会话键字符串
+        """
         if bot_message.chat_type == ChatType.PRIVATE:
             return bot_message.chat_id or bot_message.user_id or bot_message.message_id
 
@@ -295,7 +344,22 @@ class FeishuStreamHandler:
         return f"{chat_id}:{user_id}"
 
     def _enqueue_message(self, bot_message: BotMessage) -> None:
-        """将一条消息入队; 若其所属会话当前空闲, 启动一个工作协程处理。"""
+        """将一条消息入队; 若其所属会话当前空闲, 启动一个工作协程处理。
+
+        消息队列的工作流程：
+        1. 检查 handler 是否已关闭，已关闭则丢弃消息
+        2. 计算会话键，确定消息属于哪个会话
+        3. 将消息加入对应会话的队列
+        4. 如果该会话当前没有活跃的工作线程，启动一个新的工作线程
+        5. 工作线程会按 FIFO 顺序处理该会话的所有消息
+
+        线程安全：
+        - 使用 ``_queue_lock`` 保护队列和活跃会话集合的并发访问
+        - 在锁外提交线程池任务，避免在持有锁时进行 I/O 操作
+
+        Args:
+            bot_message: 消息对象
+        """
         if self._shutdown:
             self._logger.debug("[Feishu Stream] Handler already stopped, dropping message")
             return
@@ -319,7 +383,21 @@ class FeishuStreamHandler:
                 self._logger.error("[Feishu Stream] 无法启动消息处理线程: %s", exc)
 
     def _drain_conversation(self, conversation_key: str) -> None:
-        """按 FIFO 顺序排空单个会话的消息队列, 队列空后退出。"""
+        """按 FIFO 顺序排空单个会话的消息队列, 队列空后退出。
+
+        工作线程的主循环：
+        1. 获取该会话的消息队列
+        2. 如果队列为空，从活跃会话集合中移除该会话，退出循环
+        3. 从队列头部取出一条消息
+        4. 调用 ``_process_message`` 处理消息
+        5. 重复步骤 1，直到队列为空
+
+        注意：此方法在 ThreadPoolExecutor 的工作线程中运行，
+        需要处理所有异常，避免工作线程异常退出。
+
+        Args:
+            conversation_key: 会话键
+        """
         while True:
             with self._queue_lock:
                 queue = self._pending_messages.get(conversation_key)
@@ -332,7 +410,20 @@ class FeishuStreamHandler:
             self._process_message(bot_message)
 
     def _process_message(self, bot_message: BotMessage) -> None:
-        """在 SDK 回调线程之外执行命令处理, 避免阻塞 SDK 的事件循环。"""
+        """在 SDK 回调线程之外执行命令处理, 避免阻塞 SDK 的事件循环。
+
+        处理流程：
+        1. 调用 ``_on_message`` 回调函数（即命令分发器）处理消息
+        2. 如果返回了响应且包含文本内容，通过回复客户端发送回复
+        3. 发送回复时，根据响应的 ``at_user`` 设置决定是否 @用户
+
+        异常处理：
+        - 命令处理异常会被捕获并记录，不会导致工作线程退出
+        - 回复发送异常也会被捕获，避免影响后续消息处理
+
+        Args:
+            bot_message: 消息对象
+        """
         try:
             response = self._on_message(bot_message)
 
@@ -349,14 +440,39 @@ class FeishuStreamHandler:
 
     @staticmethod
     def _truncate_log_content(text: str, max_len: int = 200) -> str:
-        """截断日志内容"""
+        """截断日志内容
+
+        将多行文本压缩为单行，并截断到指定长度，
+        避免日志内容过长影响可读性。
+
+        Args:
+            text: 原始文本
+            max_len: 最大长度，默认 200
+
+        Returns:
+            截断后的文本
+        """
         cleaned = text.replace("\n", " ").strip()
         if len(cleaned) > max_len:
             return f"{cleaned[:max_len]}..."
         return cleaned
 
     def _log_incoming_message(self, message: BotMessage) -> None:
-        """记录收到的消息日志"""
+        """记录收到的消息日志
+
+        将消息的关键信息记录到日志中，便于问题排查和监控。
+        消息内容会被截断到 200 个字符以内，避免日志过长。
+
+        记录的信息：
+        - msg_id: 消息 ID
+        - user_id: 用户 ID
+        - chat_id: 会话 ID
+        - chat_type: 会话类型
+        - content: 消息内容摘要（已截断）
+
+        Args:
+            message: 消息对象
+        """
         content = message.raw_content or message.content or ""
         summary = self._truncate_log_content(content)
         self._logger.info(
@@ -492,10 +608,19 @@ class FeishuStreamHandler:
         提取命令内容（去除 @机器人）
 
         飞书的 @用户 格式是：@_user_1, @_user_2 等
+        需要将这些 @标记 从消息内容中移除，提取出纯命令文本。
+
+        清理策略（按优先级）：
+        1. 通过 mentions 列表精确移除 @标记（最准确）
+        2. 正则兜底，移除飞书 @用户 格式（@_user_N）
+        3. 清理多余空格
 
         Args:
             text: 原始消息文本
             mentions: @提及列表
+
+        Returns:
+            清理后的命令文本
         """
         import re
 
@@ -513,7 +638,19 @@ class FeishuStreamHandler:
         return ' '.join(text.split())
 
     def shutdown(self, wait: bool = False) -> None:
-        """停止接收新消息并关闭工作线程池。"""
+        """停止接收新消息并关闭工作线程池。
+
+        安全关闭流程：
+        1. 设置 ``_shutdown`` 标志，新消息将被丢弃
+        2. 清空待处理消息队列和活跃会话集合
+        3. 关闭线程池（可选等待正在执行的任务完成）
+
+        注意：此方法不会等待正在处理的消息完成，
+        如果需要等待，请将 ``wait`` 参数设为 True。
+
+        Args:
+            wait: 是否等待线程池中的任务完成
+        """
         self._shutdown = True
         with self._queue_lock:
             self._pending_messages.clear()
@@ -569,8 +706,19 @@ class FeishuStreamClient:
         self._running = False
 
     def _create_message_handler(self) -> Callable[[BotMessage], BotResponse]:
-        """创建消息处理函数"""
+        """创建消息处理函数
 
+        返回一个闭包函数，该函数接收 BotMessage 对象，
+        通过全局命令分发器处理消息，并返回 BotResponse。
+
+        闭包设计：
+        - 内部引用全局的 ``get_dispatcher()`` 函数
+        - 每次调用时获取最新的分发器实例
+        - 支持热更新（分发器实例可以被替换）
+
+        Returns:
+            消息处理函数
+        """
         def handle_message(message: BotMessage) -> BotResponse:
             """通过同步 bot 分发器处理一条飞书 Stream 消息。"""
             from bot.dispatcher import get_dispatcher
@@ -580,7 +728,21 @@ class FeishuStreamClient:
         return handle_message
 
     def _create_event_handler(self) -> 'lark.EventDispatcherHandler':
-        """创建事件分发处理器"""
+        """创建事件分发处理器
+
+        构建飞书 SDK 的事件处理器，包括：
+        1. 创建回复客户端（用于发送消息）
+        2. 创建消息处理器（处理接收到的消息）
+        3. 注册事件回调（P2ImMessageReceiveV1）
+
+        加密和验证：
+        - encrypt_key: 消息加密密钥（可选，长连接模式下不是必需的）
+        - verification_token: 验证令牌（可选，长连接模式下不是必需的）
+        - 两者都可以从配置中读取，未配置时使用空字符串
+
+        Returns:
+            飞书事件处理器实例
+        """
         # 创建回复客户端
         self._reply_client = FeishuReplyClient(self._app_id, self._app_secret)
 
@@ -615,6 +777,14 @@ class FeishuStreamClient:
         启动 Stream 客户端（阻塞）
 
         此方法会阻塞当前线程，直到客户端停止。
+        启动流程：
+        1. 创建事件处理器（包含消息处理和回复客户端）
+        2. 创建 WebSocket 客户端（配置自动重连和日志级别）
+        3. 启动 WebSocket 连接（阻塞，直到连接断开）
+
+        异常处理：
+        - 连接断开时会自动重连（如果 auto_reconnect=True）
+        - 需要在其他线程中调用 stop() 来停止客户端
         """
         logger.info("[Feishu Stream] 正在启动...")
 
@@ -641,6 +811,15 @@ class FeishuStreamClient:
         在后台线程启动 Stream 客户端（非阻塞）
 
         适用于与其他服务（如 WebUI）同时运行的场景。
+        启动流程：
+        1. 检查是否已有后台线程在运行
+        2. 创建新的后台线程
+        3. 在线程中调用 ``_run_in_background`` 方法
+
+        注意：
+        - 此方法不会阻塞当前线程
+        - 后台线程是守护线程（daemon=True），主线程退出时会自动终止
+        - 需要调用 ``stop()`` 方法来停止后台线程
         """
         if self._background_thread and self._background_thread.is_alive():
             logger.warning("[Feishu Stream] 客户端已在运行")
@@ -656,7 +835,19 @@ class FeishuStreamClient:
         logger.info("[Feishu Stream] 后台客户端已启动")
 
     def _run_in_background(self) -> None:
-        """后台运行（处理异常和重连）"""
+        """后台运行（处理异常和重连）
+
+        后台线程的主循环：
+        1. 调用 ``start()`` 启动客户端（阻塞，直到连接断开）
+        2. 如果发生异常，记录错误日志
+        3. 如果客户端仍在运行（不是被 stop() 停止的），等待 5 秒后重连
+        4. 重复步骤 1
+
+        重连策略：
+        - 连接异常时自动重连
+        - 每次重连前等待 5 秒，避免频繁重连
+        - 被 stop() 停止后不再重连
+        """
         import time
 
         while self._running:
@@ -669,7 +860,18 @@ class FeishuStreamClient:
                     time.sleep(5)
 
     def stop(self) -> None:
-        """停止客户端"""
+        """停止客户端
+
+        安全停止流程：
+        1. 设置 ``_running`` 标志为 False，通知后台线程退出
+        2. 如果消息处理器存在，调用其 ``shutdown`` 方法关闭线程池
+        3. 记录停止日志
+
+        注意：
+        - 此方法不会立即断开 WebSocket 连接
+        - WebSocket 连接会在下次心跳或消息收发时检测到 _running=False 而断开
+        - 如果需要立即断开，需要直接关闭 WebSocket 客户端
+        """
         self._running = False
         if self._message_handler is not None:
             self._message_handler.shutdown(wait=False)
@@ -677,7 +879,16 @@ class FeishuStreamClient:
 
     @property
     def is_running(self) -> bool:
-        """是否正在运行"""
+        """是否正在运行
+
+        通过检查 ``_running`` 标志来判断客户端是否处于运行状态。
+        注意：此属性只反映本地状态，不反映 WebSocket 连接的实际状态。
+        即使 ``is_running`` 为 True，WebSocket 连接也可能已断开
+        （正在等待重连）。
+
+        Returns:
+            是否正在运行
+        """
         return self._running
 
 
@@ -686,7 +897,18 @@ _stream_client: Optional[FeishuStreamClient] = None
 
 
 def get_feishu_stream_client() -> Optional[FeishuStreamClient]:
-    """获取全局 Stream 客户端实例"""
+    """获取全局 Stream 客户端实例
+
+    使用单例模式管理全局客户端实例，避免重复创建。
+    如果 lark-oapi SDK 未安装，返回 None。
+
+    异常处理：
+    - ImportError: SDK 未安装
+    - ValueError: 配置缺失（app_id 或 app_secret 未配置）
+
+    Returns:
+        全局客户端实例，或 None（SDK 未安装或配置错误）
+    """
     global _stream_client
 
     if _stream_client is None and FEISHU_SDK_AVAILABLE:
@@ -703,8 +925,15 @@ def start_feishu_stream_background() -> bool:
     """
     在后台启动飞书 Stream 客户端
 
+    便捷函数，自动获取或创建全局客户端实例，
+    并在后台线程中启动。
+
+    使用场景：
+    - 应用启动时自动启动飞书 Stream 客户端
+    - 与其他服务（如 WebUI）同时启动
+
     Returns:
-        是否成功启动
+        是否成功启动。成功返回 True，失败（SDK 未安装、配置错误等）返回 False。
     """
     client = get_feishu_stream_client()
     if client:

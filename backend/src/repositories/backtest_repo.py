@@ -7,6 +7,16 @@
 
 主要被 ``backend/src/services/backtest`` 编排的回测任务调用，并对外提供
 ``backend/api/v1/endpoints/backtest.py`` 所需的分页结果/汇总查询接口。
+
+主要功能：
+- 挑选有资格参与回测的分析记录（get_candidates）
+- 保存回测结果（save_result, save_results_batch）
+- 分页查询回测结果（get_results_paginated）
+- 统计回测结果数量（count_results）
+- 拉取回测结果列表（list_results）
+- 保存/获取回测汇总（upsert_summary, get_summary）
+- 提取分析日期（parse_analysis_date_from_snapshot）
+- 获取去重后的评估窗口（get_distinct_eval_windows）
 """
 
 from __future__ import annotations
@@ -20,14 +30,25 @@ from sqlalchemy import and_, delete, desc, func, or_, select
 
 from src.storage import BacktestResult, BacktestSummary, DatabaseManager, AnalysisHistory
 
+# 配置日志记录器：用于输出模块级别的调试、信息、警告和错误日志
 logger = logging.getLogger(__name__)
 
 # ``market_review`` 类型的分析记录不参与回测评估（用于大盘复盘类报告）。
+# 大盘复盘报告是对整体市场的分析，不针对具体个股，因此不应纳入个股回测。
 MARKET_REVIEW_REPORT_TYPE = "market_review"
 
 
 class BacktestRepository:
-    """回测域的数据访问层。"""
+    """回测域的数据访问层。
+
+    封装 ``BacktestResult`` 和 ``BacktestSummary`` 表的数据库操作，
+    提供候选记录挑选、结果保存、分页查询、汇总计算等功能。
+
+    使用方式：
+        repo = BacktestRepository()  # 使用默认数据库管理器单例
+        candidates = repo.get_candidates(code="600519", min_age_days=7, limit=100, ...)
+        repo.save_result(result)
+    """
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         """测试时注入 ``db_manager``，运行时使用进程级单例。"""
@@ -48,6 +69,24 @@ class BacktestRepository:
 
         候选需满足：创建时间早于 ``min_age_days`` 前的截止时间、非大盘复盘类报告；
         当 ``force=False`` 时排除已存在同窗口/引擎版本回测结果的记录。
+
+        回测候选筛选逻辑：
+        1. 分析记录的创建时间必须早于 cutoff_dt（至少 min_age_days 天前）
+        2. 排除大盘复盘类报告（market_review）
+        3. 如果 force=False，排除已存在同窗口/引擎版本回测结果的记录
+        4. 返回结果按创建时间倒序排列
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            min_age_days: 最小年龄天数，分析记录必须早于该天数前创建。
+            limit: 返回记录数量限制。
+            eval_window_days: 评估窗口天数，用于判断回测结果是否存在。
+            engine_version: 引擎版本，用于判断回测结果是否存在。
+            force: 是否强制重新回测。为 True 时忽略已存在的回测结果。
+            user_id: To C 模式下限定归属用户；传 ``None`` 表示单租户模式。
+
+        Returns:
+            符合条件的 ``AnalysisHistory`` 记录列表，按创建时间倒序排列。
         """
         # 取「至少 N 天前」截止时间, 让结论已经经历完整评估窗口
         cutoff_dt = datetime.now() - timedelta(days=min_age_days)
@@ -82,13 +121,28 @@ class BacktestRepository:
             return list(rows)
 
     def save_result(self, result: BacktestResult) -> None:
-        """持久化单条回测结果行。"""
+        """持久化单条回测结果行。
+
+        将单个回测结果对象保存到数据库中。适用于逐条保存回测结果的场景。
+
+        Args:
+            result: 回测结果对象，包含分析历史ID、评估日期、预测方向、
+                    实际表现等字段。
+        """
         with self.db.get_session() as session:
             session.add(result)
             session.commit()
 
     def save_results_batch(self, results: List[BacktestResult], *, replace_existing: bool = False) -> int:
         """批量保存回测结果；``replace_existing`` 时先清空同引擎/窗口的旧记录。
+
+        该方法用于批量保存回测结果，支持在保存前先删除同引擎/窗口的旧记录。
+        使用事务保证数据一致性，如果保存失败会自动回滚。
+
+        Args:
+            results: 回测结果列表。
+            replace_existing: 是否替换已存在的记录。为 True 时，会先删除同分析历史ID、
+                              同评估窗口、同引擎版本的旧记录，再保存新记录。
 
         Returns:
             实际写入的记录数；批次为空时直接返回 0。
@@ -137,8 +191,24 @@ class BacktestRepository:
     ) -> Tuple[List[Tuple[BacktestResult, Optional[str], Optional[str], Optional[datetime]]], int]:
         """分页查询回测结果，并拼接对应分析记录的展示字段。
 
-每条返回元素为 ``(BacktestResult, name, trend_prediction, created_at)`` 四元组，
-方便 API 层直接渲染列表。
+        每条返回元素为 ``(BacktestResult, name, trend_prediction, created_at)`` 四元组，
+        方便 API 层直接渲染列表。
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            eval_window_days: 评估窗口天数筛选，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本筛选，传 ``None`` 表示不筛选。
+            analysis_date_from: 分析日期起始筛选（包含）。
+            analysis_date_to: 分析日期结束筛选（包含）。
+            days: 最近天数筛选，只返回最近 days 天内的记录。
+            offset: 分页偏移量。
+            limit: 每页记录数。
+            user_id: To C 模式下限定归属用户；传 ``None`` 表示单租户模式。
+
+        Returns:
+            二元组：(记录列表, 总记录数)。
+            记录列表中每个元素为四元组：
+            (BacktestResult, 股票名称, 趋势预测, 分析记录创建时间)。
         """
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
@@ -186,7 +256,22 @@ class BacktestRepository:
         days: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> int:
-        """统计匹配的 ``BacktestResult`` 行数，不取回任何记录。"""
+        """统计匹配的 ``BacktestResult`` 行数，不取回任何记录。
+
+        用于统计符合筛选条件的回测结果数量，常用于分页查询前的总数统计。
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            eval_window_days: 评估窗口天数筛选，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本筛选，传 ``None`` 表示不筛选。
+            analysis_date_from: 分析日期起始筛选（包含）。
+            analysis_date_to: 分析日期结束筛选（包含）。
+            days: 最近天数筛选，只统计最近 days 天内的记录。
+            user_id: To C 模式下限定归属用户；传 ``None`` 表示单租户模式。
+
+        Returns:
+            符合条件的记录数量；查询失败返回 0。
+        """
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -216,7 +301,23 @@ class BacktestRepository:
         limit: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> List[BacktestResult]:
-        """拉取匹配的回测结果行，供汇总计算或导出使用。"""
+        """拉取匹配的回测结果行，供汇总计算或导出使用。
+
+        该方法用于获取符合筛选条件的回测结果列表，常用于汇总计算或数据导出。
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            eval_window_days: 评估窗口天数筛选，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本筛选，传 ``None`` 表示不筛选。
+            analysis_date_from: 分析日期起始筛选（包含）。
+            analysis_date_to: 分析日期结束筛选（包含）。
+            days: 最近天数筛选，只返回最近 days 天内的记录。
+            limit: 返回记录数量限制，传 ``None`` 表示不限制。
+            user_id: To C 模式下限定归属用户；传 ``None`` 表示单租户模式。
+
+        Returns:
+            符合条件的 ``BacktestResult`` 对象列表，按分析日期和评估时间倒序排列。
+        """
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -242,7 +343,14 @@ class BacktestRepository:
             return list(rows)
 
     def upsert_summary(self, summary: BacktestSummary) -> None:
-        """按唯一键 upsert 一条回测汇总行。"""
+        """按唯一键 upsert 一条回测汇总行。
+
+        如果存在相同 scope/code/eval_window_days/engine_version 的记录，则更新该记录；
+        否则插入新记录。使用事务保证数据一致性。
+
+        Args:
+            summary: 回测汇总对象，包含汇总指标和统计信息。
+        """
         with self.db.get_session() as session:
             existing = session.execute(
                 select(BacktestSummary)
@@ -295,7 +403,19 @@ class BacktestRepository:
         eval_window_days: Optional[int] = None,
         engine_version: str,
     ) -> Optional[BacktestSummary]:
-        """取指定 scope/code/窗口/引擎版本下的最新汇总记录。"""
+        """取指定 scope/code/窗口/引擎版本下的最新汇总记录。
+
+        用于获取特定条件下的回测汇总记录，常用于展示汇总结果。
+
+        Args:
+            scope: 汇总范围，如 "all", "stock" 等。
+            code: 股票代码，传 ``None`` 表示全市场汇总。
+            eval_window_days: 评估窗口天数，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本。
+
+        Returns:
+            最新的 ``BacktestSummary`` 记录；不存在则返回 ``None``。
+        """
         with self.db.get_session() as session:
             conditions = [
                 BacktestSummary.scope == scope,
@@ -315,7 +435,17 @@ class BacktestRepository:
 
     @staticmethod
     def parse_analysis_date_from_snapshot(context_snapshot: Optional[str]) -> Optional[date]:
-        """从历史 ``context_snapshot`` JSON 中提取原始的分析日期；解析失败返回 ``None``。"""
+        """从历史 ``context_snapshot`` JSON 中提取原始的分析日期；解析失败返回 ``None``。
+
+        该方法用于从分析记录的上下文快照中提取原始分析日期，
+        常用于回测时确定分析的时间点。
+
+        Args:
+            context_snapshot: 上下文快照 JSON 字符串。
+
+        Returns:
+            提取到的分析日期；解析失败或不存在则返回 ``None``。
+        """
         if not context_snapshot:
             return None
 
@@ -349,7 +479,20 @@ class BacktestRepository:
         analysis_date_to: Optional[date] = None,
         user_id: Optional[int] = None,
     ) -> List[int]:
-        """返回匹配条件下所有去重后的 ``eval_window_days``，按升序排列。"""
+        """返回匹配条件下所有去重后的 ``eval_window_days``，按升序排列。
+
+        用于获取符合条件的所有不同评估窗口天数，常用于前端展示筛选条件。
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本筛选，传 ``None`` 表示不筛选。
+            analysis_date_from: 分析日期起始筛选（包含）。
+            analysis_date_to: 分析日期结束筛选（包含）。
+            user_id: To C 模式下限定归属用户；传 ``None`` 表示单租户模式。
+
+        Returns:
+            去重后的评估窗口天数列表，按升序排列。
+        """
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
                 code=code,
@@ -382,7 +525,22 @@ class BacktestRepository:
         analysis_date_to: Optional[date],
         days: Optional[int],
     ) -> List[object]:
-        """构造 list/count/窗口查询共用的 SQLAlchemy 过滤条件。"""
+        """构造 list/count/窗口查询共用的 SQLAlchemy 过滤条件。
+
+        该方法用于构建回测结果查询的通用过滤条件，被多个查询方法复用，
+        避免重复编写过滤逻辑。
+
+        Args:
+            code: 股票代码筛选，传 ``None`` 表示不筛选。
+            eval_window_days: 评估窗口天数筛选，传 ``None`` 表示不筛选。
+            engine_version: 引擎版本筛选，传 ``None`` 表示不筛选。
+            analysis_date_from: 分析日期起始筛选（包含）。
+            analysis_date_to: 分析日期结束筛选（包含）。
+            days: 最近天数筛选，只返回最近 days 天内的记录。
+
+        Returns:
+            SQLAlchemy 过滤条件列表。
+        """
         conditions = []
         if code:
             conditions.append(BacktestResult.code == code)

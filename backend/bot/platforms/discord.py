@@ -30,7 +30,18 @@ class DiscordPlatform(BotPlatform):
     """Discord 平台适配器"""
 
     def __init__(self):
-        """从配置加载 Discord 交互验证设置。"""
+        """从配置加载 Discord 交互验证设置。
+
+        Discord 使用 Ed25519 公钥验证 Webhook 请求的签名，
+        需要在配置中提供 ``discord_interactions_public_key``。
+
+        配置项：
+        - ``discord_interactions_public_key``: Discord 应用的公钥（十六进制字符串）
+
+        注意：
+        - 如果未配置公钥，所有请求都会被拒绝
+        - 公钥可以在 Discord 开发者门户的应用设置中找到
+        """
         from src.config import get_config
 
         config = get_config()
@@ -325,7 +336,23 @@ class DiscordPlatform(BotPlatform):
         return None
 
     def _build_command_content(self, interaction_data: Dict[str, Any]) -> str:
-        """从 Discord 交互载荷中重建斜杠命令文本。"""
+        """从 Discord 交互载荷中重建斜杠命令文本。
+
+        Discord 的斜杠命令（Slash Command）以结构化的 JSON 格式传递，
+        需要将其重建为类似 ``/command subcommand value`` 的文本格式，
+        以便命令分发器统一处理。
+
+        重建规则：
+        - 命令名：以 ``/`` 开头
+        - 子命令：直接追加名称
+        - 选项值：根据类型处理（字符串、布尔值等）
+
+        Args:
+            interaction_data: Discord 交互数据
+
+        Returns:
+            重建的命令文本
+        """
         command_name = str(interaction_data.get("name", "")).strip()
         if not command_name:
             return ""
@@ -335,7 +362,20 @@ class DiscordPlatform(BotPlatform):
         return " ".join(parts).strip()
 
     def _append_option_parts(self, parts: List[str], options: Any) -> None:
-        """把嵌套的 Discord 斜杠命令选项值追加到命令片段列表。"""
+        """把嵌套的 Discord 斜杠命令选项值追加到命令片段列表。
+
+        Discord 的斜杠命令支持嵌套选项（subcommand groups 和 subcommands），
+        需要递归解析嵌套结构，将选项值追加到命令文本中。
+
+        处理规则：
+        - 嵌套选项（有 ``options`` 子项）：递归处理
+        - 布尔值：值为 True 时追加选项名（语义化标记），False 时省略
+        - 其他类型：直接追加值的字符串表示
+
+        Args:
+            parts: 命令片段列表（可变参数，直接修改）
+            options: Discord 选项列表
+        """
         if not isinstance(options, list):
             return
 
@@ -367,7 +407,23 @@ class DiscordPlatform(BotPlatform):
                 parts.append(str(value))
 
     def _parse_timestamp(self, value: Any) -> datetime:
-        """解析 Discord ISO 时间戳，输入非法时回退为当前时间。"""
+        """解析 Discord ISO 时间戳，输入非法时回退为当前时间。
+
+        Discord 使用 ISO 8601 格式的时间戳（如 ``2024-01-15T10:30:00.000Z``），
+        需要转换为 Python 的 datetime 对象。
+
+        解析策略：
+        1. 空值或 None：返回当前时间
+        2. 已经是 datetime 对象：直接返回
+        3. 字符串：替换 ``Z`` 为 ``+00:00`` 后解析
+        4. 解析失败：回退为当前时间
+
+        Args:
+            value: Discord 时间戳值
+
+        Returns:
+            datetime 对象
+        """
         if not value:
             return datetime.now()
 

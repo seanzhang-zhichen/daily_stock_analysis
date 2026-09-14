@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Authentication endpoints for Web admin login.
+"""管理员认证（Auth）API 端点模块。
 
-这些接口管理传统 Web 管理员认证：状态查询、启停密码登录、首次设置密码、登录、
+本模块管理传统 Web 管理员认证：状态查询、启停密码登录、首次设置密码、登录、
 修改密码和登出。用户体系登录在 ``account.py`` 中维护；本模块只处理管理后台的
 会话 cookie 和 ``ADMIN_AUTH_ENABLED`` 运行时配置。
 """
@@ -39,18 +39,27 @@ from src.auth import (
 from src.config import Config, setup_env
 from src.core.config_manager import ConfigManager
 
+
+# 模块级日志记录器，用于记录本模块的诊断信息
 logger = logging.getLogger(__name__)
 
+# FastAPI 路由实例，本模块所有端点均挂载于此
 router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    """登录请求体。首次设置密码场景需同时传入 password + password_confirm。"""
+    """登录请求体。
+
+    首次设置密码场景需同时传入 password + password_confirm。
+    """
 
     model_config = {"populate_by_name": True}
 
     password: str = Field(default="", description="Admin password")
+    """管理员密码"""
+
     password_confirm: str | None = Field(default=None, alias="passwordConfirm", description="Confirm (first-time)")
+    """确认密码（首次设置时必填）"""
 
 
 class ChangePasswordRequest(BaseModel):
@@ -59,8 +68,13 @@ class ChangePasswordRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
     current_password: str = Field(default="", alias="currentPassword")
+    """当前密码"""
+
     new_password: str = Field(default="", alias="newPassword")
+    """新密码"""
+
     new_password_confirm: str = Field(default="", alias="newPasswordConfirm")
+    """确认新密码"""
 
 
 class AuthSettingsRequest(BaseModel):
@@ -69,16 +83,30 @@ class AuthSettingsRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
     auth_enabled: bool = Field(alias="authEnabled")
+    """是否启用认证"""
+
     password: str = Field(default="")
+    """要设置的密码"""
+
     password_confirm: str | None = Field(default=None, alias="passwordConfirm")
+    """确认密码"""
+
     current_password: str = Field(default="", alias="currentPassword")
+    """当前密码（用于验证身份）"""
 
 
 def _cookie_params(request: Request) -> dict:
-    """Build admin-session cookie parameters for the current request.
+    """根据当前请求构建管理员会话 cookie 参数。
 
-    ``Secure`` 需要兼容两种部署：直连 HTTPS 时读取 request scheme，反代部署时在
-    ``TRUST_X_FORWARDED_FOR=true`` 下信任 ``X-Forwarded-Proto``。
+    ``Secure`` 标志的判定逻辑：
+    - 反代部署（``TRUST_X_FORWARDED_FOR=true``）：信任 ``X-Forwarded-Proto`` 请求头
+    - 直连部署：直接以请求 URL 的协议为准
+
+    Args:
+        request: HTTP 请求对象
+
+    Returns:
+        dict: 包含 httponly、samesite、secure、path、max_age 的 cookie 参数字典
     """
     secure = False
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
@@ -111,6 +139,13 @@ def _apply_auth_enabled(enabled: bool, request: Request | None = None) -> bool:
 
     优先复用应用生命周期里的 ``SystemConfigService``，失败时退回 ``ConfigManager``，
     这样设置页和早期测试构造的裸请求都能更新认证开关。
+
+    Args:
+        enabled: 是否启用认证
+        request: HTTP 请求对象，可选
+
+    Returns:
+        bool: 是否成功应用认证开关
     """
     manager_applied = False
     if request is not None:
@@ -156,12 +191,25 @@ def _apply_auth_enabled(enabled: bool, request: Request | None = None) -> bool:
 
 
 def _password_set_for_response(auth_enabled: bool) -> bool:
-    """构造响应中的 passwordSet 字段：认证关闭时不应泄露是否存储了密码。"""
+    """构造响应中的 passwordSet 字段：认证关闭时不应泄露是否存储了密码。
+
+    Args:
+        auth_enabled: 认证是否启用
+
+    Returns:
+        bool: 认证启用时返回实际密码设置状态，否则返回 False
+    """
     return is_password_set() if auth_enabled else False
 
 
 def _set_session_cookie(response: Response, session_value: str, request: Request) -> None:
-    """根据部署环境参数，将管理员会话 cookie 写入响应。"""
+    """根据部署环境参数，将管理员会话 cookie 写入响应。
+
+    Args:
+        response: HTTP 响应对象
+        session_value: 会话值
+        request: HTTP 请求对象，用于获取 cookie 参数
+    """
     params = _cookie_params(request)
     response.set_cookie(
         key=COOKIE_NAME,
@@ -175,7 +223,19 @@ def _set_session_cookie(response: Response, session_value: str, request: Request
 
 
 def _get_auth_status_dict(request: Request | None = None) -> dict:
-    """构造统一的认证状态响应体，供多个端点复用。"""
+    """构造统一的认证状态响应体，供多个端点复用。
+
+    setupState 语义：
+    - enabled: 认证处于启用状态
+    - password_retained: 认证关闭但磁盘上仍存有历史密码
+    - no_password: 认证关闭且从未设置过密码
+
+    Args:
+        request: HTTP 请求对象，可选
+
+    Returns:
+        dict: 包含 authEnabled、loggedIn、passwordSet、passwordChangeable、setupState 的字典
+    """
     auth_enabled = is_auth_enabled()
     logged_in = False
     if auth_enabled and request:
@@ -183,10 +243,6 @@ def _get_auth_status_dict(request: Request | None = None) -> dict:
         cookie_val = request.cookies.get(COOKIE_NAME)
         logged_in = verify_session(cookie_val) if cookie_val else False
 
-    # setupState 语义：
-    # - enabled: 认证处于启用状态
-    # - password_retained: 认证关闭但磁盘上仍存有历史密码
-    # - no_password: 认证关闭且从未设置过密码
     if auth_enabled:
         setup_state = "enabled"
     elif has_stored_password():
@@ -209,7 +265,14 @@ def _get_auth_status_dict(request: Request | None = None) -> dict:
     description="Returns whether auth is enabled and if the current request is logged in.",
 )
 async def auth_status(request: Request):
-    """返回认证状态信息，无需携带已登录的管理员会话。"""
+    """返回认证状态信息，无需携带已登录的管理员会话。
+
+    Args:
+        request: HTTP 请求对象
+
+    Returns:
+        dict: 认证状态字典
+    """
     return _get_auth_status_dict(request)
 
 
@@ -227,6 +290,13 @@ async def auth_update_settings(request: Request, body: AuthSettingsRequest):
 
     重新启用已存在的密码时，必须提供有效的会话 cookie 或当前密码。
     启用状态发生变化时，会轮换会话密钥，使旧 cookie 在安全模式切换后失效。
+
+    Args:
+        request: HTTP 请求对象
+        body: 认证设置请求体
+
+    Returns:
+        JSONResponse: 包含认证状态或错误信息的响应
     """
     target_enabled = body.auth_enabled
     current_enabled = is_auth_enabled()
@@ -383,14 +453,27 @@ async def auth_update_settings(request: Request, body: AuthSettingsRequest):
     return resp
 
 
-
 @router.post(
     "/login",
     summary="Login or set initial password",
     description="Verify password and set session cookie. If password not set yet, accepts password+passwordConfirm.",
 )
 async def auth_login(request: Request, body: LoginRequest):
-    """校验密码或在首次启动时设置初始密码，然后下发会话 cookie。"""
+    """校验密码或在首次启动时设置初始密码，然后下发会话 cookie。
+
+    流程：
+    1. 检查认证是否已启用
+    2. 检查 IP 限流
+    3. 首次配置时要求 password_confirm 进行二次确认
+    4. 校验密码通过后创建会话并设置 cookie
+
+    Args:
+        request: HTTP 请求对象
+        body: 登录请求体
+
+    Returns:
+        JSONResponse: 包含登录结果或错误信息的响应
+    """
     if not is_auth_enabled():
         return JSONResponse(
             status_code=400,
@@ -461,7 +544,14 @@ async def auth_login(request: Request, body: LoginRequest):
     description="Change password. Requires valid session.",
 )
 async def auth_change_password(body: ChangePasswordRequest):
-    """在校验当前密码后，更新管理员密码。"""
+    """在校验当前密码后，更新管理员密码。
+
+    Args:
+        body: 修改密码请求体
+
+    Returns:
+        JSONResponse: 包含修改结果或错误信息的响应
+    """
     if not is_password_changeable():
         return JSONResponse(
             status_code=400,
@@ -498,7 +588,16 @@ async def auth_change_password(body: ChangePasswordRequest):
     description="Clear session cookie.",
 )
 async def auth_logout(request: Request):
-    """使当前管理员会话失效，并清除浏览器中的会话 cookie。"""
+    """使当前管理员会话失效，并清除浏览器中的会话 cookie。
+
+    通过轮换会话密钥使所有现有会话立即失效，等价于强制登出。
+
+    Args:
+        request: HTTP 请求对象
+
+    Returns:
+        Response: 204 无内容响应，同时清除 cookie
+    """
     # 通过轮换会话密钥使所有现有会话立即失效，等价于强制登出
     if is_auth_enabled() and not rotate_session_secret():
         return JSONResponse(

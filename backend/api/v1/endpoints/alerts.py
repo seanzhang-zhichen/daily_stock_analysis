@@ -52,7 +52,7 @@ def _bad_request(exc: Exception, *, error: str = "validation_error") -> HTTPExce
 
 
 def _not_found(exc: Exception) -> HTTPException:
-    """将“资源不存在”类异常映射为 HTTP 404 响应。"""
+    """将"资源不存在"类异常映射为 HTTP 404 响应。"""
     return HTTPException(
         status_code=404,
         detail={"error": "not_found", "message": str(exc)},

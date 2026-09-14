@@ -17,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisHistoryMixin:
-    """分析历史 Mixin。"""
+    """分析历史 Mixin：封装分析结果的保存、查询与删除操作。
+
+    通过多重继承方式混入 ``DatabaseManager``，提供与 ``AnalysisHistory`` 模型
+    交互的高层 API，包括按时间窗查询、分页查询、按 ID 精确查询以及批量删除。
+    """
 
     def save_analysis_history(
         self,
@@ -50,7 +54,11 @@ class AnalysisHistoryMixin:
 
         try:
             def _write(session: Session) -> int:
-                """写入回调：由 ``_run_write_transaction`` 负责提交和 SQLite 重试。"""
+                """写入回调：由 ``_run_write_transaction`` 负责提交和 SQLite 重试。
+
+                在事务内创建 ``AnalysisHistory`` 记录并 flush 到数据库，
+                返回写入的记录 ID（当 ``return_id=True`` 时）或 1。
+                """
                 record = AnalysisHistory(
                         user_id=user_id,
                         query_id=query_id,

@@ -1661,7 +1661,7 @@ def format_copyable_diagnostics(summary: Dict[str, Any]) -> str:
     components = _as_dict(summary.get("components"))
 
     def _component_line(key: str) -> str:
-        """把单个诊断组件渲染为“key: status - message”格式的一行文本。"""
+        """把单个诊断组件渲染为"key: status - message"格式的一行文本。"""
         component = _as_dict(components.get(key))
         message = sanitize_diagnostic_text(component.get("message"), max_length=160) or "unknown"
         return f"{key}: {component.get('status', 'unknown')} - {message}"

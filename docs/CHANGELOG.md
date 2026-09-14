@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 补齐 Bot 指数分析、港美 YFinance 基本面与可选 Futu OpenD 港股行情/估值链路。
+- [新功能] 新增轻量股票画像、数据能力概览和结构化研究产物 API 契约。
+- [改进] Web 选股页支持浏览并恢复当前用户的历史运行结果。
+- [修复] SearXNG 支持独立请求超时，美股日线回退链遵循数据源优先级。
+- [测试] 新增 Bot 指数、港美基本面、Futu 资源关闭、股票画像、数据能力、研究产物和数据源路由回归测试。
+- [文档] 新增当前 ToC 分支与本地上游 v3.32.0 检出点的功能差异审计及分阶段同步建议。
 - [修复] Web 情报池路由不再将普通用户错误重定向到账户设置页。
 - [改进] Web 公告入口改为侧边栏抽屉，保留完整公告历史页。
 - [改进] Web 界面固定使用中文，移除中英文界面切换入口；报告内容语言配置保持独立。

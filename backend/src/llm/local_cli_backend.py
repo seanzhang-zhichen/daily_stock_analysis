@@ -18,6 +18,7 @@ from src.llm.generation_backend import GenerationBackend, GenerationError, Gener
 DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS = 300
 DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES = 1024 * 1024
 
+
 class LocalCliGenerationBackend:
     """本地 CLI 生成后端的实现。
 
@@ -117,6 +118,7 @@ class LocalCliGenerationBackend:
             stream_progress_callback(len(output))
         return GenerationResult(output, getattr(self.config, "litellm_model", "") or self.backend_id,
                                 self.backend_id, self.backend_id, diagnostics={"returncode": 0})
+
 
 def resolve_local_cli_preset(backend_id: str) -> str:
     """校验 backend_id 是否为已支持的本地 CLI 后端。

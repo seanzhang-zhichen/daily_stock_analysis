@@ -26,16 +26,21 @@ class RateLimiter:
     简单的频率限制器
 
     基于滑动窗口算法，限制每个用户的请求频率。
+    每个用户在指定时间窗口内只能发送有限次数的请求，
+    超过限制则拒绝服务，防止恶意刷接口或意外流量洪峰。
     """
 
     def __init__(self, max_requests: int = 10, window_seconds: int = 60):
         """
+        初始化频率限制器
+
         Args:
             max_requests: 窗口内最大请求数
             window_seconds: 窗口时间（秒）
         """
         self.max_requests = max_requests
         self.window_seconds = window_seconds
+        # 存储每个用户的请求时间戳列表，用于滑动窗口计算
         self._requests: Dict[str, List[float]] = defaultdict(list)
 
     def is_allowed(self, user_id: str) -> bool:
@@ -219,21 +224,53 @@ class CommandDispatcher:
         return sorted(commands, key=lambda c: c.name)
 
     def is_admin(self, user_id: str) -> bool:
-        """检查用户是否是管理员"""
+        """检查用户是否是管理员
+
+        通过比对用户 ID 是否在管理员白名单中来判断权限。
+        管理员可以执行 ``admin_only=True`` 的命令（如系统管理、配置修改等）。
+
+        Args:
+            user_id: 用户标识
+
+        Returns:
+            是否为管理员
+        """
         return user_id in self.admin_users
 
     def add_admin(self, user_id: str) -> None:
-        """添加管理员"""
+        """添加管理员
+
+        将指定用户 ID 加入管理员集合，赋予其执行管理员命令的权限。
+
+        Args:
+            user_id: 用户标识
+        """
         self.admin_users.add(user_id)
 
     def remove_admin(self, user_id: str) -> None:
-        """移除管理员"""
+        """移除管理员
+
+        将指定用户 ID 从管理员集合中移除，撤销其管理员权限。
+        使用 ``discard`` 而非 ``remove`` 避免用户不存在时抛出异常。
+
+        Args:
+            user_id: 用户标识
+        """
         self.admin_users.discard(user_id)
 
     def dispatch(self, message: BotMessage) -> BotResponse:
         """同步分发消息。
 
-        保持现有同步调用方兼容，实际逻辑委托给 `dispatch_async()`。
+        保持现有同步调用方兼容，实际逻辑委托给 ``dispatch_async()``。
+        如果当前线程没有事件循环，则直接同步执行 ``_dispatch_sync()``，
+        避免线程切换开销。如果已有事件循环，则在新线程中同步执行，
+        防止在已有事件循环的线程中调用异步方法导致的冲突。
+
+        Args:
+            message: 消息对象
+
+        Returns:
+            响应对象
         """
         try:
             asyncio.get_running_loop()
@@ -261,7 +298,23 @@ class CommandDispatcher:
         return result_holder.get("response", BotResponse.error_response("命令执行失败"))
 
     def _prepare_dispatch(self, message: BotMessage) -> tuple[Optional[str], List[str], Optional[BotCommand], Optional[BotResponse]]:
-        """为同步/异步分发入口统一执行前置检查（限流、命令解析、参数校验、权限校验）。"""
+        """为同步/异步分发入口统一执行前置检查（限流、命令解析、参数校验、权限校验）。
+
+        这是所有分发路径的统一入口，负责在真正执行命令前完成所有前置检查，
+        包括频率限制、命令解析、权限验证和参数校验。任何一步失败都会返回
+        提前构造好的错误响应，避免后续处理。
+
+        Args:
+            message: 消息对象
+
+        Returns:
+            (cmd_name, args, command, early_response) 元组
+            - cmd_name: 解析出的命令名称（非命令时返回 None）
+            - args: 命令参数列表
+            - command: 命令处理器实例（非命令或命令不存在时返回 None）
+            - early_response: 提前返回的响应（限流、权限不足、参数错误等情况），
+              正常流程返回 None
+        """
         if not self._rate_limiter.is_allowed(message.user_id):
             remaining_time = self._rate_limiter.window_seconds
             return None, [], None, BotResponse.error_response(
@@ -293,8 +346,50 @@ class CommandDispatcher:
         return cmd_name, args, command, None
 
     def _dispatch_sync(self, message: BotMessage) -> BotResponse:
-        """为 webhook / 流式集成场景提供的纯同步分发路径。"""
+        """为 webhook / 流式集成场景提供的纯同步分发路径。
+
+        此方法在同步上下文中执行完整的命令分发流程，包括：
+        1. 前置检查（限流、命令解析、参数校验、权限校验）
+        2. 自然语言路由（非命令消息时尝试 LLM 意图解析）
+        3. 命令执行
+
+        与 ``dispatch_async`` 的区别：
+        - 同步执行，不创建事件循环
+        - 调用 ``command.execute()`` 而非 ``command.execute_async()``
+        - 适用于 Webhook 回调、Stream 模式等同步场景
+
+        Args:
+            message: 消息对象
+
+        Returns:
+            响应对象
+        """
         cmd_name, args, command, early_response = self._prepare_dispatch(message)
+        if early_response is not None:
+            return early_response
+
+        if cmd_name is None:
+            nl_result = self._try_nl_routing_sync(message)
+            if nl_result is not None:
+                return nl_result
+            if message.mentioned:
+                return BotResponse.text_response(
+                    "你好！我是股票分析助手。\n"
+                    f"发送 `{self.command_prefix}help` 查看可用命令。"
+                )
+            return BotResponse.text_response("")
+
+        if command is None:
+            return BotResponse.error_response("命令执行失败")
+
+        try:
+            response = command.execute(message, args)
+            logger.info(f"[Dispatcher] 命令 {cmd_name} 执行成功")
+            return response
+        except Exception as e:
+            logger.error(f"[Dispatcher] 命令 {cmd_name} 执行失败: {e}")
+            logger.exception(e)
+            return BotResponse.error_response(f"命令执行失败: {str(e)[:100]}")
         if early_response is not None:
             return early_response
 
@@ -322,8 +417,17 @@ class CommandDispatcher:
             return BotResponse.error_response(f"命令执行失败: {str(e)[:100]}")
 
     async def dispatch_async(self, message: BotMessage) -> BotResponse:
-        """
-        异步分发消息到对应命令
+        """异步分发消息到对应命令
+
+        完整的异步命令分发流程：
+        1. 前置检查（限流、命令解析、参数校验、权限校验）
+        2. 自然语言路由（非命令消息时尝试 LLM 意图解析）
+        3. 异步命令执行
+
+        与 ``_dispatch_sync`` 的区别：
+        - 异步执行，需要事件循环
+        - 调用 ``command.execute_async()`` 支持异步 I/O 操作
+        - 适用于需要并发处理的场景
 
         Args:
             message: 消息对象
@@ -432,7 +536,7 @@ User: "analyze TSLA and NVDA using trend strategy"
     )
 
     _NL_NAME_CLEANUP_PATTERNS = (
-        r'[，,。.!！?？:：;；`\'"“”‘’（）()\[\]{}<>]+',
+        r'[，,。.!！?？:：;；`\'"""‘’（）()\[\]{}<>]+',
         r'(?i:\b(?:please|analy[sz]e|analysis|research|check|look\s+at|stock|ticker|trend|price)\b)',
         r'(?:帮我|帮忙|麻烦|请|想请你|我想|想|用|按照|基于|关于|对)\s*',
         r'(?:分析|看看|研究|诊断|查一?下|聊聊|说说|问问|评估)\s*',

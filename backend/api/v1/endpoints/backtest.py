@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Backtest endpoints.
+"""回测（Backtest）API 端点模块。
+
+本模块提供与股票分析回测相关的 RESTful API 端点，包括：
+- 触发回测任务执行
+- 分页查询回测结果
+- 查询整体回测表现指标
+- 查询单只股票回测表现指标
 
 接口按当前登录用户隔离回测任务和结果查询。endpoint 层负责请求参数校验、服务层
 调用和 HTTP 错误映射，具体回测计算与指标聚合由 ``BacktestService`` 维护。
@@ -26,8 +32,10 @@ from api.v1.schemas.common import ErrorResponse
 from src.services.backtest_service import BacktestService
 from src.storage import DatabaseManager
 
+# 模块级日志记录器，用于记录本模块的诊断信息
 logger = logging.getLogger(__name__)
 
+# FastAPI 路由实例，本模块所有端点均挂载于此
 router = APIRouter()
 
 
@@ -35,7 +43,15 @@ def _validate_analysis_date_range(
     analysis_date_from: Optional[date],
     analysis_date_to: Optional[date],
 ) -> None:
-    """在调用服务层之前，拦截“起始日期晚于结束日期”的非法闭区间过滤。"""
+    """校验分析日期范围的合法性，拦截"起始日期晚于结束日期"的非法闭区间过滤。
+
+    Args:
+        analysis_date_from: 分析日期起始（含），可为空
+        analysis_date_to: 分析日期结束（含），可为空
+
+    Raises:
+        HTTPException: 当起始日期晚于结束日期时抛出 400 错误
+    """
     if analysis_date_from and analysis_date_to and analysis_date_from > analysis_date_to:
         raise HTTPException(
             status_code=400,
@@ -61,7 +77,21 @@ def run_backtest(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestRunResponse:
-    """对当前用户的历史分析记录执行回测评估。"""
+    """对当前用户的历史分析记录执行回测评估。
+
+    通过 BacktestService 执行回测计算，将结果持久化到数据库，并返回统计摘要。
+
+    Args:
+        request: 回测执行请求体，包含股票代码、强制重跑标志、评估窗口等参数
+        db_manager: 数据库管理器，由依赖注入提供
+        current_user: 当前登录用户，由依赖注入提供
+
+    Returns:
+        BacktestRunResponse: 回测执行结果统计
+
+    Raises:
+        HTTPException: 回测执行失败时返回 500 错误
+    """
     try:
         service = BacktestService(db_manager)
         stats = service.run_backtest(
@@ -101,7 +131,26 @@ def get_backtest_results(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> BacktestResultsResponse:
-    """分页返回当前用户的回测结果记录。"""
+    """分页返回当前用户的回测结果记录。
+
+    支持按股票代码、评估窗口天数、分析日期范围进行过滤，并支持分页。
+
+    Args:
+        code: 股票代码筛选条件，可选
+        eval_window_days: 评估窗口天数过滤，范围 1-120
+        analysis_date_from: 分析日期起始（含），可选
+        analysis_date_to: 分析日期结束（含），可选
+        page: 页码，从 1 开始
+        limit: 每页数量，默认 20，最大 200
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        BacktestResultsResponse: 回测结果列表及分页信息
+
+    Raises:
+        HTTPException: 查询失败时返回 500 错误
+    """
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -148,7 +197,23 @@ def get_overall_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
-    """返回当前用户全部股票回测的聚合表现指标。"""
+    """返回当前用户全部股票回测的聚合表现指标。
+
+    汇总所有股票的回测结果，计算整体胜率、平均收益率、最大回撤等关键指标。
+
+    Args:
+        eval_window_days: 评估窗口天数过滤，范围 1-120
+        analysis_date_from: 分析日期起始（含），可选
+        analysis_date_to: 分析日期结束（含），可选
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        PerformanceMetrics: 整体回测表现指标
+
+    Raises:
+        HTTPException: 404 当未找到回测汇总时；500 当查询失败时
+    """
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)
@@ -199,7 +264,24 @@ def get_stock_performance(
     db_manager: DatabaseManager = Depends(get_database_manager),
     current_user: AppUser = Depends(get_current_user),
 ) -> PerformanceMetrics:
-    """返回单只股票回测的聚合表现指标。"""
+    """返回单只股票回测的聚合表现指标。
+
+    针对指定股票代码，汇总其历史回测结果，计算胜率、平均收益率、最大回撤等关键指标。
+
+    Args:
+        code: 股票代码，路径参数
+        eval_window_days: 评估窗口天数过滤，范围 1-120
+        analysis_date_from: 分析日期起始（含），可选
+        analysis_date_to: 分析日期结束（含），可选
+        db_manager: 数据库管理器
+        current_user: 当前登录用户
+
+    Returns:
+        PerformanceMetrics: 单股回测表现指标
+
+    Raises:
+        HTTPException: 404 当未找到该股票回测汇总时；500 当查询失败时
+    """
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
         service = BacktestService(db_manager)

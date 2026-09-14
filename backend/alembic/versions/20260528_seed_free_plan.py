@@ -1,4 +1,4 @@
-"""seed free plan
+"""初始化免费套餐数据
 
 Revision ID: 20260528_seed_free_plan
 Revises: 20260527_widen_eval_status
@@ -18,6 +18,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# 定义 app_plans 表的反射结构，用于数据插入
 app_plans = sa.table(
     "app_plans",
     sa.column("code", sa.String(length=32)),
@@ -36,7 +37,9 @@ app_plans = sa.table(
 
 
 def upgrade() -> None:
+    """升级：如果 free 套餐不存在，则插入默认的免费套餐记录。"""
     bind = op.get_bind()
+    # 检查 free 套餐是否已存在，避免重复插入
     exists = bind.execute(
         sa.text("SELECT 1 FROM app_plans WHERE code = :code"),
         {"code": "free"},
@@ -64,4 +67,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：不做任何操作（空降级）。"""
     return

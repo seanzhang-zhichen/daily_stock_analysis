@@ -183,7 +183,7 @@ class BaseSearchProvider(ABC):
         return bool(self._api_keys)
 
     def _get_next_key(self) -> Optional[str]:
-        """轮询获取下一个“错误次数未超阈值”的 API Key。
+        """轮询获取下一个"错误次数未超阈值"的 API Key。
 
         策略：轮询 + 跳过错误过多（>=3 次）的 key；所有 key 都不可用时重置计数并
         返回第一个 key，确保业务能继续尝试。
@@ -1331,7 +1331,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
     @staticmethod
     def _time_hint(days: int, is_chinese: bool = True) -> str:
-        """根据查询天数 + 语言生成“最近X天”之类的时间提示词，附加到 query 上。"""
+        """根据查询天数 + 语言生成"最近X天"之类的时间提示词，附加到 query 上。"""
         if is_chinese:
             if days <= 1:
                 return "今天"
@@ -1722,11 +1722,22 @@ class SearXNGSearchProvider(BaseSearchProvider):
     _public_instances_stale_retry_after: float = 0.0
     _public_instances_lock = threading.Lock()
 
-    def __init__(self, base_urls: Optional[List[str]] = None, *, use_public_instances: bool = False):
+    def __init__(
+        self,
+        base_urls: Optional[List[str]] = None,
+        *,
+        use_public_instances: bool = False,
+        self_hosted_timeout_seconds: Optional[int] = None,
+    ):
         """初始化 SearXNG：传入自建实例列表，或允许自动发现公共实例。"""
         normalized_base_urls = [url.rstrip("/") for url in (base_urls or []) if url.strip()]
         super().__init__(normalized_base_urls, "SearXNG")
         self._base_urls = normalized_base_urls
+        self._self_hosted_timeout_seconds = (
+            int(self_hosted_timeout_seconds)
+            if self_hosted_timeout_seconds and int(self_hosted_timeout_seconds) > 0
+            else self.SELF_HOSTED_TIMEOUT_SECONDS
+        )
         # 仅当用户没配置自建实例且允许公共发现时才走公共池
         self._use_public_instances = bool(use_public_instances and not self._base_urls)
         self._cursor = 0
@@ -2048,7 +2059,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 max_attempts=len(self._base_urls),
             )
             retry_enabled = True
-            timeout = self.SELF_HOSTED_TIMEOUT_SECONDS
+            timeout = self._self_hosted_timeout_seconds
             empty_error = "SearXNG 未配置可用实例"
         elif self._use_public_instances:
             public_instances = self._get_public_instances()
@@ -2118,7 +2129,7 @@ class SearchService:
     1. 管理多个搜索引擎（Bocha / Tavily / Anspire / Brave / SerpAPI / MiniMax / SearXNG）；
     2. 自动故障转移与并发去重（in-flight cache reservation）；
     3. 结果聚合、中文优先重排、时效过滤；
-    4. 数据源失败时的“增强搜索”兜底（股价、走势等）；
+    4. 数据源失败时的"增强搜索"兜底（股价、走势等）；
     5. 港股 / 美股自动使用英文搜索关键词与 Brave 地区偏好。
     """
 
@@ -2142,7 +2153,7 @@ class SearchService:
     # 请求上游时适度过取，再做时间窗口过滤，避免稀疏结果
     NEWS_OVERSAMPLE_FACTOR = 2
     NEWS_OVERSAMPLE_MAX = 10
-    # 时效窗口允许少量“未来时间”容差，处理时区/夏令时
+    # 时效窗口允许少量"未来时间"容差，处理时区/夏令时
     FUTURE_TOLERANCE_DAYS = 1
     _CHINESE_TEXT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
     _US_STOCK_RE = re.compile(r"^[A-Za-z]{1,5}(\.[A-Za-z])?$")
@@ -2157,6 +2168,7 @@ class SearchService:
         minimax_keys: Optional[List[str]] = None,
         searxng_base_urls: Optional[List[str]] = None,
         searxng_public_instances_enabled: bool = True,
+        searxng_timeout_seconds: Optional[int] = None,
         news_max_age_days: int = 3,
         news_strategy_profile: str = "short",
     ):
@@ -2223,6 +2235,7 @@ class SearchService:
         searxng_provider = SearXNGSearchProvider(
             searxng_base_urls,
             use_public_instances=bool(searxng_public_instances_enabled and not searxng_base_urls),
+            self_hosted_timeout_seconds=searxng_timeout_seconds,
         )
         if searxng_provider.is_available:
             self._providers.append(searxng_provider)
@@ -2349,7 +2362,7 @@ class SearchService:
         best_response: Optional[SearchResponse],
         best_preferred_count: int,
     ) -> bool:
-        """在“偏好语言结果数”和“总结果数”上同时择优。"""
+        """在"偏好语言结果数"和"总结果数"上同时择优。"""
         if best_response is None:
             return True
         if candidate_preferred_count != best_preferred_count:
@@ -2426,7 +2439,7 @@ class SearchService:
         self,
         key: str,
     ) -> Tuple[Optional['SearchResponse'], bool, Optional[threading.Event]]:
-        """原子地：要么返回已存在的缓存；要么为本次请求抢占“填充权”。"""
+        """原子地：要么返回已存在的缓存；要么为本次请求抢占"填充权"。"""
         with self._cache_lock:
             cached = self._get_cached_locked(key)
             if cached is not None:
@@ -2489,7 +2502,7 @@ class SearchService:
 
     @staticmethod
     def _parse_relative_news_date(text: str, now: datetime) -> Optional[date]:
-        """解析常见的中英文相对时间描述（如“3天前”、“2 hours ago”）。"""
+        """解析常见的中英文相对时间描述（如"3天前"、"2 hours ago"）。"""
         raw = (text or "").strip()
         if not raw:
             return None
@@ -2647,7 +2660,7 @@ class SearchService:
             return response
 
         today = datetime.now().date()
-        # 起始日期 = 今日 - (search_days - 1)，让“近 N 天”包含今天本身
+        # 起始日期 = 今日 - (search_days - 1)，让"近 N 天"包含今天本身
         earliest = today - timedelta(days=max(0, int(search_days) - 1))
         latest = today + timedelta(days=self.FUTURE_TOLERANCE_DAYS)
 
@@ -3298,7 +3311,7 @@ class SearchService:
         max_attempts: int = 3,
         max_results: int = 5
     ) -> SearchResponse:
-        """数据源全挂时使用的“股价/走势兜底”增强搜索。
+        """数据源全挂时使用的"股价/走势兜底"增强搜索。
 
         当 efinance / akshare / tushare / baostock 等数据源都拿不到行情时，
         用网络搜索结果作为 AI 分析的辅助输入。
@@ -3488,6 +3501,7 @@ def get_search_service() -> SearchService:
                     minimax_keys=config.minimax_api_keys,
                     searxng_base_urls=config.searxng_base_urls,
                     searxng_public_instances_enabled=config.searxng_public_instances_enabled,
+                    searxng_timeout_seconds=getattr(config, "searxng_timeout_seconds", None),
                     news_max_age_days=config.news_max_age_days,
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                 )

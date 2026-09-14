@@ -35,7 +35,7 @@ def _escape_md(text: str) -> str:
 
 
 def _clean_sniper_value(val: Any) -> str:
-    """把狙击点位值清洗为展示文本（剥离“理想买入点：”等标签前缀）。"""
+    """把狙击点位值清洗为展示文本（剥离"理想买入点："等标签前缀）。"""
     if val is None:
         return "N/A"
     if isinstance(val, (int, float)):

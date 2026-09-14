@@ -168,7 +168,7 @@ def get_system_config_service(request: Request) -> "SystemConfigService":
 
 
 def get_runtime_scheduler_service(request: Request) -> "RuntimeSchedulerService":
-    """Return the app-lifecycle runtime scheduler, creating a test fallback if needed."""
+    """返回应用生命周期的运行时调度器，需要时创建测试兜底实例。"""
     service = getattr(request.app.state, "runtime_scheduler", None)
     if service is None:
         from src.services.runtime_scheduler import RuntimeSchedulerService

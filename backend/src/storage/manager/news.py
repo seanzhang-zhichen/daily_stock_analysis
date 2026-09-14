@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 class NewsMixin:
-    """新闻情报 / 基本面快照 Mixin。"""
+    """新闻情报 / 基本面快照 Mixin：封装新闻抓取结果与基本面快照的持久化操作。
+
+    通过多重继承方式混入 ``DatabaseManager``，提供新闻去重入库、
+    基本面快照写入与读取、以及按股票和时间窗查询新闻等功能。
+    """
 
     def save_news_intel(
         self,

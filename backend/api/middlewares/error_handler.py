@@ -21,14 +21,26 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):
-    """兜底中间件：将请求链中未处理的异常转换为标准 500 JSON 响应。"""
+    """兜底中间件：将请求链中未处理的异常转换为标准 500 JSON 响应。
+
+    该中间件位于请求处理链的最外层，用于捕获所有未被上层 exception handler
+    捕获的异常，确保即使发生未预期错误，API 也能返回结构化的 JSON 响应。
+    """
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable
     ) -> Response:
-        """执行下游 handler 并把未预期异常序列化为统一 JSON 响应。"""
+        """执行下游 handler 并把未预期异常序列化为统一 JSON 响应。
+
+        Args:
+            request: 当前 HTTP 请求对象
+            call_next: 下游处理函数
+
+        Returns:
+            Response: 正常响应或 500 错误响应
+        """
         try:
             response = await call_next(request)
             return response
@@ -54,13 +66,28 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
 
 
 def add_error_handlers(app) -> None:
-    """注册异常 handler，使 API 错误响应体结构保持一致。"""
+    """注册异常 handler，使 API 错误响应体结构保持一致。
+
+    在 FastAPI 应用实例上注册多个细粒度的 exception handler，
+    按异常类型从具体到一般进行匹配处理。
+
+    Args:
+        app: FastAPI 应用实例
+    """
     from fastapi import HTTPException
     from fastapi.exceptions import RequestValidationError
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        """处理 endpoint / 依赖中显式抛出的 ``HTTPException``。"""
+        """处理 endpoint / 依赖中显式抛出的 ``HTTPException``。
+
+        Args:
+            request: 当前 HTTP 请求对象
+            exc: HTTPException 异常实例
+
+        Returns:
+            JSONResponse: 包含错误信息的 JSON 响应
+        """
         # endpoint 可直接传入标准错误 dict；此处保留原样，避免二次包装破坏字段。
         if isinstance(exc.detail, dict) and "error" in exc.detail and "message" in exc.detail:
             return JSONResponse(
@@ -79,7 +106,15 @@ def add_error_handlers(app) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        """处理 FastAPI/Pydantic 抛出的请求参数校验错误。"""
+        """处理 FastAPI/Pydantic 抛出的请求参数校验错误。
+
+        Args:
+            request: 当前 HTTP 请求对象
+            exc: RequestValidationError 异常实例
+
+        Returns:
+            JSONResponse: 包含验证错误详情的 JSON 响应
+        """
         return JSONResponse(
             status_code=422,
             content={
@@ -91,7 +126,18 @@ def add_error_handlers(app) -> None:
 
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        """处理未被前面更具体的 handler 捕获的所有其它异常。"""
+        """处理未被前面更具体的 handler 捕获的所有其它异常。
+
+        作为最后的兜底 handler，捕获所有未被特定 exception handler
+        处理的异常，确保任何情况下都能返回结构化的错误响应。
+
+        Args:
+            request: 当前 HTTP 请求对象
+            exc: Exception 异常实例
+
+        Returns:
+            JSONResponse: 包含错误信息的 JSON 响应
+        """
         logger.error(
             f"未处理的异常: {exc}\n"
             f"请求路径: {request.url.path}\n"

@@ -53,7 +53,7 @@ def _date_range(period: str):
     """Return naive Beijing-local datetime bounds for the requested period.
 
     存储层当前按 naive datetime 查询，因此这里先按 UTC+8 计算业务窗口，再移除
-    tzinfo，保证“今天/月初”与产品展示口径一致。
+    tzinfo，保证"今天/月初"与产品展示口径一致。
     """
     now = datetime.now(tz=_CST).replace(tzinfo=None)  # naive, Beijing local
     if period == "today":

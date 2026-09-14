@@ -44,9 +44,9 @@ _FRONTEND_INDEX_NO_CACHE_HEADERS = {
 
 
 def _preload_stock_search_cache() -> None:
-    """Warm stock-search cache in a background thread after app startup.
+    """在后台线程中预热股票搜索缓存。
 
-    缓存预热只是性能优化，不应影响服务可用性；失败时记录 warning 后继续启动，
+    缓存预热仅用于性能优化，不应影响服务可用性；失败时记录 warning 后继续启动，
     后续请求仍可走正常查询路径。
     """
     try:
@@ -67,8 +67,7 @@ def _frontend_index_response(static_dir: Path) -> FileResponse:
 
 
 def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
-    """
-    校验 ``index.html`` 中引用的资源是否都真实存在于 ``static_dir`` 下。
+    """校验 ``index.html`` 中引用的资源是否都真实存在于 ``static_dir`` 下。
 
     返回缺失的资源路径列表；空列表表示构建产物一致。
     当检测到不一致时，会记录一条可定位根因的错误日志（在 ``logs/desktop.log``），
@@ -129,7 +128,7 @@ def _resolve_asset_path(assets_dir: Path, asset_path: str) -> Optional[Path]:
 
 
 def _missing_asset_media_type(asset_path: str) -> str:
-    """Return a browser-safe media type for a missing asset response.
+    """返回浏览器安全的媒体类型，用于缺失资源的响应。
 
     JS/CSS 资源缺失时返回对应类型，浏览器控制台会直接暴露资源加载失败；
     其他类型统一用 text/plain，避免把任意扩展名映射成不必要的响应类型。
@@ -197,7 +196,7 @@ def _init_llm_observability() -> None:
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    """Initialize shared app services and release them on shutdown.
+    """初始化共享应用服务，并在 shutdown 时释放。
 
     启动阶段会创建系统配置服务、确保股票索引种子数据存在，并异步预热搜索缓存。
     shutdown 时清理 ``app.state``，避免测试或热重载场景复用到旧状态。
@@ -224,7 +223,7 @@ async def app_lifespan(app: FastAPI):
 
 
 def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) -> FastAPI:
-    """Create and configure the FastAPI application instance.
+    """创建并配置 FastAPI 应用实例。
 
     Args:
         static_dir: 前端构建产物目录；未传入时使用项目根目录下的 ``static``。
@@ -374,11 +373,9 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
     # ============================================================
     
     if has_frontend:
-        # Serve `/assets/*` explicitly so that misses return a plain-text
-        # 404 with the correct Content-Type instead of the default JSON
-        # error response. JSON for a JS/CSS request is what masked the
-        # blank-page root cause in #1064; here we make it obvious that the
-        # static file simply does not exist on disk.
+        # 显式提供 `/assets/*`，以便资源缺失时返回纯文本 404 和正确的 Content-Type，
+        # 而不是默认的 JSON 错误响应。对于 JS/CSS 请求返回 JSON 是 #1064 中白屏的
+        # 根本原因；这里让问题显而易见——静态文件确实不存在于磁盘上。
         assets_dir = static_dir / "assets"
 
         assets_static_files = StaticFiles(directory=str(assets_dir), check_dir=False)
@@ -417,17 +414,15 @@ def create_app(static_dir: Optional[Path] = None, serve_frontend: bool = False) 
                     content={"error": "not_found", "message": f"API endpoint /{full_path} not found"}
                 )
 
-            # Reuse the same containment check as /assets/* so that requests
-            # like `/%2e%2e/%2e%2e/etc/passwd` cannot escape static_dir via
-            # the SPA fallback. Starlette's :path converter does not collapse
-            # `..` segments, so static_dir / full_path can resolve outside
-            # the bundle root if served unchecked.
+            # 复用与 /assets/* 相同的边界检查，防止类似 `/%2e%2e/%2e%2e/etc/passwd`
+            # 的请求通过 SPA 回退逃逸出 static_dir。Starlette 的 :path 转换器不会
+            # 折叠 `..` 路径段，因此如果不加检查，static_dir / full_path 可能解析到
+            # 构建产物根目录之外。
             file_path = _resolve_asset_path(static_dir, full_path) if full_path else None
             if file_path is not None and file_path.is_file():
                 if file_path == (static_dir / "index.html").resolve():
                     return _frontend_index_response(static_dir)
-                # Issue #520: Explicitly resolve MIME type to avoid
-                # browsers rejecting JS modules served as text/plain.
+                # Issue #520: 显式解析 MIME 类型，避免浏览器将 JS 模块拒绝为 text/plain。
                 content_type, _ = mimetypes.guess_type(str(file_path))
                 return FileResponse(file_path, media_type=content_type)
 

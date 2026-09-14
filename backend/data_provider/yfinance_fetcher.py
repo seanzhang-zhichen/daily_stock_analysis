@@ -50,6 +50,7 @@ except (ImportError, ModuleNotFoundError):
 
 import os
 
+# 模块级日志记录器，用于输出本模块的调试/警告/错误信息
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +72,9 @@ class YfinanceFetcher(BaseFetcher):
     - 数据精度可能与国内源略有差异
     """
 
+    # 类属性：数据源名称标识
     name = "YfinanceFetcher"
+    # 类属性：优先级，可通过环境变量 YFINANCE_PRIORITY 动态调整，默认值为 4（最低优先级）
     priority = int(os.getenv("YFINANCE_PRIORITY", "4"))
 
     def __init__(self):
@@ -102,6 +105,7 @@ class YfinanceFetcher(BaseFetcher):
             >>> fetcher._convert_stock_code('AAPL')
             'AAPL'
         """
+        # 统一转换为大写并去除首尾空白，便于后续匹配
         code = stock_code.strip().upper()
 
         # 美股指数：映射到 Yahoo Finance 符号（如 SPX -> ^GSPC）
@@ -117,16 +121,18 @@ class YfinanceFetcher(BaseFetcher):
 
         # 港股：hk前缀 -> .HK后缀
         if code.startswith('HK'):
-            hk_code = code[2:].lstrip('0') or '0'  # 去除前导0，但保留至少一个0
-            hk_code = hk_code.zfill(4)  # 补齐到4位
+            # 去除前导0，但保留至少一个0，防止空字符串
+            hk_code = code[2:].lstrip('0') or '0'
+            # 补齐到4位，符合 Yahoo Finance 港股代码规范
+            hk_code = hk_code.zfill(4)
             logger.debug(f"转换港股代码: {stock_code} -> {hk_code}.HK")
             return f"{hk_code}.HK"
 
-        # 已经包含后缀的情况
+        # 已经包含后缀的情况，直接返回，避免重复添加后缀
         if '.SS' in code or '.SZ' in code or '.HK' in code or '.BJ' in code:
             return code
 
-        # 去除可能的 .SH 后缀
+        # 去除可能的 .SH 后缀（用户可能输入上海交易所后缀）
         code = code.replace('.SH', '')
 
         # ETF: Shanghai ETF (51xx, 52xx, 56xx, 58xx) -> .SS; Shenzhen ETF (15xx, 16xx, 18xx) -> .SZ
@@ -147,6 +153,7 @@ class YfinanceFetcher(BaseFetcher):
         elif code.startswith(('000', '002', '300')):
             return f"{code}.SZ"
         else:
+            # 无法识别时默认归为深市，并记录警告日志
             logger.warning(f"无法确定股票 {code} 的市场，默认使用深市")
             return f"{code}.SZ"
 
@@ -180,8 +187,8 @@ class YfinanceFetcher(BaseFetcher):
                 tickers=yf_code,
                 start=start_date,
                 end=end_date,
-                progress=False,  # 禁止进度条
-                auto_adjust=True,  # 自动调整价格（复权）
+                progress=False,  # 禁止进度条，避免控制台输出干扰
+                auto_adjust=True,  # 自动调整价格（复权），确保数据可比性
                 multi_level_index=True
             )
 

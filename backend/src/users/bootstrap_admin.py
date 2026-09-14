@@ -28,9 +28,11 @@ from src.users.passwords import (
 
 logger = logging.getLogger(__name__)
 
+# 环境变量名常量，用于从部署环境读取超级管理员配置
 SUPER_ADMIN_EMAIL_ENV = "SUPER_ADMIN_EMAIL"
 SUPER_ADMIN_PASSWORD_ENV = "SUPER_ADMIN_PASSWORD"
 SUPER_ADMIN_SYNC_PASSWORD_ENV = "SUPER_ADMIN_SYNC_PASSWORD"
+# 被视为 "假" 的字符串集合，用于宽松解析布尔型环境变量
 _FALSEY_VALUES = {"0", "false", "no", "off"}
 
 
@@ -43,12 +45,12 @@ class SuperAdminBootstrapResult:
     并区分创建/提升/同步密码等不同的副作用。
     """
 
-    enabled: bool
-    email: Optional[str] = None
-    created: bool = False
-    granted_admin: bool = False
-    password_updated: bool = False
-    skipped_reason: Optional[str] = None
+    enabled: bool  # 是否启用了超级管理员引导（即是否配置了 SUPER_ADMIN_EMAIL）
+    email: Optional[str] = None  # 规范化后的邮箱地址
+    created: bool = False  # 是否新建了账户
+    granted_admin: bool = False  # 是否在本次操作中授予了管理员权限
+    password_updated: bool = False  # 是否在本次操作中更新了密码
+    skipped_reason: Optional[str] = None  # 跳过原因，便于排查
 
 
 def _normalize_email(raw_email: Optional[str]) -> str:
@@ -132,6 +134,7 @@ def bootstrap_super_admin_from_env(db: Session) -> SuperAdminBootstrapResult:
                 email=email,
                 skipped_reason="invalid_password",
             )
+        # 构造新用户记录，标记为管理员并自动验证邮箱
         user = AppUser(
             email=email,
             password_hash=hash_password(password),

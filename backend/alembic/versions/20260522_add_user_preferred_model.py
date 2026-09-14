@@ -1,4 +1,4 @@
-"""remove_byok_add_user_preferred_model
+"""移除 BYOK 功能并添加用户首选模型字段
 
 Revision ID: 20260522_pref_model
 Revises: b0bc3c721ef0
@@ -18,13 +18,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级：为 app_users 表添加 preferred_model 字段，同时移除 BYOK 相关表和字段。"""
+    # 为用户表添加首选模型字段
     op.add_column("app_users", sa.Column("preferred_model", sa.String(length=128), nullable=True))
+    # 删除用户 BYOK 凭证表
     op.drop_table("app_user_byok_credentials")
+    # 删除套餐表的 BYOK 权限字段
     op.drop_column("app_plans", "can_byok")
 
 
 def downgrade() -> None:
+    """降级：恢复 BYOK 相关表和字段，并删除 preferred_model 字段。"""
+    # 恢复套餐表的 BYOK 权限字段
     op.add_column("app_plans", sa.Column("can_byok", sa.Boolean(), nullable=False, server_default=sa.false()))
+    # 恢复用户 BYOK 凭证表
     op.create_table(
         "app_user_byok_credentials",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -40,6 +47,8 @@ def downgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("user_id", "provider", name="uix_app_user_byok_user_provider"),
     )
+    # 创建 BYOK 凭证表索引
     op.create_index(op.f("ix_app_user_byok_credentials_user_id"), "app_user_byok_credentials", ["user_id"], unique=False)
     op.create_index(op.f("ix_app_user_byok_credentials_provider"), "app_user_byok_credentials", ["provider"], unique=False)
+    # 删除用户表的首选模型字段
     op.drop_column("app_users", "preferred_model")

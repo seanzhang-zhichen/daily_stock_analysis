@@ -13,6 +13,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
 
+# 用于汇总统计时的特殊代码，表示跨股票的整体汇总而非单只股票
 OVERALL_SENTINEL_CODE = "__overall__"
 
 
@@ -22,10 +23,10 @@ class DailyBarLike(Protocol):
     只需提供 date/high/low/close 字段即可被引擎当成日线数据使用。
     """
 
-    date: date
-    high: Optional[float]
-    low: Optional[float]
-    close: Optional[float]
+    date: date           # 交易日日期
+    high: Optional[float]  # 当日最高价
+    low: Optional[float]   # 当日最低价
+    close: Optional[float]  # 当日收盘价
 
 
 class BacktestResultLike(Protocol):
@@ -34,17 +35,17 @@ class BacktestResultLike(Protocol):
     用于聚合统计时读取各评估字段，使仓库行对象或测试桩都能被复用。
     """
 
-    eval_status: str
-    position_recommendation: Optional[str]
-    outcome: Optional[str]
-    direction_correct: Optional[bool]
-    stock_return_pct: Optional[float]
-    simulated_return_pct: Optional[float]
-    hit_stop_loss: Optional[bool]
-    hit_take_profit: Optional[bool]
-    first_hit: Optional[str]
-    first_hit_trading_days: Optional[int]
-    operation_advice: Optional[str]
+    eval_status: str                    # 评估状态：completed / insufficient_data / error
+    position_recommendation: Optional[str]  # 持仓建议：long / cash
+    outcome: Optional[str]              # 结果：win / loss / neutral
+    direction_correct: Optional[bool]   # 方向判断是否正确
+    stock_return_pct: Optional[float]   # 股票实际涨跌幅（%）
+    simulated_return_pct: Optional[float]  # 模拟持仓收益（%）
+    hit_stop_loss: Optional[bool]       # 是否触发止损
+    hit_take_profit: Optional[bool]     # 是否触发止盈
+    first_hit: Optional[str]            # 首次触发类型：stop_loss / take_profit / ambiguous / neither
+    first_hit_trading_days: Optional[int]  # 首次触发距分析日的交易日数
+    operation_advice: Optional[str]   # 原始操作建议文本
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,9 @@ class EvaluationConfig:
     以便后续评分规则变更时，新旧评估结果仍可共存、便于对比。
     """
 
-    eval_window_days: int
-    neutral_band_pct: float = 2.0
-    engine_version: str = "v1"
+    eval_window_days: int           # 评估窗口长度（交易日数）
+    neutral_band_pct: float = 2.0   # 中性带幅度（%），小于此幅度的涨跌视为方向不明
+    engine_version: str = "v1"      # 引擎版本，用于评分规则变更时兼容旧数据
 
 
 class BacktestEngine:
@@ -68,39 +69,49 @@ class BacktestEngine:
     测试可传入小型桩对象，而评分规则始终保持纯粹与确定性，便于复现与单测。
     """
 
-    # 操作建议关键词（中文 + 英文），命中即代表相应的多空意图
+    # === 操作建议关键词定义 ===
+    # 这些关键词用于从自由文本操作建议中推断多空意图。
+    # 中文与英文关键词混合定义，支持跨语言分析场景。
     _BULLISH_KEYWORDS = (
+        # 中文看多
         "买入",
         "加仓",
         "强烈买入",
         "增持",
         "建仓",
+        # 英文看多
         "strong buy",
         "buy",
         "add",
     )
     _BEARISH_KEYWORDS = (
+        # 中文看空
         "卖出",
         "减仓",
         "强烈卖出",
         "清仓",
+        # 英文看空
         "strong sell",
         "sell",
         "reduce",
     )
     _HOLD_KEYWORDS = (
+        # 中文持有/观望
         "持有",
         "震荡观望",
         "洗盘观察",
         "持有观察",
+        # 英文持有/观望
         "hold",
         "range-bound watch",
         "shakeout watch",
         "hold and watch",
     )
     _WAIT_KEYWORDS = (
+        # 中文纯观望
         "观望",
         "等待",
+        # 英文纯观望
         "wait",
     )
 
@@ -108,10 +119,13 @@ class BacktestEngine:
     # 英文否定词的规范形式带尾随空格；匹配时会对前缀文本执行 rstrip，
     # 因此 "do not" 既能匹配前缀 "do not " 也能匹配 "do not"。
     _NEGATION_PATTERNS = (
-        "not", "don't", "do not", "no", "never", "avoid",  # 英文
-        "不要", "不", "别", "勿", "没有",  # 中文
+        # 英文否定词
+        "not", "don't", "do not", "no", "never", "avoid",
+        # 中文否定词
+        "不要", "不", "别", "勿", "没有",
     )
 
+    # 否定连接词：否定词与动作动词之间的桥梁词，如"不应买入"中的"应"
     _NEGATION_CONNECTOR_WORDS = (
         "建议",
         "应",
@@ -130,22 +144,27 @@ class BacktestEngine:
         """根据操作建议推断预期方向：up（看多）/ down（看空）/ not_down（不看空）/ flat（观望）。"""
         # 先判看空再判观望：避免"建议减仓并观望"这类复合建议被误判为纯观望
         text = cls._normalize_text(operation_advice)
+        # 第一层：检查看空意图（优先级最高）
         if cls._matches_intent(text, cls._BEARISH_KEYWORDS):
             return "down"
+        # 第二层：检查观望意图，需判断是否为复合建议中的主意图
         if cls._first_intent_position(text, cls._WAIT_KEYWORDS) is not None:
             wait_pos = cls._first_intent_position(text, cls._WAIT_KEYWORDS)
             bullish_pos = cls._first_intent_position(text, cls._BULLISH_KEYWORDS)
             hold_pos = cls._first_intent_position(text, cls._HOLD_KEYWORDS)
+            # 只有当观望关键词出现在看多/持有关键词之前时，才判定为纯观望
             if (bullish_pos is None or wait_pos < bullish_pos) and (
                 hold_pos is None or wait_pos < hold_pos
             ):
                 return "flat"
+        # 第三层：检查看多/持有意图
         if cls._matches_intent(text, cls._BULLISH_KEYWORDS):
             return "up"
         if cls._matches_intent(text, cls._HOLD_KEYWORDS):
             return "not_down"
         if cls._matches_intent(text, cls._WAIT_KEYWORDS):
             return "flat"
+        # 默认：无法识别意图时视为观望
         return "flat"
 
     @classmethod
@@ -155,20 +174,25 @@ class BacktestEngine:
         优先级：看空/观望 → cash；看多/持有 → long；无法识别 → cash。
         """
         text = cls._normalize_text(operation_advice)
+        # 第一层：看空意图 → 空仓（避免亏损）
         if cls._matches_intent(text, cls._BEARISH_KEYWORDS):
             return "cash"
+        # 第二层：观望意图，需判断是否为复合建议中的主意图
         wait_pos = cls._first_intent_position(text, cls._WAIT_KEYWORDS)
         if wait_pos is not None:
             bullish_pos = cls._first_intent_position(text, cls._BULLISH_KEYWORDS)
             hold_pos = cls._first_intent_position(text, cls._HOLD_KEYWORDS)
+            # 只有当观望关键词出现在看多/持有关键词之前时，才判定为纯观望（空仓）
             if (bullish_pos is None or wait_pos < bullish_pos) and (
                 hold_pos is None or wait_pos < hold_pos
             ):
                 return "cash"
+        # 第三层：看多或持有 → 持仓
         if cls._matches_intent(text, cls._BULLISH_KEYWORDS) or cls._matches_intent(text, cls._HOLD_KEYWORDS):
             return "long"
         if cls._matches_intent(text, cls._WAIT_KEYWORDS):
             return "cash"
+        # 默认：无法识别时保守空仓
         return "cash"
 
     @classmethod
@@ -191,6 +215,7 @@ class BacktestEngine:
           以对风险估计保持保守口径。
         """
 
+        # 起始价格无效时直接返回错误状态，不做后续计算
         if start_price is None or start_price <= 0:
             return {
                 "analysis_date": analysis_date,
@@ -204,6 +229,7 @@ class BacktestEngine:
         if eval_days <= 0:
             raise ValueError("eval_window_days must be positive")
 
+        # 若可用数据不足评估窗口，返回数据不足状态
         if len(forward_bars) < eval_days:
             return {
                 "analysis_date": analysis_date,
@@ -214,6 +240,7 @@ class BacktestEngine:
                 "eval_window_days": eval_days,
             }
 
+        # 截取评估窗口内的 Bar，并提取关键价格统计
         window_bars = list(forward_bars[:eval_days])
         end_close = window_bars[-1].close
         highs = [b.high for b in window_bars if b.high is not None]
@@ -221,21 +248,25 @@ class BacktestEngine:
         max_high = max(highs) if highs else None
         min_low = min(lows) if lows else None
 
+        # 计算评估窗口内的股票涨跌幅（百分比）
         stock_return_pct: Optional[float]
         if end_close is None:
             stock_return_pct = None
         else:
             stock_return_pct = (end_close - start_price) / start_price * 100
 
+        # 从操作建议推断预期方向和持仓建议
         direction_expected = cls.infer_direction_expected(operation_advice)
         position = cls.infer_position_recommendation(operation_advice)
 
+        # 根据实际涨跌幅与预期方向判定胜负/中性
         outcome, direction_correct = cls._classify_outcome(
             stock_return_pct=stock_return_pct,
             direction_expected=direction_expected,
             neutral_band_pct=config.neutral_band_pct,
         )
 
+        # 评估止损/止盈触发情况及模拟出场价格
         (
             hit_stop_loss,
             hit_take_profit,
@@ -252,6 +283,7 @@ class BacktestEngine:
             end_close=end_close,
         )
 
+        # 模拟持仓收益计算：非 long 仓位收益为 0
         simulated_entry_price = start_price if position == "long" else None
         simulated_return_pct: Optional[float]
         if position != "long":
@@ -303,29 +335,37 @@ class BacktestEngine:
         results_list = list(results)
 
         total = len(results_list)
+        # 筛选出已完成评估的记录（排除数据不足和错误的）
         completed = [r for r in results_list if (r.eval_status or "") == "completed"]
+        # 统计因数据不足而未能完成评估的数量
         insufficient_count = sum(1 for r in results_list if (r.eval_status or "") == "insufficient_data")
 
+        # 持仓建议分布
         long_count = sum(1 for r in completed if (r.position_recommendation or "") == "long")
         cash_count = sum(1 for r in completed if (r.position_recommendation or "") == "cash")
 
+        # 胜负/中性结果分布
         win_count = sum(1 for r in completed if (r.outcome or "") == "win")
         loss_count = sum(1 for r in completed if (r.outcome or "") == "loss")
         neutral_count = sum(1 for r in completed if (r.outcome or "") == "neutral")
 
+        # 方向准确率：仅统计有明确方向判断的记录
         direction_denominator = sum(1 for r in completed if r.direction_correct is not None)
         direction_numerator = sum(1 for r in completed if r.direction_correct is True)
         direction_accuracy_pct = (
             round(direction_numerator / direction_denominator * 100, 2) if direction_denominator else None
         )
 
+        # 胜率与中性率（基于有胜负结果的记录）
         win_loss_denominator = win_count + loss_count
         win_rate_pct = round(win_count / win_loss_denominator * 100, 2) if win_loss_denominator else None
         neutral_rate_pct = round(neutral_count / len(completed) * 100, 2) if completed else None
 
+        # 平均收益统计
         avg_stock_return_pct = cls._average([r.stock_return_pct for r in completed])
         avg_simulated_return_pct = cls._average([r.simulated_return_pct for r in completed])
 
+        # 止损触发率：仅统计建议持仓且有止损数据的记录
         stop_applicable = [
             r
             for r in completed
@@ -337,6 +377,7 @@ class BacktestEngine:
             else None
         )
 
+        # 止盈触发率：仅统计建议持仓且有止盈数据的记录
         take_profit_applicable = [
             r
             for r in completed
@@ -351,6 +392,7 @@ class BacktestEngine:
             else None
         )
 
+        #  ambiguous 比例与平均触发天数：仅统计有止损或止盈触发的记录
         any_target_applicable = [
             r
             for r in completed
@@ -375,6 +417,7 @@ class BacktestEngine:
             ]
         )
 
+        # 按原始操作建议文本聚合统计与诊断信息
         advice_breakdown = cls._compute_advice_breakdown(completed)
         diagnostics = cls._compute_diagnostics(results_list)
 
@@ -407,6 +450,7 @@ class BacktestEngine:
     @staticmethod
     def _normalize_text(value: Optional[str]) -> str:
         """关键词匹配前，对自由文本建议做归一化（去空白、转小写）。"""
+        # 将 None 转换为空字符串，去除首尾空白并统一转为小写，确保后续匹配的一致性
         return str(value or "").strip().lower()
 
     @classmethod
@@ -417,6 +461,7 @@ class BacktestEngine:
         第二层：带否定保护的子串匹配。
         约定关键词均为小写，与 _normalize_text 的输出保持一致。
         """
+        # 只要关键词在文本中出现且未被否定，即视为匹配成功
         return cls._first_intent_position(text, keywords) is not None
 
     @classmethod
@@ -430,6 +475,7 @@ class BacktestEngine:
         for kw in keywords:
             if not kw:
                 continue
+            # 第一层：精确匹配（覆盖"买入""hold"这类干净标签）
             if text == kw:
                 return 0
 
@@ -451,6 +497,7 @@ class BacktestEngine:
                     continue
 
             # 非 ASCII 词条（中文）用子串匹配，这样"建议买入"等自然语言表述也能命中。
+            # 中文关键词不做词边界限制，因为中文没有空格分词，子串匹配更符合实际语义。
             if re.search(r"[\u4e00-\u9fff]", keyword):
                 start = 0
                 while True:
@@ -513,16 +560,21 @@ class BacktestEngine:
         """判断 *keyword* 是否存在于文本中（带意图感知的边界处理）。"""
         if not text or not keyword:
             return False
+        # 英文关键词使用词边界匹配，避免子串误匹配（如"wait"匹配到"watch"）
         if bool(re.search(r"[a-z]", keyword)):
             return bool(re.search(rf"(?<![a-zA-Z0-9_]){re.escape(keyword)}(?![a-zA-Z0-9_])", text))
+        # 中文关键词直接使用子串匹配
         return keyword in text
 
     @classmethod
     def _is_negation_connector_gap(cls, gap: str) -> bool:
         """判断一段短的中文否定间隔是否仍构成有效的否定桥接（如"不应买入"）。"""
+        # 去除间隔中的标点与空白，压缩为紧凑形式
         compact = re.sub(r"[\s,，。；;:!?！？]", "", gap).strip()
+        # 若去除标点后为空，说明否定词与关键词直接相连，构成否定
         if not compact:
             return True
+        # 检查压缩后的间隔是否属于否定连接词（如"应""当"等）
         return compact in cls._NEGATION_CONNECTOR_WORDS
 
     @classmethod
@@ -540,6 +592,7 @@ class BacktestEngine:
         band = abs(float(neutral_band_pct))
         r = float(stock_return_pct)
 
+        # 方向为看多：涨幅超过中性带上限则为赢，跌幅超过下限则为输，否则为中性
         if direction_expected == "up":
             if r >= band:
                 return "win", True
@@ -547,6 +600,7 @@ class BacktestEngine:
                 return "loss", False
             return "neutral", None
 
+        # 方向为看空：跌幅超过中性带下限则为赢，涨幅超过上限则为输，否则为中性
         if direction_expected == "down":
             if r <= -band:
                 return "win", True
@@ -591,6 +645,7 @@ class BacktestEngine:
         价格同时被触及，结果记 ``ambiguous``，且模拟出场假设先触发止损，以使风险
         估计保持保守口径。
         """
+        # 非持仓状态下，止损/止盈均不适用
         if position != "long":
             return (
                 None,
@@ -602,6 +657,7 @@ class BacktestEngine:
                 "cash",
             )
 
+        # 若未设置任何目标价，则直接以窗口收盘价作为出场价
         has_any_target = stop_loss is not None or take_profit is not None
         if not has_any_target:
             return (
@@ -614,6 +670,7 @@ class BacktestEngine:
                 "window_end",
             )
 
+        # 初始化触发状态
         hit_sl: Optional[bool] = None if stop_loss is None else False
         hit_tp: Optional[bool] = None if take_profit is None else False
         first_hit = "neither"
@@ -622,10 +679,13 @@ class BacktestEngine:
         exit_price: Optional[float] = end_close
         exit_reason = "window_end"
 
+        # 逐日遍历评估窗口内的 Bar，检查止损/止盈触发条件
         for idx, bar in enumerate(window_bars, start=1):
             low = bar.low
             high = bar.high
+            # 当日最低价触及或跌破止损价
             stop_hit = stop_loss is not None and low is not None and low <= stop_loss
+            # 当日最高价触及或涨破止盈价
             tp_hit = take_profit is not None and high is not None and high >= take_profit
 
             if stop_hit:
@@ -633,6 +693,7 @@ class BacktestEngine:
             if tp_hit:
                 hit_tp = True
 
+            # 当日未触及任何目标价，继续观察下一日
             if not stop_hit and not tp_hit:
                 continue
 
@@ -640,19 +701,21 @@ class BacktestEngine:
             # idx 从 1 开始，故此处即为"自分析日算起的第几个交易日触发"
             first_hit_days = idx
 
+            # 同一根 Bar 内两档都被触及，无法还原先后顺序，保守按止损处理
             if stop_hit and tp_hit:
-                # 同一根 Bar 内两档都被触及，无法还原先后顺序，保守按止损处理
                 first_hit = "ambiguous"
                 exit_price = stop_loss
                 exit_reason = "ambiguous_stop_loss"
                 break
 
+            # 仅触发止损
             if stop_hit:
                 first_hit = "stop_loss"
                 exit_price = stop_loss
                 exit_reason = "stop_loss"
                 break
 
+            # 仅触发止盈
             first_hit = "take_profit"
             exit_price = take_profit
             exit_reason = "take_profit"
@@ -671,9 +734,11 @@ class BacktestEngine:
     @staticmethod
     def _average(values: Iterable[Optional[float]]) -> Optional[float]:
         """返回四舍五入后的平均值，忽略缺失（None）的数值；无有效值时返回 None。"""
+        # 过滤掉 None 值并转换为浮点数，确保计算安全
         items = [float(v) for v in values if v is not None]
         if not items:
             return None
+        # 保留 4 位小数，兼顾精度与可读性
         return round(sum(items) / len(items), 4)
 
     @staticmethod
@@ -682,13 +747,16 @@ class BacktestEngine:
         breakdown: Dict[str, Dict[str, int]] = {}
         for row in results:
             raw_advice = row.operation_advice
+            # 统一处理为字符串，空值标记为 (unknown)
             advice = (raw_advice if isinstance(raw_advice, str) else str(raw_advice or "")).strip() or "(unknown)"
             bucket = breakdown.setdefault(advice, {"total": 0, "win": 0, "loss": 0, "neutral": 0})
             bucket["total"] += 1
             outcome = (row.outcome or "").strip()
+            # 只统计有效的胜负/中性结果
             if outcome in ("win", "loss", "neutral"):
                 bucket[outcome] += 1
 
+        # 计算每条建议的胜率（仅基于有胜负的结果）
         enriched: Dict[str, Any] = {}
         for advice, bucket in breakdown.items():
             win = bucket["win"]
@@ -704,8 +772,10 @@ class BacktestEngine:
         status_counts: Dict[str, int] = {}
         first_hit_counts: Dict[str, int] = {}
         for row in results:
+            # 统计各评估状态的出现次数
             status = (row.eval_status or "").strip() or "(unknown)"
             status_counts[status] = status_counts.get(status, 0) + 1
+            # 统计首次触发类型（止损/止盈/ambiguous 等）的分布
             first_hit = (row.first_hit or "").strip() or "(none)"
             first_hit_counts[first_hit] = first_hit_counts.get(first_hit, 0) + 1
         return {

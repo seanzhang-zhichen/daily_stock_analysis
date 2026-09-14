@@ -36,15 +36,15 @@ def _should_use_single_column_fast_path(lines: List[str]) -> bool:
     if not lines:
         return False
 
-    # If explicit separators exist, this is not single-column input.
+    # 若存在显式分隔符（制表符、逗号、分号），说明是多列格式，不走单列快速路径
     if any(re.search(r"[\t,;]", ln) for ln in lines):
         return False
 
     for ln in lines:
         parts = ln.split()
         if len(parts) >= 2 and is_code_like(parts[0]):
-            # Example: "600519 贵州茅台" / "HK00700 腾讯控股"
-            # First token is code-like and tail contains non-code token(s).
+            # 示例: "600519 贵州茅台" / "HK00700 腾讯控股"
+            # 首段是类代码格式且后续包含非代码内容，说明是"代码 名称"格式
             if any(not is_code_like(p) for p in parts[1:]):
                 return False
 

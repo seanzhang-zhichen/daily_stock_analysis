@@ -5,7 +5,7 @@
 字段 description 标明，服务层负责把不同数据源返回的字段标准化为这里的形状。
 """
 
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -107,3 +107,21 @@ class StockHistoryResponse(BaseModel):
                 "data": []
             }
         }
+
+
+class StockProfileBlock(BaseModel):
+    status: str
+    data: Any = None
+    limitations: List[str] = Field(default_factory=list)
+    period: Optional[str] = None
+
+
+class StockProfileResponse(BaseModel):
+    requested_code: str
+    canonical_code: str
+    market: str
+    as_of: str
+    quote: StockProfileBlock
+    history: StockProfileBlock
+    fundamentals: StockProfileBlock
+    evidence_quality: Dict[str, Any]

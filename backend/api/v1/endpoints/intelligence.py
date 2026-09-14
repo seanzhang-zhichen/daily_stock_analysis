@@ -43,6 +43,11 @@ def fetch_enabled():
 
 @router.patch("/sources/{source_id}", response_model=IntelligenceSourceItem)
 def set_source_enabled(source_id: int, request: IntelligenceSourceEnabledRequest):
+    """启用或禁用指定情报源。
+
+    通过 ``request.enabled`` 控制目标情报源的启用状态。
+    若情报源不存在则返回 404；其它业务异常转为 400 返回。
+    """
     try:
         return IntelligenceService().set_source_enabled(source_id, request.enabled)
     except IntelligenceServiceError as exc:
@@ -52,6 +57,10 @@ def set_source_enabled(source_id: int, request: IntelligenceSourceEnabledRequest
 
 @router.delete("/sources/{source_id}")
 def delete_source(source_id: int):
+    """删除指定情报源。
+
+    若情报源不存在则返回 404，由服务层保证删除幂等性。
+    """
     try:
         return IntelligenceService().delete_source(source_id)
     except IntelligenceServiceError as exc:

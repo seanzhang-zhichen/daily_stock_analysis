@@ -15,8 +15,11 @@ from src.config import AGENT_CONTEXT_COMPRESSION_PROFILES, AGENT_MAX_STEPS_DEFAU
 from src.notification_noise import NOTIFICATION_SEVERITIES
 from src.notification_routing import ROUTABLE_NOTIFICATION_CHANNELS
 
+# 配置注册表的版本号，用于前端缓存控制和兼容性校验
 SCHEMA_VERSION = "2026-05-10"
 
+# 配置分类定义列表，每个分类包含分类标识、标题、描述和展示顺序
+# 分类顺序由 display_order 决定，用于前端设置页面的分组展示
 _CATEGORY_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "category": "base",
@@ -629,6 +632,48 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 53,
+    },
+    "SEARXNG_TIMEOUT_SECONDS": {
+        "title": "SearXNG Timeout",
+        "description": "Timeout in seconds for each self-hosted SearXNG request.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": 10,
+        "options": [],
+        "validation": {"min": 1, "max": 120},
+        "display_order": 52,
+    },
+    "FUTU_OPEND_HOST": {
+        "title": "Futu OpenD Host",
+        "description": "Optional Futu OpenD host for HK realtime quotes and fundamental supplements.",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 54,
+    },
+    "FUTU_OPEND_PORT": {
+        "title": "Futu OpenD Port",
+        "description": "Futu OpenD port. Default: 11111.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": 11111,
+        "options": [],
+        "validation": {"min": 1, "max": 65535},
+        "display_order": 55,
     },
     "ENABLE_REALTIME_QUOTE": {
         "title": "Enable Realtime Quote",

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""把个股 / 大盘 / 决策仪表盘报告渲染成“结论优先”的 1080px HTML 分享海报。
+"""把个股 / 大盘 / 决策仪表盘报告渲染成"结论优先"的 1080px HTML 分享海报。
 
 通知链路拿到的是渲染后的 Markdown 字符串，而不是原始的 Pydantic/dataclass 负载，
 因此本模块只解析渲染器生成的稳定 Markdown 契约，再压缩成一张分享卡片。
@@ -585,7 +585,7 @@ def _number_text(value: object, *, suffix: str = "") -> str:
 
 
 def _compact_turnover(value: object, unit: object) -> str:
-    """渲染大额成交额，避免窄卡片换行：超过 1 万亿时换算成“万亿”。"""
+    """渲染大额成交额，避免窄卡片换行：超过 1 万亿时换算成"万亿"。"""
 
     unit_text = _clean_value(unit, limit=8)
     try:
@@ -637,7 +637,7 @@ def _compact_sniper_value(key: str, value: object) -> str:
 
 
 def _compact_position(value: object, *, holding: bool) -> str:
-    """把持仓建议长句压成“减仓/止损”或“等待企稳”这类可扫读的短指令。"""
+    """把持仓建议长句压成"减仓/止损"或"等待企稳"这类可扫读的短指令。"""
     text = _clean_value(value, limit=150)
     if not text:
         return ""
@@ -723,7 +723,7 @@ def _parse_tables(markdown_text: str) -> list[Table]:
 
 
 def _table_map(table: Table) -> dict[str, str]:
-    """将表格转为“首列小写键 → 第二列清洗值”的字典。"""
+    """将表格转为"首列小写键 → 第二列清洗值"的字典。"""
     return {
         _plain(row[0]).lower(): _clean_value(row[1], limit=120)
         for row in table.rows
@@ -813,7 +813,7 @@ def _meaningful_market_subsection_count(markdown_text: str) -> int:
 
 
 def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
-    """从“标签：值”行中提取首个匹配标签的值。"""
+    """从"标签：值"行中提取首个匹配标签的值。"""
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
         rf"(?:\*{{0,2}}(?:{joined})\*{{0,2}})\s*[:：]\s*(.+?)(?=\s*\||\n|$)",
@@ -824,7 +824,7 @@ def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
 
 
 def _labeled_line(text: str, *labels: str, limit: int = 100) -> str:
-    """从“标签：值”所在行提取首个匹配标签的值（行内）。"""
+    """从"标签：值"所在行提取首个匹配标签的值（行内）。"""
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
         rf"(?:\*{{0,2}}(?:{joined})\*{{0,2}})\s*[:：]\s*(.+?)(?=\n|$)",
@@ -912,7 +912,7 @@ def _market_label_for_region(region: str) -> str:
 def _stock_heading_entry(raw_title: str) -> Optional[tuple[str, str]]:
     """从个股标题中解析出（名称, 代码）对，兼容前后置代码写法。"""
     def _heading_name(fragment: str) -> str:
-        """从标题片段提取股票名称，去除空白/括号与“分析报告”等后缀噪声。"""
+        """从标题片段提取股票名称，去除空白/括号与"分析报告"等后缀噪声。"""
         name = _plain(fragment).strip(" -—()（）")
         return re.sub(r"\b(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
 
@@ -1427,7 +1427,7 @@ def _direction_items(value: object, *, limit: int = 2) -> list[str]:
 
 
 def _market_fund_metrics(markdown_text: str) -> list[tuple[str, str, str]]:
-    """从“资金与情绪”章节解析涨跌比、增量成交与资金风格。"""
+    """从"资金与情绪"章节解析涨跌比、增量成交与资金风格。"""
     section = _section(markdown_text, "资金与情绪", "fund flows", "liquidity & sentiment")
     if not section:
         return []
@@ -1777,7 +1777,7 @@ def _should_keep_market_fallback(markdown_text: str, data: MarketPoster) -> bool
     unmapped_subsections = max(
         0, _meaningful_market_subsection_count(markdown_text) - mapped_subsections
     )
-    # 普通报告可能包含一个说明性细节章节（如“资金与情绪”），但这不应让分享海报重复
+    # 普通报告可能包含一个说明性细节章节（如"资金与情绪"），但这不应让分享海报重复
     # 整篇报告。仅当多数本地化章节仍未被结构化契约覆盖时，才保留完整兜底内容。
     return unmapped_subsections > max(1, mapped_subsections)
 

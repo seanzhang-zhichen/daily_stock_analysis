@@ -1,4 +1,4 @@
-"""add app platform settings
+"""添加应用平台设置表
 
 Revision ID: 20260528_platform_settings
 Revises: 20260528_seed_free_plan
@@ -18,6 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级数据库：创建 app_platform_settings 表并建立唯一索引。"""
     op.create_table(
         "app_platform_settings",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -33,5 +34,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级数据库：删除 app_platform_settings 表及其索引。"""
     op.drop_index(op.f("ix_app_platform_settings_key"), table_name="app_platform_settings")
     op.drop_table("app_platform_settings")

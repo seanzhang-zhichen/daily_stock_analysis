@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Authentication middleware for API business endpoints.
+"""API 鉴权中间件。
 
 中间件只拦截 ``/api/v1/*`` 下需要登录的业务接口。公开接口、回调、健康检查、
 OpenAPI 文档和登录注册链路通过 ``EXEMPT_PATHS`` 放行，以保证用户尚未建立
@@ -19,6 +19,7 @@ from src.users.config import SESSION_COOKIE_NAME
 from src.storage import DatabaseManager
 from src.users.sessions import resolve_session
 
+# 模块级日志记录器
 logger = logging.getLogger(__name__)
 
 # 这里使用精确路径白名单，避免把整段前缀误放开。确需放行一组资源时，
@@ -62,9 +63,15 @@ EXEMPT_PATHS = frozenset({
 def _path_exempt(path: str) -> bool:
     """判断 ``path`` 是否可以绕过登录校验。
 
-    使用 ``rstrip("/")`` 归一化路径，使 ``/foo`` 与 ``/foo/`` 行为一致；
+    使用 ``rstrip(\"/\")`` 归一化路径，使 ``/foo`` 与 ``/foo/`` 行为一致；
     research report 公开访问需要按资源前缀放行，因此在此处单独处理，
     避免扩大 ``EXEMPT_PATHS`` 的匹配语义。
+
+    Args:
+        path: 请求的 HTTP 路径
+
+    Returns:
+        bool: 若路径在白名单内或属于公开研报前缀，则返回 True
     """
     normalized = path.rstrip("/") or "/"
     if normalized == "/api/v1/research-reports" or normalized.startswith("/api/v1/research-reports/"):
@@ -81,6 +88,12 @@ def _resolve_user_session(request: Request):
     这里短生命周期地打开一个 SQLAlchemy 会话，是因为中间件先于 FastAPI 的依赖
     注入运行；ORM 对象仅在当前请求内使用，校验通过后立即写入
     ``request.state`` 缓存。
+
+    Args:
+        request: FastAPI Request 对象
+
+    Returns:
+        AppUser | None: 解析到的用户对象，或 None（未登录/会话无效）
     """
     cookie_val = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie_val:
@@ -101,7 +114,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable,
     ):
-        """在路由匹配前附加会话上下文或拒绝未授权请求。"""
+        """在路由匹配前附加会话上下文或拒绝未授权请求。
+
+        Args:
+            request: 当前 HTTP 请求
+            call_next: 下游处理函数
+
+        Returns:
+            Response: 若路径豁免则直接透传；否则校验会话后透传或返回 401
+        """
         path = request.url.path
         if _path_exempt(path):
             return await call_next(request)
@@ -126,5 +147,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 def add_auth_middleware(app):
-    """在 FastAPI 应用上注册鉴权中间件。"""
+    """在 FastAPI 应用上注册鉴权中间件。
+
+    Args:
+        app: FastAPI 应用实例
+    """
     app.add_middleware(AuthMiddleware)

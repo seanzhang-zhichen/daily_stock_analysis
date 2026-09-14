@@ -23,6 +23,8 @@ OPENAI_MODEL=your-model
 
 系统依次从环境变量与 `.env` 加载配置；服务内会将已解析配置提供给 CLI、API、任务和通知模块。Web 设置页可管理被配置注册表允许的字段，但它不替代部署环境中的密钥管理。
 
+自建 SearXNG 可用 `SEARXNG_TIMEOUT_SECONDS` 独立设置单次请求超时，默认 10 秒。港股可选配置 `FUTU_OPEND_HOST` 与 `FUTU_OPEND_PORT`（默认 11111）启用 Futu OpenD 只读行情和基本面补充；未配置时不实例化该数据源。
+
 | 范畴 | 典型字段前缀 | 用途 |
 | --- | --- | --- |
 | 自选股与报告 | `STOCK_`、`REPORT_` | 分析范围、报告语言与展示。 |

@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# 计算 backend 目录的绝对路径，作为后续导入的根目录
 BACKEND_ROOT = Path(__file__).resolve().parent
 if str(BACKEND_ROOT) not in sys.path:
     # 保持 backend 内部模块优先于同名根目录兼容 shim，避免导入到旧入口。

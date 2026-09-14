@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Daily Stock Analysis 的 FastAPI 服务入口。
 
-本文件只负责“可被 Uvicorn 发现并启动”的薄入口：先完成环境变量与日志
+本文件只负责"可被 Uvicorn 发现并启动"的薄入口：先完成环境变量与日志
 初始化，再从 ``api.app`` 导出真正的 FastAPI ``app`` 实例。应用创建、
 中间件、路由、生命周期任务都集中在 ``api.app.create_app`` 中维护。
 

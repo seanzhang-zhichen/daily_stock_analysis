@@ -1,4 +1,4 @@
-"""add credit purchase tables
+"""添加积分购买相关表
 
 Revision ID: 20260603_credit_purchases
 Revises: 20260603_credit_referrals
@@ -18,16 +18,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(inspector: sa.Inspector, table_name: str) -> bool:
+    """检查指定表名是否已存在于数据库中。"""
     return table_name in inspector.get_table_names()
 
 
 def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> bool:
+    """检查指定索引是否已存在于表中。"""
     if not _table_exists(inspector, table_name):
         return False
     return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
 
 
 def _refresh_inspector() -> sa.Inspector:
+    """刷新并返回当前数据库连接的检查器对象。"""
     return sa.inspect(op.get_bind())
 
 
@@ -39,6 +42,7 @@ def _create_index_if_missing(
     *,
     unique: bool = False,
 ) -> sa.Inspector:
+    """如果索引不存在，则创建索引并刷新检查器。"""
     if not _index_exists(inspector, table_name, index_name):
         op.create_index(index_name, table_name, columns, unique=unique)
         return _refresh_inspector()
@@ -46,6 +50,7 @@ def _create_index_if_missing(
 
 
 def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: str) -> sa.Inspector:
+    """如果索引存在，则删除索引并刷新检查器。"""
     if _index_exists(inspector, table_name, index_name):
         op.drop_index(index_name, table_name=table_name)
         return _refresh_inspector()
@@ -53,8 +58,10 @@ def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: 
 
 
 def upgrade() -> None:
+    """升级：创建积分套餐、积分订单和支付事件表，并建立相关索引。"""
     inspector = _refresh_inspector()
 
+    # 创建积分套餐表
     if not _table_exists(inspector, "app_credit_packages"):
         op.create_table(
             "app_credit_packages",
@@ -85,6 +92,7 @@ def upgrade() -> None:
         ["is_active"],
     )
 
+    # 创建积分订单表
     if not _table_exists(inspector, "app_credit_orders"):
         op.create_table(
             "app_credit_orders",
@@ -157,6 +165,7 @@ def upgrade() -> None:
         unique=True,
     )
 
+    # 创建支付事件表
     if not _table_exists(inspector, "app_credit_payment_events"):
         op.create_table(
             "app_credit_payment_events",
@@ -190,6 +199,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除支付事件表、积分订单表和积分套餐表及其索引。"""
     inspector = _refresh_inspector()
 
     inspector = _drop_index_if_exists(

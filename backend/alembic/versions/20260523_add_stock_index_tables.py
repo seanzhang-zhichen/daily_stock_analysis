@@ -1,4 +1,4 @@
-"""add_stock_index_tables
+"""添加股票索引表
 
 Revision ID: 20260523_stock_index
 Revises: 20260522_pref_model
@@ -18,6 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级：创建股票索引表和元数据表，并建立相关索引。"""
+    # 创建股票索引表
     op.create_table(
         "stock_index",
         sa.Column("canonical_code", sa.String(length=32), nullable=False),
@@ -34,6 +36,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint("canonical_code"),
     )
+    # 创建股票索引表相关索引
     op.create_index(op.f("ix_stock_index_active"), "stock_index", ["active"], unique=False)
     op.create_index(op.f("ix_stock_index_asset_type"), "stock_index", ["asset_type"], unique=False)
     op.create_index(op.f("ix_stock_index_display_code"), "stock_index", ["display_code"], unique=False)
@@ -46,6 +49,7 @@ def upgrade() -> None:
     op.create_index("ix_stock_index_pinyin_active", "stock_index", ["pinyin_abbr", "pinyin_full", "active"], unique=False)
     op.create_index(op.f("ix_stock_index_updated_at"), "stock_index", ["updated_at"], unique=False)
 
+    # 创建股票索引元数据表
     op.create_table(
         "stock_index_meta",
         sa.Column("key", sa.String(length=64), nullable=False),
@@ -54,13 +58,17 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint("key"),
     )
+    # 创建股票索引元数据表索引
     op.create_index(op.f("ix_stock_index_meta_updated_at"), "stock_index_meta", ["updated_at"], unique=False)
 
 
 def downgrade() -> None:
+    """降级：删除股票索引表和元数据表及其所有索引。"""
+    # 删除股票索引元数据表及其索引
     op.drop_index(op.f("ix_stock_index_meta_updated_at"), table_name="stock_index_meta")
     op.drop_table("stock_index_meta")
 
+    # 删除股票索引表及其所有索引
     op.drop_index(op.f("ix_stock_index_updated_at"), table_name="stock_index")
     op.drop_index("ix_stock_index_pinyin_active", table_name="stock_index")
     op.drop_index(op.f("ix_stock_index_pinyin_full"), table_name="stock_index")

@@ -97,7 +97,7 @@ class _LiteLLMStreamError(RuntimeError):
     """LiteLLM 流式响应异常包装，记录是否已收到部分文本。"""
 
     def __init__(self, message: str, *, partial_received: bool = False):
-        """保存错误信息以及“是否已收到部分输出”标记。
+        """保存错误信息以及"是否已收到部分输出"标记。
 
         Args:
             message: 错误描述文本。
@@ -113,7 +113,7 @@ class _AllModelsFailedError(Exception):
     失败既包括 LLM 调用本身的异常，也包括当 `_call_litellm` 传入了
     `response_validator` 时 JSON 校验失败的情况。
 
-    `last_response_text` 记录最后一次“确实拿到了响应、但 JSON 无法通过校验”的
+    `last_response_text` 记录最后一次"确实拿到了响应、但 JSON 无法通过校验"的
     原始文本，便于调用方尝试 best-effort 的纯文本兜底解析。
 
     `last_model` 与 `last_usage` 记录最后一次尝试所使用的模型与 token 用量，
@@ -158,7 +158,7 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
         return True
 
     def _is_invalid_risk_alerts(value: Any) -> bool:
-        """判断 `risk_alerts` 是否不符合“必须是列表”的契约。"""
+        """判断 `risk_alerts` 是否不符合"必须是列表"的契约。"""
         return not isinstance(value, list)
 
     def _is_invalid_stop_loss(value: Any) -> bool:
@@ -294,7 +294,7 @@ _CHIP_KEYS: tuple = ("profit_ratio", "avg_cost", "concentration", "chip_health")
 
 
 def _is_value_placeholder(v: Any) -> bool:
-    """判断值是否为“空 / 占位”（N/A、数据缺失、未知等）。"""
+    """判断值是否为"空 / 占位"（N/A、数据缺失、未知等）。"""
     if v is None:
         return True
     # 数值型 0 也视作占位：业务上 chip_structure 没有合法的 0 数值
@@ -320,7 +320,7 @@ _RISK_WARNING_PLACEHOLDER_TEXTS = {
 }
 
 # 结构化风险关键词表：出现在 risk_warning / risk_alerts / signal_type 中即视为
-# “重大结构性风险”，触发降级到持有观望或保持 `decision_type=hold` 的兜底。
+# "重大结构性风险"，触发降级到持有观望或保持 `decision_type=hold` 的兜底。
 _STRUCTURAL_RISK_PHRASE_HINTS = (
     "重大利空",
     "重大风险",
@@ -359,7 +359,7 @@ _STRUCTURAL_RISK_PHRASE_HINTS = (
     "default",
 )
 
-# 资金流不可用 / 未支持的常见状态字符串，用于统一识别上游 “not_supported” 类响应
+# 资金流不可用 / 未支持的常见状态字符串，用于统一识别上游 "not_supported" 类响应
 _CAPITAL_FLOW_UNAVAILABLE_STATUS = {
     "not_supported",
     "not supported",
@@ -376,7 +376,7 @@ _CAPITAL_FLOW_UNAVAILABLE_STATUS = {
 
 
 def _is_meaningful_text(value: Any) -> bool:
-    """判断文本是否“非空且不是已知占位字符串”。"""
+    """判断文本是否"非空且不是已知占位字符串"。"""
     text = str(value).strip() if value is not None else ""
     if not text:
         return False
@@ -422,7 +422,7 @@ _BEARISH_TREND_HINTS: Tuple[str, ...] = (
     "downtrend",
 )
 _WEAK_BEARISH_TREND_HINTS: Tuple[str, ...] = ("弱势空头",)
-# 否定词词典：在判断“多/空”关键词前需要先排除被否定的情况。
+# 否定词词典：在判断"多/空"关键词前需要先排除被否定的情况。
 _NEGATION_TOKENS: Tuple[str, ...] = (
     "不是",
     "并非",
@@ -441,7 +441,7 @@ _NEGATION_TOKENS: Tuple[str, ...] = (
 _NEGATION_BREAK_CHARS: Tuple[str, ...] = (",", ".", ";", ":", "!", "?", "，", "。", "；", "：", "！", "？", "\n")
 _NEGATION_LOOKBACK_CHARS = 16
 _NEGATION_MAX_GAP_CHARS = 8
-# 出现在否定词与趋势词之间的“转折”短语：只要出现就视为否定被打断
+# 出现在否定词与趋势词之间的"转折"短语：只要出现就视为否定被打断
 _NEGATION_SCOPE_BREAK_TOKENS: Tuple[str, ...] = (
     "而是",
     "但是",
@@ -456,7 +456,7 @@ _NEGATION_SCOPE_BREAK_TOKENS: Tuple[str, ...] = (
     " instead ",
     " rather ",
 )
-# 单字否定词（未/无/非）后允许的紧邻动词前缀：避免把“未形成多头排列”误判为多头
+# 单字否定词（未/无/非）后允许的紧邻动词前缀：避免把"未形成多头排列"误判为多头
 _SINGLE_CHAR_NEGATION_GAP_PREFIXES: Tuple[str, ...] = (
     "形成",
     "出现",
@@ -478,7 +478,7 @@ _SINGLE_CHAR_NEGATION_GAP_PREFIXES: Tuple[str, ...] = (
 
 
 def _normalize_prompt_reason_items(items: Any) -> List[str]:
-    """把 LLM 给出的“支持/风险”列表项清洗成干净的字符串列表。"""
+    """把 LLM 给出的"支持/风险"列表项清洗成干净的字符串列表。"""
     if not isinstance(items, list):
         return []
     normalized: List[str] = []
@@ -490,9 +490,9 @@ def _normalize_prompt_reason_items(items: Any) -> List[str]:
 
 
 def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
-    """判断文本中是否包含“非否定的强趋势关键词”。
+    """判断文本中是否包含"非否定的强趋势关键词"。
 
-    用否定作用域机制避免“未形成多头排列”这种情况被误识别为多头。
+    用否定作用域机制避免"未形成多头排列"这种情况被误识别为多头。
 
     Args:
         text: 原始 LLM 描述文本。
@@ -504,7 +504,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
     lowered = text.strip().lower()
 
     def _has_negation_scope_break(gap: str) -> bool:
-        """判断否定词到趋势词之间的间隙是否包含“转折”短语；含则否定被断开。"""
+        """判断否定词到趋势词之间的间隙是否包含"转折"短语；含则否定被断开。"""
         normalized_gap = gap.lower()
         for token in _NEGATION_SCOPE_BREAK_TOKENS:
             token_index = normalized_gap.find(token)
@@ -623,7 +623,7 @@ def _sanitize_trend_analysis_for_prompt(
     仅在副本上操作，不影响运行时/Provider 配置。处理逻辑：
     1. 推断主趋势方向；
     2. 删除与之冲突的支持/风险条目，并写入 prompt_consistency_notes；
-    3. 当成交量异常放大（>10 倍）时追加“需降权解读”的提示。
+    3. 当成交量异常放大（>10 倍）时追加"需降权解读"的提示。
 
     Args:
         trend: 技术面趋势字典或 dataclass。
@@ -640,7 +640,7 @@ def _sanitize_trend_analysis_for_prompt(
     trend_direction = _infer_trend_direction(trend_dict)
 
     if trend_direction == "bearish":
-        # 空头主判断下，把“看多”结构理由剔除
+        # 空头主判断下，把"看多"结构理由剔除
         filtered_signal_reasons = _filter_conflicting_trend_items(
             signal_reasons,
             _BULLISH_TREND_HINTS + _WEAK_BULLISH_TREND_HINTS,
@@ -649,7 +649,7 @@ def _sanitize_trend_analysis_for_prompt(
             prompt_notes.append("当前技术结构偏空，已剔除与空头主判断直接冲突的看多结构理由。")
         signal_reasons = filtered_signal_reasons
         prompt_notes.append(
-            "若新闻、业绩或政策催化偏多，只能表述为“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”，严禁写成确定性买点。"
+            "若新闻、业绩或政策催化偏多，只能表述为\"事件先行、技术待确认\"或\"基本面偏多，但技术面尚未确认\"，严禁写成确定性买点。"
         )
     elif trend_direction == "bullish":
         # 多头主判断下，剔除看空结构理由（支持因素 + 风险因素都要清理）
@@ -827,8 +827,8 @@ def stabilize_decision_with_structure(
 ) -> None:
     """用价位与资金流约束买入/卖出的剧烈切换。
 
-    LLM 可能因单日涨跌而给出激进的买入/卖出结论。本函数作为“兜底守门员”，
-    在以下场景会把决策降级到“震荡/洗盘观察”这类更稳健的中性建议，并保留
+    LLM 可能因单日涨跌而给出激进的买入/卖出结论。本函数作为"兜底守门员"，
+    在以下场景会把决策降级到"震荡/洗盘观察"这类更稳健的中性建议，并保留
     `decision_type` 为 `hold`：
 
     - 接近压力位且主力资金未流入；
@@ -877,7 +877,7 @@ def stabilize_decision_with_structure(
 
         flow_bias, flow_reason = _capital_flow_bias_with_status(fundamental_context)
         if flow_bias == "unavailable":
-            # 资金流不可用时，根据原决策方向决定是降级 buy 还是直接记录“未校准”
+            # 资金流不可用时，根据原决策方向决定是降级 buy 还是直接记录"未校准"
             if isinstance(fundamental_context, dict) and "capital_flow" in fundamental_context:
                 if decision_type == "buy" or advice_decision_type == "buy":
                     _downgrade_buy_without_capital_flow(
@@ -904,9 +904,9 @@ def stabilize_decision_with_structure(
 
         # 价位关系阈值：
         #   跌破支撑 * 0.985 视为有效破位；
-        #   在支撑 * 1.03 内视为“接近支撑”；
+        #   在支撑 * 1.03 内视为"接近支撑"；
         #   突破压力 * 1.01 视为有效突破；
-        #   在压力 * 0.97 内视为“接近压力”。
+        #   在压力 * 0.97 内视为"接近压力"。
         broke_support = support is not None and current_price < support * 0.985
         near_support = support is not None and not broke_support and current_price <= support * 1.03
         breakout = resistance is not None and current_price > resistance * 1.01
@@ -1042,7 +1042,7 @@ def _has_structural_risk_alert(result: "AnalysisResult") -> bool:
 
 
 def _is_significant_structural_risk(value: Any) -> bool:
-    """判断单条风险文本是否“有意义且属于重大结构性风险”。"""
+    """判断单条风险文本是否"有意义且属于重大结构性风险"。"""
     text = str(value or "").strip()
     if not _is_meaningful_text(text):
         return False
@@ -1051,7 +1051,7 @@ def _is_significant_structural_risk(value: Any) -> bool:
     if any(keyword in normalized for keyword in _STRUCTURAL_RISK_PHRASE_HINTS):
         return True
 
-    # 中文里“重大风险”这种偏正结构也要识别
+    # 中文里"重大风险"这种偏正结构也要识别
     return "重大" in text and "风险" in normalized
 
 
@@ -1180,7 +1180,7 @@ def _capital_flow_bias_with_status(
 
 
 def _capital_flow_status_for_stability(reason: str, language: str) -> str:
-    """把“资金流不可用”的原因翻译成本地化文案，供稳定性元数据展示。"""
+    """把"资金流不可用"的原因翻译成本地化文案，供稳定性元数据展示。"""
     normalized = str(reason or "").strip().lower()
     if "not_supported" in normalized or "unsupported" in normalized or "not available" in normalized:
         return "市场资金流服务暂不支持" if language == "zh" else "Capital flow source unsupported"
@@ -1198,7 +1198,7 @@ def _set_decision_stability_unavailable(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
-    """记录“因资金流不可用，本次稳定性校准被跳过”的元数据。"""
+    """记录"因资金流不可用，本次稳定性校准被跳过"的元数据。"""
     dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
     result.dashboard = dashboard
     dashboard["decision_stability"] = {
@@ -1214,7 +1214,7 @@ def _set_decision_stability_unavailable(
 
 
 def _bound_hold_watch_sentiment_score(result: "AnalysisResult") -> None:
-    """把情感分数钳制到“中性持有/观望”区间（45-59），避免被误读为强多/强空。"""
+    """把情感分数钳制到"中性持有/观望"区间（45-59），避免被误读为强多/强空。"""
     try:
         score = int(getattr(result, "sentiment_score", 50))
     except (TypeError, ValueError):
@@ -1395,7 +1395,7 @@ def _set_structural_hold_wording(
     }
     reason = reason_templates[language].get(reason_key, "")
     result.operation_advice = advice
-    # 中文趋势词需要“震荡”前缀才能让前端按区间震荡处理
+    # 中文趋势词需要"震荡"前缀才能让前端按区间震荡处理
     if language == "zh" and "震荡" not in str(result.trend_prediction) and advice_key == "range":
         result.trend_prediction = "震荡"
     elif language == "en" and advice_key == "range":
@@ -1477,7 +1477,7 @@ def get_stock_name_multi_source(
         # 优先从 stock_name 字段获取
         if context.get('stock_name'):
             name = context['stock_name']
-            # 过滤掉 “股票xxxx” 这种没解析出来的占位名
+            # 过滤掉 "股票xxxx" 这种没解析出来的占位名
             if name and not name.startswith('股票'):
                 return name
 
@@ -1635,7 +1635,7 @@ class AnalysisResult:
         }
 
     def get_core_conclusion(self) -> str:
-        """获取“一句话核心结论”；缺失时回退到 `analysis_summary`。"""
+        """获取"一句话核心结论"；缺失时回退到 `analysis_summary`。"""
         if self.dashboard and 'core_conclusion' in self.dashboard:
             return self.dashboard['core_conclusion'].get('one_sentence', self.analysis_summary)
         return self.analysis_summary
@@ -1860,9 +1860,9 @@ class GeminiAnalyzer:
 
 ## 可操作性与稳定性约束
 
-- 不得仅因为单日涨跌或评分跨线就在“买入/卖出”之间剧烈切换。
+- 不得仅因为单日涨跌或评分跨线就在"买入/卖出"之间剧烈切换。
 - 操作建议必须同时参考价格位置（支撑/压力位）、量能/筹码、主力资金流向和风险事件。
-- 股价位于支撑与压力之间、资金流不明确时，优先输出“持有/震荡/观望/洗盘观察”等可执行的中性建议；`decision_type` 仍保持 `hold`。
+- 股价位于支撑与压力之间、资金流不明确时，优先输出"持有/震荡/观望/洗盘观察"等可执行的中性建议；`decision_type` 仍保持 `hold`。
 - 只有在接近支撑确认或有效突破压力，且资金流/量价配合时，才能给出买入；接近压力且资金流出时不得追买。
 - 只有在跌破关键支撑、主力资金持续流出或风险显著放大时，才能给出卖出/减仓。"""
 
@@ -2015,9 +2015,9 @@ class GeminiAnalyzer:
 
 ## 可操作性与稳定性约束
 
-- 不得仅因为单日涨跌或评分跨线就在“买入/卖出”之间剧烈切换。
+- 不得仅因为单日涨跌或评分跨线就在"买入/卖出"之间剧烈切换。
 - 操作建议必须同时参考价格位置（支撑/压力位）、量能/筹码、主力资金流向和风险事件。
-- 股价位于支撑与压力之间、资金流不明确时，优先输出“持有/震荡/观望/洗盘观察”等可执行的中性建议；`decision_type` 仍保持 `hold`。
+- 股价位于支撑与压力之间、资金流不明确时，优先输出"持有/震荡/观望/洗盘观察"等可执行的中性建议；`decision_type` 仍保持 `hold`。
 - 只有在接近支撑确认或有效突破压力，且资金流/量价配合时，才能给出买入；接近压力且资金流出时不得追买。
 - 只有在跌破关键支撑、主力资金持续流出或风险显著放大时，才能给出卖出/减仓。"""
 
@@ -2443,7 +2443,7 @@ class GeminiAnalyzer:
 
                 chunks.append(delta_text)
                 chars_received += len(delta_text)
-                # 进度回调采用按字符数“步进”通知，避免每个 chunk 都打日志
+                # 进度回调采用按字符数"步进"通知，避免每个 chunk 都打日志
                 if progress_callback and chars_received >= next_emit_at:
                     progress_callback(chars_received)
                     next_emit_at = chars_received + 160
@@ -2480,7 +2480,7 @@ class GeminiAnalyzer:
         行为要点：
         1. 优先尝试本地的 generation backend（如果有），失败时回退到 LiteLLM；
         2. 依次尝试每个用户/平台可见模型，stream 失败时退化为非流式重试；
-        3. `response_validator` 可用于把“返回了 JSON 但格式非法”也视为失败并触发回退；
+        3. `response_validator` 可用于把"返回了 JSON 但格式非法"也视为失败并触发回退；
         4. 所有模型都失败时抛出 `_AllModelsFailedError`，附带最后一次的响应文本/模型/用量。
 
         Args:
@@ -2843,7 +2843,7 @@ class GeminiAnalyzer:
                 logger.debug(
                     f"=== {model_name} 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ==="
                 )
-                # 解析进度采用“单调递增”策略，避免与重试进度叠加出现倒退
+                # 解析进度采用"单调递增"策略，避免与重试进度叠加出现倒退
                 parse_progress = min(99, 93 + retry_count * 2)
                 _emit_progress(parse_progress, f"{name}：LLM 返回完成，正在解析 JSON")
 
@@ -2927,7 +2927,7 @@ class GeminiAnalyzer:
         Args:
             context: 技术面上下文（含 `today` / `realtime` / `chip` / `trend_analysis` 等）。
             name: 默认股票名称（可能被上下文里的 `stock_name` 覆盖）。
-            news_context: 预先搜索的新闻正文（None 时回退到“无新闻”提示）。
+            news_context: 预先搜索的新闻正文（None 时回退到"无新闻"提示）。
             report_language: 报告语言；本函数仅根据它决定 `no_data_text` 文案。
         """
         code = context.get('code', 'Unknown')
@@ -3036,7 +3036,7 @@ class GeminiAnalyzer:
 | TTM 股息率 | {ttm_yield} | 公式：近12个月每股现金分红 / 当前价格 × 100% |
 | TTM 分红事件数 | {ttm_count} | |
 
-> 若上述字段为 N/A 或缺失，请明确写“数据缺失，无法判断”，禁止编造。
+> 若上述字段为 N/A 或缺失，请明确写"数据缺失，无法判断"，禁止编造。
 """
 
         capital_flow_block = (
@@ -3264,7 +3264,7 @@ class GeminiAnalyzer:
 ⚠️ **数据缺失警告**
 由于接口限制，当前无法获取完整的实时行情和技术指标数据。
 请 **忽略上述表格中的 N/A 数据**，重点依据 **【📰 舆情情报】** 中的新闻进行基本面和情绪面分析。
-在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
+在回答技术面问题（如均线、乖离率）时，请直接说明"数据缺失，无法判断"，**严禁编造数据**。
 """
 
         # 明确的输出要求
@@ -3286,7 +3286,7 @@ class GeminiAnalyzer:
 """
         prompt += f"""
 ### ⚠️ 重要：输出正确的股票名称格式
-正确的股票名称格式为“股票名称（股票代码）”，例如“贵州茅台（600519）”。
+正确的股票名称格式为"股票名称（股票代码）"，例如"贵州茅台（600519）"。
 如果上方显示的股票名称为"股票{code}"或不正确，请在分析开头**明确输出该股票的正确中文全称**。
 """
         if use_legacy_default_prompt:
@@ -3318,7 +3318,7 @@ class GeminiAnalyzer:
 - **具体狙击点位**：买入价、止损价、目标价（精确到分）
 - **检查清单**：每项用 ✅/⚠️/❌ 标记
 - **消息面时间合规**：`latest_news`、`risk_alerts`、`positive_catalysts` 不得包含超出近{news_window_days}日或时间未知的信息
-- **技术面一致性**：严禁把“空头排列”和“多头排列”等互斥结论同时当作有效依据；若基本面/事件面与技术面冲突，必须明确写“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”
+- **技术面一致性**：严禁把"空头排列"和"多头排列"等互斥结论同时当作有效依据；若基本面/事件面与技术面冲突，必须明确写"事件先行、技术待确认"或"基本面偏多，但技术面尚未确认"
  
 请输出完整的 JSON 格式决策仪表盘。"""
 
@@ -3340,7 +3340,7 @@ class GeminiAnalyzer:
 - 所有 JSON 键名必须保持不变，不要翻译键名。
 - `decision_type` 必须保持为 `buy`、`hold`、`sell`。
 - 所有面向用户的人类可读文本值必须使用中文。
-- 当数据缺失时，请使用中文直接说明“{no_data_text}，无法判断”。
+- 当数据缺失时，请使用中文直接说明"{no_data_text}，无法判断"。
 """
         
         daily_market_context_section = format_daily_market_context_prompt_section(
@@ -3360,7 +3360,7 @@ class GeminiAnalyzer:
         return prompt
     
     def _format_volume(self, volume: Optional[float]) -> str:
-        """把成交量数字格式化为“亿股/万股/股”易读字符串。"""
+        """把成交量数字格式化为"亿股/万股/股"易读字符串。"""
         if volume is None:
             return 'N/A'
         if volume >= 1e8:
@@ -3371,7 +3371,7 @@ class GeminiAnalyzer:
             return f"{volume:.0f} 股"
 
     def _format_amount(self, amount: Optional[float]) -> str:
-        """把成交额数字格式化为“亿元/万元/元”易读字符串。"""
+        """把成交额数字格式化为"亿元/万元/元"易读字符串。"""
         if amount is None:
             return 'N/A'
         if amount >= 1e8:
@@ -3382,7 +3382,7 @@ class GeminiAnalyzer:
             return f"{amount:.0f} 元"
 
     def _format_percent(self, value: Optional[float]) -> str:
-        """把百分比数值格式化为带 “%” 的字符串。"""
+        """把百分比数值格式化为带 "%" 的字符串。"""
         if value is None:
             return 'N/A'
         try:
@@ -3400,7 +3400,7 @@ class GeminiAnalyzer:
             return 'N/A'
 
     def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """组装“当日行情快照”，供前端展示使用。"""
+        """组装"当日行情快照"，供前端展示使用。"""
         today = context.get('today', {}) or {}
         realtime = context.get('realtime', {}) or {}
         yesterday = context.get('yesterday', {}) or {}
@@ -3453,7 +3453,7 @@ class GeminiAnalyzer:
         return check_content_integrity(result)
 
     def _build_integrity_complement_prompt(self, missing_fields: List[str], report_language: str = "zh") -> str:
-        """为缺失的必填字段生成“补全要求”提示行。"""
+        """为缺失的必填字段生成"补全要求"提示行。"""
         report_language = normalize_report_language(report_language)
         if report_language == "en":
             lines = ["### Completion requirements: fill the missing mandatory fields below and output the full JSON again:"]
@@ -3688,7 +3688,7 @@ class GeminiAnalyzer:
     ) -> AnalysisResult:
         """当 JSON 解析失败时，从纯文本响应里尽量提取情感和操作建议。
 
-        提取策略：分别统计“看多/买入”等正向关键词与“看空/卖出”等负向关键词的
+        提取策略：分别统计"看多/买入"等正向关键词与"看空/卖出"等负向关键词的
         出现次数，按多数判定 sentiment_score / trend_prediction / decision_type。
         同时把原文前 500 字符截取为摘要，并标记 success=False，提示调用方该结果
         仅供参考。

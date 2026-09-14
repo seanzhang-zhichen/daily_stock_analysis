@@ -30,17 +30,32 @@ _frozen_target_date: contextvars.ContextVar[Optional[date]] = contextvars.Contex
 
 
 def set_frozen_target_date(d: date) -> contextvars.Token:
-    """冻结当前 Agent 上下文的历史截止日期，返回 token 以便稍后 reset。"""
+    """冻结当前 Agent 上下文的历史截止日期，返回 token 以便稍后 reset。
+
+    参数:
+        d: 要冻结的目标日期。
+
+    返回:
+        ContextVar 的 token，用于后续恢复。
+    """
     return _frozen_target_date.set(d)
 
 
 def get_frozen_target_date() -> Optional[date]:
-    """返回当前上下文里已冻结的目标日期；若从未设置则返回 None。"""
+    """返回当前上下文里已冻结的目标日期；若从未设置则返回 None。
+
+    返回:
+        已冻结的目标日期，或 None。
+    """
     return _frozen_target_date.get()
 
 
 def reset_frozen_target_date(token: contextvars.Token) -> None:
-    """在单只股票分析结束后恢复之前冻结的目标日期。"""
+    """在单只股票分析结束后恢复之前冻结的目标日期。
+
+    参数:
+        token: set_frozen_target_date 返回的 token。
+    """
     _frozen_target_date.reset(token)
 
 
@@ -52,7 +67,11 @@ _fetcher_lock = Lock()
 
 
 def _get_fetcher_manager():
-    """惰性创建 ``DataFetcherManager``，仅在 DB 兜底路径中使用，避免常态化的网络请求。"""
+    """惰性创建 ``DataFetcherManager``，仅在 DB 兜底路径中使用，避免常态化的网络请求。
+
+    返回:
+        DataFetcherManager 的单例实例。
+    """
     global _fetcher_singleton
     if _fetcher_singleton is None:
         with _fetcher_lock:
@@ -66,7 +85,16 @@ def _get_fetcher_manager():
 # DB 优先历史加载器
 # ---------------------------------------------------------------------------
 def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
-    """返回 DB 候选代码列表与规范化代码，用于兼容"带/不带前缀"等多种股票代码形态。"""
+    """返回 DB 候选代码列表与规范化代码，用于兼容"带/不带前缀"等多种股票代码形态。
+
+    参数:
+        stock_code: 原始股票代码。
+
+    返回:
+        一个元组 (candidates, normalized_code)：
+        - candidates: 候选代码列表。
+        - normalized_code: 规范化后的代码。
+    """
     from data_provider.base import canonical_stock_code, normalize_stock_code
 
     raw_code = str(stock_code or "").strip()
@@ -79,7 +107,14 @@ def _history_code_candidates(stock_code: str) -> Tuple[List[str], str]:
 
 
 def _coerce_bar_date(value: Any) -> date:
-    """把 ORM 或 DataFrame 中类似日期的值强转成 ``date``，无法解析则返回 ``date.min``。"""
+    """把 ORM 或 DataFrame 中类似日期的值强转成 ``date``，无法解析则返回 ``date.min``。
+
+    参数:
+        value: 待转换的日期值，可以是 datetime、date、字符串或具有 .date() 方法的对象。
+
+    返回:
+        转换后的 date 对象；无法解析时返回 date.min。
+    """
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -99,7 +134,14 @@ def _coerce_bar_date(value: Any) -> date:
 
 
 def _bar_date(bar: Any) -> date:
-    """从 ORM 对象或类 DataFrame 行对象中读取日 K 线日期。"""
+    """从 ORM 对象或类 DataFrame 行对象中读取日 K 线日期。
+
+    参数:
+        bar: ORM 对象或类 DataFrame 行对象。
+
+    返回:
+        提取到的日期；失败时返回 date.min。
+    """
     row_date = _coerce_bar_date(getattr(bar, "date", None))
     if row_date != date.min:
         return row_date
@@ -112,7 +154,19 @@ def _bar_date(bar: Any) -> date:
 
 
 def _select_best_bars(db, stock_code: str, start: date, end: date) -> Tuple[Optional[str], list]:
-    """在多个候选代码中挑出"最新且最大"的一组缓存 K 线，优先使用规范化代码命中。"""
+    """在多个候选代码中挑出"最新且最大"的一组缓存 K 线，优先使用规范化代码命中。
+
+    参数:
+        db: 数据库连接对象。
+        stock_code: 股票代码。
+        start: 查询起始日期。
+        end: 查询截止日期。
+
+    返回:
+        一个元组 (best_code, best_bars)：
+        - best_code: 最佳匹配的股票代码。
+        - best_bars: 对应的 K 线数据列表。
+    """
     candidates, normalized_code = _history_code_candidates(stock_code)
     best_code = None
     best_bars = []
@@ -140,8 +194,16 @@ def load_history_df(
 ) -> Tuple[Optional[pd.DataFrame], str]:
     """加载 K 线历史：DB 优先，DataFetcherManager 兜底。
 
-    返回 ``(df, source)``：DB 命中时 source 为 ``"db_cache"``，网络兜底时为对应
-    provider；两者皆失败时返回 ``(None, "none")``。
+    参数:
+        stock_code: 股票代码。
+        days: 需要的历史数据天数，默认 60 天。
+        target_date: 目标截止日期，未提供时读取冻结值或今天。
+
+    返回:
+        一个元组 (df, source)：
+        - df: 包含 K 线数据的 DataFrame，失败时为 None。
+        - source: 数据来源标识，DB 命中时为 "db_cache"，网络兜底时为对应 provider，
+          两者皆失败时为 "none"。
     """
     from src.storage import get_db
 
@@ -155,7 +217,7 @@ def load_history_df(
     # 按"日历日 × 1.8 + 10"补偿周末与长假，确保能取到足够数量的交易日
     start = end - timedelta(days=int(days * 1.8) + 10)
 
-    # --- 1. DB 查询（先规范化代码，再尝试去前缀） -------------------------
+    # --- 1. DB 查询（先规范化代码，再尝试去前缀）-------------------------
     try:
         db = get_db()
         _code, bars = _select_best_bars(db, stock_code, start, end)
@@ -171,7 +233,7 @@ def load_history_df(
     except Exception as e:
         logger.debug("load_history_df(%s): DB read failed: %s", stock_code, e)
 
-    # --- 2. 通过单例 ``DataFetcherManager`` 走网络兜底 --------------------
+    # --- 2. 通过单例 ``DataFetcherManager`` 走网络兜底--------------------
     try:
         manager = _get_fetcher_manager()
         df, source = manager.get_daily_data(stock_code, days=days)

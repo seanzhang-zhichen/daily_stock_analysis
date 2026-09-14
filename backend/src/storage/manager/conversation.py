@@ -12,7 +12,11 @@ import json
 
 
 class ConversationMixin:
-    """Agent 对话历史 Mixin。"""
+    """Agent 对话历史 Mixin：封装对话消息的保存、查询与会话管理。
+
+    通过多重继承方式混入 ``DatabaseManager``，提供与会话（session）维度
+    相关的完整 CRUD 操作，包括消息持久化、会话列表聚合、滚动摘要等。
+    """
 
     def save_conversation_message(
         self,

@@ -32,7 +32,20 @@ from src.storage.base import Base
 
 
 class AppUser(Base):
-    """C 端用户表（与单管理员 ``.admin_password_hash`` 解耦，承载登录/套餐/积分等状态）。"""
+    """C 端用户表：承载登录、套餐、积分、运营标记等核心状态。
+
+    与单管理员 ``.admin_password_hash`` 解耦，独立承载多用户业务。
+    关键字段说明：
+    - ``password_hash``: 采用 pbkdf2_sha256 格式存储（iter$salt_b64$hash_b64）。
+    - ``status``: active/disabled，disabled 时禁止登录。
+    - ``plan_code``: 当前生效套餐，与 ``AppPlan.code`` 软关联。
+    - ``credit_balance``: 积分余额，消费/退款通过 ``AppCreditLedger`` 流水记账。
+    - ``referral_code``: 唯一邀请码，用于邀请关系绑定。
+    - ``is_admin``: 平台运营管理员标记，拥有管理后台权限。
+    - ``is_research_operator``: 研究员运营标记，可发布付费研报。
+    - ``terms_version``: 最近一次接受的协议版本，用于合规。
+    - ``deletion_requested_at``: 注销申请时间（PIPL 冷静期），非 NULL 表示用户已申请注销。
+    """
 
     __tablename__ = 'app_users'
 
@@ -81,7 +94,11 @@ class AppUser(Base):
 
 
 class AppUserSession(Base):
-    """服务端会话表；cookie 仅承载 token，会话元信息（IP、UA、过期等）落库。"""
+    """服务端会话表：承载用户登录后的会话元信息。
+
+    cookie 仅承载 token，会话详情（IP、UA、过期时间等）落库。
+    支持多设备登录，通过 ``revoked_at`` 实现单点登出。
+    """
 
     __tablename__ = 'app_user_sessions'
 
@@ -96,7 +113,13 @@ class AppUserSession(Base):
 
 
 class AppUserEmailVerification(Base):
-    """邮箱验证 / 密码重置的一次性 token 表。"""
+    """邮箱验证 / 密码重置的一次性 token 表。
+
+    每条记录对应一次验证或重置请求，通过 ``purpose`` 区分用途：
+    - ``verify``: 注册后的邮箱验证
+    - ``reset``: 密码重置请求
+    ``expires_at`` 控制 token 有效期，``consumed_at`` 记录实际使用时间。
+    """
 
     __tablename__ = 'app_user_email_verifications'
 
@@ -110,7 +133,13 @@ class AppUserEmailVerification(Base):
 
 
 class AppUserUsageCounter(Base):
-    """按用户 + 日期 + 维度统计的用量计数（quota 服务读写）。"""
+    """按用户 + 日期 + 维度统计的用量计数（quota 服务读写）。
+
+    用于实现每日调用上限控制：
+    - ``kind`` 取值：analysis（分析）/ agent（Agent 调用）/ notify（通知推送）
+    - ``count`` 为当日累计调用次数
+    通过 ``(user_id, counter_date, kind)`` 唯一约束保证幂等。
+    """
 
     __tablename__ = 'app_user_usage_counters'
 
@@ -121,6 +150,7 @@ class AppUserUsageCounter(Base):
     count = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
+        # 唯一约束：同一用户同一天同一维度只能有一条记录
         UniqueConstraint('user_id', 'counter_date', 'kind', name='uix_app_user_usage_user_date_kind'),
     )
 
@@ -192,12 +222,18 @@ class AppCreditOrder(Base):
 
     与订阅订单使用相同的状态机骨架，但作为独立表持久化，避免收入、退款与
     履约语义被混入订阅流水中。
+
+    状态机::
+
+        created → pending → paid → refunded / partial_refunded
+                            └→ failed
+        created → closed (超时或用户主动取消)
     """
 
     __tablename__ = 'app_credit_orders'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    order_no = Column(String(32), nullable=False, unique=True, index=True)
+    order_no = Column(String(32), nullable=False, unique=True, index=True)  # DSA{yyyymmdd}{random10}
     user_id = Column(Integer, ForeignKey('app_users.id'), nullable=False, index=True)
     package_code = Column(String(32), nullable=False, index=True)
     credit_amount = Column(Integer, nullable=False, default=0)
@@ -218,13 +254,21 @@ class AppCreditOrder(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 复合索引：按用户和时间范围查询订单列表
         Index('ix_app_credit_orders_user_created', 'user_id', 'created_at'),
+        # 复合索引：按支付通道和状态查询待处理订单
         Index('ix_app_credit_orders_provider_status', 'provider', 'status'),
     )
 
 
 class AppCreditPaymentEvent(Base):
-    """积分订单的支付通道回调流水。"""
+    """积分订单的支付通道回调流水。
+
+    记录支付通道（微信/支付宝等）的回调事件，用于：
+    - 幂等去重：通过 ``provider_event_id`` 唯一约束避免重复处理
+    - 对账审计：保留原始回调 payload 和签名信息
+    - 状态流转：``processed`` 标记是否已驱动业务（积分充值）
+    """
 
     __tablename__ = 'app_credit_payment_events'
 
@@ -242,10 +286,14 @@ class AppCreditPaymentEvent(Base):
 
 
 class AppPlan(Base):
-    """套餐定义表 (Phase 2)。
+    """套餐定义表 (Phase 2)：定义不同等级的用户权益。
 
-    与 ``AppUser.plan_code`` 通过 ``code`` 软关联，决定每日调用上限、自选股上限
-    与允许使用的模型集合等权益。
+    与 ``AppUser.plan_code`` 通过 ``code`` 软关联，决定：
+    - 每日调用上限（analysis / agent）
+    - 自选股上限（``max_stocks``）
+    - 允许使用的模型集合（``allowed_models`` JSON 数组）
+    - Webhook 推送权限（``can_webhook``）
+    套餐和积分包是两条独立产品线，不互通。
     """
 
     __tablename__ = 'app_plans'
@@ -266,7 +314,14 @@ class AppPlan(Base):
 
 
 class AppPlatformSetting(Base):
-    """平台运行时配置表，由管理后台维护；可覆盖环境变量默认值。"""
+    """平台运行时配置表，由管理后台维护；可覆盖环境变量默认值。
+
+    典型用途：
+    - 开关功能（如是否允许新用户注册）
+    - 动态调整阈值（如每日分析上限临时提升）
+    - 运营公告内容
+    - 支付通道配置
+    """
 
     __tablename__ = 'app_platform_settings'
 
@@ -282,6 +337,18 @@ class AppSubscription(Base):
     """用户订阅历史（含 trial / paid / invite）。
 
     Phase 2 MVP 不接入在线支付, 仅记录手动开通 / 兑换码 / 邀请码三种来源。
+    订阅记录用于：
+    - 追踪用户套餐变更历史
+    - 计算套餐到期时间
+    - 生成续费提醒（配合 ``AppPlanReminder``）
+
+    ``source`` 取值::
+
+        trial:   试用期自动开通
+        manual:  管理员手动开通
+        invite:  邀请奖励开通
+        redeem:  兑换码兑换
+        paid:    在线支付开通（Phase 5+）
     """
 
     __tablename__ = 'app_subscriptions'
@@ -297,7 +364,14 @@ class AppSubscription(Base):
 
 
 class AppRedeemCode(Base):
-    """兑换码表（一次性，与邀请码不同；兑换后赠送套餐时长）。"""
+    """兑换码表（一次性，与邀请码不同；兑换后赠送套餐时长）。
+
+    兑换码由运营后台生成，可指定：
+    - ``plan_code``: 兑换后开通的套餐
+    - ``grant_days``: 赠送天数
+    - ``expires_at``: 兑换码本身过期时间（与赠送天数区分）
+    兑换后 ``redeemed_by`` 和 ``redeemed_at`` 被填充，防止重复使用。
+    """
 
     __tablename__ = 'app_redeem_codes'
 
@@ -317,6 +391,7 @@ class AppUserWatchlist(Base):
 
     每个用户有独立的自选股列表，上限由 ``plan.max_stocks`` 控制；
     各套餐的具体上限由 ``AppPlan.max_stocks`` 决定。
+    通过 ``(user_id, stock_code)`` 唯一约束防止重复添加同一股票。
     """
 
     __tablename__ = 'app_user_watchlists'
@@ -328,6 +403,7 @@ class AppUserWatchlist(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 唯一约束：同一用户不能重复添加同一股票
         UniqueConstraint('user_id', 'stock_code', name='uix_app_user_watchlist_user_code'),
     )
 
@@ -337,6 +413,11 @@ class AppUserNotificationPref(Base):
 
     存储用户级通知设置：每日订阅推送开关、邮件开关、自定义 Webhook 等。
     每个用户至多一行（upsert 语义），缺行时使用兜底默认值。
+    关键字段说明：
+    - ``daily_push_enabled``: 每日定时推送开关（付费套餐权益）
+    - ``email_enabled``: 邮件推送开关（付费套餐权益）
+    - ``webhook_url``: 付费套餐自定义 Webhook 地址
+    - ``webhook_type``: Webhook 类型（feishu / wecom / discord / telegram / generic）
     """
 
     __tablename__ = 'app_user_notification_prefs'
@@ -360,6 +441,11 @@ class AppOrder(Base):
         created → pending → paid → refunded / partial_refunded
                             └→ failed
         created → closed (超时或用户主动取消)
+
+    关键字段说明：
+    - ``order_no``: 订单号格式 DSA{yyyymmdd}{random10}
+    - ``quote_snapshot``: 下单时套餐快照（JSON），防止价格漂移
+    - ``expires_at``: 订单超时时间（默认 15min 关单）
     """
 
     __tablename__ = 'app_orders'
@@ -387,7 +473,9 @@ class AppOrder(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 复合索引：按用户和时间范围查询订单列表
         Index('ix_app_orders_user_created', 'user_id', 'created_at'),
+        # 复合索引：按支付通道和状态查询待处理订单
         Index('ix_app_orders_provider_status', 'provider', 'status'),
     )
 
@@ -398,6 +486,13 @@ class AppPaymentEvent(Base):
     所有回调原样落库，便于线下回放、对账与审计；
     ``signature_valid=False`` 的事件仅落库不驱动业务。
     ``provider_event_id`` 唯一约束保证幂等去重。
+
+    ``event_type`` 常见取值::
+
+        pay.success:     支付成功
+        pay.fail:        支付失败
+        refund.success: 退款成功
+        refund.fail:     退款失败
     """
 
     __tablename__ = 'app_payment_events'
@@ -419,6 +514,14 @@ class AppRefund(Base):
     """退款记录表 (Phase 5)。
 
     申请退款后等待运营审核；审核通过后调用通道退款 API；可同步撤销对应订阅。
+    状态机::
+
+        pending → approved → refunded
+                └→ rejected
+
+    关键字段说明：
+    - ``revoke_subscription``: 退款成功后是否同步撤销订阅
+    - ``reviewer_id``: 运营审核人 ID
     """
 
     __tablename__ = 'app_refunds'
@@ -444,6 +547,16 @@ class AppInvoice(Base):
 
     MVP 阶段手工开具，后期接电子发票 SaaS 自动开票；
     仅开电子普通发票（增值税普通发票）。
+    状态机::
+
+        pending → issued
+              └→ rejected
+
+    关键字段说明：
+    - ``invoice_type``: personal（个人）/ company（公司）
+    - ``title``: 发票抬头
+    - ``tax_id``: 公司税号（公司类型必填）
+    - ``issued_url``: 电子发票下载链接
     """
 
     __tablename__ = 'app_invoices'
@@ -469,6 +582,10 @@ class AppUserConsent(Base):
 
     每当用户首次注册、或在协议升版后重新接受协议时, 写入一条记录。
     用于合规审计 (PIPL / 用户协议变更) 与争议追溯。
+    关键字段说明：
+    - ``terms_version``: 协议版本号，与 ``AppUser.terms_version`` 对应
+    - ``purpose``: register（首次注册）/ reaccept（重新接受）
+    - ``ip`` / ``user_agent``: 用于合规审计，记录用户接受协议时的环境
     """
 
     __tablename__ = 'app_user_consents'
@@ -487,6 +604,10 @@ class AppReconciliationDiff(Base):
 
     由 ``scripts/reconcile_payments.py`` 每日跑批写入：通道有/本地无、
     本地有/通道无、金额不一致、状态不一致等类型。
+    关键字段说明：
+    - ``diff_type``: channel_only / local_only / amount_mismatch / status_mismatch
+    - ``resolved``: 是否已处理（人工确认或自动修复）
+    - ``detail``: JSON 格式，保留通道原始账单行，便于线下分析
     """
 
     __tablename__ = 'app_reconciliation_diffs'
@@ -513,6 +634,11 @@ class AppReconciliationReport(Base):
     """每日对账总览表 (Phase 5)。
 
     一次对账任务跑完后写入一条；便于审计 / 追溯当日是否成功对账。
+    关键字段说明：
+    - ``status``: clean（无差异）/ has_diff（有差异）/ failed（跑批失败）
+    - ``total_channel``: 通道侧订单总数
+    - ``total_local``: 本地侧订单总数
+    - ``diff_count``: 差异数量
     """
 
     __tablename__ = 'app_reconciliation_reports'
@@ -528,6 +654,7 @@ class AppReconciliationReport(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 唯一约束：同一支付通道每天只能有一条对账报告
         UniqueConstraint('reconcile_date', 'provider', name='uix_app_recon_report_date_provider'),
     )
 
@@ -555,6 +682,7 @@ class AppPlanReminder(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 唯一约束：同一用户同一套餐同一到期时间同一提醒类型只发送一次
         UniqueConstraint(
             'user_id', 'plan_code', 'expires_at', 'reminder_type',
             name='uix_app_plan_reminders_user_plan_expires_type',
@@ -566,6 +694,8 @@ class AppAuditLog(Base):
     """用户 / 管理员关键操作审计日志表 (Phase 6)。
 
     永不删除；写入后只读，便于合规追溯。
+    记录所有敏感操作，包括：登录、注册、密码修改、套餐变更、订单操作、
+    退款审核、发票处理、管理员操作等。
 
     常见 action 值::
 
@@ -595,7 +725,7 @@ class AppAuditLog(Base):
 class AppGrowthEvent(Base):
     """增长埋点事件表 (Phase 6)。
 
-    记录用户关键转化漏斗事件，用于统计注册→首单分析→付费的转化率。
+    记录用户关键转化漏斗事件，用于统计注册->首单分析->付费的转化率。
     前端通过 ``POST /api/v1/usage/events`` 上报；后端关键节点直接写库。
 
     常见 event 值::
@@ -622,6 +752,12 @@ class AppNotice(Base):
 
     运营通过管理后台创建公告，用户通过 ``/notices`` 页面和顶栏铃铛查看。
     支持 priority（info/warning/danger）、is_pinned（置顶）、is_published（发布状态）。
+    关键字段说明：
+    - ``notice_type``: info / warning / danger，控制前端展示样式
+    - ``is_pinned``: 置顶公告，始终展示在列表顶部
+    - ``is_published``: 发布状态，未发布时仅管理员可见
+    - ``target_plan``: NULL=所有用户; 'pro'=仅付费用户，用于精准投放
+    - ``expires_at``: 公告过期时间，NULL=永不过期
     """
 
     __tablename__ = 'app_notices'
@@ -640,12 +776,22 @@ class AppNotice(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 复合索引：按发布状态和置顶状态查询公告列表
         Index('ix_app_notices_published_pinned', 'is_published', 'is_pinned'),
     )
 
 
 class AppResearchReport(Base):
-    """运营撰写的付费研究报告表。"""
+    """运营撰写的付费研究报告表。
+
+    研究报告由研究员运营人员撰写，用户可使用积分解锁查看完整内容。
+    关键字段说明：
+    - ``preview_content``: 预览内容（免费可见）
+    - ``full_content``: 完整内容（需解锁）
+    - ``price_credits``: 解锁所需积分，0 表示免费
+    - ``is_published``: 发布状态，未发布时仅管理员可见
+    - ``author_id``: 撰写者 ID，关联 ``AppUser``（需具备 is_research_operator 权限）
+    """
 
     __tablename__ = 'app_research_reports'
 
@@ -665,12 +811,19 @@ class AppResearchReport(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 复合索引：按发布状态和发布时间查询报告列表
         Index('ix_app_research_reports_published_time', 'is_published', 'published_at'),
     )
 
 
 class AppResearchReportPurchase(Base):
-    """用户对研究报告的解锁记录。"""
+    """用户对研究报告的解锁记录。
+
+    记录用户解锁某篇研究报告的详细信息，包括：
+    - ``price_credits``: 解锁时的实际积分价格（可能与报告当前价格不同）
+    - ``ledger_id``: 关联的积分流水记录，便于审计和对账
+    通过 ``(report_id, user_id)`` 唯一约束防止重复解锁。
+    """
 
     __tablename__ = 'app_research_report_purchases'
 
@@ -682,12 +835,20 @@ class AppResearchReportPurchase(Base):
     purchased_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     __table_args__ = (
+        # 唯一约束：同一用户不能重复解锁同一篇报告
         UniqueConstraint('report_id', 'user_id', name='uix_app_research_purchase_report_user'),
     )
 
 
 class AppResearchReportReaction(Base):
-    """用户对研究报告的点赞 / 点踩反应表。"""
+    """用户对研究报告的点赞 / 点踩反应表。
+
+    记录用户对研究报告的反馈，用于：
+    - 评估报告质量和用户满意度
+    - 推荐系统排序依据
+    - 运营数据分析
+    通过 ``(report_id, user_id)`` 唯一约束保证每个用户对同一报告只能有一个反应。
+    """
 
     __tablename__ = 'app_research_report_reactions'
 
@@ -699,12 +860,21 @@ class AppResearchReportReaction(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 唯一约束：同一用户对同一报告只能有一个反应
         UniqueConstraint('report_id', 'user_id', name='uix_app_research_reaction_report_user'),
     )
 
 
 class AppResearchReportComment(Base):
-    """用户对研究报告的评论表。"""
+    """用户对研究报告的评论表。
+
+    记录用户对研究报告的评论内容，支持运营审核（``status`` 字段）。
+    常见状态：
+    - ``visible``: 正常展示
+    - ``hidden``: 运营隐藏
+    - ``deleted``: 用户删除
+    通过 ``(report_id, created_at)`` 复合索引优化报告详情页的评论列表查询。
+    """
 
     __tablename__ = 'app_research_report_comments'
 
@@ -717,6 +887,7 @@ class AppResearchReportComment(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     __table_args__ = (
+        # 复合索引：按报告 ID 和创建时间查询评论列表
         Index('ix_app_research_comments_report_created', 'report_id', 'created_at'),
     )
 

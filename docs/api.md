@@ -24,6 +24,7 @@ uv run --locked python backend/main.py --serve-only
 | --- | --- |
 | `auth`、`account` | 管理员认证与多用户账户。 |
 | `analysis`、`history`、`stocks` | 分析发起、任务/历史查询与股票信息。 |
+| `data` | 数据源能力与数据质量只读契约；`capabilities` 面向登录用户，`overview` 仅管理员。 |
 | `agent`、`intelligence` | 多轮问股、智能情报和运行上下文。 |
 | `decision-signals` | 决策信号、反馈、复评与跟踪结果。 |
 | `portfolio`、`alerts` | 组合、持仓和告警规则。 |
@@ -38,3 +39,5 @@ uv run --locked python backend/main.py --serve-only
 认证由后端中间件统一处理。未启用用户模式时，部分本地管理路径可按当前服务配置访问；启用认证后，客户端应保留服务设置的安全 Cookie，并处理未认证、无权限和配额用尽响应。不要在浏览器或脚本中硬编码会话令牌。
 
 新增 API 优先追加字段和路径，避免静默破坏已发布客户端。修改枚举、认证、任务状态或报告载荷时，必须同步更新 Web、桌面端和相关契约测试。
+
+股票画像使用 `GET /api/v1/stocks/{stock_code}/profile`，分别返回 `quote`、`history`、`fundamentals` 区块状态，单个数据源失败不会使整个请求失败。历史详情新增可选 `structured_report` 字段，旧客户端可继续消费原有字段。

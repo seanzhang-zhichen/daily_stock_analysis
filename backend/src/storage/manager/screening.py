@@ -16,7 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class ScreeningMixin:
-    """选股历史的读写 Mixin，按用户维度隔离。"""
+    """选股历史的读写 Mixin：封装选股运行结果的持久化与查询。
+
+    通过多重继承方式混入 ``DatabaseManager``，提供选股结果保存、
+    历史列表查询、单条详情获取等功能，按用户维度隔离数据。
+    """
 
     def save_screening_run(
         self,

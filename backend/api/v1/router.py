@@ -19,6 +19,7 @@ from api.v1.endpoints import (
     billing,
     credits,
     decision_signals,
+    data,
     history,
     notices,
     portfolio,
@@ -69,6 +70,8 @@ router.include_router(
     prefix="/decision-signals",
     tags=["DecisionSignals"],
 )
+
+router.include_router(data.router, prefix="/data", tags=["DataCapabilities"])
 
 router.include_router(
     stocks.router,

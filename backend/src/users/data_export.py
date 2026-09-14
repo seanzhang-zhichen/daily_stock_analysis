@@ -39,7 +39,23 @@ def _dt(val: Optional[datetime]) -> Optional[str]:
 
 
 def _collect_user_data(db: Session, user_id: int) -> Dict[str, Any]:
-    """从各表收集用户数据并序列化（敏感字段脱敏）。"""
+    """从各表收集用户数据并序列化（敏感字段脱敏）。
+
+    收集范围：
+    - 用户基本信息（不含密码哈希等敏感字段）
+    - 自选股列表
+    - 通知偏好设置
+    - 订阅历史记录
+    - 订单历史记录
+    - 协议同意记录
+
+    Args:
+        db: 数据库会话
+        user_id: 目标用户 ID
+
+    Returns:
+        包含用户所有可导出数据的字典，可直接序列化为 JSON。
+    """
     from src.storage import AppUser  # noqa: PLC0415
 
     user: Optional[AppUser] = db.query(AppUser).filter(AppUser.id == user_id).first()
@@ -138,8 +154,21 @@ def request_data_export(
 ) -> None:
     """收集并通过邮件发送用户个人数据导出包。
 
+    执行流程：
+    1. 校验用户状态（已注销账号拒绝导出）
+    2. 写入审计日志（data_export_requested）
+    3. 收集用户数据并序列化为 JSON
+    4. 通过邮件发送导出结果
+
     MVP：直接把 JSON 正文发送至注册邮箱。
     二期可改为生成签名临时下载 URL（OSS / S3）。
+
+    Args:
+        db: 数据库会话
+        user: 目标用户对象
+        ip: 请求来源 IP，用于审计
+        user_agent: 请求 User-Agent，用于审计
+        email_backend: 邮件发送后端，默认使用系统配置的后端
 
     Raises:
         :class:`src.users.errors.UserError` — 账号已注销时拒绝导出。
@@ -147,6 +176,7 @@ def request_data_export(
     if user.status == "deleted":
         raise UserError(UserErrorCode.VALIDATION_ERROR, "账号已注销，无法导出数据")
 
+    # 记录数据导出请求审计日志
     write_audit_log(
         db,
         action="account.data_export_requested",
@@ -155,9 +185,11 @@ def request_data_export(
         user_agent=user_agent,
     )
 
+    # 收集用户数据并序列化
     data = _collect_user_data(db, user.id)
     json_body = json.dumps(data, ensure_ascii=False, indent=2)
 
+    # 发送邮件
     backend = email_backend or get_email_backend()
     backend.send(
         EmailMessageDTO(

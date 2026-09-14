@@ -17,6 +17,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# 分红相关字段关键词映射，用于在 DataFrame 列名中匹配对应语义
 _DIVIDEND_KEYWORD_MAP: Dict[str, List[str]] = {
     "per_share": [
         "每股派息",

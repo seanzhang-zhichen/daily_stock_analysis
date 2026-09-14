@@ -19,6 +19,7 @@ from api.v1.schemas.stocks import (
     KLineData,
     StockHistoryResponse,
     StockQuote,
+    StockProfileResponse,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.services.image_stock_extractor import (
@@ -32,6 +33,7 @@ from src.services.import_parser import (
     parse_import_from_text,
 )
 from src.services.stock_service import StockService
+from src.services.stock_profile_service import InvalidStockProfileCode, StockProfileService
 from src.repositories.stock_index_repo import StockIndexRepository
 
 logger = logging.getLogger(__name__)
@@ -40,10 +42,27 @@ router = APIRouter()
 _SEARCH_RATE_WINDOW_SEC = 60
 _SEARCH_RATE_MAX_REQUESTS = 60
 _search_rate_lock = threading.Lock()
+# key: 客户端标识（IP），value: (窗口内已请求次数, 窗口起始时间戳)
+# 采用滑动窗口而非固定窗口，避免窗口边界处的突发流量穿透
 _search_rate_state: dict[str, tuple[int, float]] = {}
 
 # 搜索路由必须在 /{stock_code}/... 动态路由之前定义，否则会被当作股票代码。
 ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
+
+
+@router.get("/{stock_code}/profile", response_model=StockProfileResponse, summary="获取轻量股票画像")
+def get_stock_profile(
+    stock_code: str,
+    history_days: int = Query(60, ge=5, le=250),
+) -> StockProfileResponse:
+    """聚合行情、日线和基本面；各区块独立降级，不触发 LLM 分析计费。"""
+    try:
+        return StockProfileResponse(**StockProfileService().get_profile(stock_code, history_days=history_days))
+    except InvalidStockProfileCode as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_stock_code", "message": str(exc)})
+    except Exception:
+        logger.exception("股票画像聚合失败: %s", stock_code)
+        raise HTTPException(status_code=500, detail={"error": "profile_failed", "message": "股票画像暂时不可用"})
 
 
 def _check_search_rate_limit(key: str) -> bool:
@@ -51,6 +70,7 @@ def _check_search_rate_limit(key: str) -> bool:
     now = time.time()
     with _search_rate_lock:
         # 顺手清理过期窗口，避免长期运行进程中内存随客户端 IP 无界增长。
+        # 清理逻辑放在每次请求时执行，属于"被动 GC"，不额外占用线程。
         for state_key, (_, started_at) in list(_search_rate_state.items()):
             if now - started_at > _SEARCH_RATE_WINDOW_SEC:
                 _search_rate_state.pop(state_key, None)
@@ -81,6 +101,8 @@ def search_stock_index(
     用于前端 autocomplete 下拉。
     """
     client_host = request.client.host if request.client else "unknown"
+    # 基于客户端 IP 做限流，而非用户身份；
+    # 这样即使未登录用户也能被保护，同时防止恶意脚本通过更换账号绕过限制。
     if not _check_search_rate_limit(client_host):
         raise HTTPException(
             status_code=429,
@@ -89,6 +111,8 @@ def search_stock_index(
     try:
         return {"items": StockIndexRepository().search(q, limit=limit)}
     except Exception as e:
+        # 搜索失败通常是索引文件损坏或磁盘 IO 问题，记 error 并返回模糊消息，
+        # 避免把内部异常细节暴露给客户端。
         logger.error("股票搜索失败: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
@@ -118,7 +142,8 @@ def extract_from_image(
             detail={"error": "bad_request", "message": "未提供文件，请使用表单字段 file 上传图片"},
         )
 
-    # 兼容形如 "image/jpeg; charset=utf-8" 的 Content-Type，只取媒体类型部分
+    # 兼容形如 "image/jpeg; charset=utf-8" 的 Content-Type，只取媒体类型部分。
+    # 某些客户端或代理会自动追加 charset，若不截断会导致 MIME 白名单误判。
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in ALLOWED_MIME:
         raise HTTPException(
@@ -129,8 +154,9 @@ def extract_from_image(
             },
         )
 
+    # 先读取限定大小，再探测是否还有剩余字节；超过上限就拒绝，避免完整读入大文件。
+    # 这是防御性编程：即使客户端绕过前端限制上传超大文件，服务端也能在 OOM 前拦截。
     try:
-        # 先读取限定大小，再探测是否还有剩余字节；超过上限就拒绝，避免完整读入大文件。
         data = file.file.read(MAX_SIZE_BYTES)
         if file.file.read(1):
             raise HTTPException(
@@ -159,9 +185,11 @@ def extract_from_image(
             raw_text=raw_text if include_raw else None,
         )
     except ValueError as e:
-        # 服务层用 ValueError 表达输入不合法或解析失败，映射为 400
+        # 服务层用 ValueError 表达输入不合法或解析失败，映射为 400。
+        # 这类异常属于可预期的业务错误，不需要记录 error 级别日志。
         raise HTTPException(status_code=400, detail={"error": "extract_failed", "message": str(e)})
     except Exception as e:
+        # 未知异常记录完整堆栈，便于排查 Vision LLM 或依赖服务故障。
         logger.error(f"图片提取失败: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
@@ -190,10 +218,14 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
     content_type = (request.headers.get("content-type") or "").lower()
 
     if "application/json" in content_type:
-        # 剪贴板纯文本路径：直接读取 body.text 后交给服务层解析
+        # 剪贴板纯文本路径：直接读取 body.text 后交给服务层解析。
+        # 不在这里做文本长度限制，因为 parse_import_from_text 内部会校验；
+        # 这样可以把业务规则收敛到服务层，endpoint 只负责协议适配。
         try:
             body = await request.json()
         except Exception as e:
+            # 捕获所有 JSON 解析异常（包括 malformed JSON、编码错误等），
+            # 统一映射为 400，避免内部异常细节泄露给客户端。
             logger.warning("[parse_import] JSON parse failed: %s", e)
             raise HTTPException(
                 status_code=400,
@@ -216,7 +248,9 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
             )
             raise HTTPException(status_code=400, detail={"error": "parse_failed", "message": str(e)})
     elif "multipart" in content_type:
-        # 文件上传路径：先做大小校验，再分块读取防止一次性载入超大文件
+        # 文件上传路径：先做大小校验，再分块读取防止一次性载入超大文件。
+        # 这里使用 "先读后探" 策略：读取 MAX_FILE_BYTES 后若还有剩余字节，
+        # 说明文件超过限制，立即拒绝，避免内存被撑爆。
         form = await request.form()
         file = form.get("file")
         if not file or not hasattr(file, "read"):
@@ -284,6 +318,7 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
         ExtractItem(code=code, name=name, confidence=conf)
         for code, name, conf in items
     ]
+    # raw_text=None 表示不暴露内部原始文本，减少信息泄露面。
     return ExtractFromImageResponse(items=extract_items, raw_text=None)
 
 
@@ -304,9 +339,11 @@ def get_stock_quote(stock_code: str) -> StockQuote:
         service = StockService()
 
         # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
+        # 若使用 async def，阻塞调用会卡住事件循环，导致并发性能骤降。
         result = service.get_realtime_quote(stock_code)
 
         if result is None:
+            # 服务层返回 None 而非抛异常，说明外部数据源无此标的或接口超时
             raise HTTPException(
                 status_code=404,
                 detail={
@@ -331,8 +368,11 @@ def get_stock_quote(stock_code: str) -> StockQuote:
         )
 
     except HTTPException:
+        # 直接透传 HTTPException，避免被外层 except Exception 捕获后二次包装。
         raise
     except Exception as e:
+        # 兜底异常：记录原始异常后转换为通用 500，避免堆栈信息泄露。
+        # 生产环境不应把内部异常详情返回给客户端。
         logger.error(f"获取实时行情失败: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
@@ -364,13 +404,15 @@ def get_stock_history(
         service = StockService()
 
         # 同步数据源可能阻塞网络/IO；使用 def 让 FastAPI 在线程池中执行。
+        # 若使用 async def，阻塞调用会卡住事件循环，导致并发性能骤降。
         result = service.get_history_data(
             stock_code=stock_code,
             period=period,
             days=days
         )
 
-        # 服务层返回 dict 列表，这里收敛为公开 Pydantic 响应模型。
+        # 服务层返回 dict 列表，这里收敛为公开 Pydantic 响应模型，
+        # 隔离内部数据结构与外部 API 契约，避免前端直接依赖底层字段名。
         data = [
             KLineData(
                 date=item.get("date"),
@@ -393,7 +435,8 @@ def get_stock_history(
         )
 
     except ValueError as e:
-        # 服务层用 ValueError 表达不支持的周期，映射为请求参数错误。
+        # 服务层用 ValueError 表达不支持的周期（如 "hourly"），映射为 422 请求参数错误。
+        # 不记 error 日志，因为这是客户端输入问题，非服务端故障。
         raise HTTPException(
             status_code=422,
             detail={
@@ -401,7 +444,12 @@ def get_stock_history(
                 "message": str(e)
             }
         )
+    except HTTPException:
+        # 直接透传 HTTPException，避免被外层 except Exception 捕获后二次包装。
+        raise
     except Exception as e:
+        # 兜底异常：记录原始异常后转换为通用 500，避免堆栈信息泄露。
+        # 生产环境不应把内部异常详情返回给客户端。
         logger.error(f"获取历史行情失败: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,

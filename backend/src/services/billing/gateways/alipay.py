@@ -314,7 +314,7 @@ class AlipayGateway(PaymentGateway):
             notify_url: 异步回调地址；留空时使用初始化时的 ``notify_url``。
 
         Returns:
-            ``qr_code`` 字符串，例如 ``https://qr.alipay.com/bax...``。
+            ``qr_code`` 字符串，例如 ``https://qr.alipay.com/bax...`` 。
 
         Raises:
             :class:`GatewayError`: 私钥未配置 / API 返回错误 / 缺少 qr_code。

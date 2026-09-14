@@ -48,6 +48,11 @@ def record_consent(
 ) -> AppUserConsent:
     """记录用户同意协议, 并同步 ``AppUser.terms_version``。
 
+    业务逻辑：
+    - 创建一条 ``AppUserConsent`` 记录，记录用户同意协议的版本、时间、IP 等信息。
+    - 同时更新 ``AppUser.terms_version`` 字段，确保用户最新的协议版本始终一致。
+    - 调用方负责提交事务（db.commit()），本函数仅执行 flush。
+
     Args:
         db: SQLAlchemy Session, 由调用方负责事务提交。
         user: 当前用户。
@@ -80,7 +85,21 @@ def record_consent(
 
 
 def needs_reaccept(user: AppUser, current_version: str = CURRENT_TERMS_VERSION) -> bool:
-    """判断用户是否需要重新确认协议 (协议升版后)。"""
+    """判断用户是否需要重新确认协议 (协议升版后)。
+
+    判断逻辑：
+    - 用户未登录（user is None）→ 不需要重新确认
+    - 用户未同意过任何协议（terms_version 为空）→ 需要重新确认
+    - 用户同意的协议版本与当前版本不一致 → 需要重新确认
+    - 否则 → 不需要重新确认
+
+    Args:
+        user: 当前用户对象。
+        current_version: 当前生效的协议版本号，默认使用 ``CURRENT_TERMS_VERSION``。
+
+    Returns:
+        若用户需要重新确认协议则返回 True，否则返回 False。
+    """
     if user is None:
         return False
     if not user.terms_version:

@@ -24,7 +24,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class EmailMessageDTO:
-    """邮件发送请求对象，避免各调用方直接操作 EmailMessage。"""
+    """邮件发送请求对象，避免各调用方直接操作 EmailMessage。
+
+    属性:
+        to: 收件人邮箱地址
+        subject: 邮件主题
+        body_text: 纯文本邮件正文
+        body_html: HTML 格式邮件正文（可选）
+    """
 
     to: str
     subject: str
@@ -65,7 +72,17 @@ class SmtpEmailBackend:
         use_tls: bool = True,
         use_ssl: bool = False,
     ) -> None:
-        """保存 SMTP 连接参数，实际连接在每次 send 时创建。"""
+        """保存 SMTP 连接参数，实际连接在每次 send 时创建。
+
+        Args:
+            host: SMTP 服务器地址
+            port: SMTP 服务器端口
+            username: SMTP 认证用户名
+            password: SMTP 认证密码
+            sender: 发件人邮箱地址
+            use_tls: 是否使用 STARTTLS（默认 True）
+            use_ssl: 是否使用 SSL 连接（默认 False，若 True 则使用 SMTP_SSL）
+        """
         self._host = host
         self._port = port
         self._username = username
@@ -75,7 +92,13 @@ class SmtpEmailBackend:
         self._use_ssl = use_ssl
 
     def send(self, message: EmailMessageDTO) -> None:
-        """发送一封文本/HTML 邮件，认证信息为空时跳过 login。"""
+        """发送一封文本/HTML 邮件，认证信息为空时跳过 login。
+
+        连接策略：
+        - 若 use_ssl=True，使用 SMTP_SSL 直接建立加密连接
+        - 若 use_tls=True，使用 SMTP + STARTTLS 升级加密
+        - 若两者均为 False，使用明文 SMTP（不推荐生产环境使用）
+        """
         msg = EmailMessage()
         msg["Subject"] = message.subject
         msg["From"] = self._sender
@@ -106,6 +129,7 @@ def _coerce_int(value: str | None, default: int) -> int:
         return default
 
 
+# 常见邮箱服务商的 SMTP 配置映射表，用于自动推断
 _SMTP_CONFIGS: dict[str, dict] = {
     "qq.com":      {"host": "smtp.qq.com",             "port": 465, "use_tls": False, "use_ssl": True},
     "foxmail.com": {"host": "smtp.qq.com",             "port": 465, "use_tls": False, "use_ssl": True},
@@ -137,6 +161,15 @@ def get_email_backend() -> EmailBackend:
     1. ``USER_EMAIL_BACKEND=smtp`` 且 ``SMTP_HOST`` / ``EMAIL_SENDER`` 完整 → 使用显式配置
     2. ``EMAIL_SENDER`` + ``EMAIL_PASSWORD`` 已配置 → 自动从域名推断 SMTP Host（与通知系统一致）
     3. 其余情况 → 退化为日志后端（开发环境无需任何配置）
+
+    环境变量说明：
+    - USER_EMAIL_BACKEND: 邮件后端类型（smtp / logging）
+    - EMAIL_SENDER / SMTP_USER: 发件人邮箱
+    - EMAIL_PASSWORD / SMTP_PASSWORD: 发件人邮箱密码或授权码
+    - SMTP_HOST / EMAIL_SMTP_HOST: SMTP 服务器地址
+    - SMTP_PORT / EMAIL_SMTP_PORT: SMTP 服务器端口
+    - SMTP_USE_TLS: 是否使用 STARTTLS（默认 true）
+    - SMTP_USERNAME: SMTP 认证用户名（默认使用 EMAIL_SENDER）
     """
     sender = (os.getenv("EMAIL_SENDER") or os.getenv("SMTP_USER") or "").strip()
     password = (os.getenv("EMAIL_PASSWORD") or os.getenv("SMTP_PASSWORD") or "").strip()

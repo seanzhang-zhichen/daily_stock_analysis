@@ -2,6 +2,8 @@ export type UiLanguage = 'zh';
 export type UiTextKey = keyof typeof zh;
 export type UiTextParams = Record<string, string | number>;
 const zh = {
+  'language.toggle': '切换界面语言', 'language.uiLanguage': '界面语言', 'language.current': '中文',
+  'language.short.en': 'EN', 'language.short.zh': '中',
   'desktopUpdate.entry': '桌面端更新', 'desktopUpdate.idle': '当前版本 {version}。点击检查更新或查看状态。',
   'desktopUpdate.currentVersion': '当前版本 {version}', 'desktopUpdate.versionRange': '当前 {current} · 最新 {latest}',
   'desktopUpdate.check': '检查更新', 'desktopUpdate.checking': '检查中...', 'desktopUpdate.recheck': '重新检查',

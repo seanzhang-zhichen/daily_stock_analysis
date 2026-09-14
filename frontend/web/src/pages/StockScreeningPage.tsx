@@ -35,6 +35,7 @@ import {
   type ScreeningHotspotsResponse,
   type ScreeningScreenResponse,
   type ScreeningScreenTaskStatus,
+  type ScreeningRunSummary,
   type ScreeningStrategy,
 } from '../api/screening';
 import { formatParsedApiError, getParsedApiError, toApiErrorMessage, type ParsedApiError } from '../api/error';
@@ -67,6 +68,12 @@ type PersistedScreenTask = {
   market: string;
   strategy: string;
   maxResults: number;
+};
+
+const formatRunCreatedAt = (value?: string | null) => {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
 const readPersistedScreenTask = (): PersistedScreenTask | null => {
@@ -824,6 +831,7 @@ const StockScreeningPage: React.FC = () => {
   const selectedHotspotTopicRef = useRef<string | null>(null);
   const hotspotDetailRequestIdRef = useRef(0);
   const hotspotDetailsByTopicRef = useRef<Record<string, ScreeningHotspotDetail>>({});
+  const historyRunRequestIdRef = useRef(0);
   const [hotspotDetail, setHotspotDetail] = useState<ScreeningHotspotDetail | null>(null);
   const [loadingHotspotDetail, setLoadingHotspotDetail] = useState(false);
   const [searchingHotspotNews, setSearchingHotspotNews] = useState(false);
@@ -833,6 +841,9 @@ const StockScreeningPage: React.FC = () => {
   const [screenMeta, setScreenMeta] = useState<ScreeningScreenResponse | null>(null);
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(restoredTask?.taskId));
+  const [historyRuns, setHistoryRuns] = useState<ScreeningRunSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const [loadingStrategies, setLoadingStrategies] = useState(false);
   const [error, setError] = useState('');
   const [strategyLoadError, setStrategyLoadError] = useState('');
@@ -867,6 +878,40 @@ const StockScreeningPage: React.FC = () => {
     setCandidates(nextCandidates);
     setExpandedCode(nextCandidates[0]?.code ?? null);
   }, []);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const result = await screeningApi.getHistory({ limit: 10 });
+      setHistoryRuns(result.runs || []);
+    } catch (err) {
+      setHistoryError(toApiErrorMessage(err, '历史记录加载失败'));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const handleHistoryRunSelect = useCallback(async (runId: string) => {
+    const requestId = ++historyRunRequestIdRef.current;
+    setLoading(true);
+    setHistoryError('');
+    try {
+      const detail = await screeningApi.getRun(runId);
+      if (historyRunRequestIdRef.current !== requestId) return;
+      applyScreenResult(detail.result);
+      setStrategy(detail.strategy);
+      setMarket(detail.market);
+      setActiveTaskId(null);
+      clearPersistedScreenTask();
+      setTaskProgress(100);
+      setTaskMessage('已恢复历史选股结果');
+    } catch (err) {
+      if (historyRunRequestIdRef.current === requestId) setHistoryError(toApiErrorMessage(err, '历史结果加载失败'));
+    } finally {
+      if (historyRunRequestIdRef.current === requestId) setLoading(false);
+    }
+  }, [applyScreenResult]);
 
   const clearScreeningResults = () => {
     setCandidates([]);
@@ -1087,6 +1132,7 @@ const StockScreeningPage: React.FC = () => {
         if (status.available) {
           void loadStrategies();
           void loadHotspots(false);
+          void loadHistory();
         }
       })
       .catch(() => {
@@ -1097,7 +1143,7 @@ const StockScreeningPage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [loadHotspots, loadStrategies]);
+  }, [loadHistory, loadHotspots, loadStrategies]);
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -1847,6 +1893,21 @@ const StockScreeningPage: React.FC = () => {
         )}
         </section>
       ) : null}
+      <section className="rounded-lg border border-border/80 bg-card p-4 shadow-soft-card">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Clock3 className="h-4 w-4 text-cyan" />历史记录</div>
+          <button type="button" className="text-xs font-medium text-cyan hover:text-foreground" onClick={() => void loadHistory()} disabled={historyLoading}>{historyLoading ? '加载中...' : '刷新'}</button>
+        </div>
+        {historyError ? <p className="mb-2 text-xs text-danger">{historyError}</p> : null}
+        {historyRuns.length === 0 ? <p className="py-3 text-center text-xs text-secondary-text">{historyLoading ? '正在加载历史记录...' : '暂无历史选股记录'}</p> : (
+          <div className="divide-y divide-border/70">
+            {historyRuns.map((run) => <button key={run.runId} type="button" className="flex w-full items-center justify-between gap-3 py-2.5 text-left hover:bg-hover/50" onClick={() => void handleHistoryRunSelect(run.runId)}>
+              <span className="min-w-0"><span className="block truncate text-sm font-semibold text-foreground">{strategies.find((item) => item.id === run.strategy)?.name || run.strategy}<span className="ml-2 text-xs font-normal text-secondary-text">{run.market === 'cn' ? 'A 股' : run.market}</span></span><span className="text-xs text-secondary-text">返回 {run.candidateCount ?? 0} 只{run.llmRanked ? ' · 智能重排' : ''}</span></span>
+              <span className="shrink-0 text-xs text-secondary-text">{formatRunCreatedAt(run.createdAt)}</span>
+            </button>)}
+          </div>
+        )}
+      </section>
     </AppPage>
   );
 };

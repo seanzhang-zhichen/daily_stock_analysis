@@ -28,7 +28,7 @@ class PushplusSender:
     仅依赖 ``Config`` 中的 ``pushplus_token`` / ``pushplus_topic`` /
     ``pushplus_max_bytes`` 三个字段；缺失 token 时所有发送动作都将直接跳过。
     """
-    
+
     def __init__(self, config: Config):
         """
         初始化 PushPlus 配置。
@@ -43,7 +43,7 @@ class PushplusSender:
         self._pushplus_topic = getattr(config, 'pushplus_topic', None)
         # 单次推送允许的最大字节数，超出会分批发送
         self._pushplus_max_bytes = getattr(config, 'pushplus_max_bytes', 20000)
-        
+
     def send_to_pushplus(
         self,
         content: str,

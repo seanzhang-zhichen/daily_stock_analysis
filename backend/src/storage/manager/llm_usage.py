@@ -12,7 +12,11 @@ from src.storage.models.conversation import LLMUsage
 
 
 class LLMUsageMixin:
-    """LLM usage 写入与汇总查询 Mixin。"""
+    """LLM usage 写入与汇总查询 Mixin：封装 LLM 调用记录的持久化与统计分析。
+
+    通过多重继承方式混入 ``DatabaseManager``，提供单条记录写入、
+    时间窗汇总统计以及明细记录查询等功能。
+    """
 
     def record_llm_usage(
         self,

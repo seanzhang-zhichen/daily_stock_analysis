@@ -227,8 +227,8 @@ def _assess_daily_data_risk(pick: Pick, profile: dict[str, float]) -> tuple[floa
     """把日线历史数据的质量元信息转换为风险扣分。
 
     根据 daily_quality_score 与 daily_quality_flags 判定数据可信度：
-    取数失败、缓存过期、数据源回退等“软”问题分别扣分，而 OHLC 非法、
-    价格非正、成交量异常等“硬”问题意味着 K 线本身不可信，另加较重扣分。
+    取数失败、缓存过期、数据源回退等"软"问题分别扣分，而 OHLC 非法、
+    价格非正、成交量异常等"硬"问题意味着 K 线本身不可信，另加较重扣分。
     """
     points = 0.0
     flags: list[str] = []

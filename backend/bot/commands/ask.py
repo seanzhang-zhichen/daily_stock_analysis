@@ -61,7 +61,7 @@ class AskCommand(BotCommand):
 
         # 匹配单只股票代码；忽略大小写、容忍多余逗号
         code_like = re.compile(
-            r"^,?(\d{6}|hk\d{5}|[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?),?$",
+            r"^,(\d{6}|hk\d{5}|[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?),?$",
             re.IGNORECASE,
         )
         raw_codes_parts = [args[0]]
@@ -200,7 +200,7 @@ class AskCommand(BotCommand):
         return default_skill_id
 
     def _resolve_skill_name(self, skill_id: Optional[str]) -> str:
-        """将技能 id 解析为人类可读的展示名；缺省退回 ``"default"``。"""
+        """将技能 id 解析为人类可读的展示名；缺省退回 ``"default"`` 。"""
         if not skill_id:
             return "default"
         for skill in self._load_skills():
@@ -305,7 +305,7 @@ class AskCommand(BotCommand):
         user_id = message.user_id
 
         def _run_one(stock_code: str) -> Tuple[str, Optional[Dict[str, Any]], Optional[str]]:
-            """在独立会话中分析一只股票，返回 ``(code, payload, error)``。"""
+            """在独立会话中分析一只股票，返回 ``(code, payload, error)`` 。"""
             try:
                 from src.agent.conversation import conversation_manager
                 from src.agent.factory import build_agent_executor
@@ -458,7 +458,7 @@ class AskCommand(BotCommand):
 
     @staticmethod
     def _extract_signal(dashboard: Optional[Dict[str, Any]]) -> str:
-        """从 dashboard 中抽出标准化的决策信号（如 ``buy``/``sell``）。"""
+        """从 dashboard 中抽出标准化的决策信号（如 ``buy``/``sell`` ）。"""
         if isinstance(dashboard, dict):
             signal = dashboard.get("decision_type")
             if isinstance(signal, str) and signal.strip():
@@ -470,7 +470,7 @@ class AskCommand(BotCommand):
         """从 dashboard 中抽取 0..1 区间的置信度。
 
         优先使用数值型 ``sentiment_score``（0-100，按比例归一），
-        缺失时再退回到中文等级映射（``高/中/低``）。
+        缺失时再退回到中文等级映射（``高/中/低`` ）。
         """
         if not isinstance(dashboard, dict):
             return None
@@ -509,7 +509,7 @@ class AskCommand(BotCommand):
         # 文本兜底：跳过空行、过短行与疑似 JSON 片段
         for line in raw_content.splitlines():
             stripped = line.strip()
-            if stripped and len(stripped) > 4 and not stripped.startswith(("{", "}", "\"")):
+            if stripped and len(stripped) > 4 and not stripped.startswith(("{", "}", '"')):
                 return stripped[:120]
         return f"{stock_code} 分析完成"
 

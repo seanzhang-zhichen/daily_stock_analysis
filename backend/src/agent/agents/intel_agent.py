@@ -48,6 +48,9 @@ class IntelAgent(BaseAgent):
     def system_prompt(self, ctx: AgentContext) -> str:
         """构造情报收集 system prompt 与 JSON 输出约定。
 
+        Args:
+            ctx: 当前调用上下文（实际未使用，保留以对齐父类签名）。
+
         Returns:
             str: 多行字符串，定义工作流、风险优先级、资金流解读、JSON schema。
         """

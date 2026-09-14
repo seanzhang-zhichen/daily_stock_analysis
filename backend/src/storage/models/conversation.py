@@ -17,7 +17,15 @@ from src.storage.base import Base
 
 
 class ConversationMessage(Base):
-    """Agent 对话历史记录表。"""
+    """Agent 对话历史记录表。
+
+    记录用户与 AI Agent 之间的每一次交互，包括用户提问、AI 回复和系统消息。
+    按 ``session_id`` 分组，支持多轮对话上下文管理。
+    关键字段说明：
+    - ``user_id``: To C 多用户隔离；Web 用户由 endpoint 注入 current_user.id，Bot / CLI 路径保持 NULL
+    - ``role``: user / assistant / system，标识消息发送方
+    - ``content``: 消息正文，Text 类型避免长度截断
+    """
     __tablename__ = 'conversation_messages'
 
     # 自增主键
@@ -35,7 +43,13 @@ class ConversationMessage(Base):
 
 
 class ConversationSessionState(Base):
-    """会话级 Agent 技能选择（持久化用户偏好）。"""
+    """会话级 Agent 技能选择（持久化用户偏好）。
+
+    记录用户在特定会话中选择的 Agent 技能组合，用于：
+    - 持久化用户偏好，避免每次对话重新选择
+    - 支持多会话并行，每个会话独立维护技能状态
+    - 以 ``session_id`` 作为主键，一个会话只对应一份技能选择
+    """
     __tablename__ = "conversation_session_states"
 
     # 以 session_id 作为主键：一个会话只对应一份技能选择
@@ -47,7 +61,15 @@ class ConversationSessionState(Base):
 
 
 class ConversationSummary(Base):
-    """会话滚动摘要，用于压缩超长 Agent 对话上下文。"""
+    """会话滚动摘要，用于压缩超长 Agent 对话上下文。
+
+    当对话消息过多导致超出 LLM 上下文窗口时，通过摘要机制压缩历史消息，
+    保留关键信息的同时减少 token 消耗。
+    关键字段说明：
+    - ``covered_message_id``: 当前摘要已覆盖到的最大消息 ID，便于增量更新
+    - ``source_message_count``: 摘要所对应的原始消息条数，便于审计
+    - ``estimated_tokens``: 摘要的估算 token 数，方便上层按预算选择上下文
+    """
     __tablename__ = "conversation_summaries"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -66,7 +88,20 @@ class ConversationSummary(Base):
 
 
 class LLMUsage(Base):
-    """每次 ``litellm.completion()`` 调用一条记录，作为 token 用量审计日志。"""
+    """每次 ``litellm.completion()`` 调用一条记录，作为 token 用量审计日志。
+
+    用于：
+    - 成本核算：统计各模型、各业务线的 token 消耗
+    - 用量监控：发现异常调用模式（如短时间内大量请求）
+    - 配额管理：按用户或按会话限制调用次数
+    - 性能分析：分析 prompt/completion 比例，优化提示词设计
+
+    ``call_type`` 常见取值::
+
+        analysis:      股票分析调用
+        agent:         Agent 对话调用
+        market_review: 市场回顾调用
+    """
     __tablename__ = 'llm_usage'
 
     id = Column(Integer, primary_key=True, autoincrement=True)

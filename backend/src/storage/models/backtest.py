@@ -21,7 +21,13 @@ from src.storage.base import Base
 
 
 class BacktestResult(Base):
-    """单条分析记录的回测结果。"""
+    """单条分析记录的回测结果。
+
+    记录某次分析（``analysis_history_id``）在特定评估窗口和引擎版本下的
+    回测表现，包括价格走势、方向判断正确性、模拟交易收益等。
+    通过 ``(analysis_history_id, eval_window_days, engine_version)`` 唯一约束
+    保证同一分析在同一窗口和版本下只有一条回测记录。
+    """
 
     __tablename__ = 'backtest_results'
 
@@ -34,7 +40,7 @@ class BacktestResult(Base):
         index=True,
     )
 
-    # 冗余字段，便于按股票筛选
+    # 冗余字段，便于按股票筛选（避免 JOIN analysis_history）
     code = Column(String(10), nullable=False, index=True)
     analysis_date = Column(Date, index=True)
 
@@ -78,18 +84,31 @@ class BacktestResult(Base):
     simulated_return_pct = Column(Float)
 
     __table_args__ = (
+        # 唯一约束：同一分析在同一窗口和版本下只有一条回测记录
         UniqueConstraint(
             'analysis_history_id',
             'eval_window_days',
             'engine_version',
             name='uix_backtest_analysis_window_version',
         ),
+        # 复合索引：按股票代码和分析日期查询回测结果
         Index('ix_backtest_code_date', 'code', 'analysis_date'),
     )
 
 
 class BacktestSummary(Base):
-    """回测汇总指标（按股票或全局）。"""
+    """回测汇总指标（按股票或全局）。
+
+    对多个 ``BacktestResult`` 记录进行聚合统计，生成整体或单只股票的
+    回测汇总数据，包括胜率、准确率、平均收益等核心指标。
+    通过 ``(scope, code, eval_window_days, engine_version)`` 唯一约束
+    保证同一维度在同一窗口和版本下只有一条汇总记录。
+
+    ``scope`` 取值::
+
+        overall: 全局汇总（code 为 NULL）
+        stock:   单只股票汇总
+    """
 
     __tablename__ = 'backtest_summaries'
 
@@ -133,6 +152,7 @@ class BacktestSummary(Base):
     diagnostics_json = Column(Text)
 
     __table_args__ = (
+        # 唯一约束：同一维度在同一窗口和版本下只有一条汇总记录
         UniqueConstraint(
             'scope',
             'code',

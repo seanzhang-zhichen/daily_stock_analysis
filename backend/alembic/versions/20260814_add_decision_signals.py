@@ -1,4 +1,4 @@
-"""add user-owned AI decision signals
+"""添加用户决策信号表
 
 Revision ID: 20260814_decision_signals
 Revises: 20260814_screening_runs
@@ -18,6 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """升级：创建 decision_signals 表并建立相关索引。"""
+    # 创建用户决策信号表
     op.create_table(
         "decision_signals",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -59,6 +61,7 @@ def upgrade() -> None:
             name="uix_decision_signal_owner_source",
         ),
     )
+    # 创建用户决策信号表相关索引
     for name, columns in (
         ("ix_decision_signals_user_id", ["user_id"]),
         ("ix_decision_signals_stock_code", ["stock_code"]),
@@ -84,4 +87,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除 decision_signals 表。"""
+    # 删除用户决策信号表（索引会随表一起删除）
     op.drop_table("decision_signals")

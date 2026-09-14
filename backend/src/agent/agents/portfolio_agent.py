@@ -55,7 +55,14 @@ class PortfolioAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def system_prompt(self, ctx: AgentContext) -> str:
-        """构造组合级配置与风险提示词（system prompt）。"""
+        """构造组合级配置与风险提示词（system prompt）。
+
+        Args:
+            ctx: 当前调用上下文（实际未使用，保留以对齐父类签名）。
+
+        Returns:
+            str: 包含组合分析任务描述与 JSON 输出格式的完整提示词。
+        """
         return (
             "You are a professional **portfolio analyst** specializing in "
             "multi-asset allocation for A-share, HK, and US equity portfolios.\n\n"
@@ -89,7 +96,14 @@ class PortfolioAgent(BaseAgent):
         )
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        """汇总逐股意见与风险标记，构建发送给 LLM 的 user message。"""
+        """汇总逐股意见与风险标记，构建发送给 LLM 的 user message。
+
+        Args:
+            ctx: 当前调用上下文，包含逐股意见与风险标记。
+
+        Returns:
+            str: 多行 Markdown 字符串，汇总组合信息。
+        """
         # 从上下文收集逐股意见与股票列表
         stock_opinions = ctx.data.get("stock_opinions", {})
         stock_list = ctx.data.get("stock_list", [])

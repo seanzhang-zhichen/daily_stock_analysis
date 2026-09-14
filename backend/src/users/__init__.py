@@ -9,6 +9,13 @@
 - :mod:`src.users.service` 编排注册、登录、邮箱验证、密码重置等用例。
 - :mod:`src.users.email` 抽象邮件发送（默认开发模式只写日志）。
 - :mod:`src.users.errors` 统一业务错误码。
+- :mod:`src.users.quota` 用量配额管理与检查。
+- :mod:`src.users.quota_guard` 配额守卫装饰器。
+- :mod:`src.users.credits` 积分系统管理。
+- :mod:`src.users.plans` 套餐权益解析与授予。
+- :mod:`src.users.model_router` 模型路由选择。
+- :mod:`src.users.watchlist` 自选股管理。
+- :mod:`src.users.notification_prefs` 通知偏好管理。
 
 该模块是业务 API 的默认认证与用户上下文来源。
 """

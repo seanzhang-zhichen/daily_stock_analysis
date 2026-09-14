@@ -25,9 +25,11 @@ from src.storage import AppCreditLedger, AppOrder, AppUser, AppUserReferral
 from src.users.platform_settings import get_platform_setting_value
 
 
+# 积分业务类型常量
 KIND_ANALYSIS = "analysis"
 KIND_AGENT = "agent"
 
+# 积分流水原因常量，用于区分不同业务场景
 REASON_REGISTER_BONUS = "register_bonus"
 REASON_REFERRAL_SIGNUP = "referral_signup"
 REASON_SUBSCRIPTION_BONUS = "subscription_bonus"
@@ -37,6 +39,7 @@ REASON_CONSUME = "consume"
 REASON_REFUND = "refund"
 REASON_ADMIN_ADJUST = "admin_adjust"
 
+# 邀请码字符集：大写字母 + 数字，保证可读性和唯一性
 _CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
@@ -44,28 +47,28 @@ _CODE_ALPHABET = string.ascii_uppercase + string.digits
 class CreditSettings:
     """积分系统运行时配置快照，来自平台设置表。"""
 
-    enabled: bool
-    registration_bonus: int
-    referral_signup_bonus: int
-    monthly_subscription_bonus: int
-    yearly_subscription_bonus: int
-    referral_paid_bonus: int
-    analysis_cost: int
-    agent_cost: int
+    enabled: bool  # 积分系统总开关
+    registration_bonus: int  # 注册奖励积分
+    referral_signup_bonus: int  # 邀请注册奖励积分
+    monthly_subscription_bonus: int  # 月度订阅奖励积分
+    yearly_subscription_bonus: int  # 年度订阅奖励积分
+    referral_paid_bonus: int  # 邀请首单奖励积分
+    analysis_cost: int  # 单次分析消耗积分
+    agent_cost: int  # 单次 Agent 调用消耗积分
 
 
 @dataclass(frozen=True)
 class CreditOutcome:
     """一次积分扣费尝试的结果，供 endpoint 决定是否继续业务。"""
 
-    user: AppUser
-    kind: str
-    cost: int
-    balance: int
-    consumed: bool
-    enabled: bool
-    exceeded: bool
-    ledger_id: Optional[int] = None
+    user: AppUser  # 目标用户
+    kind: str  # 业务类型（analysis / agent）
+    cost: int  # 本次消耗积分
+    balance: int  # 扣费后余额
+    consumed: bool  # 是否成功扣费
+    enabled: bool  # 积分系统是否启用
+    exceeded: bool  # 余额是否不足
+    ledger_id: Optional[int] = None  # 关联的流水记录 ID
 
     @property
     def remaining(self) -> int:
@@ -74,7 +77,10 @@ class CreditOutcome:
 
 
 def load_credit_settings(db: Optional[Session]) -> CreditSettings:
-    """读取积分开关、奖励和消费成本配置。"""
+    """读取积分开关、奖励和消费成本配置。
+
+    从平台设置表中读取各项配置，若某项未配置则使用默认值 0。
+    """
     return CreditSettings(
         enabled=bool(get_platform_setting_value(db, "CREDIT_SYSTEM_ENABLED")),
         registration_bonus=int(get_platform_setting_value(db, "CREDIT_REGISTRATION_BONUS")),
@@ -102,7 +108,11 @@ def normalize_referral_code(value: Optional[str]) -> str:
 
 
 def ensure_referral_code(db: Session, user: AppUser) -> str:
-    """确保用户拥有唯一推荐码；已存在时保持不变。"""
+    """确保用户拥有唯一推荐码；已存在时保持不变。
+
+    生成规则：以 "U" 开头，后跟 9 位随机字符（大写字母 + 数字）。
+    若连续 12 次生成均冲突（概率极低），则抛出 RuntimeError。
+    """
     code = normalize_referral_code(getattr(user, "referral_code", None))
     if code:
         return code
@@ -165,7 +175,11 @@ def add_credits(
     idempotency_key: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
-    """增加用户积分并写正向流水；amount<=0 时不产生流水。"""
+    """增加用户积分并写正向流水；amount<=0 时不产生流水。
+
+    幂等性：若提供了 idempotency_key 且已存在对应流水，
+    则直接返回既有记录，避免重复发放。
+    """
     amount = int(amount or 0)
     if amount <= 0:
         return None
@@ -205,7 +219,11 @@ def consume_credits(
     idempotency_key: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Optional[AppCreditLedger]:
-    """扣减积分并写负向流水；余额不足时抛 ValueError。"""
+    """扣减积分并写负向流水；余额不足时抛 ValueError。
+
+    幂等性：若提供了 idempotency_key 且已存在对应流水，
+    则直接返回既有记录，避免重复扣费。
+    """
     amount = int(amount or 0)
     if amount <= 0:
         return None
@@ -268,7 +286,16 @@ def register_referral(
     invite_code: Optional[str],
     settings: Optional[CreditSettings] = None,
 ) -> Optional[AppUserReferral]:
-    """建立邀请关系，并在配置开启时给邀请人发注册奖励。"""
+    """建立邀请关系，并在配置开启时给邀请人发注册奖励。
+
+    邀请关系建立规则：
+    - 邀请人和被邀请人均不能为空
+    - 用户不能邀请自己
+    - 每个被邀请人只能有一条邀请关系（幂等）
+
+    奖励发放：若积分系统启用且 referral_signup_bonus > 0，
+    则给邀请人发放注册奖励，并记录奖励发放时间。
+    """
     if inviter is None or invitee is None:
         return None
     if int(inviter.id) == int(invitee.id):
@@ -328,7 +355,14 @@ def grant_subscription_credit_rewards(
     user: AppUser,
     settings: Optional[CreditSettings] = None,
 ) -> None:
-    """订阅支付完成后发放本人订阅奖励和邀请首单奖励。"""
+    """订阅支付完成后发放本人订阅奖励和邀请首单奖励。
+
+    奖励规则：
+    - 本人订阅奖励：根据订阅时长（grant_days >= 365 为年付，否则为月付）
+      发放对应的 monthly_subscription_bonus 或 yearly_subscription_bonus。
+    - 邀请首单奖励：若用户有邀请关系且未发放过首单奖励，
+      则给邀请人发放 referral_paid_bonus。
+    """
     settings = settings or load_credit_settings(db)
     if not settings.enabled:
         return
@@ -407,7 +441,13 @@ def enforce_credits(
     related_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> CreditOutcome:
-    """检查并扣减一次积分，返回可序列化的结果对象。"""
+    """检查并扣减一次积分，返回可序列化的结果对象。
+
+    执行逻辑：
+    - 若积分系统未启用或成本 <= 0，则返回 consumed=False, exceeded=False
+    - 若余额不足，则返回 consumed=False, exceeded=True
+    - 否则扣减积分并返回 consumed=True, exceeded=False
+    """
     settings = load_credit_settings(db)
     cost = _credit_cost_for(settings, kind)
     balance = int(getattr(user, "credit_balance", 0) or 0)

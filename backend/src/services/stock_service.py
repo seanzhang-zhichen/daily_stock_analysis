@@ -38,16 +38,20 @@ class StockService:
         """
         try:
             # 调用数据获取器获取实时行情
+            # DataFetcherManager 是数据提供层的统一入口，负责聚合多个数据源（Tushare、Sina、AKShare 等）
+            # 并根据配置的策略自动选择最优数据源返回标准化行情
             from data_provider.base import DataFetcherManager
-            
+
             manager = DataFetcherManager()
             quote = manager.get_realtime_quote(stock_code)
-            
+
             if quote is None:
+                # 数据源返回 None 通常意味着：1) 股票代码不存在；2) 数据源全部超时或不可用
                 logger.warning(f"获取 {stock_code} 实时行情失败")
                 return None
-            
+
             # UnifiedRealtimeQuote 是 dataclass，使用 getattr 安全访问字段
+            # 不同数据源的字段命名可能存在差异，这里通过统一映射表屏蔽底层差异
             # 字段映射: UnifiedRealtimeQuote -> API 响应
             # - code -> stock_code
             # - name -> stock_name
@@ -76,9 +80,12 @@ class StockService:
             }
             
         except ImportError:
+            # DataFetcherManager 可能因依赖缺失或循环导入而失败
+            # 降级到占位数据，保证 API 不直接崩溃，前端可展示友好提示
             logger.warning("DataFetcherManager 未找到，使用占位数据")
             return self._get_placeholder_quote(stock_code)
         except Exception as e:
+            # 兜底异常：记录完整堆栈便于排查，返回 None 让上层决定如何展示
             logger.error(f"获取实时行情失败: {e}", exc_info=True)
             return None
     
@@ -111,27 +118,36 @@ class StockService:
         
         try:
             # 调用数据获取器获取历史数据
+            # DataFetcherManager.get_daily_data 内部会按优先级尝试多个数据源
+            # 返回 (DataFrame, source_name) 元组，source_name 用于调试和监控
             from data_provider.base import DataFetcherManager
-            
+
             manager = DataFetcherManager()
             df, source = manager.get_daily_data(stock_code, days=days)
-            
+
             if df is None or df.empty:
+                # 日线数据为空的可能原因：1) 新股上市不足；2) 数据源全部失败；3) 代码不存在
                 logger.warning(f"获取 {stock_code} 历史数据失败")
                 return {"stock_code": stock_code, "period": period, "data": []}
-            
-            # 获取股票名称
+
+            # 从数据源获取股票中文名称，用于前端展示
             stock_name = manager.get_stock_name(stock_code)
             
-            # 转换为响应格式
+            # 转换为前端友好的响应格式
+            # 遍历 DataFrame 行，把日期格式化为 ISO 字符串，数值字段做安全转换
+            # 注意：iterrows() 会返回 (index, Series)，这里忽略 index
             data = []
             for _, row in df.iterrows():
                 date_val = row.get("date")
                 if hasattr(date_val, "strftime"):
+                    # pandas Timestamp 或 datetime 对象，格式化为 YYYY-MM-DD
                     date_str = date_val.strftime("%Y-%m-%d")
                 else:
+                    # 兜底：直接字符串化
                     date_str = str(date_val)
-                
+
+                # 使用 float() 做安全数值转换，缺失值会被转为 0.0
+                # 成交量和成交额可能为 None，需要额外判断避免把 None 转成 0.0
                 data.append({
                     "date": date_str,
                     "open": float(row.get("open", 0)),
@@ -151,9 +167,13 @@ class StockService:
             }
             
         except ImportError:
+            # 当 data_provider 包不可用时降级处理
+            # 常见于测试环境或依赖未完全安装的场景
             logger.warning("DataFetcherManager 未找到，返回空数据")
             return {"stock_code": stock_code, "period": period, "data": []}
         except Exception as e:
+            # 兜底异常：记录完整堆栈便于排查数据源故障
+            # 返回空数据结构而非抛异常，避免 API 500 错误影响前端体验
             logger.error(f"获取历史数据失败: {e}", exc_info=True)
             return {"stock_code": stock_code, "period": period, "data": []}
     

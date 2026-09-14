@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _TOOL_REGISTRY = None
 _SKILL_MANAGER_PROTOTYPE = None
-# 作为初始值的哨兵，让 None（即未配置自定义目录）在首次调用时被视为“已变化”，
+# 作为初始值的哨兵，让 None（即未配置自定义目录）在首次调用时被视为"已变化"，
 # 从而强制构建一次，而不是被意外跳过。
 _SENTINEL = object()
 # 记录构建原型时使用的 custom_dir，以便在 AGENT_SKILL_DIR 运行时变化

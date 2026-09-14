@@ -87,7 +87,11 @@ from src.storage.models import (
 
 
 def __getattr__(name):
-    """按需导入 DatabaseManager 相关对象，避免导入模型时提前初始化数据库。"""
+    """按需导入 DatabaseManager 相关对象，避免导入模型时提前初始化数据库。
+
+    当外部代码首次访问 ``DatabaseManager``、``get_db`` 或 ``persist_llm_usage`` 时，
+    本函数才会触发实际导入，并将导入的符号缓存到 ``globals()`` 中，后续访问直接命中。
+    """
     if name in {"DatabaseManager", "get_db", "persist_llm_usage"}:
         from src.storage.manager import DatabaseManager, get_db, persist_llm_usage
 
@@ -102,13 +106,13 @@ def __getattr__(name):
 
 
 __all__ = [
-    # base
+    # base: SQLAlchemy 声明式基类，所有 ORM 模型均继承自此基类
     "Base",
-    # manager
+    # manager: 数据库管理器及便捷函数
     "DatabaseManager",
     "get_db",
     "persist_llm_usage",
-    # core models
+    # core models: 核心业务数据模型
     "StockDaily",
     "NewsIntel",
     "IntelligenceSource",
@@ -119,10 +123,10 @@ __all__ = [
     "ScreeningRun",
     "StockIndexEntry",
     "StockIndexMeta",
-    # backtest
+    # backtest: 回测相关模型
     "BacktestResult",
     "BacktestSummary",
-    # portfolio
+    # portfolio: 投资组合相关模型
     "PortfolioAccount",
     "PortfolioTrade",
     "PortfolioCashLedger",
@@ -131,23 +135,23 @@ __all__ = [
     "PortfolioPositionLot",
     "PortfolioDailySnapshot",
     "PortfolioFxRate",
-    # conversation / llm
+    # conversation / llm: 对话历史与 LLM 用量模型
     "ConversationMessage",
     "ConversationSessionState",
     "ConversationSummary",
     "LLMUsage",
-    # decision signals
+    # decision signals: 决策信号与反馈模型
     "DecisionSignalRecord",
     "DecisionSignalOutcomeRecord",
     "DecisionSignalFeedbackRecord",
     "SkillOpinionSampleRecord",
     "SkillOpinionOutcomeRecord",
-    # alert
+    # alert: 告警规则与通知模型
     "AlertRuleRecord",
     "AlertTriggerRecord",
     "AlertNotificationRecord",
     "AlertCooldownRecord",
-    # app (To C)
+    # app (To C): C 端用户体系相关模型
     "AppUser",
     "AppUserSession",
     "AppUserEmailVerification",

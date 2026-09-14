@@ -16,10 +16,12 @@ CODEX_CLI_BACKEND_ID = "codex_cli"
 OPENCODE_CLI_BACKEND_ID = "opencode_cli"
 SUPPORTED_GENERATION_BACKENDS = frozenset({LITELLM_BACKEND_ID, CODEX_CLI_BACKEND_ID, OPENCODE_CLI_BACKEND_ID})
 
+
 def _value(config: Any, name: str, default: Any = None):
     """从 config 中以统一方式取字段，兼容 Mapping 与普通对象。"""
     if isinstance(config, Mapping): return config.get(name, default)
     return getattr(config, name, default)
+
 
 def resolve_generation_backend_id(config: Any) -> str:
     """解析并校验主生成后端 id。
@@ -41,6 +43,7 @@ def resolve_generation_backend_id(config: Any) -> str:
         raise GenerationError(GenerationErrorCode.BACKEND_NOT_CONFIGURED, "configuration", False, False, value,
                               details={"supported_backends": sorted(SUPPORTED_GENERATION_BACKENDS)})
     return value
+
 
 def resolve_generation_fallback_backend_id(config: Any) -> Optional[str]:
     """解析降级用后端 id，仅允许是 litellm 且不能与主后端相同。

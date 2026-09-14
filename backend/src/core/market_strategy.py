@@ -17,8 +17,11 @@ class StrategyDimension:
     因此此处写得太冗长反而会稀释最终的市场复盘指令。
     """
 
+    # 策略维度的名称，如"趋势结构"、"资金情绪"等
     name: str
+    # 该维度的分析目标描述，用于指导 LLM 关注重点
     objective: str
+    # 该维度下的检查点列表，作为 LLM 复盘时的具体锚点
     checkpoints: List[str]
 
 
@@ -30,15 +33,25 @@ class MarketStrategyBlueprint:
     变化时，LLM 路径与非 LLM/模板路径能保持一致。
     """
 
+    # 市场区域代码：cn（A股）、us（美股）、hk（港股）等
     region: str
+    # 策略蓝图的标题，用于 prompt 和报告中标识
     title: str
+    # 策略定位描述，说明该策略的核心关注点和目标
     positioning: str
+    # 策略原则列表，指导 LLM 分析时的基本逻辑和优先级
     principles: List[str]
+    # 分析维度列表，每个维度包含具体的检查点
     dimensions: List[StrategyDimension]
+    # 行动框架列表，定义不同市场状态下的操作建议
     action_framework: List[str]
 
     def to_prompt_block(self) -> str:
-        """把蓝图渲染为 prompt 指令文本。"""
+        """把蓝图渲染为 prompt 指令文本。
+
+        将策略原则、分析维度和行动框架格式化为结构化的 prompt 文本，
+        供 LLM 在生成复盘报告时遵循。
+        """
         principles_text = "\n".join([f"- {item}" for item in self.principles])
         action_text = "\n".join([f"- {item}" for item in self.action_framework])
 
@@ -57,12 +70,18 @@ class MarketStrategyBlueprint:
         )
 
     def to_markdown_block(self) -> str:
-        """把蓝图渲染为模板回退报告用的 markdown 小节。"""
+        """把蓝图渲染为模板回退报告用的 markdown 小节。
+
+        当 LLM 不可用时，将策略维度简化为 markdown 列表，
+        作为模板报告的"策略框架"部分。
+        """
         dims = "\n".join([f"- **{dim.name}**: {dim.objective}" for dim in self.dimensions])
         section_title = "### VI. Strategy Framework" if self.region == "us" else "### 六、策略框架"
         return f"{section_title}\n{dims}\n"
 
 
+# A股（中国）市场复盘策略蓝图
+# 聚焦指数趋势、资金博弈与板块轮动，形成次日交易计划
 CN_BLUEPRINT = MarketStrategyBlueprint(
     region="cn",
     title="A股市场三段式复盘策略",
@@ -96,6 +115,8 @@ CN_BLUEPRINT = MarketStrategyBlueprint(
     ],
 )
 
+# 美股市场复盘策略蓝图
+# 聚焦指数趋势、宏观叙事与板块轮动，定义下一交易时段的风险姿态
 US_BLUEPRINT = MarketStrategyBlueprint(
     region="us",
     title="US Market Regime Strategy",
@@ -141,6 +162,8 @@ US_BLUEPRINT = MarketStrategyBlueprint(
     ],
 )
 
+# 港股市场复盘策略蓝图
+# 聚焦恒生指数趋势、南向资金博弈与板块轮动，形成次日交易计划
 HK_BLUEPRINT = MarketStrategyBlueprint(
     region="hk",
     title="港股市场三段式复盘策略",
@@ -178,7 +201,14 @@ HK_BLUEPRINT = MarketStrategyBlueprint(
 def get_market_strategy_blueprint(region: str) -> MarketStrategyBlueprint:
     """按市场区域返回对应的策略蓝图。
 
+    根据传入的区域代码返回对应的策略蓝图实例。
     未知区域回退到 A 股语义，因为市场复盘的历史默认区域就是 ``cn``。
+
+    Args:
+        region: 市场区域代码，支持 "cn"（A股）、"us"（美股）、"hk"（港股）
+
+    Returns:
+        对应区域的 MarketStrategyBlueprint 策略蓝图实例
     """
     if region == "us":
         return US_BLUEPRINT

@@ -1,4 +1,4 @@
-"""seed default credit packages
+"""初始化默认积分套餐数据
 
 Revision ID: 20260603_seed_credit_packages
 Revises: 20260603_credit_purchases
@@ -18,6 +18,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# 定义积分套餐表的反射结构，用于数据插入
 app_credit_packages = sa.table(
     "app_credit_packages",
     sa.column("code", sa.String),
@@ -32,6 +33,7 @@ app_credit_packages = sa.table(
 )
 
 
+# 默认积分套餐配置列表
 DEFAULT_CREDIT_PACKAGES = [
     {
         "code": "credits_200",
@@ -64,9 +66,11 @@ DEFAULT_CREDIT_PACKAGES = [
 
 
 def upgrade() -> None:
+    """升级：插入默认积分套餐数据，避免重复插入。"""
     bind = op.get_bind()
     now = datetime.utcnow()
     for package in DEFAULT_CREDIT_PACKAGES:
+        # 检查该套餐是否已存在
         exists = bind.execute(
             sa.text("SELECT 1 FROM app_credit_packages WHERE code = :code"),
             {"code": package["code"]},
@@ -86,6 +90,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除默认积分套餐数据。"""
     bind = op.get_bind()
     for package in DEFAULT_CREDIT_PACKAGES:
         bind.execute(

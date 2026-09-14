@@ -10,6 +10,7 @@ A股自选股智能分析系统 - 配置管理模块
 3. 提供类型安全的配置访问接口
 """
 
+# 标准库导入：JSON 解析、日志记录、操作系统交互、正则表达式、路径处理、类型注解、URL 解析
 import json
 import logging
 import os
@@ -17,9 +18,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import unquote, urlparse
+
+# 第三方库导入：从 .env 文件加载环境变量、数据类定义
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
+# 项目内部模块导入：报告语言处理、通知路由、通知降噪、LLM 生成参数
 from src.report_language import (
     is_supported_report_language_value,
     normalize_report_language,
@@ -33,12 +37,17 @@ from src.notification_noise import (
 )
 from src.llm import generation_params as llm_generation_params
 
+# 模块级日志记录器，用于输出配置加载和解析过程中的日志信息
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ConfigIssue:
     """一条带严重级别的结构化配置校验问题。
+
+    该类用于封装配置校验过程中发现的各类问题，支持错误(error)、
+    警告(warning)和信息(info)三种严重级别，便于调用方根据级别
+    决定后续处理策略（如严格模式下遇到 error 则退出程序）。
 
     Attributes:
         severity: 问题级别，取值为 "error"、"warning" 或 "info"。
@@ -56,15 +65,29 @@ class ConfigIssue:
 
 
 # API Key 由本模块显式管理的 provider 集合；其余 provider 交给 litellm 从环境变量直连
+# 这些 provider 的 API Key 会在 Config 类中单独维护，支持多 Key 负载均衡
 _MANAGED_LITELLM_KEY_PROVIDERS = {"gemini", "vertex_ai", "anthropic", "openai", "deepseek"}
 # LLM_CHANNELS 中允许声明的协议（对应 LiteLLM 的 provider 标识）
+# 定义了系统支持的 LLM 提供商协议集合，用于渠道配置时的协议校验
 SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama")
-# 环境变量中判定为“假”的取值（比较前统一小写化）
+# 环境变量中判定为"假"的取值（比较前统一小写化）
+# 用于 parse_env_bool 函数识别用户意图表示"关闭/禁用"的环境变量值
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 
 
 def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
-    """判断 ntfy URL 是否指向了具体 topic endpoint（path 中存在非空片段）。"""
+    """判断 ntfy URL 是否指向了具体 topic endpoint（path 中存在非空片段）。
+
+    ntfy 服务通过 URL path 中的 topic 名称来路由消息，如果 URL 缺少 topic，
+    推送消息将无法送达任何接收端。本函数用于配置校验阶段识别此类错误。
+
+    Args:
+        value: ntfy 服务的完整 URL 字符串。
+
+    Returns:
+        当 URL 包含有效的 scheme、netloc 以及非空的 path topic 时返回 True，
+        否则返回 False。
+    """
     raw_url = (value or "").strip()
     if not raw_url:
         return False
@@ -76,7 +99,18 @@ def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
 
 
 def _has_gotify_base_url(value: Optional[str]) -> bool:
-    """判断 Gotify URL 是否为 server base URL（发送端会自行拼接 /message）。"""
+    """判断 Gotify URL 是否为 server base URL（发送端会自行拼接 /message）。
+
+    Gotify 的推送 API 路径为 /message，如果用户误将完整的发送端点填入，
+    会导致路径重复拼接为 /message/message 而失败。本函数用于识别此问题。
+
+    Args:
+        value: Gotify 服务器的 URL 字符串。
+
+    Returns:
+        当 URL 是合法的 base URL（scheme 为 http/https，有 netloc，
+        无 query/fragment，且 path 末尾不是 /message）时返回 True。
+    """
     raw_url = (value or "").strip().rstrip("/")
     if not raw_url:
         return False
@@ -91,10 +125,13 @@ def _has_gotify_base_url(value: Optional[str]) -> bool:
 
 
 # Agent 单轮任务默认最大步数，防止工具调用陷入死循环
+# 当 Agent 连续执行超过此步数时会被强制终止，避免消耗过多 Token 或陷入无限循环
 AGENT_MAX_STEPS_DEFAULT = 10
 # 基本面聚合阶段的默认总预算（秒），超时即降级返回
+# 用于控制基本面数据获取的总耗时，避免单个股票的基本面分析阻塞整体流程
 FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT = 8.0
 # 新闻策略档位对应的最大回溯窗口（天）
+# 不同策略对应不同的新闻时效性需求：超短线关注1天，短线3天，中线7天，长线30天
 NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
     "ultra_short": 1,
     "short": 3,
@@ -105,14 +142,29 @@ NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
 
 @dataclass(frozen=True)
 class AgentContextCompressionPreset:
-    """Default values for a visible chat-history compression profile."""
+    """Agent 对话历史压缩预设配置。
+
+    当 Agent 的对话历史 token 数超过 trigger_tokens 时，系统会保留
+    protected_turns 轮最近的对话，并将其余历史压缩为 summary_tokens
+    长度的摘要，以控制上下文长度和 API 成本。
+
+    Attributes:
+        trigger_tokens: 触发压缩的 token 阈值，超过此值开始压缩。
+        protected_turns: 保留不压缩的最近对话轮数。
+        summary_tokens: 压缩后摘要的目标 token 数。
+    """
 
     trigger_tokens: int
     protected_turns: int
     summary_tokens: int
 
 
+# Agent 上下文压缩的默认配置档位
 AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE = "balanced"
+# Agent 上下文压缩的三档预设配置：
+# - cost: 成本优先，较早触发压缩，保留较少轮数，摘要较短
+# - balanced: 平衡模式，适中的触发阈值和摘要长度
+# - long_context_raw_first: 长上下文优先，较晚触发压缩，保留更多原始对话
 AGENT_CONTEXT_COMPRESSION_PROFILES: Dict[str, AgentContextCompressionPreset] = {
     "cost": AgentContextCompressionPreset(6000, 2, 900),
     "balanced": AgentContextCompressionPreset(12000, 4, 1500),
@@ -124,6 +176,7 @@ def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
     """把环境变量风格的字符串解析为布尔值。
 
     除 `0/false/no/off`（大小写不敏感）外均视为真；空值与 None 返回 default。
+    该函数用于统一处理各类启用/禁用开关的环境变量，兼容用户常见的各种写法。
 
     Args:
         value: 原始环境变量值。
@@ -149,6 +202,9 @@ def parse_env_int(
     maximum: Optional[int] = None,
 ) -> int:
     """解析整型环境变量，非法值记警告并回退，越界则夹取到边界。
+
+    该函数提供健壮的整型环境变量解析，当用户输入非数字或超出合理范围时，
+    不会抛出异常导致程序崩溃，而是记录警告日志并返回安全的默认值或边界值。
 
     Args:
         value: 原始环境变量值。
@@ -206,6 +262,9 @@ def parse_env_float(
 ) -> float:
     """解析浮点型环境变量，非法值记警告并回退，越界则夹取到边界。
 
+    与 parse_env_int 类似，但处理浮点数。用于解析温度、超时时间、阈值等
+    需要小数精度的配置项。
+
     Args:
         value: 原始环境变量值。
         default: 缺省或解析失败时使用的值。
@@ -253,13 +312,28 @@ def parse_env_float(
 
 
 def normalize_news_strategy_profile(value: Optional[str]) -> str:
-    """把新闻策略档位归一化到已知取值，未知档位回退为 short。"""
+    """把新闻策略档位归一化到已知取值，未知档位回退为 short。
+
+    新闻策略档位决定了系统获取新闻数据时的回溯窗口大小。
+    当用户配置的策略档位不在预定义集合中时，使用最保守的 short（3天）
+    作为安全回退，避免获取过多历史数据导致性能问题。
+
+    Args:
+        value: 原始策略档位字符串。
+
+    Returns:
+        归一化后的策略档位名称（ultra_short/short/medium/long 之一）。
+    """
     candidate = (value or "short").strip().lower()
     return candidate if candidate in NEWS_STRATEGY_WINDOWS else "short"
 
 
 def resolve_news_window_days(news_max_age_days: int, news_strategy_profile: Optional[str]) -> int:
     """计算新闻实际回溯天数：全局时效与策略档位窗口取更严格的那个。
+
+    系统同时受两个参数约束：全局最大时效（NEWS_MAX_AGE_DAYS）和策略档位窗口。
+    本函数取两者中较小值作为实际回溯天数，确保既不超过用户设定的全局限制，
+    也符合当前策略档位的时效要求。
 
     Args:
         news_max_age_days: NEWS_MAX_AGE_DAYS 配置的全局最大时效（天）。
@@ -274,7 +348,17 @@ def resolve_news_window_days(news_max_age_days: int, news_strategy_profile: Opti
 
 
 def normalize_agent_context_compression_profile(value: Optional[str]) -> str:
-    """Return a supported chat compression profile, defaulting to balanced."""
+    """返回支持的 Agent 对话压缩档位，未知档位回退为 balanced。
+
+    Agent 上下文压缩用于控制长对话的内存占用和 API 成本。
+    当配置值无效时，使用 balanced 模式作为安全默认值。
+
+    Args:
+        value: 原始压缩档位字符串。
+
+    Returns:
+        归一化后的压缩档位名称（cost/balanced/long_context_raw_first 之一）。
+    """
     candidate = (value or AGENT_CONTEXT_COMPRESSION_DEFAULT_PROFILE).strip().lower()
     if candidate in AGENT_CONTEXT_COMPRESSION_PROFILES:
         return candidate
@@ -287,13 +371,34 @@ def normalize_agent_context_compression_profile(value: Optional[str]) -> str:
 
 
 def get_agent_context_compression_preset(value: Optional[str]) -> AgentContextCompressionPreset:
+    """获取指定档位的 Agent 上下文压缩预设参数。
+
+    根据档位名称返回对应的压缩配置（触发阈值、保护轮数、摘要 token 数）。
+
+    Args:
+        value: 压缩档位名称。
+
+    Returns:
+        AgentContextCompressionPreset 预设配置对象。
+    """
     return AGENT_CONTEXT_COMPRESSION_PROFILES[
         normalize_agent_context_compression_profile(value)
     ]
 
 
 def canonicalize_llm_channel_protocol(value: Optional[str]) -> str:
-    """把协议别名归一化成 LiteLLM 的 provider 标识（如 claude → anthropic）。"""
+    """把协议别名归一化成 LiteLLM 的 provider 标识（如 claude → anthropic）。
+
+    用户配置时可能使用各种别名（如 claude、google、vertex 等），
+    本函数将这些别名统一映射为 LiteLLM 标准的 provider 标识，
+    确保后续路由和 API Key 管理能正确识别。
+
+    Args:
+        value: 原始协议字符串或别名。
+
+    Returns:
+        归一化后的 LiteLLM provider 标识。
+    """
     candidate = (value or "").strip().lower().replace("-", "_")
     aliases = {
         "openai_compatible": "openai",
@@ -317,6 +422,9 @@ def resolve_llm_channel_protocol(
 
     优先级：显式 protocol > 模型名前缀 > 渠道名 > base_url 推断；
     全部无法判定且无 base_url 时返回空字符串，由调用方按缺省处理。
+
+    该函数是 LLM 渠道配置解析的核心，通过多层推断确保即使配置不完整
+    也能正确识别 provider 协议。
 
     Args:
         protocol: 显式声明的协议。
@@ -356,7 +464,18 @@ def resolve_llm_channel_protocol(
 
 
 def channel_allows_empty_api_key(protocol: Optional[str], base_url: Optional[str]) -> bool:
-    """判断渠道是否允许缺省 API Key（Ollama 与本地自建服务通常免鉴权）。"""
+    """判断渠道是否允许缺省 API Key（Ollama 与本地自建服务通常免鉴权）。
+
+    某些本地部署的 LLM 服务（如 Ollama、vLLM）不需要 API Key 即可访问。
+    本函数用于在配置校验时识别这类场景，避免对本地服务强制要求 API Key。
+
+    Args:
+        protocol: 渠道协议标识。
+        base_url: 渠道基础 URL。
+
+    Returns:
+        当渠道是 Ollama 协议或指向本地地址时返回 True，表示允许空 API Key。
+    """
     resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url)
     if resolved_protocol == "ollama":
         return True
@@ -368,7 +487,15 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
     """为缺少 provider 前缀的模型名补齐前缀，保证 LiteLLM 能正确路由。
 
     已带前缀且前缀是已知 provider（如 SiliconFlow 上的 HuggingFace 风格 ID）时保持原样，
-    避免破坏用户显式声明的路由。
+    避免破坏用户显式声明的路由。本函数确保所有模型名都符合 LiteLLM 的 "provider/model" 格式要求。
+
+    Args:
+        model: 原始模型名字符串。
+        protocol: 渠道协议，用于推断 provider。
+        base_url: 渠道基础 URL，用于协议推断。
+
+    Returns:
+        补齐前缀后的模型路由字符串。
     """
     normalized_model = model.strip()
     if not normalized_model:
@@ -436,7 +563,17 @@ def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
 # 选股引擎与较新的 LLM 渠道消费方共用下面这些兼容性辅助函数。
 # 保留在此处，便于旧部署加载选股引擎时无需再引入另一套配置实现。
 def normalize_llm_channel_api_surface(value: Optional[str]) -> str:
-    """把 API 形态别名归一化为 chat_completions / responses，缺省取 chat_completions。"""
+    """把 API 形态别名归一化为 chat_completions / responses，缺省取 chat_completions。
+
+    LiteLLM 支持两种 API 形态：chat_completions（标准对话补全）和
+    responses（OpenAI 的 Responses API）。本函数将各种别名统一映射到标准值。
+
+    Args:
+        value: 原始 API 形态字符串。
+
+    Returns:
+        归一化后的 API 形态标识（chat_completions 或 responses）。
+    """
     candidate = (value or "").strip().lower().replace("-", "_")
     aliases = {
         "chat": "chat_completions",
@@ -450,7 +587,16 @@ def normalize_llm_channel_api_surface(value: Optional[str]) -> str:
 
 
 def is_supported_llm_channel_api_surface_value(value: Optional[str]) -> bool:
-    """判断 API 形态取值是否合法；空值表示未配置，同样视为合法。"""
+    """判断 API 形态取值是否合法；空值表示未配置，同样视为合法。
+
+    用于配置校验阶段识别用户是否配置了未知的 API 形态。
+
+    Args:
+        value: 原始 API 形态字符串。
+
+    Returns:
+        当值为空或属于支持的 API 形态时返回 True。
+    """
     candidate = (value or "").strip().lower().replace("-", "_")
     return not candidate or candidate in {
         "chat", "chat_completion", "completions", "chat_completions",
@@ -459,7 +605,17 @@ def is_supported_llm_channel_api_surface_value(value: Optional[str]) -> bool:
 
 
 def _screening_model_provider(model: str) -> str:
-    """取模型名中的 provider 前缀，无前缀时返回空字符串。"""
+    """取模型名中的 provider 前缀，无前缀时返回空字符串。
+
+    用于从 "provider/model" 格式的模型路由中提取 provider 标识。
+    例如 "gemini/gemini-3.1-pro" 返回 "gemini"。
+
+    Args:
+        model: 模型路由字符串。
+
+    Returns:
+        provider 前缀（小写），无前缀时返回空字符串。
+    """
     normalized = (model or "").strip()
     if "/" not in normalized:
         return ""
@@ -500,6 +656,9 @@ def find_incompatible_llm_channel_models(
 def find_llm_channel_surface_conflicts(channels: List[Dict[str, Any]]) -> Dict[str, Tuple[str, ...]]:
     """检测同一模型是否被多个启用的渠道声明成了不同的 API 形态。
 
+    当同一模型在不同渠道中声明了 chat_completions 和 responses 两种形态时，
+    会导致 LiteLLM 路由冲突。本函数用于配置校验阶段识别此类问题。
+
     Args:
         channels: 解析后的渠道字典列表。
 
@@ -527,6 +686,9 @@ def find_llm_channel_surface_conflicts(channels: List[Dict[str, Any]]) -> Dict[s
 def apply_litellm_api_surface(model: str, api_surface: Optional[str]) -> str:
     """按声明的 API 形态改写模型路由；responses 形态需转成 openai/responses/<model>。
 
+    OpenAI 的 Responses API 使用特殊的路由格式 openai/responses/<model>，
+    本函数在发送请求前将标准模型路由转换为对应的 Responses API 路由。
+
     Args:
         model: 原始模型路由（带 provider 前缀）。
         api_surface: 目标 API 形态。
@@ -551,7 +713,18 @@ def resolve_litellm_wire_model(
     model: str,
     model_list: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """把 Router 别名解析为其底层实际请求的 LiteLLM wire model。"""
+    """把 Router 别名解析为其底层实际请求的 LiteLLM wire model。
+
+    当使用 LiteLLM Router 时，model_name 可能是用户定义的别名，
+    本函数将其解析为实际发送给 provider 的模型标识。
+
+    Args:
+        model: Router 中的模型别名。
+        model_list: Router 的 model_list 配置。
+
+    Returns:
+        底层实际的模型标识字符串。
+    """
     return llm_generation_params.resolve_litellm_wire_model(model, model_list)
 
 
@@ -560,7 +733,19 @@ def resolve_litellm_thinking_enabled(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
-    """解析本次 LiteLLM 请求是否显式开启思考（thinking）模式。"""
+    """解析本次 LiteLLM 请求是否显式开启思考（thinking）模式。
+
+    某些模型（如 Claude 3.7 Sonnet）支持 thinking 模式，
+    本函数根据模型配置和请求覆盖参数判断是否启用。
+
+    Args:
+        model: 模型路由字符串。
+        model_list: Router 的 model_list 配置。
+        request_overrides: 请求级别的覆盖参数。
+
+    Returns:
+        是否启用 thinking 模式，未配置时返回 None。
+    """
     return llm_generation_params.resolve_litellm_thinking_enabled(
         model,
         model_list=model_list,
@@ -573,7 +758,19 @@ def get_fixed_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
-    """返回 provider 强制要求的固定温度值（针对已知的严格模型）。"""
+    """返回 provider 强制要求的固定温度值（针对已知的严格模型）。
+
+    某些模型（如 o1/o3 系列）对温度参数有特殊要求，
+    本函数返回这些模型强制要求的固定温度值。
+
+    Args:
+        model: 模型路由字符串。
+        model_list: Router 的 model_list 配置。
+        request_overrides: 请求级别的覆盖参数。
+
+    Returns:
+        强制温度值，未强制时返回 None。
+    """
     return llm_generation_params.get_fixed_litellm_temperature(
         model,
         model_list=model_list,
@@ -589,7 +786,23 @@ def normalize_litellm_temperature(
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> float:
-    """发送 LiteLLM 请求前对温度参数做归一化（含 provider 强制值处理）。"""
+    """发送 LiteLLM 请求前对温度参数做归一化（含 provider 强制值处理）。
+
+    该函数在发送请求前统一处理温度参数：
+    1. 检查模型是否有强制温度要求
+    2. 应用用户配置的温度值
+    3. 处理默认值
+
+    Args:
+        model: 模型路由字符串。
+        temperature: 用户指定的温度值。
+        default: 默认温度值。
+        model_list: Router 的 model_list 配置。
+        request_overrides: 请求级别的覆盖参数。
+
+    Returns:
+        归一化后的温度值。
+    """
     return llm_generation_params.normalize_litellm_temperature(
         model,
         temperature,
@@ -605,6 +818,17 @@ def resolve_unified_llm_temperature(model: str) -> float:
     回退顺序：LLM_TEMPERATURE → 当前模型 provider 对应的专属变量 →
     GEMINI/ANTHROPIC/OPENAI_TEMPERATURE 依次尝试 → 0.7。
     这样老版本只配 provider 专属变量的部署无需改动即可继续生效。
+
+    温度参数控制 LLM 输出的随机性：
+    - 0.0：确定性输出，适合需要稳定结果的场景
+    - 0.7：平衡模式，兼顾创造性和一致性（默认值）
+    - 2.0：高度随机，适合创意生成
+
+    Args:
+        model: 模型路由字符串，用于推断所属 provider。
+
+    Returns:
+        解析后的温度值（浮点数）。
     """
     llm_temperature_raw = os.getenv("LLM_TEMPERATURE")
     if llm_temperature_raw and llm_temperature_raw.strip():
@@ -613,6 +837,7 @@ def resolve_unified_llm_temperature(model: str) -> float:
         except (ValueError, TypeError):
             pass
 
+    # provider 专属温度环境变量映射表
     provider_temperature_env = {
         "gemini": "GEMINI_TEMPERATURE",
         "vertex_ai": "GEMINI_TEMPERATURE",
@@ -641,7 +866,17 @@ def resolve_unified_llm_temperature(model: str) -> float:
 
 
 def _get_litellm_provider(model: str) -> str:
-    """从模型字符串中提取 LiteLLM provider 前缀；无前缀时按 openai 处理。"""
+    """从模型字符串中提取 LiteLLM provider 前缀；无前缀时按 openai 处理。
+
+    LiteLLM 使用 "provider/model" 格式来路由请求，
+    本函数提取 provider 部分，用于 API Key 选择和参数配置。
+
+    Args:
+        model: 模型路由字符串。
+
+    Returns:
+        provider 标识（小写），无前缀时返回 "openai"。
+    """
     if not model:
         return ""
     if "/" in model:
@@ -654,6 +889,12 @@ def _uses_direct_env_provider(model: str) -> bool:
 
     非本模块托管 Key 的 provider（如 cohere/*）不会进入 Router model_list，
     因此校验与调用都要走直连分支。
+
+    Args:
+        model: 模型路由字符串。
+
+    Returns:
+        当模型使用直连 provider 时返回 True。
     """
     provider = _get_litellm_provider(model)
     return bool(provider) and provider not in _MANAGED_LITELLM_KEY_PROVIDERS
@@ -663,7 +904,18 @@ def normalize_agent_litellm_model(
     model: str,
     configured_models: Optional[set[str]] = None,
 ) -> str:
-    """归一化 AGENT_LITELLM_MODEL，同时保留已配置的 Router 别名不被加前缀。"""
+    """归一化 AGENT_LITELLM_MODEL，同时保留已配置的 Router 别名不被加前缀。
+
+    Agent 专用模型配置需要特殊处理：如果模型名已存在于 Router 配置中，
+    说明它是用户定义的别名，不应添加 provider 前缀。
+
+    Args:
+        model: 原始模型字符串。
+        configured_models: 已配置的 Router 模型别名集合。
+
+    Returns:
+        归一化后的模型路由字符串。
+    """
     normalized_model = (model or "").strip()
     if not normalized_model:
         return ""
@@ -675,7 +927,17 @@ def normalize_agent_litellm_model(
 
 
 def get_effective_agent_primary_model(config: "Config") -> str:
-    """返回 Agent 实际生效的主模型；未单独配置时继承全局 LITELLM_MODEL。"""
+    """返回 Agent 实际生效的主模型；未单独配置时继承全局 LITELLM_MODEL。
+
+    Agent 可以配置独立的主模型（AGENT_LITELLM_MODEL），
+    当未配置时自动回退到全局主模型，确保 Agent 始终有模型可用。
+
+    Args:
+        config: 配置实例。
+
+    Returns:
+        Agent 实际使用的主模型路由字符串。
+    """
     configured_router_models = set(
         get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
@@ -689,7 +951,17 @@ def get_effective_agent_primary_model(config: "Config") -> str:
 
 
 def get_effective_agent_models_to_try(config: "Config") -> List[str]:
-    """返回 Agent 的模型尝试顺序：主模型 + 全局备选模型（已去重）。"""
+    """返回 Agent 的模型尝试顺序：主模型 + 全局备选模型（已去重）。
+
+    当主模型不可用时，Agent 会按此列表依次尝试备选模型，
+    提高系统容错能力。列表中已去除重复项。
+
+    Args:
+        config: 配置实例。
+
+    Returns:
+        去重后的模型尝试顺序列表。
+    """
     configured_router_models = set(
         get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
@@ -717,10 +989,13 @@ def setup_env(override: bool = False):
     """
     从 .env 文件初始化环境变量。
 
+    该函数在应用启动时调用，负责将 .env 文件中的配置加载到 os.environ 中。
+    支持配置热更新：当 override=True 时，用 .env 中的值覆盖已存在的环境变量。
+
     Args:
         override: 为 True 时用 .env 中的值覆盖已存在的环境变量；
                   配置热更新后重新加载时应设为 True。默认 False，
-                  保持首次加载时“系统环境变量优先”的历史行为。
+                  保持首次加载时"系统环境变量优先"的历史行为。
     """
     Config._capture_bootstrap_runtime_env_overrides()
     # src/config.py -> src/ -> 项目根目录
@@ -736,25 +1011,29 @@ def setup_env(override: bool = False):
 class Config:
     """
     系统配置类 - 单例模式
-    
+
     设计说明：
-    - 使用 dataclass 简化配置属性定义
-    - 所有配置项从环境变量读取，支持默认值
-    - 类方法 get_instance() 实现单例访问
+    - 使用 dataclass 简化配置属性定义，自动生成 __init__ 等方法
+    - 所有配置项从环境变量读取，支持默认值，确保未配置时也能正常运行
+    - 类方法 get_instance() 实现单例访问，全局共享同一配置实例
+    - __post_init__ 在构造完成后对枚举型配置做归一化校验
     """
-    
+
     # === 自选股配置 ===
+    # 用户关注的股票代码列表，支持逗号分隔配置
     stock_list: List[str] = field(default_factory=list)
 
     # === 飞书云文档配置 ===
+    # 飞书开放平台应用凭证，用于将分析报告写入飞书云文档
     feishu_app_id: Optional[str] = None
     feishu_app_secret: Optional[str] = None
-    feishu_folder_token: Optional[str] = None  # 目标文件夹 Token
+    feishu_folder_token: Optional[str] = None  # 目标文件夹 Token，报告将写入此文件夹
     feishu_chat_id: Optional[str] = None
     feishu_domain: str = "feishu"
     feishu_send_as_file: bool = False
 
     # === 数据源 API Token ===
+    # 各数据源的 API 认证凭证，用于获取股票行情、财务数据等
     tushare_token: Optional[str] = None
     tickflow_api_key: Optional[str] = None
     finnhub_api_key: Optional[str] = None
@@ -762,6 +1041,8 @@ class Config:
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
     longbridge_access_token: Optional[str] = None
+    futu_opend_host: Optional[str] = None
+    futu_opend_port: int = 11111
 
     # === AI 分析配置 ===
     # LiteLLM 统一模型配置（provider/model 格式，例如 gemini/gemini-3.1-pro-preview）
@@ -769,24 +1050,29 @@ class Config:
     generation_fallback_backend: str = "litellm"
     generation_backend_timeout_seconds: int = 300
     generation_backend_max_output_bytes: int = 1048576
-    opencode_cli_model: str = ""
+    opencode_cli_model: str = ""  # OpenCode CLI 专用模型配置
     litellm_model: str = ""  # Primary model; must include provider prefix when set explicitly
     litellm_fallback_models: List[str] = field(default_factory=list)  # Cross-model fallback list
 
     # 所有 LLM 调用的统一温度（LLM_TEMPERATURE）
+    # 温度参数控制输出随机性：0.0 确定性最高，2.0 最随机，默认 0.7
     llm_temperature: float = 0.7
 
     # --- Multi-channel LLM config (new) ---
     # LITELLM_CONFIG：标准 litellm_config.yaml 文件路径（能力最强）
+    # 支持多 provider 路由、负载均衡、fallback 等高级功能
     litellm_config_path: Optional[str] = None
     # 内部元数据：记录 llm_model_list 实际由哪一层配置生成
+    # 取值："litellm_config" | "llm_channels" | ""（未配置）
     llm_models_source: str = ""
     # LLM_CHANNELS：渠道字典列表，每项含 name/base_url/api_keys/models
+    # 用于在环境变量中配置多 provider 路由
     llm_channels: List[Dict[str, Any]] = field(default_factory=list)
     # 预构建的 LiteLLM Router model_list（由渠道或 YAML 填充）
     llm_model_list: List[Dict[str, Any]] = field(default_factory=list)
 
     # 由 provider 专属环境变量解析出的 API Key 列表
+    # 支持多 Key 负载均衡，逗号分隔配置
     gemini_api_keys: List[str] = field(default_factory=list)
     anthropic_api_keys: List[str] = field(default_factory=list)
     openai_api_keys: List[str] = field(default_factory=list)
@@ -799,9 +1085,9 @@ class Config:
     gemini_temperature: float = 0.7  # 温度参数（0.0-2.0，控制输出随机性，默认0.7）
 
     # Gemini API 请求配置（防止 429 限流）
-    gemini_request_delay: float = 2.0  # 请求间隔（秒）
+    gemini_request_delay: float = 2.0  # 请求间隔（秒），控制请求频率避免触发限流
     gemini_max_retries: int = 5  # 最大重试次数
-    gemini_retry_delay: float = 5.0  # 重试基础延时（秒）
+    gemini_retry_delay: float = 5.0  # 重试基础延时（秒），采用指数退避策略
 
     # Anthropic Claude API（备选，当 Gemini 不可用时使用）
     anthropic_api_key: Optional[str] = None
@@ -821,9 +1107,11 @@ class Config:
     # 回退链：VISION_MODEL → OPENAI_VISION_MODEL → gemini/gemini-2.0-flash
     vision_model: str = ""
     # VISION_PROVIDER_PRIORITY：Vision 回退时的 provider 顺序（逗号分隔）
+    # 当主模型不可用时，按此顺序尝试其他 provider
     vision_provider_priority: str = "gemini,anthropic,openai"
 
     # === 搜索引擎配置（支持多 Key 负载均衡）===
+    # 各搜索引擎的 API Keys，逗号分隔支持多 Key 轮询
     anspire_api_keys: List[str] = field(default_factory=list)  # Anspire Search API Keys
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys
     minimax_api_keys: List[str] = field(default_factory=list)  # MiniMax API Keys
@@ -832,19 +1120,21 @@ class Config:
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
     searxng_base_urls: List[str] = field(default_factory=list)  # SearXNG instance URLs (self-hosted, no quota)
     searxng_public_instances_enabled: bool = True  # Auto-discover public SearXNG instances when base URLs are absent
+    searxng_timeout_seconds: int = 10  # Self-hosted SearXNG request timeout
 
     # === Social Sentiment (US stocks only, api.adanos.org) ===
+    # 美股社交情绪分析数据源，仅适用于美股
     social_sentiment_api_key: Optional[str] = None
     social_sentiment_api_url: str = "https://api.adanos.org"
 
     # === 新闻与分析筛选配置 ===
-    news_max_age_days: int = 3   # 新闻最大时效（天）
+    news_max_age_days: int = 3   # 新闻最大时效（天），超过此天数的新闻将被过滤
     news_strategy_profile: str = "short"  # 新闻窗口策略档位：ultra_short/short/medium/long
-    news_intel_retention_days: int = 30
-    news_intel_fetch_timeout_sec: float = 8.0
-    news_intel_max_items_per_source: int = 50
-    news_intel_auto_fetch_enabled: bool = False
-    newsnow_base_url: str = "https://newsnow.busiyi.world"
+    news_intel_retention_days: int = 30  # 新闻情报保留天数
+    news_intel_fetch_timeout_sec: float = 8.0  # 新闻获取超时（秒）
+    news_intel_max_items_per_source: int = 50  # 每个来源最大获取条数
+    news_intel_auto_fetch_enabled: bool = False  # 是否自动获取新闻情报
+    newsnow_base_url: str = "https://newsnow.busiyi.world"  # NewsNow 新闻聚合服务地址
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === Agent 模式配置 ===
@@ -1437,6 +1727,8 @@ class Config:
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
             longbridge_app_secret=os.getenv('LONGBRIDGE_APP_SECRET') or None,
             longbridge_access_token=os.getenv('LONGBRIDGE_ACCESS_TOKEN') or None,
+            futu_opend_host=os.getenv('FUTU_OPEND_HOST') or None,
+            futu_opend_port=parse_env_int(os.getenv('FUTU_OPEND_PORT'), 11111, field_name='FUTU_OPEND_PORT', minimum=1, maximum=65535),
             generation_backend=(os.getenv('GENERATION_BACKEND') or 'litellm').strip().lower(),
             generation_fallback_backend=(os.getenv('GENERATION_FALLBACK_BACKEND') or 'litellm').strip().lower(),
             generation_backend_timeout_seconds=parse_env_int(
@@ -1496,6 +1788,12 @@ class Config:
             serpapi_keys=serpapi_keys,
             searxng_base_urls=searxng_base_urls,
             searxng_public_instances_enabled=searxng_public_instances_enabled,
+            searxng_timeout_seconds=parse_env_int(
+                os.getenv('SEARXNG_TIMEOUT_SECONDS'),
+                10,
+                field_name='SEARXNG_TIMEOUT_SECONDS',
+                minimum=1,
+            ),
             social_sentiment_api_key=os.getenv('SOCIAL_SENTIMENT_API_KEY') or None,
             social_sentiment_api_url=os.getenv('SOCIAL_SENTIMENT_API_URL', 'https://api.adanos.org').rstrip('/'),
             news_max_age_days=parse_env_int(os.getenv('NEWS_MAX_AGE_DAYS'), 3, field_name='NEWS_MAX_AGE_DAYS', minimum=1),
@@ -2142,8 +2440,8 @@ class Config:
         """解析单个环境变量值，可指定是否优先采用持久化的 `.env` 副本。
 
         运行期可被 WebUI 改写的键（见 _WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS）默认以
-        `.env` 为准，除非该键在进程启动时被显式覆盖，从而兼顾“界面改配置即时生效”
-        与“容器环境变量不被静默覆盖”。
+        `.env` 为准，除非该键在进程启动时被显式覆盖，从而兼顾"界面改配置即时生效"
+        与"容器环境变量不被静默覆盖"。
 
         Args:
             key: 环境变量名。
@@ -2175,7 +2473,7 @@ class Config:
         中只含真正的进程级取值（Docker ``environment:``、Dockerfile ``ENV``、
         shell export 等）。
 
-        一个键被判定为“显式覆盖”的条件是：它存在于 ``os.environ`` 且
+        一个键被判定为"显式覆盖"的条件是：它存在于 ``os.environ`` 且
         * 持久化的 ``.env`` 文件中不存在，**或**
         * 两处取值 **不同**。
 

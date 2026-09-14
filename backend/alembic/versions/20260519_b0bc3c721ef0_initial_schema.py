@@ -360,7 +360,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_news_intel_published_date'), 'news_intel', ['published_date'], unique=False)
     op.create_index(op.f('ix_news_intel_query_id'), 'news_intel', ['query_id'], unique=False)
     op.create_index(op.f('ix_news_intel_query_source'), 'news_intel', ['query_source'], unique=False)
-    # ----------------------------------------------- Portfolio: base tables
+    # --------------------------------------------------------------- Portfolio: base tables
     op.create_table('portfolio_accounts',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('owner_id', sa.String(length=64), nullable=True),

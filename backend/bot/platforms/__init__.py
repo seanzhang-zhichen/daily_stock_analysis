@@ -15,11 +15,13 @@ from bot.platforms.base import BotPlatform
 from bot.platforms.dingtalk import DingtalkPlatform
 
 # 所有可用平台（Webhook 模式）
+# 键为平台标识字符串，值为对应平台适配器类
 ALL_PLATFORMS = {
     'dingtalk': DingtalkPlatform,
 }
 
-# 钉钉 Stream 模式（可选）
+# 钉钉 Stream 模式（可选，依赖 dingtalk-stream SDK）
+# 使用 try/except 实现可选依赖，SDK 未安装时优雅降级
 try:
     from bot.platforms.dingtalk_stream import (
         DingtalkStreamClient,
@@ -29,13 +31,15 @@ try:
         DINGTALK_STREAM_AVAILABLE,
     )
 except ImportError:
+    # SDK 未安装时的占位符，避免导入失败导致整个模块不可用
     DINGTALK_STREAM_AVAILABLE = False
     DingtalkStreamClient = None
     DingtalkStreamHandler = None
     get_dingtalk_stream_client = lambda: None
     start_dingtalk_stream_background = lambda: False
 
-# 飞书 Stream 模式（可选）
+# 飞书 Stream 模式（可选，依赖 lark-oapi SDK）
+# 使用 try/except 实现可选依赖，SDK 未安装时优雅降级
 try:
     from bot.platforms.feishu_stream import (
         FeishuStreamClient,
@@ -46,6 +50,7 @@ try:
         FEISHU_SDK_AVAILABLE,
     )
 except ImportError:
+    # SDK 未安装时的占位符，避免导入失败导致整个模块不可用
     FEISHU_SDK_AVAILABLE = False
     FeishuStreamClient = None
     FeishuStreamHandler = None

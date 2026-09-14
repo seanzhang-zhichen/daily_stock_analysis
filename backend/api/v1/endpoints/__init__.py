@@ -41,6 +41,9 @@ _ENDPOINT_MODULES = {
 def __getattr__(name):
     """PEP 562 风格的惰性属性加载：按需 import endpoint 模块。
 
+    当外部代码通过 ``api.v1.endpoints.xxx`` 访问时，若 ``xxx`` 在白名单中，
+    则动态导入对应模块并缓存到 globals，下次访问直接返回缓存结果。
+
     Args:
         name: 调用方访问的属性名（应为 endpoint 模块名）。
 

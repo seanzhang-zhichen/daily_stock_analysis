@@ -7,21 +7,33 @@
 模块执行。
 """
 
-import asyncio
-import json
-import logging
-import re
-import uuid
-from datetime import date, datetime
-from pathlib import Path
-from typing import Optional, Union, Dict, Any
+# ============================================================
+# 标准库导入
+# ============================================================
+import asyncio          # 异步 I/O 支持，用于 SSE 事件生成器
+import json             # JSON 序列化/反序列化
+import logging          # 结构化日志记录
+import re               # 正则表达式，用于输入合法性校验
+import uuid             # 生成全局唯一标识符（query_id / task_id）
+from datetime import date, datetime   # 日期/时间类型
+from pathlib import Path                # 跨平台路径处理
+from typing import Optional, Union, Dict, Any  # 类型提示
 
+# ============================================================
+# 第三方库导入
+# ============================================================
 from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
+# ============================================================
+# 项目内部模块导入
+# ============================================================
+# 依赖注入：配置、当前用户、数据库会话
 from api.deps import get_config_dep, get_current_user, get_db
-from src.storage import AppUser
+from src.storage import AppUser  # 用户 ORM 模型
+
+# 用户配额与积分管理
 from src.users import (
     KIND_ANALYSIS,
     enforce_quota,
@@ -34,6 +46,8 @@ from src.users.credits import (
     enforce_credits,
     refund_consumed_credits,
 )
+
+# API Schema：请求体、响应体、任务状态等 DTO
 from api.v1.schemas.analysis import (
     AnalyzeRequest,
     AnalysisResultResponse,
@@ -56,7 +70,11 @@ from api.v1.schemas.history import (
     ReportStrategy,
     ReportDetails,
 )
+
+# 数据提供层：股票代码规范化
 from data_provider.base import canonical_stock_code, normalize_stock_code
+
+# 核心配置与运行时
 from src.config import Config
 from src.core.market_review_lock import (
     MarketReviewExecutionLock as _MarketReviewExecutionLock,
@@ -67,7 +85,11 @@ from src.core.market_review_lock import (
 from src.core.market_review_runtime import (
     build_market_review_runtime as _runtime_build_market_review_runtime,
 )
+
+# 报告语言本地化
 from src.report_language import get_localized_stock_name, normalize_report_language
+
+# 业务服务层
 from src.services.name_to_code_resolver import resolve_name_to_code
 from src.services.empty_news import empty_news_disclosure_from_stored
 from src.services.stock_code_utils import is_code_like
@@ -76,6 +98,8 @@ from src.services.task_queue import (
     DuplicateTaskError,
     TaskStatus as TaskStatusEnum,
 )
+
+# 数据处理工具函数
 from src.utils.data_processing import (
     normalize_model_used,
     parse_json_field,
@@ -84,15 +108,28 @@ from src.utils.data_processing import (
     extract_market_structure_context,
 )
 
-logger = logging.getLogger(__name__)
+# ============================================================
+# 日志与路由
+# ============================================================
+logger = logging.getLogger(__name__)  # 当前模块的日志记录器
+router = APIRouter()                   # FastAPI 路由注册器
 
-router = APIRouter()
-
-_SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
+# ============================================================
+# 常量与正则
+# ============================================================
+# 支持自由文本输入的合法字符正则：字母、数字、点、星号、减号、加号、中文字符及空白
+_SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+㐀-鿿\s]+$")
 
 
 def _current_user_id_or_none(current_user: Any) -> Optional[int]:
-    """从 AppUser 之类的对象中提取数值型 user id。"""
+    """从 AppUser 之类的对象中提取数值型 user id。
+
+    参数:
+        current_user: 当前用户对象，可能为 None 或匿名用户。
+
+    返回:
+        用户 ID（整数），若无法提取则返回 None。
+    """
     user_id = getattr(current_user, "id", None)
     if user_id is None:
         return None
@@ -103,7 +140,15 @@ def _current_user_id_or_none(current_user: Any) -> Optional[int]:
 
 
 def _db_user(db: Session, current_user: AppUser) -> AppUser:
-    """在配额/积分扣减前尽量从 DB 重新加载当前用户，保证状态最新。"""
+    """在配额/积分扣减前尽量从 DB 重新加载当前用户，保证状态最新。
+
+    参数:
+        db: SQLAlchemy 数据库会话。
+        current_user: 请求上下文中的当前用户对象。
+
+    返回:
+        从数据库重新加载后的 AppUser 实例；若查询失败则回退到传入的对象。
+    """
     user_id = _current_user_id_or_none(current_user)
     if user_id is None or not hasattr(db, "query"):
         return current_user
@@ -116,12 +161,26 @@ def _db_user(db: Session, current_user: AppUser) -> AppUser:
 
 
 def _market_review_lock_path(config: Config) -> Path:
-    """返回用于串行化大盘复盘任务的本地文件系统锁路径。"""
+    """返回用于串行化大盘复盘任务的本地文件系统锁路径。
+
+    参数:
+        config: 全局配置对象。
+
+    返回:
+        本地文件系统锁的 Path 对象。
+    """
     return market_review_lock_path(config)
 
 
 def _compute_market_review_override_region(config: Config) -> Optional[str]:
-    """按交易日历过滤大盘复盘区域，非交易日时返回空串以提示跳过。"""
+    """按交易日历过滤大盘复盘区域，非交易日时返回空串以提示跳过。
+
+    参数:
+        config: 全局配置对象。
+
+    返回:
+        有效的区域字符串（如 "cn"），或 None（表示不覆盖）。
+    """
     if not getattr(config, "trading_day_check_enabled", True):
         return None
 
@@ -143,7 +202,15 @@ def _compute_market_review_override_region(config: Config) -> Optional[str]:
 
 
 def _build_market_review_runtime(config: Config, source_message: Optional[Any] = None) -> tuple[Any, Any, Any]:
-    """构造大盘复盘所需的通知器、分析器、检索服务等运行时依赖。"""
+    """构造大盘复盘所需的通知器、分析器、检索服务等运行时依赖。
+
+    参数:
+        config: 全局配置对象。
+        source_message: 可选的源消息，用于运行时上下文传递。
+
+    返回:
+        三元组 (notifier, analyzer, search_service)。
+    """
     return _runtime_build_market_review_runtime(config, source_message)
 
 
@@ -154,7 +221,15 @@ def _run_market_review_background(
     config: Optional[Config] = None,
     query_id: Optional[str] = None,
 ) -> None:
-    """在 API 响应已受理后再真正执行大盘复盘任务。"""
+    """在 API 响应已受理后再真正执行大盘复盘任务。
+
+    参数:
+        send_notification: 是否发送完成通知。
+        override_region: 覆盖的区域代码，None 表示使用默认。
+        lock_token: 本地文件锁令牌，用于任务完成后释放锁。
+        config: 全局配置对象，None 时从依赖注入获取。
+        query_id: 本次复盘的唯一查询 ID。
+    """
     from src.core.market_review import run_market_review
 
     runtime_config = config or get_config_dep()
@@ -179,7 +254,11 @@ def _run_market_review_background(
 
 
 def _invalid_analysis_input_error() -> HTTPException:
-    """针对不合法自由文本输入返回统一的 400 响应。"""
+    """针对不合法自由文本输入返回统一的 400 响应。
+
+    返回:
+        HTTPException，状态码 400，提示用户输入有效股票代码或名称。
+    """
     return HTTPException(
         status_code=400,
         detail={
@@ -190,7 +269,14 @@ def _invalid_analysis_input_error() -> HTTPException:
 
 
 def _is_obviously_invalid_analysis_input(text: str) -> bool:
-    """早期拒绝明显是乱码或不支持字符的输入，减少后续昂贵的解析开销。"""
+    """早期拒绝明显是乱码或不支持字符的输入，减少后续昂贵的解析开销。
+
+    参数:
+        text: 用户输入的原始文本。
+
+    返回:
+        True 表示输入明显无效，False 表示通过初步校验。
+    """
     if not text or is_code_like(text):
         return False
 
@@ -209,6 +295,15 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
     - 类代码输入：走原有的规范化路径。
     - 非代码输入：必须能解析为已知股票代码。
     - 明显的无效输入会在进入昂贵的解析/任务队列前被拒绝。
+
+    参数:
+        raw_value: 用户输入的原始字符串。
+
+    返回:
+        规范化后的股票代码字符串。
+
+    异常:
+        HTTPException: 输入无法解析为有效股票时抛出 400 错误。
     """
     text = (raw_value or "").strip()
     if not text:
@@ -266,7 +361,18 @@ def trigger_analysis(
         db: Session = Depends(get_db),
         current_user: AppUser = Depends(get_current_user),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
-    """在输入/配额归一化后，触发同步或异步的股票分析任务。"""
+    """在输入/配额归一化后，触发同步或异步的股票分析任务。
+
+    参数:
+        request: 分析请求体，包含股票代码、分析模式等。
+        config: 全局配置，由依赖注入提供。
+        db: 数据库会话，由依赖注入提供。
+        current_user: 当前登录用户，由依赖注入提供。
+
+    返回:
+        同步模式下返回 AnalysisResultResponse；
+        异步模式下返回 JSONResponse（状态码 202）。
+    """
     current_user_id = _current_user_id_or_none(current_user)
     if current_user_id is not None:
         current_user = _db_user(db, current_user)
@@ -496,6 +602,18 @@ def _handle_async_analysis_batch(
     """处理异步分析请求，含批量提交与重复任务识别。
 
     ``user_id`` 来自 ``current_user.id``。
+
+    参数:
+        stock_codes: 需要去分析的股票代码列表。
+        request: 原始分析请求体。
+        user_id: 当前用户 ID，None 表示匿名或系统任务。
+        refund_analysis_quota: 是否需要退还分析配额。
+        quota_refund_date: 配额退还日期。
+        refund_analysis_credits: 是否需要退还分析积分。
+        analysis_credit_cost: 单次分析积分消耗数量。
+
+    返回:
+        JSONResponse，包含已接受任务和重复任务的详细信息。
     """
     task_queue = get_task_queue()
 
@@ -597,6 +715,14 @@ def _handle_sync_analysis(
 
     直接执行分析，等待完成后返回结果。
     ``user_id`` 来自 ``current_user.id``。
+
+    参数:
+        stock_code: 规范化后的股票代码。
+        request: 原始分析请求体。
+        user_id: 当前用户 ID，None 表示匿名。
+
+    返回:
+        AnalysisResultResponse，包含完整的分析结果报告。
     """
     import uuid
     from src.services.analysis_service import AnalysisService
@@ -683,7 +809,16 @@ def trigger_market_review(
     config: Config = Depends(get_config_dep),
     current_user: AppUser = Depends(get_current_user),
 ) -> MarketReviewAccepted:
-    """以非阻塞方式从 Web/API 提交大盘复盘任务。"""
+    """以非阻塞方式从 Web/API 提交大盘复盘任务。
+
+    参数:
+        request: 大盘复盘请求体，None 时使用默认值。
+        config: 全局配置，由依赖注入提供。
+        current_user: 当前登录用户，由依赖注入提供。
+
+    返回:
+        MarketReviewAccepted，表示任务已提交。
+    """
     request = request or MarketReviewRequest()
     current_user_id = _current_user_id_or_none(current_user)
 
@@ -749,7 +884,16 @@ def get_task_list(
     limit: int = Query(20, description="返回数量限制", ge=1, le=100),
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskListResponse:
-    """返回当前用户在内存任务队列中的快照。"""
+    """返回当前用户在内存任务队列中的快照。
+
+    参数:
+        status: 可选的状态过滤字符串，逗号分隔。
+        limit: 返回任务数量上限，默认 20，最大 100。
+        current_user: 当前登录用户，由依赖注入提供。
+
+    返回:
+        TaskListResponse，包含任务列表和统计信息。
+    """
     task_queue = get_task_queue()
     current_user_id = _current_user_id_or_none(current_user)
 
@@ -817,7 +961,10 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
     - task_failed: 任务失败
     - heartbeat: 心跳（每 30 秒）
 
-    Returns:
+    参数:
+        current_user: 当前登录用户，由依赖注入提供。
+
+    返回:
         StreamingResponse: SSE 事件流
     """
     current_user_id = _current_user_id_or_none(current_user)
@@ -868,7 +1015,15 @@ async def task_stream(current_user: AppUser = Depends(get_current_user)):
 
 
 def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
-    """构造一帧 Server-Sent Event，data 部分为 UTF-8 JSON。"""
+    """构造一帧 Server-Sent Event，data 部分为 UTF-8 JSON。
+
+    参数:
+        event_type: SSE 事件类型标识字符串。
+        data: 事件载荷字典，会被序列化为 JSON。
+
+    返回:
+        符合 SSE 协议的字符串帧。
+    """
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -890,7 +1045,18 @@ def get_analysis_status(
     task_id: str,
     current_user: AppUser = Depends(get_current_user),
 ) -> TaskStatus:
-    """优先从内存任务队列查询，再回退到持久化历史记录。"""
+    """优先从内存任务队列查询，再回退到持久化历史记录。
+
+    参数:
+        task_id: 任务的唯一标识符。
+        current_user: 当前登录用户，由依赖注入提供。
+
+    返回:
+        TaskStatus，包含任务当前状态、进度、结果或错误信息。
+
+    异常:
+        HTTPException: 404 当任务不存在或已过期时抛出。
+    """
     current_user_id = _current_user_id_or_none(current_user)
     # 1. 先从任务队列查询
     task_queue = get_task_queue()
@@ -1075,6 +1241,13 @@ def _load_sync_fundamental_sources(
 
     这些补充信息仅用于丰富同步响应的结构化报告；读取失败时 fail-open，避免分析已经
     成功但附加历史/基本面读取异常导致整个接口失败。
+
+    参数:
+        query_id: 本次查询的唯一标识。
+        stock_code: 股票代码。
+
+    返回:
+        三元组 (context_snapshot, fallback_fundamental, price_history)。
     """
     try:
         from src.storage import DatabaseManager
@@ -1110,7 +1283,14 @@ def _load_sync_fundamental_sources(
 
 
 def _stringify_report_strategy_value(value: Any) -> Optional[str]:
-    """将策略点位转换为历史 schema 期望的字符串类型。"""
+    """将策略点位转换为历史 schema 期望的字符串类型。
+
+    参数:
+        value: 原始策略值，可能是 None、字符串或其他类型。
+
+    返回:
+        字符串形式或 None。
+    """
     if value is None:
         return None
     if isinstance(value, str):
@@ -1132,6 +1312,18 @@ def _build_analysis_report(
     原始分析结果可能来自同步执行、历史记录或不同版本的报告生成器；这里统一补齐
     meta/summary/strategy/details，并从 context/fallback 中提取财务、分红、板块和
     价格历史字段，保证前端消费的报告结构稳定。
+
+    参数:
+        report_data: 原始报告数据字典。
+        query_id: 本次查询的唯一标识。
+        stock_code: 股票代码。
+        stock_name: 股票名称，可选。
+        context_snapshot: 上下文快照，可选。
+        fallback_fundamental_payload: 基本面数据兜底载荷，可选。
+        price_history: 价格历史数据列表，可选。
+
+    返回:
+        AnalysisReport 实例，包含完整的结构化报告信息。
     """
     meta_data = report_data.get("meta", {})
     summary_data = report_data.get("summary", {})

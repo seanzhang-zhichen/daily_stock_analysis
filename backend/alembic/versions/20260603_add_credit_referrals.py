@@ -1,4 +1,4 @@
-"""add credit and referral tables
+"""添加积分和推荐相关表
 
 Revision ID: 20260603_credit_referrals
 Revises: 20260528_platform_settings
@@ -18,22 +18,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(inspector: sa.Inspector, table_name: str) -> bool:
+    """检查指定表名是否已存在于数据库中。"""
     return table_name in inspector.get_table_names()
 
 
 def _column_exists(inspector: sa.Inspector, table_name: str, column_name: str) -> bool:
+    """检查指定列是否已存在于表中。"""
     if not _table_exists(inspector, table_name):
         return False
     return column_name in {column["name"] for column in inspector.get_columns(table_name)}
 
 
 def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> bool:
+    """检查指定索引是否已存在于表中。"""
     if not _table_exists(inspector, table_name):
         return False
     return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
 
 
 def _refresh_inspector() -> sa.Inspector:
+    """刷新并返回当前数据库连接的检查器对象。"""
     return sa.inspect(op.get_bind())
 
 
@@ -45,6 +49,7 @@ def _create_index_if_missing(
     *,
     unique: bool = False,
 ) -> sa.Inspector:
+    """如果索引不存在，则创建索引并刷新检查器。"""
     if not _index_exists(inspector, table_name, index_name):
         op.create_index(index_name, table_name, columns, unique=unique)
         return _refresh_inspector()
@@ -52,6 +57,7 @@ def _create_index_if_missing(
 
 
 def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: str) -> sa.Inspector:
+    """如果索引存在，则删除索引并刷新检查器。"""
     if _index_exists(inspector, table_name, index_name):
         op.drop_index(index_name, table_name=table_name)
         return _refresh_inspector()
@@ -59,14 +65,17 @@ def _drop_index_if_exists(inspector: sa.Inspector, index_name: str, table_name: 
 
 
 def upgrade() -> None:
+    """升级：添加用户积分余额、推荐码字段，创建推荐关系和积分流水表。"""
     inspector = _refresh_inspector()
 
+    # 为用户表添加积分余额字段
     if not _column_exists(inspector, "app_users", "credit_balance"):
         op.add_column(
             "app_users",
             sa.Column("credit_balance", sa.Integer(), nullable=False, server_default="0"),
         )
         inspector = _refresh_inspector()
+    # 为用户表添加推荐码字段
     if not _column_exists(inspector, "app_users", "referral_code"):
         op.add_column("app_users", sa.Column("referral_code", sa.String(length=32), nullable=True))
         inspector = _refresh_inspector()
@@ -78,6 +87,7 @@ def upgrade() -> None:
         unique=True,
     )
 
+    # 创建用户推荐关系表
     if not _table_exists(inspector, "app_user_referrals"):
         op.create_table(
             "app_user_referrals",
@@ -108,6 +118,7 @@ def upgrade() -> None:
     inspector = _create_index_if_missing(inspector, op.f("ix_app_user_referrals_inviter_user_id"), "app_user_referrals", ["inviter_user_id"])
     inspector = _create_index_if_missing(inspector, op.f("ix_app_user_referrals_registered_at"), "app_user_referrals", ["registered_at"])
 
+    # 创建积分流水表
     if not _table_exists(inspector, "app_credit_ledger"):
         op.create_table(
             "app_credit_ledger",
@@ -140,6 +151,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级：删除积分流水表、推荐关系表，移除用户表的推荐码和积分余额字段。"""
     inspector = _refresh_inspector()
 
     inspector = _drop_index_if_exists(inspector, op.f("ix_app_credit_ledger_user_id"), "app_credit_ledger")

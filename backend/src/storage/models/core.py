@@ -25,6 +25,12 @@ class StockDaily(Base):
     """股票日线数据模型。
 
     存储每日行情数据与计算的技术指标；支持多股票、多日期唯一约束。
+    关键字段说明：
+    - ``canonical_id``: 稳定分析身份（如 sh000300 / sh600519），可空以兼容存量数据库
+    - ``volume``: 成交量（股）
+    - ``amount``: 成交额（元）
+    - ``pct_chg``: 涨跌幅（%）
+    - ``volume_ratio``: 量比，衡量当前成交量与近期平均成交量的比值
     """
     __tablename__ = 'stock_daily'
 
@@ -100,6 +106,11 @@ class NewsIntel(Base):
 
     存储抓取到的新闻条目，用于后续分析、查询与回放；``(code, published_date)``
     索引便于按个股快速拉取近期新闻。
+    关键字段说明：
+    - ``query_id``: 关联用户查询操作，便于追溯新闻来源
+    - ``dimension``: 新闻维度（latest_news / risk_check / earnings / market_analysis / industry）
+    - ``provider``: 新闻提供商（如 bing / google / tushare）
+    - ``query_source``: 查询来源（bot / web / cli / system）
     """
     __tablename__ = 'news_intel'
 
@@ -135,7 +146,9 @@ class NewsIntel(Base):
     requester_query = Column(String(255))
 
     __table_args__ = (
+        # URL 唯一约束：避免重复抓取同一新闻
         UniqueConstraint('url', name='uix_news_url'),
+        # 复合索引：按股票代码和发布时间查询近期新闻
         Index('ix_news_code_pub', 'code', 'published_date'),
     )
 
@@ -148,6 +161,8 @@ class FundamentalSnapshot(Base):
     """基本面上下文快照（P0 write-only）。
 
     仅用于写入，主链路不依赖读取该表，便于后续回测 / 画像扩展。
+    记录某次分析时点的基本面数据（如 PE、PB、ROE 等），
+    通过 ``(query_id, code)`` 复合索引支持按查询和股票快速检索。
     """
     __tablename__ = 'fundamental_snapshot'
 
@@ -160,6 +175,7 @@ class FundamentalSnapshot(Base):
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
+        # 复合索引：按查询 ID 和股票代码检索基本面快照
         Index('ix_fundamental_snapshot_query_code', 'query_id', 'code'),
         Index('ix_fundamental_snapshot_created', 'created_at'),
     )
@@ -173,7 +189,12 @@ INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__all__"
 
 
 class IntelligenceSource(Base):
-    """可配置的 RSS/Atom/NewsNow 情报源（用于 A 股场景）。"""
+    """可配置的 RSS/Atom/NewsNow 情报源（用于 A 股场景）。
+
+    记录外部情报源的元数据，包括名称、类型、URL、启用状态等。
+    支持按 ``scope_type`` 和 ``scope_value`` 进行维度过滤，
+    按 ``market`` 区分不同市场（如 cn / us / hk）。
+    """
 
     __tablename__ = "intelligence_sources"
 
@@ -194,7 +215,12 @@ class IntelligenceSource(Base):
 
 
 class IntelligenceItem(Base):
-    """持久化的归一化情报条目。"""
+    """持久化的归一化情报条目。
+
+    从各情报源抓取后经过清洗和归一化处理的新闻/公告条目。
+    通过 ``(source_id, url, scope_type, scope_value, market)`` 唯一约束
+    避免同一情报在不同批次中被重复存储。
+    """
 
     __tablename__ = "intelligence_items"
 
@@ -214,7 +240,9 @@ class IntelligenceItem(Base):
     raw_payload = Column(Text)
 
     __table_args__ = (
+        # 唯一约束：同一来源、同一 URL、同一维度下只存一条
         UniqueConstraint("source_id", "url", "scope_type", "scope_value", "market", name="uix_intel_item_source_scope_url"),
+        # 复合索引：按维度、市场、发布时间查询情报列表
         Index("ix_intel_item_scope_time", "scope_type", "scope_value", "market", "published_at"),
         Index("ix_intel_item_fetch_time", "fetched_at"),
     )
@@ -225,6 +253,12 @@ class AnalysisHistory(Base):
 
     保存每次分析结果，支持按 ``query_id`` / 股票代码检索，附带用于回测的
     狙击点位（``ideal_buy`` / ``secondary_buy`` / ``stop_loss`` / ``take_profit``）。
+    关键字段说明：
+    - ``user_id``: To C 多用户隔离；由 endpoint 注入 current_user.id
+    - ``report_type``: 报告类型（如 daily / weekly / realtime）
+    - ``sentiment_score``: 情绪评分（-100 ~ 100）
+    - ``operation_advice``: 操作建议（如 buy / hold / sell）
+    - ``raw_result``: 原始分析结果（JSON 字符串）
     """
     __tablename__ = 'analysis_history'
 
@@ -261,6 +295,7 @@ class AnalysisHistory(Base):
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
+        # 复合索引：按股票代码和创建时间查询分析历史
         Index('ix_analysis_code_time', 'code', 'created_at'),
     )
 
@@ -289,7 +324,15 @@ class AnalysisHistory(Base):
 
 
 class ScreeningRun(Base):
-    """内置选股（screening）运行结果与载荷的持久化记录。"""
+    """内置选股（screening）运行结果与载荷的持久化记录。
+
+    记录每次选股运行的完整信息，包括：
+    - 选股策略和参数
+    - 数据源和过滤条件
+    - 候选股票数量和排序结果
+    - LLM 排序和每日增强标记
+    通过 ``run_id`` 唯一标识一次选股运行，支持按策略和市场查询历史记录。
+    """
 
     __tablename__ = "screening_runs"
 
@@ -310,13 +353,23 @@ class ScreeningRun(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     __table_args__ = (
+        # 复合索引：按策略和创建时间查询选股历史
         Index("ix_screening_run_strategy_created", "strategy", "created_at"),
+        # 复合索引：按市场和创建时间查询选股历史
         Index("ix_screening_run_market_created", "market", "created_at"),
     )
 
 
 class StockIndexEntry(Base):
-    """本地股票搜索索引条目，覆盖代码、中文名、拼音和别名。"""
+    """本地股票搜索索引条目，覆盖代码、中文名、拼音和别名。
+
+    为前端搜索提供快速匹配能力，支持：
+    - 按代码搜索（如 600519）
+    - 按中文名搜索（如 贵州茅台）
+    - 按拼音搜索（如 maotai）
+    - 按别名搜索（如 茅台）
+    ``active`` 标记控制该股票是否在搜索结果中展示。
+    """
 
     __tablename__ = 'stock_index'
 
@@ -334,8 +387,11 @@ class StockIndexEntry(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
 
     __table_args__ = (
+        # 复合索引：按代码和活跃状态查询
         Index('ix_stock_index_display_active', 'display_code', 'active'),
+        # 复合索引：按名称和活跃状态查询
         Index('ix_stock_index_name_active', 'name_zh', 'active'),
+        # 复合索引：按拼音和活跃状态查询
         Index('ix_stock_index_pinyin_active', 'pinyin_abbr', 'pinyin_full', 'active'),
     )
 
@@ -350,7 +406,14 @@ class StockIndexEntry(Base):
 
 
 class StockIndexMeta(Base):
-    """股票索引同步元数据，用于判断本地索引版本和规模。"""
+    """股票索引同步元数据，用于判断本地索引版本和规模。
+
+    记录索引同步的关键信息：
+    - ``key``: 索引类型标识（如 'stock_index'）
+    - ``version``: 索引版本号，用于判断是否需要重新同步
+    - ``total``: 索引条目总数，用于校验同步完整性
+    - ``updated_at``: 最后更新时间
+    """
 
     __tablename__ = 'stock_index_meta'
 

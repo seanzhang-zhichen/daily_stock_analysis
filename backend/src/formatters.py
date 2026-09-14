@@ -29,7 +29,7 @@ _SPECIAL_CHAR_REGEX = re.compile(r'[\U00010000-\U000FFFFF]')
 
 
 def _page_marker(i: int, total: int) -> str:
-    """生成分块通知消息中紧凑的页码标记（如“📄 3/10”）。"""
+    """生成分块通知消息中紧凑的页码标记（如"📄 3/10"）。"""
     return f"{PAGE_MARKER_PREFIX} {i+1}/{total}"
 
 

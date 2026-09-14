@@ -13,7 +13,17 @@ from src.utils.analysis_metadata import SELECTION_SOURCE_PATTERN
 
 
 class TaskStatusEnum(str, Enum):
-    """对外暴露给 API 客户端与 SSE 订阅者的任务生命周期状态。"""
+    """对外暴露给 API 客户端与 SSE 订阅者的任务生命周期状态。
+
+    该枚举定义了异步分析任务在生命周期中的各个状态，用于任务状态查询、
+    SSE 推送和前端展示。
+
+    Attributes:
+        PENDING: 任务已创建，等待被调度执行
+        PROCESSING: 任务正在执行中
+        COMPLETED: 任务已成功完成
+        FAILED: 任务执行失败
+    """
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -26,15 +36,27 @@ class AnalyzeRequest(BaseModel):
     ``stock_code`` 用于单只股票，``stock_codes`` 用于批量分析，两者由 endpoint
     层做互斥/必填校验。``stock_name``、``original_query``、``selection_source``
     保留用户输入上下文，供历史记录、任务列表和埋点分析复用。
+
+    Attributes:
+        stock_code: 单只股票代码（与 stock_codes 二选一）
+        stock_codes: 多只股票代码列表（与 stock_code 二选一）
+        report_type: 报告类型：simple(精简) / detailed(完整) / full(完整) / brief(简洁)
+        force_refresh: 是否强制刷新（忽略缓存）
+        async_mode: 是否使用异步模式
+        stock_name: 用户选中的股票名称（自动补全时提供）
+        original_query: 用户原始输入（如茅台、gzmt、600519）
+        selection_source: 股票选择来源：manual(手动输入) | autocomplete(自动补全) | import(导入) | image(图片识别)
+        notify: 是否发送推送通知（Telegram/企业微信等）
+        skills: 本次分析请求使用的策略 skill ID 列表
     """
-    
+
     stock_code: Optional[str] = Field(
-        None, 
-        description="单只股票代码", 
+        None,
+        description="单只股票代码",
         example="600519"
     )
     stock_codes: Optional[List[str]] = Field(
-        None, 
+        None,
         description="多只股票代码（与 stock_code 二选一）",
         example=["600519", "000858"]
     )
@@ -78,7 +100,10 @@ class AnalyzeRequest(BaseModel):
     )
 
     class Config:
-        """分析请求 schema 的 OpenAPI 示例元数据。"""
+        """分析请求 schema 的 OpenAPI 示例元数据。
+
+        通过 json_schema_extra 提供示例数据，便于 API 文档生成和前端调试。
+        """
         json_schema_extra = {
             "example": {
                 "stock_code": "600519",
@@ -95,7 +120,13 @@ class AnalyzeRequest(BaseModel):
 
 
 class MarketReviewRequest(BaseModel):
-    """手动触发大盘复盘后台任务的请求体。"""
+    """手动触发大盘复盘后台任务的请求体。
+
+    用于手动触发对全市场或特定范围的大盘复盘分析任务。
+
+    Attributes:
+        send_notification: 是否在大盘复盘完成后发送推送通知
+    """
 
     send_notification: bool = Field(
         True,
@@ -104,7 +135,16 @@ class MarketReviewRequest(BaseModel):
 
 
 class MarketReviewAccepted(BaseModel):
-    """大盘复盘任务被受理或跳过后的响应。"""
+    """大盘复盘任务被受理或跳过后的响应。
+
+    当用户提交大盘复盘请求后，返回此响应表示任务已被接受或已被跳过。
+
+    Attributes:
+        status: 提交状态，通常为 "accepted"
+        message: 提示信息，描述任务受理结果
+        send_notification: 是否发送通知
+        task_id: 任务 ID（仅当任务实际提交时返回），可选
+    """
 
     status: str = Field("accepted", description="提交状态")
     message: str = Field(..., description="提示信息")
@@ -116,14 +156,24 @@ class MarketReviewAccepted(BaseModel):
 
 
 class AnalysisResultResponse(BaseModel):
-    """同步接口或任务轮询返回的已持久化分析结果。"""
-    
+    """同步接口或任务轮询返回的已持久化分析结果。
+
+    当分析任务完成后，返回此模型包含分析结果和元数据。
+
+    Attributes:
+        query_id: 分析记录唯一标识
+        stock_code: 股票代码
+        stock_name: 股票名称，可选
+        report: 分析报告内容（结构化数据），可选
+        created_at: 创建时间（ISO 格式）
+    """
+
     query_id: str = Field(..., description="分析记录唯一标识")
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")
     report: Optional[Any] = Field(None, description="分析报告")
     created_at: str = Field(..., description="创建时间")
-    
+
     class Config:
         """分析响应 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
@@ -143,16 +193,24 @@ class AnalysisResultResponse(BaseModel):
 
 
 class TaskAccepted(BaseModel):
-    """新受理的异步分析任务的响应。"""
-    
+    """新受理的异步分析任务的响应。
+
+    当异步分析任务被成功受理后，返回此模型包含任务 ID 和初始状态。
+
+    Attributes:
+        task_id: 任务 ID，用于后续查询任务状态
+        status: 任务状态（通常为 "pending" 或 "processing"）
+        message: 提示信息，可选
+    """
+
     task_id: str = Field(..., description="任务 ID，用于查询状态")
     status: str = Field(
-        ..., 
+        ...,
         description="任务状态",
         pattern="^(pending|processing)$"
     )
     message: Optional[str] = Field(None, description="提示信息")
-    
+
     class Config:
         """任务受理 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
@@ -165,7 +223,16 @@ class TaskAccepted(BaseModel):
 
 
 class BatchTaskAcceptedItem(BaseModel):
-    """批量分析请求中一个成功提交的任务。"""
+    """批量分析请求中一个成功提交的任务。
+
+    在批量分析请求中，每个成功提交的股票对应一个此模型实例。
+
+    Attributes:
+        task_id: 任务 ID，用于查询状态
+        stock_code: 股票代码
+        status: 任务状态（通常为 "pending" 或 "processing"）
+        message: 提示信息，可选
+    """
 
     task_id: str = Field(..., description="任务 ID，用于查询状态")
     stock_code: str = Field(..., description="股票代码")
@@ -189,7 +256,15 @@ class BatchTaskAcceptedItem(BaseModel):
 
 
 class BatchDuplicateTaskItem(BaseModel):
-    """批量分析请求中一个因重复而跳过的条目。"""
+    """批量分析请求中一个因重复而跳过的条目。
+
+    当某只股票正在分析中时，再次提交会被视为重复任务并跳过。
+
+    Attributes:
+        stock_code: 股票代码
+        existing_task_id: 已存在的任务 ID
+        message: 错误信息，说明重复原因
+    """
 
     stock_code: str = Field(..., description="股票代码")
     existing_task_id: str = Field(..., description="已存在的任务 ID")
@@ -207,7 +282,16 @@ class BatchDuplicateTaskItem(BaseModel):
 
 
 class BatchTaskAcceptedResponse(BaseModel):
-    """批量分析任务提交汇总：包含成功接收与因重复跳过的条目。"""
+    """批量分析任务提交汇总：包含成功接收与因重复跳过的条目。
+
+    批量分析请求完成后，返回此模型汇总所有提交结果，
+    包括成功提交的任务和因重复而跳过的任务。
+
+    Attributes:
+        accepted: 成功提交的任务列表
+        duplicates: 重复而跳过的任务列表
+        message: 汇总信息
+    """
 
     accepted: List[BatchTaskAcceptedItem] = Field(default_factory=list, description="成功提交的任务列表")
     duplicates: List[BatchDuplicateTaskItem] = Field(default_factory=list, description="重复而跳过的任务列表")
@@ -242,22 +326,34 @@ class TaskStatus(BaseModel):
 
     个股分析任务在完成时携带 ``result``；大盘复盘任务使用
     ``market_review_report``。失败任务携带 ``error``，两个结果字段保持为空。
+
+    Attributes:
+        task_id: 任务 ID
+        status: 任务状态（"pending" / "processing" / "completed" / "failed"）
+        progress: 进度百分比 (0-100)，可选
+        result: 分析结果（仅在 completed 时存在），可选
+        market_review_report: 大盘复盘任务返回的报告文本（仅大盘复盘任务），可选
+        error: 错误信息（仅在 failed 时存在），可选
+        stock_name: 股票名称，可选
+        original_query: 用户原始输入，可选
+        selection_source: 选择来源，可选
+        skills: 本次任务使用的策略 skill ID 列表，可选
     """
-    
+
     task_id: str = Field(..., description="任务 ID")
     status: str = Field(
-        ..., 
+        ...,
         description="任务状态",
         pattern="^(pending|processing|completed|failed)$"
     )
     progress: Optional[int] = Field(
-        None, 
+        None,
         description="进度百分比 (0-100)",
         ge=0,
         le=100
     )
     result: Optional[AnalysisResultResponse] = Field(
-        None, 
+        None,
         description="分析结果（仅在 completed 时存在）"
     )
     market_review_report: Optional[str] = Field(
@@ -265,7 +361,7 @@ class TaskStatus(BaseModel):
         description="大盘复盘任务返回的报告文本（仅大盘复盘任务）",
     )
     error: Optional[str] = Field(
-        None, 
+        None,
         description="错误信息（仅在 failed 时存在）"
     )
     stock_name: Optional[str] = Field(None, description="股票名称")
@@ -276,7 +372,7 @@ class TaskStatus(BaseModel):
         pattern=SELECTION_SOURCE_PATTERN,
     )
     skills: Optional[List[str]] = Field(None, description="本次任务使用的策略 skill ID 列表")
-    
+
     class Config:
         """配置任务状态 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
@@ -296,8 +392,27 @@ class TaskStatus(BaseModel):
 
 
 class TaskInfo(BaseModel):
-    """任务列表 / SSE 推送携带的执行态元数据。"""
-    
+    """任务列表 / SSE 推送携带的执行态元数据。
+
+    用于任务列表查询和 SSE 实时推送时，携带任务的完整执行状态信息。
+
+    Attributes:
+        task_id: 任务 ID
+        stock_code: 股票代码
+        stock_name: 股票名称，可选
+        status: 任务状态（TaskStatusEnum 枚举值）
+        progress: 进度百分比 (0-100)
+        message: 状态消息，可选
+        report_type: 报告类型
+        created_at: 创建时间（ISO 格式）
+        started_at: 开始执行时间（ISO 格式），可选
+        completed_at: 完成时间（ISO 格式），可选
+        error: 错误信息（仅在 failed 时存在），可选
+        original_query: 用户原始输入，可选
+        selection_source: 选择来源，可选
+        skills: 本次任务使用的策略 skill ID 列表，可选
+    """
+
     task_id: str = Field(..., description="任务 ID")
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")
@@ -316,7 +431,7 @@ class TaskInfo(BaseModel):
         pattern=SELECTION_SOURCE_PATTERN,
     )
     skills: Optional[List[str]] = Field(None, description="本次任务使用的策略 skill ID 列表")
-    
+
     class Config:
         """配置任务信息 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
@@ -340,13 +455,22 @@ class TaskInfo(BaseModel):
 
 
 class TaskListResponse(BaseModel):
-    """任务列表端点返回的聚合队列快照。"""
-    
+    """任务列表端点返回的聚合队列快照。
+
+    用于查询任务列表时返回当前队列的整体状态和任务详情。
+
+    Attributes:
+        total: 任务总数
+        pending: 等待中的任务数
+        processing: 处理中的任务数
+        tasks: 任务列表
+    """
+
     total: int = Field(..., description="任务总数")
     pending: int = Field(..., description="等待中的任务数")
     processing: int = Field(..., description="处理中的任务数")
     tasks: List[TaskInfo] = Field(..., description="任务列表")
-    
+
     class Config:
         """配置任务列表 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
@@ -360,13 +484,22 @@ class TaskListResponse(BaseModel):
 
 
 class DuplicateTaskErrorResponse(BaseModel):
-    """单股分析任务已在运行时的重复提交错误载荷。"""
-    
+    """单股分析任务已在运行时的重复提交错误载荷。
+
+    当用户尝试分析一只已经在分析中的股票时，返回此错误响应。
+
+    Attributes:
+        error: 错误类型，固定为 "duplicate_task"
+        message: 错误信息，描述重复情况
+        stock_code: 股票代码
+        existing_task_id: 已存在的任务 ID
+    """
+
     error: str = Field("duplicate_task", description="错误类型")
     message: str = Field(..., description="错误信息")
     stock_code: str = Field(..., description="股票代码")
     existing_task_id: str = Field(..., description="已存在的任务 ID")
-    
+
     class Config:
         """重复任务错误 schema 的 OpenAPI 示例元数据。"""
         json_schema_extra = {
