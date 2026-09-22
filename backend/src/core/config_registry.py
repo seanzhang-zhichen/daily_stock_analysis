@@ -2918,7 +2918,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "AGENT_DEEP_RESEARCH_TIMEOUT": {
         "title": "Deep Research Timeout",
-        "description": "Maximum seconds allowed for a Deep Research request before returning a timeout response.",
+        "description": "Maximum seconds allowed for each Deep Research LLM call. This does not limit the whole research workflow.",
         "category": "agent",
         "data_type": "integer",
         "ui_control": "number",

@@ -1160,7 +1160,7 @@ class Config:
     agent_context_compression_summary_tokens: int = 1500
     agent_risk_override: bool = True  # Allow risk agent to veto buy signals
     agent_deep_research_budget: int = 30000  # Max token budget for deep research
-    agent_deep_research_timeout: int = 600  # Max seconds for /research command before returning timeout
+    agent_deep_research_timeout: int = 600  # Timeout for each Deep Research LLM call
     agent_deep_research_max_sub_questions: int = 8
     agent_deep_research_sub_question_steps: int = 6
     agent_memory_enabled: bool = False  # Enable memory & calibration system

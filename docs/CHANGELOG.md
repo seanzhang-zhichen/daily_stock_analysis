@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] Deep Research 的超时配置改为约束每次 LLM 请求而非整个研究流程，并增加带调用 ID、模型、超时、耗时和 token 的调用日志；DEBUG 日志同时记录脱敏且限长的模型输入输出。
+- [改进] 控制台日志按 DEBUG、INFO、WARNING、ERROR、CRITICAL 等级显示不同颜色，文件与重定向日志保持纯文本。
 - [新功能] 补齐 Bot 指数分析、港美 YFinance 基本面与可选 Futu OpenD 港股行情/估值链路。
 - [新功能] 新增轻量股票画像、数据能力概览和结构化研究产物 API 契约。
 - [改进] Web 选股页支持浏览并恢复当前用户的历史运行结果。

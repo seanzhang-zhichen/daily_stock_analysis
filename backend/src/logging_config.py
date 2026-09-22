@@ -22,10 +22,19 @@ from loguru import logger as loguru_logger
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(pathname)s:%(lineno)d | %(message)s"
 LOGURU_FORMAT = (
-    "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | "
-    "{extra[relative_path]}:{extra[source_line]} | {message}\n{exception}"
+    "<level>{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | "
+    "{extra[relative_path]}:{extra[source_line]} | {message}</level>\n{exception}"
 )
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+LOG_LEVEL_COLORS = {
+    "TRACE": "<dim><cyan>",
+    "DEBUG": "<cyan>",
+    "INFO": "<green>",
+    "SUCCESS": "<bold><green>",
+    "WARNING": "<yellow>",
+    "ERROR": "<red>",
+    "CRITICAL": "<bold><magenta>",
+}
 _ALLOWED_LOG_LEVELS = {
     'DEBUG': logging.DEBUG,
     'INFO': logging.INFO,
@@ -158,11 +167,13 @@ def setup_logging(
 
     # Loguru sinks: 控制台 + 常规日志 + 调试日志
     loguru_logger.remove()
+    for level_name, color in LOG_LEVEL_COLORS.items():
+        loguru_logger.level(level_name, color=color)
     loguru_logger.add(
         sys.stdout,
         level=_logging_level_to_loguru(level),
         format=loguru_format,
-        colorize=False,
+        colorize=None,
         backtrace=False,
         diagnose=False,
         enqueue=False,

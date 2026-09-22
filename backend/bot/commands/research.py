@@ -111,7 +111,7 @@ class ResearchCommand(BotCommand):
             )
 
             research_timeout = getattr(config, "agent_deep_research_timeout", 600)
-            logger.info("[ResearchCommand] Starting deep research (timeout=%ds): %s", research_timeout, question[:100])
+            logger.info("[ResearchCommand] Starting deep research (llm_call_timeout=%ds): %s", research_timeout, question[:100])
             t0 = time.time()
             result = agent.research(
                 question,
@@ -122,9 +122,9 @@ class ResearchCommand(BotCommand):
             duration = result.duration_s or round(time.time() - t0, 1)
 
             if getattr(result, "timed_out", False):
-                logger.warning("[ResearchCommand] Deep research timed out after %ss", duration)
+                logger.warning("[ResearchCommand] Deep research LLM call timed out after %ss", research_timeout)
                 return BotResponse.text_response(
-                    f"⏳ 深度研究超时（{duration}s / {research_timeout}s），请稍后重试或缩小研究范围。"
+                    f"⏳ 深度研究的单次模型调用超时（上限 {research_timeout}s，任务已运行 {duration}s），请稍后重试或缩小研究范围。"
                 )
 
             if result.success:

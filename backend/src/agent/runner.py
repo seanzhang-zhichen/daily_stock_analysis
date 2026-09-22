@@ -369,6 +369,7 @@ def _run_agent_loop_impl(
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     thinking_labels: Optional[Dict[str, str]] = None,
     max_wall_clock_seconds: Optional[float] = None,
+    llm_call_timeout_seconds: Optional[float] = None,
     tool_call_timeout_seconds: Optional[float] = None,
     emit_stage_events: bool = True,
 ) -> RunLoopResult:
@@ -386,6 +387,7 @@ def _run_agent_loop_impl(
         progress_callback: 可选的接收进度字典的回调。
         thinking_labels: tool_name → 友好标签的覆盖映射。
         max_wall_clock_seconds: 循环整体的可选超时预算。
+        llm_call_timeout_seconds: 每次 LLM 请求的可选超时。
         tool_call_timeout_seconds: 单批并行工具调用的可选超时。
 
     Returns:
@@ -462,10 +464,17 @@ def _run_agent_loop_impl(
             progress_callback({"type": "thinking", "step": step + 1, "message": thinking_msg})
 
         # --- LLM 调用 ---
+        llm_timeout = remaining_timeout
+        if llm_call_timeout_seconds is not None:
+            llm_timeout = (
+                min(float(llm_call_timeout_seconds), remaining_timeout)
+                if remaining_timeout is not None
+                else float(llm_call_timeout_seconds)
+            )
         response = llm_adapter.call_with_tools(
             messages,
             tool_decls,
-            timeout=remaining_timeout,
+            timeout=llm_timeout,
         )
         provider_used = response.provider
         total_tokens += (response.usage or {}).get("total_tokens", 0)
@@ -605,6 +614,7 @@ def run_agent_loop(
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     thinking_labels: Optional[Dict[str, str]] = None,
     max_wall_clock_seconds: Optional[float] = None,
+    llm_call_timeout_seconds: Optional[float] = None,
     tool_call_timeout_seconds: Optional[float] = None,
     emit_stage_events: bool = True,
 ) -> RunLoopResult:
@@ -621,6 +631,7 @@ def run_agent_loop(
         progress_callback=callback,
         thinking_labels=thinking_labels,
         max_wall_clock_seconds=max_wall_clock_seconds,
+        llm_call_timeout_seconds=llm_call_timeout_seconds,
         tool_call_timeout_seconds=tool_call_timeout_seconds,
         emit_stage_events=emit_stage_events,
     )

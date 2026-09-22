@@ -1872,6 +1872,9 @@ class TestResearchAgentFilteredRegistry(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(run_loop.call_args.kwargs["max_steps"], 9)
+        self.assertEqual(run_loop.call_args.kwargs["llm_call_timeout_seconds"], 10)
+        self.assertNotIn("max_wall_clock_seconds", run_loop.call_args.kwargs)
+        self.assertNotIn("tool_call_timeout_seconds", run_loop.call_args.kwargs)
 
     def test_synthesise_report_uses_shared_adapter(self):
         from src.agent.research import ResearchAgent
@@ -1927,7 +1930,7 @@ class TestResearchAgentFilteredRegistry(unittest.TestCase):
         self.assertIn("insufficient budget", (result["error"] or "").lower())
         self.assertEqual(result["tokens"], 7)
 
-    def test_research_returns_timeout_result_when_overall_deadline_is_exceeded(self):
+    def test_research_does_not_treat_llm_timeout_as_overall_deadline(self):
         import time as _time
         from src.agent.research import ResearchAgent
 
@@ -1938,12 +1941,14 @@ class TestResearchAgentFilteredRegistry(unittest.TestCase):
             return {"question": "Q1", "content": "done", "tokens": 7, "success": True}
 
         with patch.object(agent, "_decompose_query", return_value={"questions": ["Q1"], "tokens": 3}), \
-             patch.object(agent, "_research_sub_question", side_effect=_slow_sub_question):
+             patch.object(agent, "_research_sub_question", side_effect=_slow_sub_question) as research_sub_question, \
+             patch.object(agent, "_synthesise_report", return_value={"content": "report", "tokens": 5}) as synthesise:
             result = agent.research("分析 600519", timeout_seconds=0.01)
 
-        self.assertFalse(result.success)
-        self.assertTrue(result.timed_out)
-        self.assertIn("timed out", result.error)
+        self.assertTrue(result.success)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(research_sub_question.call_args.kwargs["timeout_seconds"], 0.01)
+        self.assertEqual(synthesise.call_args.kwargs["timeout_seconds"], 0.01)
 
 
 class TestAgentResearchEndpoint(unittest.IsolatedAsyncioTestCase):

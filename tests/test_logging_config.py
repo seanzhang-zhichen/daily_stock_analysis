@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
 """Regression tests for application logging configuration."""
 
+import io
 import logging
+import re
 import sys
 
 import pytest
 from loguru import logger as loguru_logger
 
 from src.logging_config import LITELLM_LOGGERS, setup_logging
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -108,3 +115,37 @@ def test_loguru_and_standard_logging_share_configured_sinks(tmp_path):
     assert "stdlib logging should be bridged" in debug_log_text
     assert "loguru direct logging should be written" in debug_log_text
     assert "tests\\test_logging_config.py" in debug_log_text or "tests/test_logging_config.py" in debug_log_text
+
+
+def test_console_uses_distinct_colors_for_log_levels(tmp_path, monkeypatch):
+    console = _TTYBuffer()
+    monkeypatch.setattr(sys, "stdout", console)
+    setup_logging(log_prefix="stock_analysis", log_dir=str(tmp_path), debug=True)
+
+    for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        loguru_logger.log(level, f"color-{level.lower()}")
+    loguru_logger.complete()
+
+    output = console.getvalue()
+    expected_colors = {
+        "debug": "36",
+        "info": "32",
+        "warning": "33",
+        "error": "31",
+        "critical": "35",
+    }
+    for level, color_code in expected_colors.items():
+        line = next(line for line in output.splitlines() if f"color-{level}" in line)
+        assert re.search(rf"\x1b\[[0-9;]*{color_code}m", line)
+
+
+def test_file_logs_do_not_contain_ansi_color_codes(tmp_path, monkeypatch):
+    console = _TTYBuffer()
+    monkeypatch.setattr(sys, "stdout", console)
+    setup_logging(log_prefix="stock_analysis", log_dir=str(tmp_path), debug=True)
+
+    loguru_logger.error("plain-file-log")
+    debug_log_text = _read_debug_log(tmp_path)
+
+    assert "plain-file-log" in debug_log_text
+    assert "\x1b[" not in debug_log_text

@@ -441,7 +441,7 @@ async def _run_research_in_background(
     *,
     timeout: int,
 ):
-    """在事件循环之外执行深度研究，并施加内部整体超时。"""
+    """在事件循环之外执行深度研究，并为每次 LLM 调用设置超时。"""
     return await asyncio.to_thread(
         agent.research,
         question,
@@ -541,8 +541,8 @@ async def agent_research(
             timeout=research_timeout,
         )
         if getattr(result, "timed_out", False):
-            logger.warning("Agent research API timed out after %ss", research_timeout)
-            # 整体超时：退还本次已扣的积分与日额度
+            logger.warning("Agent research API LLM call timed out after %ss", research_timeout)
+            # 单次 LLM 调用超时：退还本次已扣的积分与日额度
             if credit_outcome and credit_outcome.consumed:
                 refund_consumed_credits(db, user=current_user, outcome=credit_outcome, related_type="research")
             if outcome and outcome.consumed:
@@ -554,7 +554,7 @@ async def agent_research(
                 content="",
                 sources=[],
                 token_usage=0,
-                error=f"Deep research timed out after {research_timeout}s",
+                error=f"Deep research LLM call timed out after {research_timeout}s",
             )
 
         result_success = bool(getattr(result, "success", False))

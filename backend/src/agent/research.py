@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -83,7 +82,7 @@ class ResearchAgent:
             query: 研究问题或主题。
             context: 可选上下文（stock_code、stock_name 等）。
             progress_callback: 可选的进度回调。
-            timeout_seconds: 可选的整个研究任务的总时间预算。
+            timeout_seconds: 可选的单次 LLM 调用超时，不限制整个研究任务总耗时。
 
         Returns:
             一个包含报告与元数据的 :class:`ResearchResult` 实例。
@@ -94,22 +93,13 @@ class ResearchAgent:
         questions: List[str] = [query]
 
         # 阶段一：拆解问题
-        if self._is_timed_out(started_at, timeout_seconds):
-            return self._build_timeout_result(
-                query=query,
-                questions=questions,
-                findings_count=0,
-                total_tokens=tokens_used,
-                duration_s=round(time.monotonic() - started_at, 2),
-                timeout_seconds=timeout_seconds,
-            )
         if progress_callback:
             progress_callback({"type": "research_phase", "phase": "decompose", "message": "Decomposing research query..."})
 
         sub_questions = self._decompose_query(
             query,
             context,
-            timeout_seconds=self._remaining_timeout_seconds(started_at, timeout_seconds),
+            timeout_seconds=timeout_seconds,
         )
         tokens_used += sub_questions.get("tokens", 0)
 
@@ -127,15 +117,6 @@ class ResearchAgent:
 
         # 阶段二：逐个研究子问题
         for i, question in enumerate(questions):
-            if self._is_timed_out(started_at, timeout_seconds):
-                return self._build_timeout_result(
-                    query=query,
-                    questions=questions,
-                    findings_count=len(all_findings),
-                    total_tokens=tokens_used,
-                    duration_s=round(time.monotonic() - started_at, 2),
-                    timeout_seconds=timeout_seconds,
-                )
             if tokens_used >= self.token_budget:
                 logger.warning("[ResearchAgent] token budget exceeded (%d/%d), stopping", tokens_used, self.token_budget)
                 break
@@ -152,7 +133,7 @@ class ResearchAgent:
                 question,
                 context,
                 tokens_used,
-                timeout_seconds=self._remaining_timeout_seconds(started_at, timeout_seconds),
+                timeout_seconds=timeout_seconds,
             )
             tokens_used += finding.get("tokens", 0)
             if finding.get("timed_out"):
@@ -167,15 +148,6 @@ class ResearchAgent:
             all_findings.append(finding)
 
         # 阶段三：综合成报告
-        if self._is_timed_out(started_at, timeout_seconds):
-            return self._build_timeout_result(
-                query=query,
-                questions=questions,
-                findings_count=len(all_findings),
-                total_tokens=tokens_used,
-                duration_s=round(time.monotonic() - started_at, 2),
-                timeout_seconds=timeout_seconds,
-            )
         if progress_callback:
             progress_callback({"type": "research_phase", "phase": "synthesize", "message": "Synthesising research report..."})
 
@@ -184,7 +156,7 @@ class ResearchAgent:
                 query,
                 all_findings,
                 context,
-                timeout_seconds=self._remaining_timeout_seconds(started_at, timeout_seconds),
+                timeout_seconds=timeout_seconds,
             )
             if all_findings
             else {"content": "No findings gathered.", "tokens": 0}
@@ -213,26 +185,13 @@ class ResearchAgent:
         )
 
     @staticmethod
-    def _remaining_timeout_seconds(started_at: float, timeout_seconds: Optional[float]) -> Optional[float]:
-        """返回整个研究任务剩余的总时间预算。"""
-        if timeout_seconds is None:
-            return None
-        return max(0.0, float(timeout_seconds) - (time.monotonic() - started_at))
-
-    @staticmethod
-    def _is_timed_out(started_at: float, timeout_seconds: Optional[float]) -> bool:
-        """判断整个研究任务的截止时间是否已超。"""
-        remaining = ResearchAgent._remaining_timeout_seconds(started_at, timeout_seconds)
-        return remaining is not None and remaining <= 0
-
-    @staticmethod
     def _resolve_step_timeout(default_timeout: int, timeout_seconds: Optional[float]) -> Optional[int]:
-        """将单个阶段的超时收敛到整个研究任务剩余预算之内。"""
+        """解析单次 LLM 调用超时。"""
         if timeout_seconds is None:
             return default_timeout
         if timeout_seconds <= 0:
             return None
-        return max(1, math.ceil(min(float(default_timeout), float(timeout_seconds))))
+        return max(1, int(timeout_seconds))
 
     @staticmethod
     def _looks_like_timeout_error(error: Any) -> bool:
@@ -257,7 +216,7 @@ class ResearchAgent:
     ) -> ResearchResult:
         """构造结构化的超时结果，避免遗留未完成的工作。"""
         timeout_label = f"{timeout_seconds}s" if timeout_seconds is not None else "the configured limit"
-        logger.warning("[ResearchAgent] timed out after %s for query: %s", timeout_label, query[:120])
+        logger.warning("[ResearchAgent] LLM call timed out after %s for query: %s", timeout_label, query[:120])
         return ResearchResult(
             success=False,
             report="",
@@ -265,7 +224,7 @@ class ResearchAgent:
             findings_count=findings_count,
             total_tokens=total_tokens,
             duration_s=duration_s,
-            error=f"Deep research timed out after {timeout_label}",
+            error=f"Deep research LLM call timed out after {timeout_label}",
             timed_out=True,
         )
 
@@ -393,8 +352,7 @@ Token budget remaining: ~{remaining_budget}
                 tool_registry=registry,
                 llm_adapter=self.llm_adapter,
                 max_steps=self.sub_question_max_steps,
-                max_wall_clock_seconds=timeout_seconds,
-                tool_call_timeout_seconds=timeout_seconds,
+                llm_call_timeout_seconds=timeout_seconds,
             )
             if not result.success and self._looks_like_timeout_error(result.error):
                 error_text = str(result.error or "").lower()

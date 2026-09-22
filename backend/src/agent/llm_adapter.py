@@ -31,6 +31,46 @@ from src.users.model_router import ModelRoute, resolve_model_route
 
 logger = logging.getLogger(__name__)
 
+_TRACE_MAX_CHARS = 100_000
+_SENSITIVE_TRACE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def _is_sensitive_trace_key(key: Any) -> bool:
+    normalized = str(key).lower().replace("-", "_")
+    return (
+        normalized in _SENSITIVE_TRACE_KEYS
+        or normalized.endswith("_token")
+        or normalized.endswith("_secret")
+        or normalized.endswith("_password")
+        or normalized.endswith("_api_key")
+    )
+
+
+def _trace_payload(value: Any) -> str:
+    """Serialize an LLM trace payload while redacting credential-shaped fields."""
+    def _redact(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {
+                key: "***REDACTED***" if _is_sensitive_trace_key(key) else _redact(child)
+                for key, child in item.items()
+            }
+        if isinstance(item, (list, tuple)):
+            return [_redact(child) for child in item]
+        return item
+
+    rendered = json.dumps(_redact(value), ensure_ascii=False, default=str)
+    if len(rendered) > _TRACE_MAX_CHARS:
+        return rendered[:_TRACE_MAX_CHARS] + f"... [truncated {len(rendered) - _TRACE_MAX_CHARS} chars]"
+    return rendered
+
 
 def _resolve_litellm_exception(name: str) -> type[BaseException]:
     """返回可捕获的 LiteLLM 异常类，即便在桩测试环境下也能生效。"""
@@ -353,31 +393,72 @@ class LLMToolAdapter:
             )
             logger.error(error_msg)
             return LLMResponse(content=error_msg, provider="error")
-        started_at = time.time()
         providers = [self._get_model_provider(model) for model in models_to_try]
 
         last_error = None
         hit_rate_limit = False
         for idx, model in enumerate(models_to_try):
-            remaining_timeout = timeout
-            if timeout is not None and timeout > 0:
-                remaining_timeout = max(0.0, float(timeout) - (time.time() - started_at))
-                if remaining_timeout <= 0:
-                    last_error = TimeoutError(
-                        f"LLM completion timed out before trying fallback model {model}"
-                    )
-                    break
+            call_timeout = float(timeout) if timeout is not None and timeout > 0 else timeout
+            call_id = uuid.uuid4().hex[:8]
+            attempt_started = time.monotonic()
+            logger.info(
+                "[AgentLLM:%s] request model=%s timeout=%s messages=%d tools=%d",
+                call_id,
+                model,
+                f"{call_timeout:g}s" if call_timeout else "provider-default",
+                len(messages),
+                len(tools or []),
+            )
+            logger.debug(
+                "[AgentLLM:%s] input messages=%s tools=%s",
+                call_id,
+                _trace_payload(messages),
+                _trace_payload(tools or []),
+            )
             try:
-                return self._call_litellm_model(
+                response = self._call_litellm_model(
                     messages,
                     tools or [],
                     model,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    timeout=remaining_timeout,
+                    timeout=call_timeout,
                     model_route=model_route,
                 )
+                duration_s = time.monotonic() - attempt_started
+                logger.info(
+                    "[AgentLLM:%s] response model=%s duration=%.2fs tokens=%s content_chars=%d tool_calls=%d",
+                    call_id,
+                    response.model or model,
+                    duration_s,
+                    response.usage.get("total_tokens", 0),
+                    len(response.content or ""),
+                    len(response.tool_calls),
+                )
+                logger.debug(
+                    "[AgentLLM:%s] output=%s",
+                    call_id,
+                    _trace_payload({
+                        "content": response.content,
+                        "tool_calls": [
+                            {"id": call.id, "name": call.name, "arguments": call.arguments}
+                            for call in response.tool_calls
+                        ],
+                        "usage": response.usage,
+                        "provider": response.provider,
+                        "model": response.model,
+                    }),
+                )
+                return response
             except Exception as e:
+                logger.warning(
+                    "[AgentLLM:%s] failed model=%s duration=%.2fs timeout=%s error=%s",
+                    call_id,
+                    model,
+                    time.monotonic() - attempt_started,
+                    f"{call_timeout:g}s" if call_timeout else "provider-default",
+                    e,
+                )
                 if isinstance(e, _resolve_litellm_exception("RateLimitError")):
                     logger.warning("Agent LLM rate-limited on %s: %s", model, e)
                     last_error = e
@@ -389,13 +470,8 @@ class LLMToolAdapter:
                         and providers[idx] == providers[idx + 1]
                     )
                     if should_backoff:
-                        backoff_sleep = min(2.0, (time.time() - started_at) * 0.1 + 0.5)
-                        if timeout is not None and timeout > 0:
-                            remaining_timeout = max(0.0, float(timeout) - (time.time() - started_at))
-                            if remaining_timeout > 0:
-                                time.sleep(min(backoff_sleep, remaining_timeout))
-                        else:
-                            time.sleep(backoff_sleep)
+                        backoff_sleep = min(2.0, (time.monotonic() - attempt_started) * 0.1 + 0.5)
+                        time.sleep(backoff_sleep)
                     continue
                 if isinstance(e, _resolve_litellm_exception("ContextWindowExceededError")):
                     logger.warning("Agent LLM context window exceeded on %s: %s", model, e)

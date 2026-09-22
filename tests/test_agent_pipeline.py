@@ -1455,6 +1455,20 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 class TestAgentConstructionChain(unittest.TestCase):
     """Test that the agent construction chain wires up correctly."""
 
+    def test_llm_trace_payload_redacts_credentials(self):
+        from src.agent.llm_adapter import _trace_payload
+
+        rendered = _trace_payload({
+            "content": "visible",
+            "access_token": "token-value",
+            "nested": {"api-key": "key-value"},
+        })
+
+        self.assertIn('"content": "visible"', rendered)
+        self.assertNotIn("token-value", rendered)
+        self.assertNotIn("key-value", rendered)
+        self.assertEqual(rendered.count("***REDACTED***"), 2)
+
     def test_llm_adapter_accepts_config(self):
         """LLMToolAdapter should accept an optional config parameter."""
         mock_cfg = MagicMock()
@@ -1560,18 +1574,32 @@ class TestAgentConstructionChain(unittest.TestCase):
 
         calls = []
 
-        def fake_call(_messages, _tools, model, **_kwargs):
-            calls.append(model)
+        def fake_call(_messages, _tools, model, **kwargs):
+            calls.append((model, kwargs.get("timeout")))
             if model == "openai/gpt-4o-mini":
                 raise RuntimeError("primary failed")
-            return MagicMock(content="ok")
+            from src.agent.llm_adapter import LLMResponse
+            return LLMResponse(content="ok", provider="anthropic", model=model)
 
         adapter._call_litellm_model = MagicMock(side_effect=fake_call)
 
-        result = adapter.call_completion(messages=[{"role": "user", "content": "hi"}], tools=[])
+        with self.assertLogs("src.agent.llm_adapter", level="DEBUG") as captured_logs:
+            result = adapter.call_completion(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                timeout=12,
+            )
 
-        self.assertEqual(calls, ["openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet-20241022"])
+        self.assertEqual(calls, [
+            ("openai/gpt-4o-mini", 12.0),
+            ("anthropic/claude-3-5-sonnet-20241022", 12.0),
+        ])
         self.assertEqual(result.content, "ok")
+        trace_text = "\n".join(captured_logs.output)
+        self.assertIn("request model=openai/gpt-4o-mini timeout=12s", trace_text)
+        self.assertIn('input messages=[{"role": "user", "content": "hi"}]', trace_text)
+        self.assertIn("response model=anthropic/claude-3-5-sonnet-20241022", trace_text)
+        self.assertIn('output={"content": "ok"', trace_text)
 
     @patch("src.agent.llm_adapter.Router")
     def test_llm_adapter_normalizes_kimi_k26_temperature(self, _mock_router):
@@ -1929,8 +1957,8 @@ class TestAgentConstructionChain(unittest.TestCase):
         )
 
     @patch("src.agent.llm_adapter.Router")
-    def test_llm_adapter_recomputes_timeout_for_each_fallback_attempt(self, _mock_router):
-        """Each fallback model attempt should receive only the remaining timeout budget."""
+    def test_llm_adapter_applies_full_timeout_to_each_fallback_attempt(self, _mock_router):
+        """Each fallback model request should receive the configured per-call timeout."""
         mock_cfg = MagicMock()
         mock_cfg.agent_litellm_model = "gpt-4o-mini"
         mock_cfg.litellm_model = None
@@ -1956,20 +1984,19 @@ class TestAgentConstructionChain(unittest.TestCase):
 
         adapter._call_litellm_model = MagicMock(side_effect=fake_call)
 
-        with patch("src.agent.llm_adapter.time.time", side_effect=[0.0, 0.0, 7.0, 7.0]):
-            result = adapter.call_completion(
-                messages=[{"role": "user", "content": "hi"}],
-                tools=[],
-                timeout=10.0,
-            )
+        result = adapter.call_completion(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            timeout=10.0,
+        )
 
         self.assertEqual(result.content, "ok")
         self.assertEqual(timeouts[0], ("openai/gpt-4o-mini", 10.0))
-        self.assertEqual(timeouts[1], ("anthropic/claude-3-5-sonnet-20241022", 3.0))
+        self.assertEqual(timeouts[1], ("anthropic/claude-3-5-sonnet-20241022", 10.0))
 
     @patch("src.agent.llm_adapter.Router")
-    def test_llm_adapter_rate_limit_backoff_is_bounded_by_remaining_timeout(self, _mock_router):
-        """Rate-limit backoff should sleep, but never longer than the remaining timeout budget."""
+    def test_llm_adapter_rate_limit_backoff_keeps_per_call_timeout(self, _mock_router):
+        """Rate-limit backoff should not reduce the next model request's timeout."""
         mock_cfg = MagicMock()
         mock_cfg.agent_litellm_model = "gpt-4o-mini"
         mock_cfg.litellm_model = None
@@ -2010,7 +2037,7 @@ class TestAgentConstructionChain(unittest.TestCase):
 
         with patch("src.agent.llm_adapter.litellm.RateLimitError", FakeRateLimitError), \
              patch("src.agent.llm_adapter.logger.warning"), \
-             patch("src.agent.llm_adapter.time.time", side_effect=fake_time), \
+             patch("src.agent.llm_adapter.time.monotonic", side_effect=fake_time), \
              patch("src.agent.llm_adapter.time.sleep", side_effect=fake_sleep) as mock_sleep:
             result = adapter.call_completion(
                 messages=[{"role": "user", "content": "hi"}],
@@ -2022,8 +2049,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         self.assertEqual(timeouts[0], ("openai/gpt-4o-mini", 10.0))
         self.assertEqual(timeouts[1][0], "openai/gpt-4.1-mini")
         expected_backoff = min(2.0, 8.0 * 0.1 + 0.5)
-        expected_next_timeout = 10.0 - (8.0 + expected_backoff)
-        self.assertAlmostEqual(timeouts[1][1], expected_next_timeout)
+        self.assertEqual(timeouts[1][1], 10.0)
         mock_sleep.assert_called_once()
         self.assertAlmostEqual(mock_sleep.call_args.args[0], expected_backoff)
         self.assertAlmostEqual(sleep_calls[0], expected_backoff)

@@ -701,6 +701,38 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertGreater(captured["timeout"], 0.0)
         self.assertLessEqual(captured["timeout"], 1.0)
 
+    def test_llm_call_timeout_applies_to_each_agent_step(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(
+                content="Gathering data.",
+                tool_calls=[ToolCall(id="echo-1", name="echo", arguments={"message": "hello"})],
+                usage={},
+                provider="openai",
+            ),
+            LLMResponse(
+                content=json.dumps(SAMPLE_DASHBOARD),
+                tool_calls=[],
+                usage={},
+                provider="openai",
+            ),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "user", "content": "Analyze"}],
+            tool_registry=registry,
+            llm_adapter=adapter,
+            max_steps=2,
+            llm_call_timeout_seconds=12,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [call.kwargs["timeout"] for call in adapter.call_with_tools.call_args_list],
+            [12.0, 12.0],
+        )
+
     def test_min_step_budget_skips_followup_llm_call(self):
         """When step>0 and remaining budget is too small, no extra LLM call should be made."""
         registry = _make_registry_with_echo()
